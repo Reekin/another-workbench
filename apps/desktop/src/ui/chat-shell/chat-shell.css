@@ -65,14 +65,15 @@ button {
   position: fixed;
   inset: 0;
   display: grid;
-  grid-template-columns: 296px minmax(0, 1fr);
+  grid-template-columns: 296px minmax(0, 1fr) 336px;
   gap: 1px;
   background: var(--awb-rule-strong);
   overflow: hidden;
 }
 
 .awb-shell__sidebar,
-.awb-shell__main {
+.awb-shell__main,
+.awb-shell__detail {
   min-width: 0;
   min-height: 0;
   background: var(--awb-panel);
@@ -91,6 +92,14 @@ button {
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
+}
+
+.awb-shell__detail {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--awb-panel-alt);
 }
 
 .awb-sidebar__header,
@@ -944,6 +953,154 @@ button {
   line-height: 1.5;
 }
 
+.awb-detail__empty {
+  margin: 0;
+  padding: 12px 14px;
+  font-size: 0.79rem;
+  line-height: 1.5;
+  color: var(--awb-ink-muted);
+}
+
+.awb-detail-card {
+  margin: 0;
+  padding: 12px 14px;
+  border-top: 1px solid var(--awb-rule);
+  color: var(--awb-ink-muted);
+}
+
+.awb-detail-card strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--awb-ink-strong);
+}
+
+.awb-detail-card p {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--awb-ink-muted);
+}
+
+.awb-shell__detail {
+  border-left: 1px solid var(--awb-rule);
+}
+
+.awb-detail__spacer {
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--awb-panel-alt);
+}
+
+.awb-detail__graph {
+  flex: 0 0 42%;
+  min-height: 220px;
+  border-top: 1px solid var(--awb-rule);
+  background: #1a1a1a;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.awb-detail__resize-handle {
+  position: relative;
+  flex: 0 0 auto;
+  width: 100%;
+  height: 10px;
+  padding: 0;
+  border: none;
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.awb-detail__resize-handle::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 52px;
+  height: 2px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: var(--awb-rule-strong);
+}
+
+.awb-detail__resize-handle:hover::before,
+.awb-detail__resize-handle.is-dragging::before {
+  background: var(--awb-accent-strong);
+}
+
+.awb-chat-tree {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.awb-chat-tree__graph-shell {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 0 0;
+  scrollbar-gutter: stable both-edges;
+}
+
+.awb-chat-tree__graph-canvas {
+  position: relative;
+}
+
+.awb-chat-tree__graph-svg {
+  display: block;
+}
+
+.awb-chat-tree__graph-connector {
+  fill: none;
+  stroke: rgba(121, 123, 122, 0.28);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+}
+
+.awb-chat-tree__graph-node {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  margin-left: -10px;
+  margin-top: -10px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+}
+
+.awb-chat-tree__graph-node-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 2px solid rgba(182, 185, 183, 0.7);
+  background: #222324;
+  box-shadow: 0 0 0 5px rgba(26, 26, 26, 0.78);
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    transform 160ms ease;
+}
+
+.awb-chat-tree__graph-node:hover .awb-chat-tree__graph-node-dot {
+  transform: scale(1.08);
+  border-color: rgba(182, 185, 183, 0.9);
+}
+
+.awb-chat-tree__graph-node.is-current .awb-chat-tree__graph-node-dot {
+  border-color: var(--awb-accent-strong);
+  background: var(--awb-accent);
+}
+
 .awb-tool-timeline,
 .awb-terminal-list,
 .awb-approval-list {
@@ -1237,7 +1394,7 @@ button {
 
 @media (max-width: 1280px) {
   .awb-shell {
-    grid-template-columns: 284px minmax(0, 1fr);
+    grid-template-columns: 284px minmax(0, 1fr) 300px;
   }
 }
 
@@ -1247,8 +1404,13 @@ button {
   }
 
   .awb-shell__sidebar,
-  .awb-shell__main {
+  .awb-shell__main,
+  .awb-shell__detail {
     min-height: unset;
+  }
+
+  .awb-detail__graph {
+    min-height: 260px;
   }
 
   .awb-transcript {

@@ -29,6 +29,7 @@ import {
 import type { RendererStore } from "../../store/store.js";
 import type { DesktopTransport } from "../../transport/desktop-transport.js";
 import { connectDesktopTransportToStore } from "../../transport/store-bridge.js";
+import { ChatTreePanel } from "./ChatTreePanel.js";
 import { MessageMarkdownView } from "./MessageMarkdownView.js";
 import {
   resolveProcessExpanded,
@@ -262,6 +263,14 @@ const resolveStatusDotLabel = (
 };
 
 const sessionActionLabel = (action: SessionActionDescriptorRpc): string => action.label;
+
+const defaultChatTreePaneHeight = (): number =>
+  typeof window === "undefined" ? 420 : Math.round(window.innerHeight * 0.6);
+
+const clampChatTreePaneHeight = (height: number, viewportHeight?: number): number => {
+  const maxHeight = Math.max(220, Math.floor((viewportHeight ?? 900) * 0.82));
+  return Math.min(Math.max(height, 220), maxHeight);
+};
 
 const summarizeProcessToggle = (input: {
   toolCount: number;
@@ -564,6 +573,7 @@ export const ChatShellApp = ({
   const [processVisibilityByTurnId, setProcessVisibilityByTurnId] = useState<
     Record<string, ProcessVisibilityOverride>
   >({});
+  const [isResizingChatTree, setIsResizingChatTree] = useState(false);
   const [settingsHydrated, setSettingsHydrated] = useState(false);
   const reconcileQueueRef = useRef<string[]>([]);
   const reconcileQueuedIdsRef = useRef(new Set<string>());
@@ -593,6 +603,17 @@ export const ChatShellApp = ({
       }
     | undefined
   >(undefined);
+  const detailRef = useRef<HTMLElement | null>(null);
+  const chatTreePaneManualRef = useRef(false);
+  const chatTreeDragState = useRef<
+    | {
+        pointerId: number;
+      }
+    | undefined
+  >(undefined);
+  const [chatTreePaneHeight, setChatTreePaneHeight] = useState<number>(() =>
+    clampChatTreePaneHeight(defaultChatTreePaneHeight())
+  );
 
   const activeWorkspace = workspaceTree.find((workspace) => workspace.isActive);
   const activeSessionNode =
@@ -655,6 +676,10 @@ export const ChatShellApp = ({
     [transcriptRows, activeChatTree]
   );
   const renderedTranscriptRows = isOpeningSelectedSession ? [] : visibleTranscriptRows;
+  const resolvedChatTreePaneHeight = clampChatTreePaneHeight(
+    chatTreePaneHeight,
+    typeof window === "undefined" ? undefined : window.innerHeight
+  );
 
   const fallbackAgents = useMemo(
     () => buildWorkspaceAgentFallbacks(workspaceTree),
@@ -704,6 +729,19 @@ export const ChatShellApp = ({
   useEffect(() => {
     clearComposerAttachments();
   }, [activeSessionId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || chatTreePaneManualRef.current) {
+      return;
+    }
+    const onResize = (): void => {
+      setChatTreePaneHeight(clampChatTreePaneHeight(defaultChatTreePaneHeight()));
+    };
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+    };
+  }, []);
 
   const activateLoadedSession = (sessionId: string): boolean => {
     const session = store.getState().entities.sessions[sessionId];
@@ -1646,6 +1684,91 @@ export const ChatShellApp = ({
     );
   };
 
+  const stopChatTreeResize = (): void => {
+    chatTreeDragState.current = undefined;
+    setIsResizingChatTree(false);
+    if (typeof document !== "undefined") {
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    }
+  };
+
+  const onChatTreeResizeStart = (event: ReactMouseEvent<HTMLButtonElement>): void => {
+    if (!detailRef.current) {
+      return;
+    }
+    chatTreeDragState.current = {
+      pointerId: event.button
+    };
+    chatTreePaneManualRef.current = true;
+    setIsResizingChatTree(true);
+    if (typeof document !== "undefined") {
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "ns-resize";
+    }
+    event.preventDefault();
+  };
+
+  useEffect(() => {
+    const onPointerMove = (event: MouseEvent): void => {
+      if (!chatTreeDragState.current || !detailRef.current) {
+        return;
+      }
+      const rect = detailRef.current.getBoundingClientRect();
+      const nextHeight = clampChatTreePaneHeight(rect.bottom - event.clientY, rect.height);
+      setChatTreePaneHeight(nextHeight);
+    };
+
+    const onPointerUp = (): void => {
+      if (!chatTreeDragState.current) {
+        return;
+      }
+      stopChatTreeResize();
+    };
+
+    window.addEventListener("mousemove", onPointerMove);
+    window.addEventListener("mouseup", onPointerUp);
+    return () => {
+      window.removeEventListener("mousemove", onPointerMove);
+      window.removeEventListener("mouseup", onPointerUp);
+      stopChatTreeResize();
+    };
+  }, []);
+
+  const onJumpChatTree = async (nodeId: string): Promise<void> => {
+    if (!transport || !displayedSessionId || isOpeningSelectedSession) {
+      return;
+    }
+    try {
+      await transport.chatTree.jump({
+        sessionId: displayedSessionId,
+        nodeId
+      });
+      const nextTree = await transport.chatTree.get(displayedSessionId);
+      setChatTree(nextTree);
+      const currentNode =
+        nextTree.nodes.find((node) => node.nodeId === nextTree.currentNodeId) ??
+        nextTree.nodes.find((node) => node.nodeId === nodeId);
+      if (currentNode?.turnId) {
+        const requestId = ++openSessionRequestIdRef.current;
+        const result = await transport.sessionBrowser.open(displayedSessionId);
+        if (openSessionRequestIdRef.current === requestId) {
+          applySessionWindow(result.page, "replace");
+        }
+      }
+      setStatusNotice({
+        message: `Jumped to ${nodeId}`,
+        source: "chat-tree"
+      });
+    } catch (error) {
+      setStatusNotice({
+        message: `Chat tree jump failed: ${(error as Error).message}`,
+        persistent: true,
+        source: "chat-tree"
+      });
+    }
+  };
+
   const renderSessionNode = (
     session: WorkspaceBrowserNodeRpc["sessions"][number],
     depth = 0
@@ -1901,6 +2024,25 @@ export const ChatShellApp = ({
             </div>
           </footer>
         </main>
+
+        <aside className="awb-shell__detail" aria-label="Chat tree" ref={detailRef}>
+          <div className="awb-detail__spacer" aria-hidden="true" />
+          <section
+            className="awb-detail__graph"
+            style={{ flexBasis: `${resolvedChatTreePaneHeight}px` }}
+          >
+            <button
+              type="button"
+              className={`awb-detail__resize-handle${isResizingChatTree ? " is-dragging" : ""}`}
+              aria-label="Resize chat tree"
+              onMouseDown={onChatTreeResizeStart}
+            />
+            <ChatTreePanel
+              chatTree={activeChatTree}
+              onJump={transport ? (nodeId) => void onJumpChatTree(nodeId) : undefined}
+            />
+          </section>
+        </aside>
       </div>
       {sessionMenuMarkup &&
         (typeof document === "undefined"

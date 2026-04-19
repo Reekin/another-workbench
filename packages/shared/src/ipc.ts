@@ -1,0 +1,669 @@
+import { z } from "zod";
+import {
+  zAgentId,
+  zConversationId,
+  zCursor,
+  zJsonRecord,
+  zRequestId,
+  zSessionId,
+  zTurnId
+} from "./common.js";
+import { commandTypes, zCommandEnvelopeSchema } from "./commands.js";
+import { zChatSessionSchema, zDomainSnapshotSchema } from "./domain.js";
+import { eventTypes, zEventEnvelopeSchema } from "./events.js";
+
+export const workbenchRpcMethods = [
+  "agent.list",
+  "agent.select",
+  "domain.snapshot",
+  "session.list",
+  "workspace.list",
+  "workspace.pickDirectory",
+  "workspace.add",
+  "workspace.remove",
+  "workspace.toggleExpanded",
+  "workspace.select",
+  "sessionBrowser.listTree",
+  "sessionBrowser.reconcile",
+  "sessionBrowser.toggleExpanded",
+  "sessionBrowser.create",
+  "sessionBrowser.open",
+  "sessionBrowser.getActions",
+  "sessionBrowser.runAction",
+  "chatTree.get",
+  "chatTree.jump",
+  "runtime.command",
+  "events.subscribe",
+  "events.unsubscribe",
+  "events.replay"
+] as const;
+
+export type WorkbenchRpcMethod = (typeof workbenchRpcMethods)[number];
+
+const zWorkbenchEventType = z.enum(eventTypes);
+const zWorkbenchCommandType = z.enum(commandTypes);
+
+const zAgentDescriptorSchema = z.object({
+  agentId: zAgentId,
+  displayName: z.string().min(1),
+  capabilities: z.array(z.string().min(1)).default([])
+});
+
+const zWorkspaceRecordSchema = z.object({
+  workspaceId: z.string().min(1),
+  absolutePath: z.string().min(1),
+  label: z.string().min(1),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1)
+});
+
+const zSessionStatusDotSchema = z.enum(["none", "running", "unread_completed"]);
+
+const zSessionBrowserNodeSchema: z.ZodType = z.lazy(() =>
+  z.object({
+    sessionId: zSessionId,
+    displaySessionId: z.string().min(1),
+    providerSessionId: z.string().min(1).optional(),
+    workspaceId: z.string().min(1),
+    conversationId: zConversationId.optional(),
+    agentId: zAgentId,
+    title: z.string().min(1),
+    summaryText: z.string().min(1).optional(),
+    statusDot: zSessionStatusDotSchema,
+    isExpanded: z.boolean(),
+    isActive: z.boolean(),
+    isArchived: z.boolean(),
+    parentSessionId: zSessionId.optional(),
+    children: z.array(zSessionBrowserNodeSchema).default([]),
+    updatedAt: z.string().min(1)
+  })
+);
+
+const zWorkspaceBrowserNodeSchema = z.object({
+  workspaceId: z.string().min(1),
+  label: z.string().min(1),
+  rootPath: z.string().min(1),
+  isExpanded: z.boolean(),
+  isActive: z.boolean(),
+  sessions: z.array(zSessionBrowserNodeSchema).default([])
+});
+
+const zSessionActionKindSchema = z.enum([
+  "archive",
+  "copy_session_id",
+  "open_rollout",
+  "reload"
+]);
+
+const zSessionActionDescriptorSchema = z.object({
+  action: zSessionActionKindSchema,
+  label: z.string().min(1),
+  disabled: z.boolean().optional(),
+  reason: z.string().min(1).optional()
+});
+
+const zSessionActionResultSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("archive"),
+    archived: z.literal(true)
+  }),
+  z.object({
+    action: z.literal("copy_session_id"),
+    copiedText: z.string().min(1)
+  }),
+  z.object({
+    action: z.literal("open_rollout"),
+    rolloutPath: z.string().min(1)
+  }),
+  z.object({
+    action: z.literal("reload"),
+    resumed: z.literal(true)
+  })
+]);
+
+const zChatTreeNodeSchema = z.object({
+  nodeId: z.string().min(1),
+  parentNodeId: z.string().min(1).optional(),
+  label: z.string().min(1),
+  turnId: zTurnId.optional(),
+  order: z.number().int(),
+  isCurrent: z.boolean()
+});
+
+const zChatTreeSnapshotSchema = z.object({
+  sessionId: zSessionId,
+  agentId: zAgentId,
+  supportsJump: z.boolean(),
+  currentNodeId: z.string().min(1).optional(),
+  nodes: z.array(zChatTreeNodeSchema).default([]),
+  fetchedAt: z.string().min(1)
+});
+
+const zAgentListRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("agent.list"),
+  params: z.object({})
+});
+
+const zAgentSelectRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("agent.select"),
+  params: z.object({
+    agentId: zAgentId,
+    config: zJsonRecord.optional()
+  })
+});
+
+const zDomainSnapshotRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("domain.snapshot"),
+  params: z.object({})
+});
+
+const zRuntimeCommandRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("runtime.command"),
+  params: z.object({
+    envelope: zCommandEnvelopeSchema
+  })
+});
+
+const zSessionListRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("session.list"),
+  params: z.object({
+    conversationId: zConversationId.optional(),
+    includeArchived: z.boolean().default(false)
+  })
+});
+
+const zWorkspaceListRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("workspace.list"),
+  params: z.object({})
+});
+
+const zWorkspacePickDirectoryRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("workspace.pickDirectory"),
+  params: z.object({})
+});
+
+const zWorkspaceAddRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("workspace.add"),
+  params: z.object({
+    rootPath: z.string().min(1),
+    label: z.string().min(1).optional()
+  })
+});
+
+const zWorkspaceRemoveRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("workspace.remove"),
+  params: z.object({
+    workspaceId: z.string().min(1)
+  })
+});
+
+const zWorkspaceToggleExpandedRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("workspace.toggleExpanded"),
+  params: z.object({
+    workspaceId: z.string().min(1)
+  })
+});
+
+const zWorkspaceSelectRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("workspace.select"),
+  params: z.object({
+    workspaceId: z.string().min(1)
+  })
+});
+
+const zSessionBrowserListTreeRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.listTree"),
+  params: z.object({
+    workspaceId: z.string().min(1).optional()
+  })
+});
+
+const zSessionBrowserToggleExpandedRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.toggleExpanded"),
+  params: z.object({
+    sessionId: zSessionId
+  })
+});
+
+const zSessionBrowserCreateRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.create"),
+  params: z.object({
+    workspaceId: z.string().min(1),
+    agentId: zAgentId,
+    conversationId: zConversationId.optional(),
+    metadata: zJsonRecord.optional()
+  })
+});
+
+const zSessionBrowserReconcileRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.reconcile"),
+  params: z.object({
+    workspaceId: z.string().min(1).optional()
+  })
+});
+
+const zSessionBrowserOpenRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.open"),
+  params: z.object({
+    sessionId: zSessionId
+  })
+});
+
+const zSessionBrowserGetActionsRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.getActions"),
+  params: z.object({
+    sessionId: zSessionId
+  })
+});
+
+const zSessionBrowserRunActionRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.runAction"),
+  params: z.object({
+    sessionId: zSessionId,
+    action: zSessionActionKindSchema
+  })
+});
+
+const zChatTreeGetRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("chatTree.get"),
+  params: z.object({
+    sessionId: zSessionId
+  })
+});
+
+const zChatTreeJumpRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("chatTree.jump"),
+  params: z.object({
+    sessionId: zSessionId,
+    nodeId: z.string().min(1)
+  })
+});
+
+export const zWorkbenchEventSubscriptionFilterSchema = z.object({
+  sessionId: zSessionId.optional(),
+  conversationId: zConversationId.optional(),
+  eventTypes: z.array(zWorkbenchEventType).optional()
+});
+
+const zEventsSubscribeRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("events.subscribe"),
+  params: z.object({
+    subscriptionId: z.string().min(1).optional(),
+    fromCursor: zCursor.optional(),
+    filter: zWorkbenchEventSubscriptionFilterSchema.optional()
+  })
+});
+
+const zEventsUnsubscribeRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("events.unsubscribe"),
+  params: z.object({
+    subscriptionId: z.string().min(1)
+  })
+});
+
+const zEventsReplayRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("events.replay"),
+  params: z.object({
+    fromCursor: zCursor,
+    toCursor: zCursor.optional(),
+    filter: zWorkbenchEventSubscriptionFilterSchema.optional()
+  })
+});
+
+export const zWorkbenchRpcRequestSchema = z.discriminatedUnion("method", [
+  zAgentListRequestSchema,
+  zAgentSelectRequestSchema,
+  zDomainSnapshotRequestSchema,
+  zSessionListRequestSchema,
+  zWorkspaceListRequestSchema,
+  zWorkspacePickDirectoryRequestSchema,
+  zWorkspaceAddRequestSchema,
+  zWorkspaceRemoveRequestSchema,
+  zWorkspaceToggleExpandedRequestSchema,
+  zWorkspaceSelectRequestSchema,
+  zSessionBrowserListTreeRequestSchema,
+  zSessionBrowserReconcileRequestSchema,
+  zSessionBrowserToggleExpandedRequestSchema,
+  zSessionBrowserCreateRequestSchema,
+  zSessionBrowserOpenRequestSchema,
+  zSessionBrowserGetActionsRequestSchema,
+  zSessionBrowserRunActionRequestSchema,
+  zChatTreeGetRequestSchema,
+  zChatTreeJumpRequestSchema,
+  zRuntimeCommandRequestSchema,
+  zEventsSubscribeRequestSchema,
+  zEventsUnsubscribeRequestSchema,
+  zEventsReplayRequestSchema
+]);
+
+const zAgentListResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("agent.list"),
+  ok: z.literal(true),
+  result: z.object({
+    agents: z.array(zAgentDescriptorSchema)
+  })
+});
+
+const zAgentSelectResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("agent.select"),
+  ok: z.literal(true),
+  result: z.object({
+    selectedAgentId: zAgentId
+  })
+});
+
+const zDomainSnapshotResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("domain.snapshot"),
+  ok: z.literal(true),
+  result: z.object({
+    snapshot: zDomainSnapshotSchema,
+    cursor: zCursor.optional()
+  })
+});
+
+const zSessionListResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("session.list"),
+  ok: z.literal(true),
+  result: z.object({
+    sessions: z.array(zChatSessionSchema)
+  })
+});
+
+const zWorkspaceListResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("workspace.list"),
+  ok: z.literal(true),
+  result: z.object({
+    workspaces: z.array(zWorkspaceRecordSchema),
+    lastActiveWorkspaceId: z.string().min(1).optional(),
+    lastActiveSessionId: z.string().min(1).optional()
+  })
+});
+
+const zWorkspacePickDirectoryResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("workspace.pickDirectory"),
+  ok: z.literal(true),
+  result: z.object({
+    canceled: z.boolean(),
+    rootPath: z.string().min(1).optional()
+  })
+});
+
+const zWorkspaceAddResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("workspace.add"),
+  ok: z.literal(true),
+  result: z.object({
+    workspace: zWorkspaceRecordSchema
+  })
+});
+
+const zWorkspaceRemoveResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("workspace.remove"),
+  ok: z.literal(true),
+  result: z.object({
+    workspaceId: z.string().min(1),
+    removed: z.boolean()
+  })
+});
+
+const zWorkspaceToggleExpandedResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("workspace.toggleExpanded"),
+  ok: z.literal(true),
+  result: z.object({
+    workspaceId: z.string().min(1),
+    expanded: z.boolean()
+  })
+});
+
+const zWorkspaceSelectResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("workspace.select"),
+  ok: z.literal(true),
+  result: z.object({
+    workspaceId: z.string().min(1),
+    activeSessionId: zSessionId.optional()
+  })
+});
+
+const zSessionBrowserListTreeResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.listTree"),
+  ok: z.literal(true),
+  result: z.object({
+    workspaces: z.array(zWorkspaceBrowserNodeSchema)
+  })
+});
+
+const zSessionBrowserToggleExpandedResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.toggleExpanded"),
+  ok: z.literal(true),
+  result: z.object({
+    sessionId: zSessionId,
+    expanded: z.boolean()
+  })
+});
+
+const zSessionBrowserCreateResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.create"),
+  ok: z.literal(true),
+  result: z.object({
+    sessionId: zSessionId,
+    conversationId: zConversationId
+  })
+});
+
+const zSessionBrowserReconcileResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.reconcile"),
+  ok: z.literal(true),
+  result: z.object({
+    workspaces: z.number().int().nonnegative(),
+    sessions: z.number().int().nonnegative(),
+    relations: z.number().int().nonnegative()
+  })
+});
+
+const zSessionBrowserOpenResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.open"),
+  ok: z.literal(true),
+  result: z.object({
+    sessionId: zSessionId
+  })
+});
+
+const zSessionBrowserGetActionsResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.getActions"),
+  ok: z.literal(true),
+  result: z.object({
+    actions: z.array(zSessionActionDescriptorSchema)
+  })
+});
+
+const zSessionBrowserRunActionResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.runAction"),
+  ok: z.literal(true),
+  result: zSessionActionResultSchema
+});
+
+const zChatTreeGetResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("chatTree.get"),
+  ok: z.literal(true),
+  result: z.object({
+    chatTree: zChatTreeSnapshotSchema
+  })
+});
+
+const zChatTreeJumpResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("chatTree.jump"),
+  ok: z.literal(true),
+  result: z.object({
+    jumped: z.boolean()
+  })
+});
+
+const zRuntimeCommandResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("runtime.command"),
+  ok: z.literal(true),
+  result: z.object({
+    commandId: zRequestId,
+    commandType: zWorkbenchCommandType,
+    accepted: z.boolean().default(true)
+  })
+});
+
+const zEventsSubscribeResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("events.subscribe"),
+  ok: z.literal(true),
+  result: z.object({
+    subscriptionId: z.string().min(1),
+    fromCursor: zCursor.optional()
+  })
+});
+
+const zEventsUnsubscribeResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("events.unsubscribe"),
+  ok: z.literal(true),
+  result: z.object({
+    unsubscribed: z.boolean().default(true)
+  })
+});
+
+const zEventsReplayResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("events.replay"),
+  ok: z.literal(true),
+  result: z.object({
+    replayed: z.number().int().nonnegative(),
+    fromCursor: zCursor,
+    toCursor: zCursor.optional(),
+    envelopes: z.array(zEventEnvelopeSchema).default([])
+  })
+});
+
+const zWorkbenchRpcErrorResponseSchema = z.object({
+  id: zRequestId,
+  method: z.enum(workbenchRpcMethods),
+  ok: z.literal(false),
+  error: z.object({
+    code: z.string().min(1),
+    message: z.string().min(1),
+    details: zJsonRecord.optional()
+  })
+});
+
+export const zWorkbenchRpcResponseSchema = z.union([
+  zAgentListResponseSchema,
+  zAgentSelectResponseSchema,
+  zDomainSnapshotResponseSchema,
+  zSessionListResponseSchema,
+  zWorkspaceListResponseSchema,
+  zWorkspacePickDirectoryResponseSchema,
+  zWorkspaceAddResponseSchema,
+  zWorkspaceRemoveResponseSchema,
+  zWorkspaceToggleExpandedResponseSchema,
+  zWorkspaceSelectResponseSchema,
+  zSessionBrowserListTreeResponseSchema,
+  zSessionBrowserReconcileResponseSchema,
+  zSessionBrowserToggleExpandedResponseSchema,
+  zSessionBrowserCreateResponseSchema,
+  zSessionBrowserOpenResponseSchema,
+  zSessionBrowserGetActionsResponseSchema,
+  zSessionBrowserRunActionResponseSchema,
+  zChatTreeGetResponseSchema,
+  zChatTreeJumpResponseSchema,
+  zRuntimeCommandResponseSchema,
+  zEventsSubscribeResponseSchema,
+  zEventsUnsubscribeResponseSchema,
+  zEventsReplayResponseSchema,
+  zWorkbenchRpcErrorResponseSchema
+]);
+
+export const zWorkbenchEventPushSchema = z.object({
+  channel: z.literal("workbench.events"),
+  subscriptionId: z.string().min(1),
+  envelope: zEventEnvelopeSchema
+});
+
+export type AgentDescriptor = z.infer<typeof zAgentDescriptorSchema>;
+export type WorkbenchEventSubscriptionFilter = z.infer<
+  typeof zWorkbenchEventSubscriptionFilterSchema
+>;
+export type WorkbenchRpcRequest = z.infer<typeof zWorkbenchRpcRequestSchema>;
+export type WorkbenchRpcResponse = z.infer<typeof zWorkbenchRpcResponseSchema>;
+export type WorkbenchEventPush = z.infer<typeof zWorkbenchEventPushSchema>;
+export type WorkspaceRecordRpc = z.infer<typeof zWorkspaceRecordSchema>;
+export type SessionBrowserNodeRpc = z.infer<typeof zSessionBrowserNodeSchema>;
+export type WorkspaceBrowserNodeRpc = z.infer<typeof zWorkspaceBrowserNodeSchema>;
+export type SessionActionKindRpc = z.infer<typeof zSessionActionKindSchema>;
+export type SessionActionDescriptorRpc = z.infer<typeof zSessionActionDescriptorSchema>;
+export type SessionActionResultRpc = z.infer<typeof zSessionActionResultSchema>;
+export type ChatTreeSnapshotRpc = z.infer<typeof zChatTreeSnapshotSchema>;
+
+export type WorkbenchEventHandler = (event: WorkbenchEventPush) => void;
+
+export type WorkbenchClientApi = {
+  request: (request: WorkbenchRpcRequest) => Promise<WorkbenchRpcResponse>;
+  subscribe: (
+    params: Extract<WorkbenchRpcRequest, { method: "events.subscribe" }>["params"],
+    handler: WorkbenchEventHandler
+  ) => Promise<{ subscriptionId: string; unsubscribe: () => Promise<void> }>;
+};
+
+export const parseWorkbenchRpcRequest = (value: unknown): WorkbenchRpcRequest =>
+  zWorkbenchRpcRequestSchema.parse(value);
+
+export const parseWorkbenchRpcResponse = (value: unknown): WorkbenchRpcResponse =>
+  zWorkbenchRpcResponseSchema.parse(value);
+
+export const parseWorkbenchEventPush = (value: unknown): WorkbenchEventPush =>
+  zWorkbenchEventPushSchema.parse(value);
+
+export const safeParseWorkbenchRpcRequest = (value: unknown) =>
+  zWorkbenchRpcRequestSchema.safeParse(value);
+
+export const safeParseWorkbenchRpcResponse = (value: unknown) =>
+  zWorkbenchRpcResponseSchema.safeParse(value);
+
+export const safeParseWorkbenchEventPush = (value: unknown) =>
+  zWorkbenchEventPushSchema.safeParse(value);

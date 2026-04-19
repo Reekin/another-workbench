@@ -1,0 +1,39 @@
+{
+  "name": "@another-workbench/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "pnpm exec tsc -p tsconfig.json && pnpm exec node ./scripts/build-electron.mjs && pnpm exec vite build",
+    "dev": "pnpm exec node ./scripts/dev-electron.mjs",
+    "dev:web": "pnpm exec vite --host 127.0.0.1 --port 4173",
+    "dev:demo": "pnpm exec vite --host 127.0.0.1 --port 4173 --open /demo.html",
+    "preview": "pnpm exec vite preview --host 127.0.0.1 --port 4173",
+    "start": "pnpm exec electron ./dist-electron/main.js",
+    "typecheck": "pnpm exec tsc -p tsconfig.json --noEmit",
+    "test": "pnpm exec vitest run",
+    "lint": "node -e \"console.log('lint placeholder: @another-workbench/desktop')\""
+  },
+  "dependencies": {
+    "@another-workbench/adapters": "workspace:*",
+    "@another-workbench/core": "workspace:*",
+    "@another-workbench/desktop-server": "workspace:*",
+    "@another-workbench/shared": "workspace:*",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1",
+    "xterm": "^5.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^5.0.2",
+    "electron": "^37.2.6",
+    "esbuild": "^0.25.9",
+    "vite": "^7.1.5"
+  }
+}

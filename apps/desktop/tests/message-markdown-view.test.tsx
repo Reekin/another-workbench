@@ -1,0 +1,68 @@
+import { describe, expect, it } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import { buildParticipantDirectory } from "../src/ui/chat-shell/participant-directory.js";
+import { MessageMarkdownView } from "../src/ui/chat-shell/MessageMarkdownView.js";
+
+const participantDirectory = buildParticipantDirectory([
+  {
+    participantId: "participant-1",
+    conversationId: "conv-1",
+    agentId: "agent-codex",
+    role: "primary",
+    capabilities: ["chat"],
+    activeSessionIds: ["session-1"]
+  }
+]);
+
+describe("MessageMarkdownView", () => {
+  it("renders markdown content into semantic HTML", () => {
+    const html = renderToStaticMarkup(
+      <MessageMarkdownView
+        participantDirectory={participantDirectory}
+        block={{
+          blockId: "message-1:md",
+          messageId: "message-1",
+          sessionId: "session-1",
+          turnId: "turn-1",
+          role: "assistant",
+          kind: "markdown",
+          text: "# Heading\n\n- item",
+          actor: {
+            participantId: "participant-1",
+            agentId: "agent-codex"
+          },
+          startedAt: "2026-04-17T00:00:00.000Z"
+        }}
+      />
+    );
+
+    expect(html).toContain("<h1>Heading</h1>");
+    expect(html).toContain("<li>item</li>");
+    expect(html).toContain("agent-codex");
+  });
+
+  it("sanitizes unsafe html fragments in markdown source", () => {
+    const html = renderToStaticMarkup(
+      <MessageMarkdownView
+        participantDirectory={participantDirectory}
+        block={{
+          blockId: "message-2:md",
+          messageId: "message-2",
+          sessionId: "session-1",
+          turnId: "turn-1",
+          role: "assistant",
+          kind: "markdown",
+          text: "safe<script>alert('xss')</script>",
+          actor: {
+            participantId: "participant-1",
+            agentId: "agent-codex"
+          },
+          startedAt: "2026-04-17T00:00:00.000Z"
+        }}
+      />
+    );
+
+    expect(html).toContain("safe");
+    expect(html).not.toContain("<script>");
+  });
+});

@@ -1,0 +1,43 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: ^0.19.0
+        version: 0.19.0(zod@3.25.76)
+      '@another-workbench/adapters':
+        specifier: workspace:*
+        version: link:../../packages/adapters
+      '@another-workbench/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@another-workbench/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+
+packages:
+
+  '@agentclientprotocol/sdk@0.19.0':
+    resolution: {integrity: sha512-U9I8ws9WTOk6jCBAWpXefGSDgVXn14/kV6HFzwWGcstQ02mOQgClMAROHmoIn9GqZbDBDEOkdIbP4P4TEMQdug==}
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
+
+  zod@3.25.76:
+    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+
+snapshots:
+
+  '@agentclientprotocol/sdk@0.19.0(zod@3.25.76)':
+    dependencies:
+      zod: 3.25.76
+
+  zod@3.25.76: {}

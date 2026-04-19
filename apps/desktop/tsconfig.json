@@ -1,0 +1,50 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "src",
+    "outDir": "dist",
+    "jsx": "react-jsx",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@another-workbench/shared": [
+        "../../packages/shared/src/index.ts"
+      ],
+      "@another-workbench/core": [
+        "../../packages/core/src/index.ts"
+      ],
+      "@another-workbench/adapters": [
+        "../../packages/adapters/src/index.ts"
+      ],
+      "@another-workbench/desktop-server": [
+        "../../apps/desktop-server/src/index.ts"
+      ],
+      "@another-workbench/desktop-server/browser": [
+        "../../apps/desktop-server/src/browser.ts"
+      ]
+    }
+  },
+  "include": [
+    "src"
+  ],
+  "references": [
+    {
+      "path": "../../packages/shared"
+    },
+    {
+      "path": "../../packages/core"
+    },
+    {
+      "path": "../../packages/adapters"
+    },
+    {
+      "path": "../desktop-server"
+    }
+  ]
+}

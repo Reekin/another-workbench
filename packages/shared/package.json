@@ -1,0 +1,20 @@
+{
+  "name": "@another-workbench/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": ["src", "dist"],
+  "scripts": {
+    "build": "pnpm exec tsc -p tsconfig.json",
+    "typecheck": "pnpm exec tsc -p tsconfig.json --noEmit",
+    "lint": "node -e \"console.log('lint placeholder: @another-workbench/shared')\""
+  },
+  "dependencies": {
+    "zod": "^3.25.76"
+  }
+}

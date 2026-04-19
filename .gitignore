@@ -1,0 +1,11 @@
+node_modules
+dist
+dist-electron
+dist-web
+.turbo
+.DS_Store
+*.log
+*.tsbuildinfo
+.tmp/
+.codex-temp-*
+.tmp-awb-*.png

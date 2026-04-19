@@ -124,6 +124,7 @@ const zMessageCompletedEvent = z
     sessionId: zSessionId,
     turnId: zTurnId,
     messageId: zMessageId,
+    finalText: z.string().optional(),
     ...zActorFields
   });
 

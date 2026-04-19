@@ -22,6 +22,8 @@ import type { ThreadListParams } from "./codex-app-server-generated/v2/ThreadLis
 import type { ThreadListResponse } from "./codex-app-server-generated/v2/ThreadListResponse.js";
 import type { ThreadReadParams } from "./codex-app-server-generated/v2/ThreadReadParams.js";
 import type { ThreadReadResponse } from "./codex-app-server-generated/v2/ThreadReadResponse.js";
+import type { ThreadResumeParams } from "./codex-app-server-generated/v2/ThreadResumeParams.js";
+import type { ThreadResumeResponse } from "./codex-app-server-generated/v2/ThreadResumeResponse.js";
 import type { TurnStartResponse } from "./codex-app-server-generated/v2/TurnStartResponse.js";
 import type { ThreadItem } from "./codex-app-server-generated/v2/ThreadItem.js";
 
@@ -396,6 +398,22 @@ export class CodexAppServerRuntimePort
     return result.thread;
   }
 
+  public async resumeThread(threadId: string): Promise<Thread> {
+    await this.start(this.startConfig);
+    const selected = this.resolveSelectedConfig();
+    const result = (await this.rpc("thread/resume", {
+      threadId,
+      persistExtendedHistory: true,
+      cwd: selected.cwd ?? this.startConfig.cwd ?? null,
+      model: selected.model ?? null,
+      modelProvider: selected.modelProvider ?? null,
+      serviceTier: selected.serviceTier ?? null,
+      approvalPolicy: selected.approvalPolicy ?? null,
+      sandbox: selected.sandbox ?? null
+    } satisfies ThreadResumeParams)) as ThreadResumeResponse;
+    return result.thread;
+  }
+
   public async readChatTree(threadId: string): Promise<ThreadChatTreeReadResponse> {
     await this.start(this.startConfig);
     return (await this.rpc("thread/chatTree/read", {
@@ -525,17 +543,33 @@ export class CodexAppServerRuntimePort
     }
 
     const selected = this.resolveSelectedConfig();
-    const result = (await this.rpc("thread/start", {
-      cwd: selected.cwd ?? this.startConfig.cwd ?? null,
-      model: selected.model ?? null,
-      modelProvider: selected.modelProvider ?? null,
-      serviceTier: selected.serviceTier ?? null,
-      approvalPolicy: selected.approvalPolicy ?? "on-request",
-      sandbox: selected.sandbox ?? "workspace-write",
+    const threadStartParams: Record<string, unknown> = {
       ephemeral: false,
       experimentalRawEvents: false,
       persistExtendedHistory: true
-    })) as ThreadStartResponse;
+    };
+
+    const resolvedCwd = selected.cwd ?? this.startConfig.cwd;
+    if (resolvedCwd) {
+      threadStartParams.cwd = resolvedCwd;
+    }
+    if (selected.model !== undefined) {
+      threadStartParams.model = selected.model;
+    }
+    if (selected.modelProvider !== undefined) {
+      threadStartParams.modelProvider = selected.modelProvider;
+    }
+    if (selected.serviceTier !== undefined) {
+      threadStartParams.serviceTier = selected.serviceTier;
+    }
+    if (selected.approvalPolicy !== undefined) {
+      threadStartParams.approvalPolicy = selected.approvalPolicy;
+    }
+    if (selected.sandbox !== undefined) {
+      threadStartParams.sandbox = selected.sandbox;
+    }
+
+    const result = (await this.rpc("thread/start", threadStartParams)) as ThreadStartResponse;
 
     const threadId = result.thread.id;
     this.threadIdBySessionId.set(sessionId, threadId);
@@ -852,6 +886,7 @@ export class CodexAppServerRuntimePort
         turnId,
         messageId: item.id,
         role: "assistant",
+        ...(method === "item/completed" ? { finalText: item.text } : {}),
         agentId: this.agentId
       });
       return;

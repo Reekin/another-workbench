@@ -221,6 +221,69 @@ describe("createRemoteRpcHandler", () => {
     });
   });
 
+  it("serves settings get and update through the shared RPC shape", async () => {
+    const shellService = {
+      listAgents: () => [],
+      selectAgent: () => ({ selectedAgentId: "codex" }),
+      listWorkspaces: vi.fn().mockResolvedValue({
+        workspaces: []
+      }),
+      getSnapshotResult: () => ({
+        snapshot: {
+          conversations: [],
+          sessions: [],
+          turns: [],
+          messageBlocks: [],
+          toolCalls: [],
+          terminalStreams: [],
+          approvalRequests: [],
+          participants: [],
+          sessionRelations: []
+        }
+      }),
+      listSessions: () => [],
+      getSettings: vi.fn().mockResolvedValue({
+        defaultNewSessionAgentId: "pi"
+      }),
+      updateSettings: vi.fn().mockResolvedValue({
+        defaultNewSessionAgentId: "codex"
+      }),
+      executeCommand: vi.fn(),
+      replay: vi.fn().mockReturnValue([])
+    };
+    const handler = createRemoteRpcHandler(shellService as never);
+
+    const getResponse = await handler.handleRequest({
+      id: "req-settings-get",
+      method: "settings.get",
+      params: {}
+    });
+    const updateResponse = await handler.handleRequest({
+      id: "req-settings-update",
+      method: "settings.update",
+      params: {
+        defaultNewSessionAgentId: "codex"
+      }
+    });
+
+    expect(getResponse).toMatchObject({
+      id: "req-settings-get",
+      method: "settings.get",
+      ok: true,
+      result: {
+        defaultNewSessionAgentId: "pi"
+      }
+    });
+    expect(updateResponse).toMatchObject({
+      id: "req-settings-update",
+      method: "settings.update",
+      ok: true,
+      result: {
+        defaultNewSessionAgentId: "codex"
+      }
+    });
+  });
+
   it("requires websocket transport for remote event subscribe and unsubscribe", async () => {
     const service = createService();
     const handler = createRemoteRpcHandler(service, {
@@ -332,7 +395,44 @@ describe("createRemoteRpcHandler", () => {
         expanded: true
       }),
       openSession: vi.fn().mockResolvedValue({
-        sessionId: "session-1"
+        page: {
+          sessionId: "session-1",
+          snapshot: {
+            conversations: [],
+            sessions: [],
+            turns: [],
+            messageBlocks: [],
+            toolCalls: [],
+            terminalStreams: [],
+            approvalRequests: [],
+            participants: [],
+            sessionRelations: []
+          },
+          windowStartTurnId: "turn-2",
+          windowEndTurnId: "turn-3",
+          hasOlder: true,
+          hasNewer: false
+        }
+      }),
+      loadOlderSessionTurns: vi.fn().mockResolvedValue({
+        page: {
+          sessionId: "session-1",
+          snapshot: {
+            conversations: [],
+            sessions: [],
+            turns: [],
+            messageBlocks: [],
+            toolCalls: [],
+            terminalStreams: [],
+            approvalRequests: [],
+            participants: [],
+            sessionRelations: []
+          },
+          windowStartTurnId: "turn-1",
+          windowEndTurnId: "turn-2",
+          hasOlder: false,
+          hasNewer: true
+        }
       }),
       getSessionActions: vi.fn().mockResolvedValue({
         actions: []
@@ -373,6 +473,22 @@ describe("createRemoteRpcHandler", () => {
       method: "sessionBrowser.reconcile",
       params: {
         workspaceId: "workspace-1"
+      }
+    });
+    const openSessionResponse = await handler.handleRequest({
+      id: "req-open",
+      method: "sessionBrowser.open",
+      params: {
+        sessionId: "session-1"
+      }
+    });
+    const loadOlderResponse = await handler.handleRequest({
+      id: "req-load-older",
+      method: "sessionBrowser.loadOlder",
+      params: {
+        sessionId: "session-1",
+        beforeTurnId: "turn-3",
+        limit: 8
       }
     });
     const removeWorkspaceResponse = await handler.handleRequest({
@@ -417,6 +533,34 @@ describe("createRemoteRpcHandler", () => {
         relations: 1
       }
     });
+    expect(openSessionResponse).toMatchObject({
+      id: "req-open",
+      method: "sessionBrowser.open",
+      ok: true,
+      result: {
+        page: {
+          sessionId: "session-1",
+          windowStartTurnId: "turn-2",
+          windowEndTurnId: "turn-3",
+          hasOlder: true,
+          hasNewer: false
+        }
+      }
+    });
+    expect(loadOlderResponse).toMatchObject({
+      id: "req-load-older",
+      method: "sessionBrowser.loadOlder",
+      ok: true,
+      result: {
+        page: {
+          sessionId: "session-1",
+          windowStartTurnId: "turn-1",
+          windowEndTurnId: "turn-2",
+          hasOlder: false,
+          hasNewer: true
+        }
+      }
+    });
     expect(removeWorkspaceResponse).toMatchObject({
       id: "req-remove-workspace",
       method: "workspace.remove",
@@ -442,6 +586,12 @@ describe("createRemoteRpcHandler", () => {
     expect((shellService as any).reconcileSessionBrowser).toHaveBeenCalledWith(
       "workspace-1"
     );
+    expect((shellService as any).openSession).toHaveBeenCalledWith("session-1");
+    expect((shellService as any).loadOlderSessionTurns).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      beforeTurnId: "turn-3",
+      limit: 8
+    });
     expect((shellService as any).removeWorkspace).toHaveBeenCalledWith("workspace-1");
     expect((shellService as any).getChatTree).toHaveBeenCalledWith("session-1");
   });

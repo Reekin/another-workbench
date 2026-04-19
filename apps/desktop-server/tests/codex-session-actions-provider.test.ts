@@ -1,0 +1,109 @@
+import { describe, expect, it, vi } from "vitest";
+import type { CodexAppServerRuntimePort } from "../src/codex-app-server-runtime-port.js";
+import { CodexSessionActionsProvider } from "../src/codex-session-actions-provider.js";
+
+describe("CodexSessionActionsProvider", () => {
+  it("prefers the live thread id when copying the displayed session id", () => {
+    const provider = new CodexSessionActionsProvider({
+      codexRuntimePort: {
+        getThreadIdForSession: vi.fn().mockReturnValue("thread-live")
+      } as unknown as CodexAppServerRuntimePort
+    });
+
+    expect(
+      provider.resolveDisplayedSessionId({
+        sessionId: "session-1",
+        agentId: "codex",
+        runtimeService: {} as never,
+        sessionIndexStore: {} as never,
+        indexEntry: {
+          sessionId: "session-1",
+          providerSessionId: "thread-indexed"
+        } as never
+      })
+    ).toBe("thread-live");
+  });
+
+  it("exposes rollout action availability based on thread identity", async () => {
+    const provider = new CodexSessionActionsProvider({
+      codexRuntimePort: {
+        getThreadIdForSession: vi.fn().mockReturnValue(undefined)
+      } as unknown as CodexAppServerRuntimePort
+    });
+
+    await expect(
+      provider.listAdditionalActions({
+        sessionId: "session-1",
+        agentId: "codex",
+        runtimeService: {} as never,
+        sessionIndexStore: {} as never
+      })
+    ).resolves.toEqual([
+      {
+        action: "open_rollout",
+        label: "Open rollout",
+        disabled: true,
+        reason: "Rollout is not available until the thread is created."
+      }
+    ]);
+  });
+
+  it("archives the underlying Codex thread before the generic archive flow continues", async () => {
+    const archiveThread = vi.fn().mockResolvedValue(undefined);
+    const provider = new CodexSessionActionsProvider({
+      codexRuntimePort: {
+        getThreadIdForSession: vi.fn().mockReturnValue("thread-1"),
+        archiveThread
+      } as unknown as CodexAppServerRuntimePort
+    });
+
+    await provider.prepareArchive({
+      sessionId: "session-1",
+      agentId: "codex",
+      runtimeService: {} as never,
+      sessionIndexStore: {} as never
+    });
+
+    expect(archiveThread).toHaveBeenCalledWith("thread-1");
+  });
+
+  it("opens rollout paths through the Codex thread reader", async () => {
+    const readThread = vi
+      .fn()
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        path: "\\\\?\\I:\\rollouts\\thread-1.md"
+      });
+    const provider = new CodexSessionActionsProvider({
+      codexRuntimePort: {
+        getThreadIdForSession: vi.fn().mockReturnValue("thread-1"),
+        readThread
+      } as unknown as CodexAppServerRuntimePort
+    });
+
+    await expect(
+      provider.runAction({
+        sessionId: "session-1",
+        agentId: "codex",
+        action: "open_rollout",
+        runtimeService: {} as never,
+        sessionIndexStore: {} as never
+      })
+    ).rejects.toThrow("Codex thread does not expose a rollout path.");
+
+    await expect(
+      provider.runAction({
+        sessionId: "session-1",
+        agentId: "codex",
+        action: "open_rollout",
+        runtimeService: {} as never,
+        sessionIndexStore: {} as never
+      })
+    ).resolves.toEqual({
+      action: "open_rollout",
+      rolloutPath: "\\\\?\\I:\\rollouts\\thread-1.md",
+      rolloutDisplayPath: "I:\\rollouts\\thread-1.md",
+      rolloutFileUrl: "file:///I:/rollouts/thread-1.md"
+    });
+  });
+});

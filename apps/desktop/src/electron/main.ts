@@ -53,7 +53,10 @@ const loadRendererTarget = async (window: BrowserWindow): Promise<void> => {
   if (target.type === "url") {
     await window.loadURL(target.value);
   } else {
-    await window.loadFile(target.value);
+    await window.webContents.session.clearCache();
+    await window.loadFile(target.value, {
+      search: `v=${Date.now()}`
+    });
   }
 };
 

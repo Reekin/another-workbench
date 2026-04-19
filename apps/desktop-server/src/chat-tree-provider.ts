@@ -1,6 +1,9 @@
-import type { CodexAppServerRuntimePort } from "./codex-app-server-runtime-port.js";
 import type { SessionIndexStore } from "./session-index.js";
 import type { WorkbenchRuntimeService } from "./runtime-service.js";
+import {
+  resolveSessionContext,
+  type ResolvedSessionContext
+} from "./session-provider-context.js";
 
 export type ChatTreeNodeSnapshot = {
   nodeId: string;
@@ -22,118 +25,79 @@ export type ChatTreeSnapshot = {
 
 type ChatTreeProviderOptions = {
   runtimeService: WorkbenchRuntimeService;
-  codexRuntimePort: CodexAppServerRuntimePort;
   sessionIndexStore: SessionIndexStore;
+  providers?: ChatTreeAgentProvider[];
   now?: () => string;
+};
+
+export type ChatTreeProviderContext = ResolvedSessionContext & {
+  runtimeService: WorkbenchRuntimeService;
+  sessionIndexStore: SessionIndexStore;
+};
+
+export type ChatTreeAgentProvider = {
+  readonly agentId: string;
+  get: (input: ChatTreeProviderContext) => Promise<ChatTreeSnapshot>;
+  jump: (input: ChatTreeProviderContext, nodeId: string) => Promise<boolean>;
 };
 
 export class ChatTreeProvider {
   private readonly runtimeService: WorkbenchRuntimeService;
-  private readonly codexRuntimePort: CodexAppServerRuntimePort;
   private readonly sessionIndexStore: SessionIndexStore;
+  private readonly providersByAgentId: Map<string, ChatTreeAgentProvider>;
   private readonly now: () => string;
 
   public constructor(options: ChatTreeProviderOptions) {
     this.runtimeService = options.runtimeService;
-    this.codexRuntimePort = options.codexRuntimePort;
     this.sessionIndexStore = options.sessionIndexStore;
+    this.providersByAgentId = new Map(
+      (options.providers ?? []).map((provider) => [provider.agentId, provider])
+    );
     this.now = options.now ?? (() => new Date().toISOString());
   }
 
   public async get(sessionId: string): Promise<ChatTreeSnapshot> {
-    const session = this.resolveSession(sessionId);
+    const context = this.resolveContext(sessionId);
 
-    if (!session) {
+    if (!context.agentId) {
       throw new Error(`Unknown session: ${sessionId}`);
     }
 
-    if (session.agentId !== "codex") {
-      return {
-        sessionId,
-        agentId: session.agentId,
-        supportsJump: false,
-        nodes: [],
-        fetchedAt: this.now()
-      };
-    }
-
-    const threadId =
-      this.codexRuntimePort.getThreadIdForSession(sessionId) ??
-      this.sessionIndexStore.getEntry(sessionId)?.providerSessionId;
-    const chatTree = threadId
-      ? await this.codexRuntimePort.readChatTree(threadId)
-      : undefined;
-    if (!chatTree) {
-      return {
-        sessionId,
-        agentId: session.agentId,
-        supportsJump: false,
-        nodes: [],
-        fetchedAt: this.now()
-      };
+    const provider = this.providersByAgentId.get(context.agentId);
+    if (provider) {
+      return provider.get(context);
     }
 
     return {
       sessionId,
-      agentId: session.agentId,
-      supportsJump: true,
-      currentNodeId: chatTree.chatTree.currentNodeId ?? undefined,
-      nodes: chatTree.chatTree.nodes.map((node) => ({
-        nodeId: node.nodeId,
-        parentNodeId: node.parentNodeId ?? undefined,
-        label: node.summary ?? node.nodeId,
-        turnId: node.turnId ?? undefined,
-        order: node.order,
-        isCurrent: chatTree.chatTree.currentNodeId === node.nodeId
-      })),
+      agentId: context.agentId,
+      supportsJump: false,
+      nodes: [],
       fetchedAt: this.now()
     };
   }
 
   public async jump(sessionId: string, nodeId: string): Promise<{ jumped: boolean }> {
-    const session = this.resolveSession(sessionId);
-    if (!session) {
+    const context = this.resolveContext(sessionId);
+    if (!context.agentId) {
       throw new Error(`Unknown session: ${sessionId}`);
     }
-    if (session.agentId !== "codex") {
+    const provider = this.providersByAgentId.get(context.agentId);
+    if (!provider) {
       return {
         jumped: false
       };
-    }
-    const threadId =
-      this.codexRuntimePort.getThreadIdForSession(sessionId) ??
-      this.sessionIndexStore.getEntry(sessionId)?.providerSessionId;
-    if (!threadId) {
-      return {
-        jumped: false
-      };
-    }
-    if (this.codexRuntimePort.getThreadIdForSession(sessionId)) {
-      await this.codexRuntimePort.setCurrentChatTreeNodeForSession(sessionId, nodeId);
-    } else {
-      await this.codexRuntimePort.setCurrentChatTreeNode(threadId, nodeId);
     }
     return {
-      jumped: true
+      jumped: await provider.jump(context, nodeId)
     };
   }
 
-  private resolveSession(sessionId: string): { sessionId: string; agentId: string } | undefined {
-    const runtimeSession = this.runtimeService
-      .listSessions({
-        includeArchived: true
-      })
-      .find((item) => item.sessionId === sessionId);
-    if (runtimeSession) {
-      return runtimeSession;
-    }
-    const indexEntry = this.sessionIndexStore.getEntry(sessionId);
-    if (!indexEntry) {
-      return undefined;
-    }
+  private resolveContext(sessionId: string): ChatTreeProviderContext {
     return {
-      sessionId,
-      agentId: indexEntry.agentId
+      ...resolveSessionContext(this.runtimeService, this.sessionIndexStore, sessionId),
+      runtimeService: this.runtimeService,
+      sessionIndexStore: this.sessionIndexStore
     };
   }
 }

@@ -4,6 +4,7 @@ let nextThreadNumber = 1;
 let nextTurnNumber = 1;
 let nextApprovalRequestId = 0;
 const pendingApprovalByRequestId = new Map();
+let lastThreadStartParams = null;
 
 const send = (payload) => {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
@@ -12,6 +13,10 @@ const send = (payload) => {
 const emitHappyPath = ({ threadId, turnId, prompt }) => {
   const messageId = `msg-${turnId}`;
   const commandId = `cmd-${turnId}`;
+  const renderedPrompt =
+    prompt === "__THREAD_START_PARAMS__"
+      ? JSON.stringify(lastThreadStartParams ?? {})
+      : prompt;
   const output = "$ pwd\nD:/workspace\n";
 
   send({
@@ -48,7 +53,7 @@ const emitHappyPath = ({ threadId, turnId, prompt }) => {
       threadId,
       turnId,
       itemId: messageId,
-      delta: `Real Codex says: ${prompt}\n`
+      delta: `Real Codex says: ${renderedPrompt}\n`
     }
   });
   send({
@@ -59,7 +64,7 @@ const emitHappyPath = ({ threadId, turnId, prompt }) => {
       item: {
         type: "agentMessage",
         id: messageId,
-        text: `Real Codex says: ${prompt}\n`,
+        text: `Real Codex says: ${renderedPrompt}\n`,
         phase: null,
         memoryCitation: null
       }
@@ -251,6 +256,7 @@ const handleRequest = (payload) => {
         });
         return;
       case "thread/start": {
+        lastThreadStartParams = payload.params ?? null;
         const threadId = `thread-${nextThreadNumber++}`;
         send({
           id: payload.id,

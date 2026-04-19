@@ -14,8 +14,8 @@ vi.mock("xterm", () => ({
 
 import { ChatShellApp } from "../src/ui/chat-shell/ChatShellApp.js";
 
-describe("ChatShellApp process panel visibility", () => {
-  it("collapses process details by default for completed turns while keeping running turns open", () => {
+describe("ChatShellApp inspector layout", () => {
+  it("moves process details into the inspector and focuses the latest assistant turn", () => {
     const store = createRendererStore();
     store.hydrateSnapshot(
       parseDomainSnapshot({
@@ -112,10 +112,12 @@ describe("ChatShellApp process panel visibility", () => {
 
     const html = renderToStaticMarkup(<ChatShellApp store={store} />);
 
-    expect(html).toContain("Process details hidden by default after completion.");
-    expect(html).toContain("Process details stay open while the turn is still running.");
-    expect(html).toContain(">Show process<");
-    expect(html).toContain('class="awb-turn__process is-expanded"');
+    expect(html).toContain(">Inspector<");
+    expect(html).toContain("Turn process");
+    expect(html).toContain(">turn-running<");
     expect((html.match(/Tool activity/g) ?? []).length).toBe(1);
+    expect(html).not.toContain("Process details hidden by default after completion.");
+    expect(html).not.toContain("Process details stay open while the turn is still running.");
+    expect(html).not.toContain('class="awb-turn__process');
   });
 });

@@ -20,6 +20,12 @@ import {
 import { SessionReconciliationService } from "./session-discovery.js";
 import type { WorkbenchRuntimeService } from "./runtime-service.js";
 import type { WorkspaceRecord } from "./workspace-registry.js";
+import {
+  buildSessionWindowSnapshot,
+  type SessionWindowSnapshot
+} from "./session-window.js";
+
+const defaultSessionWindowLimit = 8;
 
 export type WorkbenchShellServiceOptions = {
   runtimeService: WorkbenchRuntimeService;
@@ -42,6 +48,7 @@ export class WorkbenchShellService {
   private readonly pickWorkspaceDirectoryImpl:
     | (() => Promise<{ canceled: boolean; rootPath?: string }>)
     | undefined;
+  private openSessionGeneration = 0;
 
   public constructor(options: WorkbenchShellServiceOptions) {
     this.runtimeService = options.runtimeService;
@@ -65,6 +72,31 @@ export class WorkbenchShellService {
 
   public getSelectedAgentId(): string | undefined {
     return this.runtimeService.getSelectedAgentId();
+  }
+
+  public async getSettings(): Promise<{
+    defaultNewSessionAgentId?: string;
+  }> {
+    const registry = this.requireWorkspaceRegistry();
+    await registry.ready();
+    return {
+      defaultNewSessionAgentId: registry.getState().defaultNewSessionAgentId
+    };
+  }
+
+  public async updateSettings(input: {
+    defaultNewSessionAgentId?: string;
+  }): Promise<{
+    defaultNewSessionAgentId?: string;
+  }> {
+    const registry = this.requireWorkspaceRegistry();
+    await registry.updateSettings(input);
+    if (input.defaultNewSessionAgentId) {
+      this.runtimeService.selectAgent({
+        agentId: input.defaultNewSessionAgentId
+      });
+    }
+    return this.getSettings();
   }
 
   public async executeCommand(input: CommandEnvelope) {
@@ -249,8 +281,12 @@ export class WorkbenchShellService {
     };
   }
 
-  public async openSession(sessionId: string): Promise<{ sessionId: string }> {
-    await this.sessionReconciliation?.ensureSessionLoaded(sessionId);
+  public async openSession(sessionId: string): Promise<{ page: SessionWindowSnapshot }> {
+    const generation = ++this.openSessionGeneration;
+    const isCancelled = () => generation !== this.openSessionGeneration;
+    await this.sessionReconciliation?.ensureSessionLoaded(sessionId, {
+      isCancelled
+    });
     const loadedSession = this.runtimeService.listSessions({
       includeArchived: true
     }).find((session) => session.sessionId === sessionId);
@@ -267,8 +303,26 @@ export class WorkbenchShellService {
       sessionId
     });
     await this.sessionCatalog.markSessionRead(sessionId);
+    const anchorTurnId = await this.resolveProviderAnchorTurnId(sessionId);
     return {
-      sessionId
+      page: this.buildSessionWindow(sessionId, {
+        limit: defaultSessionWindowLimit,
+        anchorTurnId
+      })
+    };
+  }
+
+  public async loadOlderSessionTurns(input: {
+    sessionId: string;
+    beforeTurnId?: string;
+    limit?: number;
+  }): Promise<{ page: SessionWindowSnapshot }> {
+    await this.sessionReconciliation?.ensureSessionLoaded(input.sessionId);
+    return {
+      page: this.buildSessionWindow(input.sessionId, {
+        limit: input.limit ?? defaultSessionWindowLimit,
+        beforeTurnId: input.beforeTurnId
+      })
     };
   }
 
@@ -308,5 +362,64 @@ export class WorkbenchShellService {
       throw new Error("Workspace registry is unavailable.");
     }
     return registry;
+  }
+
+  private async resolveProviderAnchorTurnId(
+    sessionId: string
+  ): Promise<string | undefined> {
+    try {
+      const chatTree = await this.chatTreeProvider.get(sessionId);
+      if (!chatTree.currentNodeId) {
+        return undefined;
+      }
+      return chatTree.nodes.find((node) => node.nodeId === chatTree.currentNodeId)?.turnId;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private buildSessionWindow(
+    sessionId: string,
+    input: {
+      limit: number;
+      beforeTurnId?: string;
+      anchorTurnId?: string;
+    }
+  ): SessionWindowSnapshot {
+    const snapshot = this.runtimeService.getSnapshot();
+    const session = snapshot.sessions.find((item) => item.sessionId === sessionId);
+    if (!session) {
+      throw new Error(`Unknown session: ${sessionId}`);
+    }
+    const conversation = snapshot.conversations.find(
+      (item) => item.conversationId === session.conversationId
+    );
+    if (!conversation) {
+      throw new Error(`Conversation is unavailable for session: ${sessionId}`);
+    }
+    return buildSessionWindowSnapshot({
+      sessionId,
+      conversation,
+      session,
+      turns: snapshot.turns.filter((turn) => turn.sessionId === sessionId),
+      messageBlocks: snapshot.messageBlocks.filter((block) => block.sessionId === sessionId),
+      toolCalls: snapshot.toolCalls.filter((toolCall) => toolCall.sessionId === sessionId),
+      terminalStreams: snapshot.terminalStreams.filter(
+        (terminal) => terminal.sessionId === sessionId
+      ),
+      approvalRequests: snapshot.approvalRequests.filter(
+        (approval) => approval.sessionId === sessionId
+      ),
+      participants: snapshot.participants.filter(
+        (participant) => participant.conversationId === conversation.conversationId
+      ),
+      sessionRelations: snapshot.sessionRelations.filter(
+        (relation) =>
+          relation.parentSessionId === sessionId || relation.childSessionId === sessionId
+      ),
+      limit: input.limit,
+      beforeTurnId: input.beforeTurnId,
+      anchorTurnId: input.anchorTurnId
+    });
   }
 }

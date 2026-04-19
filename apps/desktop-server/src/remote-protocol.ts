@@ -73,6 +73,34 @@ export const createRemoteRpcHandler = (
               ok: true,
               result: service.selectAgent(request.params)
             });
+          case "settings.get":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "SETTINGS_UNAVAILABLE",
+                "Settings APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: await shellService.getSettings()
+            });
+          case "settings.update":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "SETTINGS_UNAVAILABLE",
+                "Settings APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: await shellService.updateSettings(request.params)
+            });
           case "domain.snapshot":
             return parseWorkbenchRpcResponse({
               id: request.id,
@@ -250,6 +278,20 @@ export const createRemoteRpcHandler = (
               method: request.method,
               ok: true,
               result: await shellService.openSession(request.params.sessionId)
+            });
+          case "sessionBrowser.loadOlder":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "SESSION_BROWSER_UNAVAILABLE",
+                "Session browser APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: await shellService.loadOlderSessionTurns(request.params)
             });
           case "sessionBrowser.getActions":
             if (!shellService) {

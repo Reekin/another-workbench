@@ -24,6 +24,7 @@ const createThread = (input: {
   source?: Thread["source"];
   name?: string | null;
   preview?: string;
+  cwd?: string;
 }): Thread => ({
   id: input.id,
   preview: input.preview ?? `Preview ${input.id}`,
@@ -35,7 +36,7 @@ const createThread = (input: {
     type: "idle"
   },
   path: `I:/rollouts/${input.id}.md`,
-  cwd: "I:/workspace-alpha",
+  cwd: input.cwd ?? "I:/workspace-alpha",
   cliVersion: "1.0.0",
   source: input.source ?? "appServer",
   agentNickname: null,
@@ -55,6 +56,44 @@ afterEach(async () => {
 });
 
 describe("Session discovery and reconciliation", () => {
+  it("matches codex thread cwd values that include the windows device prefix", async () => {
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        listThreads: vi.fn().mockResolvedValue({
+          data: [
+            createThread({
+              id: "thread-root",
+              cwd: "\\\\?\\I:\\workspace-alpha"
+            }),
+            createThread({
+              id: "thread-child",
+              cwd: "\\\\?\\I:\\workspace-alpha\\apps\\desktop"
+            }),
+            createThread({
+              id: "thread-other",
+              cwd: "\\\\?\\I:\\other-workspace"
+            })
+          ],
+          nextCursor: null
+        })
+      } as never
+    });
+
+    await expect(
+      provider.discoverWorkspace({
+        workspaceId: "workspace-1",
+        absolutePath: "I:/workspace-alpha",
+        label: "Alpha"
+      })
+    ).resolves.toEqual({
+      sessions: [
+        expect.objectContaining({ sessionId: "codex-thread:thread-root" }),
+        expect.objectContaining({ sessionId: "codex-thread:thread-child" })
+      ],
+      relations: []
+    });
+  });
+
   it("discovers codex threads, derives subagent relations, and hydrates discovered sessions", async () => {
     const baseDir = await createTempDir();
     const workspaceRegistry = new WorkspaceRegistryService({
@@ -91,7 +130,7 @@ describe("Session discovery and reconciliation", () => {
     });
 
     const attachThreadToSession = vi.fn();
-    const readThread = vi.fn().mockResolvedValue({
+    const resumeThread = vi.fn().mockResolvedValue({
       ...rootThread,
       turns: [
         {
@@ -139,7 +178,7 @@ describe("Session discovery and reconciliation", () => {
     const provider = new CodexSessionDiscoveryProvider({
       codexRuntimePort: {
         listThreads,
-        readThread,
+        resumeThread,
         attachThreadToSession
       } as never
     });
@@ -219,6 +258,18 @@ describe("Session discovery and reconciliation", () => {
         })
       ])
     );
+    expect(runtimeService.getSnapshot().messageBlocks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          blockId: "hydrated:codex-thread:thread-root:msg-user-1:md",
+          messageId: "hydrated:codex-thread:thread-root:msg-user-1"
+        }),
+        expect.objectContaining({
+          blockId: "hydrated:codex-thread:thread-root:msg-1:md",
+          messageId: "hydrated:codex-thread:thread-root:msg-1"
+        })
+      ])
+    );
     expect(runtimeService.getSnapshot().turns).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -228,5 +279,224 @@ describe("Session discovery and reconciliation", () => {
         })
       ])
     );
+  });
+
+  it("keeps hydrated message blocks distinct when different sessions reuse item ids", async () => {
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        resumeThread: vi
+          .fn()
+          .mockImplementation(async (threadId: string) => ({
+            ...createThread({
+              id: threadId,
+              name: `Thread ${threadId}`,
+              preview: `Preview ${threadId}`
+            }),
+            turns: [
+              {
+                id: `${threadId}-turn-1`,
+                status: "completed",
+                error: null,
+                items: [
+                  {
+                    type: "userMessage",
+                    id: "item-1",
+                    content: [
+                      {
+                        type: "text",
+                        text: `Prompt ${threadId}`,
+                        text_elements: []
+                      }
+                    ]
+                  },
+                  {
+                    type: "agentMessage",
+                    id: "item-2",
+                    text: `Answer ${threadId}`,
+                    phase: null,
+                    memoryCitation: null
+                  }
+                ]
+              }
+            ]
+          })),
+        attachThreadToSession: vi.fn()
+      } as never
+    });
+
+    const first = await provider.hydrateSession({
+      workspaceId: "workspace-1",
+      sessionId: "codex-thread:thread-a",
+      conversationId: "conversation-a",
+      agentId: "codex",
+      providerKind: "codex-thread",
+      providerSessionId: "thread-a",
+      createdAt: "2026-04-19T00:00:00.000Z",
+      updatedAt: "2026-04-19T00:00:01.000Z"
+    });
+    const second = await provider.hydrateSession({
+      workspaceId: "workspace-1",
+      sessionId: "codex-thread:thread-b",
+      conversationId: "conversation-b",
+      agentId: "codex",
+      providerKind: "codex-thread",
+      providerSessionId: "thread-b",
+      createdAt: "2026-04-19T00:00:00.000Z",
+      updatedAt: "2026-04-19T00:00:01.000Z"
+    });
+
+    expect(first?.turns[0]?.messageIds).toEqual([
+      "hydrated:codex-thread:thread-a:item-1",
+      "hydrated:codex-thread:thread-a:item-2"
+    ]);
+    expect(second?.turns[0]?.messageIds).toEqual([
+      "hydrated:codex-thread:thread-b:item-1",
+      "hydrated:codex-thread:thread-b:item-2"
+    ]);
+    expect(first?.messageBlocks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          blockId: "hydrated:codex-thread:thread-a:item-1:md",
+          text: "Prompt thread-a"
+        }),
+        expect.objectContaining({
+          blockId: "hydrated:codex-thread:thread-a:item-2:md",
+          text: "Answer thread-a"
+        })
+      ])
+    );
+    expect(second?.messageBlocks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          blockId: "hydrated:codex-thread:thread-b:item-1:md",
+          text: "Prompt thread-b"
+        }),
+        expect.objectContaining({
+          blockId: "hydrated:codex-thread:thread-b:item-2:md",
+          text: "Answer thread-b"
+        })
+      ])
+    );
+  });
+
+  it("serializes local image inputs as markdown images with file URLs", async () => {
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        resumeThread: vi.fn().mockResolvedValue({
+          ...createThread({
+            id: "thread-images",
+            name: "Images",
+            preview: "Images"
+          }),
+          turns: [
+            {
+              id: "turn-image",
+              status: "completed",
+              error: null,
+              items: [
+                {
+                  type: "userMessage",
+                  id: "msg-image",
+                  content: [
+                    {
+                      type: "text",
+                      text: "Look at this",
+                      text_elements: []
+                    },
+                    {
+                      type: "localImage",
+                      path: "C:\\\\Users\\\\TestUser\\\\Pictures\\\\cat.png"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }),
+        attachThreadToSession: vi.fn()
+      } as never
+    });
+
+    const hydrated = await provider.hydrateSession({
+      workspaceId: "workspace-1",
+      sessionId: "codex-thread:thread-images",
+      conversationId: "conversation-images",
+      agentId: "codex",
+      providerKind: "codex-thread",
+      providerSessionId: "thread-images",
+      createdAt: "2026-04-19T00:00:00.000Z",
+      updatedAt: "2026-04-19T00:00:01.000Z"
+    });
+
+    expect(hydrated?.messageBlocks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "user",
+          text:
+            "Look at this\n\n![image](file:///C:/Users/TestUser/Pictures/cat.png)"
+        })
+      ])
+    );
+  });
+
+  it("archives stale reconciled Codex entries that disappear from discovery", async () => {
+    const baseDir = await createTempDir();
+    const workspaceRegistry = new WorkspaceRegistryService({
+      baseDir
+    });
+    const sessionIndexStore = new SessionIndexStore({
+      baseDir
+    });
+    await workspaceRegistry.registerWorkspace({
+      workspaceId: "workspace-1",
+      absolutePath: "I:/workspace-alpha",
+      label: "Alpha"
+    });
+    await sessionIndexStore.upsertSession({
+      workspaceId: "workspace-1",
+      session: {
+        sessionId: "codex-thread:thread-stale",
+        conversationId: "conversation-stale",
+        agentId: "codex",
+        createdAt: "2026-04-18T00:00:01Z",
+        updatedAt: "2026-04-18T00:00:01Z"
+      },
+      providerKind: "codex-thread",
+      providerSessionId: "thread-stale",
+      source: "reconciled"
+    });
+
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        listThreads: vi.fn().mockResolvedValue({
+          data: [createThread({ id: "thread-fresh" })],
+          nextCursor: null
+        })
+      } as never
+    });
+    const runtimeService = new WorkbenchRuntimeService({
+      agents: [
+        {
+          agentId: "codex",
+          displayName: "Codex",
+          capabilities: ["chat"]
+        }
+      ]
+    });
+
+    const reconciliation = new SessionReconciliationService({
+      workspaceRegistry,
+      sessionIndexStore,
+      runtimeService,
+      providers: [provider]
+    });
+
+    await reconciliation.reconcileWorkspace("workspace-1");
+
+    expect(sessionIndexStore.getEntry("codex-thread:thread-stale")?.archivedAt).toBeDefined();
+    expect(sessionIndexStore.getEntry("codex-thread:thread-fresh")).toMatchObject({
+      providerSessionId: "thread-fresh",
+      archivedAt: undefined
+    });
   });
 });

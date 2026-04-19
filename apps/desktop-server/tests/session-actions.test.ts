@@ -1,6 +1,5 @@
 import type { ChatSession } from "@another-workbench/shared";
 import { describe, expect, it, vi } from "vitest";
-import type { CodexAppServerRuntimePort } from "../src/codex-app-server-runtime-port.js";
 import type { WorkbenchRuntimeService } from "../src/runtime-service.js";
 import { SessionActionsProvider } from "../src/session-actions.js";
 
@@ -20,37 +19,31 @@ const createSession = (input: {
 });
 
 describe("SessionActionsProvider", () => {
-  it("lists action descriptors with codex rollout capability and archive disable reasons", async () => {
+  it("lists base actions for known sessions and only copy for unknown sessions", async () => {
     const runtimeService = {
       listSessions: vi.fn().mockReturnValue([
         createSession({
-          sessionId: "session-codex",
-          agentId: "codex",
+          sessionId: "session-1",
+          agentId: "pi-acp",
           archivedAt: "2026-04-18T00:01:00Z"
         })
       ])
     } as unknown as WorkbenchRuntimeService;
-    const codexRuntimePort = {
-      getThreadIdForSession: vi.fn().mockReturnValue(undefined)
-    } as unknown as CodexAppServerRuntimePort;
     const provider = new SessionActionsProvider({
       runtimeService,
-      codexRuntimePort,
       sessionIndexStore: {
         getEntry: vi.fn().mockReturnValue(undefined)
       } as never
     });
 
-    const actions = await provider.listActions("session-codex");
-    const unknown = await provider.listActions("session-missing");
-
-    expect(unknown).toEqual([
+    await expect(provider.listActions("session-missing")).resolves.toEqual([
       {
         action: "copy_session_id",
         label: "Copy session id"
       }
     ]);
-    expect(actions).toEqual([
+
+    await expect(provider.listActions("session-1")).resolves.toEqual([
       {
         action: "copy_session_id",
         label: "Copy session id"
@@ -64,66 +57,135 @@ describe("SessionActionsProvider", () => {
       {
         action: "reload",
         label: "Reload"
-      },
-      {
-        action: "open_rollout",
-        label: "Open rollout",
-        disabled: true,
-        reason: "Rollout is not available until the thread is created."
       }
     ]);
   });
 
-  it("runs archive and reload actions by forwarding runtime commands", async () => {
+  it("delegates provider-specific action contribution and provider-native session id copying", async () => {
+    const runtimeService = {
+      listSessions: vi.fn().mockReturnValue([
+        createSession({
+          sessionId: "session-1",
+          agentId: "custom"
+        })
+      ])
+    } as unknown as WorkbenchRuntimeService;
+    const provider = new SessionActionsProvider({
+      runtimeService,
+      sessionIndexStore: {
+        getEntry: vi.fn().mockReturnValue(undefined)
+      } as never,
+      providers: [
+        {
+          agentId: "custom",
+          resolveDisplayedSessionId: () => "provider-session-1",
+          listAdditionalActions: async () => [
+            {
+              action: "open_rollout",
+              label: "Open rollout"
+            }
+          ]
+        }
+      ]
+    });
+
+    await expect(provider.listActions("session-1")).resolves.toEqual([
+      {
+        action: "copy_session_id",
+        label: "Copy session id"
+      },
+      {
+        action: "archive",
+        label: "Archive",
+        disabled: false,
+        reason: undefined
+      },
+      {
+        action: "reload",
+        label: "Reload"
+      },
+      {
+        action: "open_rollout",
+        label: "Open rollout"
+      }
+    ]);
+
+    await expect(provider.runAction("session-1", "copy_session_id")).resolves.toEqual({
+      action: "copy_session_id",
+      copiedText: "provider-session-1"
+    });
+  });
+
+  it("runs common archive/reload behavior while allowing providers to hook archive preparation", async () => {
     const executeCommand = vi.fn().mockResolvedValue({
       commandId: "ignored",
       commandType: "listSessions",
       accepted: true
     });
+    const prepareArchive = vi.fn().mockResolvedValue(undefined);
+    const archiveSessions = vi.fn().mockResolvedValue(undefined);
     const runtimeService = {
       listSessions: vi.fn().mockReturnValue([
         createSession({
           sessionId: "session-1",
-          agentId: "codex"
+          agentId: "custom"
         })
       ]),
       executeCommand
     } as unknown as WorkbenchRuntimeService;
-    const codexRuntimePort = {
-      getThreadIdForSession: vi.fn().mockReturnValue("thread-1"),
-      readThread: vi.fn()
-    } as unknown as CodexAppServerRuntimePort;
     const provider = new SessionActionsProvider({
       runtimeService,
-      codexRuntimePort,
       sessionIndexStore: {
         getEntry: vi.fn((sessionId: string) =>
-          sessionId === "session-missing"
+          sessionId === "session-indexed"
             ? {
                 sessionId,
-                providerSessionId: "thread-missing"
+                agentId: "custom",
+                providerSessionId: "provider-session-1",
+                workspaceId: "workspace-1"
               }
             : undefined
-        )
-      } as never
+        ),
+        archiveSession: vi.fn().mockResolvedValue(undefined),
+        archiveSessions,
+        listEntriesByProviderSessionId: vi.fn().mockReturnValue([
+          {
+            sessionId: "session-indexed",
+            providerSessionId: "provider-session-1"
+          },
+          {
+            sessionId: "session-1",
+            providerSessionId: "provider-session-1"
+          }
+        ])
+      } as never,
+      providers: [
+        {
+          agentId: "custom",
+          prepareArchive
+        }
+      ]
     });
 
-    const archiveResult = await provider.runAction("session-1", "archive");
-    const reloadResult = await provider.runAction("session-1", "reload");
-    const copyResult = await provider.runAction("session-missing", "copy_session_id");
-
-    expect(archiveResult).toEqual({
+    await expect(provider.runAction("session-1", "archive")).resolves.toEqual({
       action: "archive",
       archived: true
     });
-    expect(reloadResult).toEqual({
+    await expect(provider.runAction("session-1", "reload")).resolves.toEqual({
       action: "reload",
       resumed: true
     });
-    expect(copyResult).toEqual({
-      action: "copy_session_id",
-      copiedText: "thread-missing"
+    await expect(provider.runAction("session-indexed", "archive")).resolves.toEqual({
+      action: "archive",
+      archived: true
     });
+    await expect(provider.runAction("session-indexed", "reload")).resolves.toEqual({
+      action: "reload",
+      resumed: true
+    });
+
+    expect(prepareArchive).toHaveBeenCalledTimes(2);
+    expect(archiveSessions).toHaveBeenCalledWith(["session-indexed", "session-1"]);
     expect(executeCommand).toHaveBeenNthCalledWith(1, {
       commandId: "archive-session-1",
       command: {
@@ -140,105 +202,44 @@ describe("SessionActionsProvider", () => {
     });
   });
 
-  it("resolves rollout paths only for codex sessions with an available thread path", async () => {
+  it("delegates provider-owned actions and rejects unsupported ones", async () => {
     const runtimeService = {
       listSessions: vi.fn().mockReturnValue([
         createSession({
-          sessionId: "session-codex",
-          agentId: "codex"
-        }),
-        createSession({
-          sessionId: "session-acp",
-          agentId: "acp"
+          sessionId: "session-1",
+          agentId: "custom"
         })
       ])
     } as unknown as WorkbenchRuntimeService;
-    const getThreadIdForSession = vi.fn((sessionId: string) => {
-      if (sessionId === "session-codex") {
-        return "thread-1";
-      }
-      return undefined;
-    });
-    const readThread = vi.fn().mockResolvedValue({
-      path: "I:/rollouts/thread-1.md"
-    });
     const provider = new SessionActionsProvider({
       runtimeService,
-      codexRuntimePort: {
-        getThreadIdForSession,
-        readThread
-      } as unknown as CodexAppServerRuntimePort,
       sessionIndexStore: {
         getEntry: vi.fn().mockReturnValue(undefined)
-      } as never
+      } as never,
+      providers: [
+        {
+          agentId: "custom",
+          runAction: async ({ action }) =>
+            action === "open_rollout"
+              ? {
+                  action: "open_rollout",
+                  rolloutPath: "I:/rollouts/thread-1.md",
+                  rolloutDisplayPath: "I:\\rollouts\\thread-1.md",
+                  rolloutFileUrl: "file:///I:/rollouts/thread-1.md"
+                }
+              : undefined
+        }
+      ]
     });
 
-    await expect(provider.runAction("session-acp", "open_rollout")).rejects.toThrow(
-      "Open rollout is not supported for acp sessions."
-    );
-
-    getThreadIdForSession.mockImplementation(() => undefined);
-    await expect(provider.runAction("session-codex", "open_rollout")).rejects.toThrow(
-      "Rollout path is unavailable before the thread is created."
-    );
-
-    getThreadIdForSession.mockImplementation(() => "thread-1");
-    readThread.mockResolvedValueOnce({});
-    await expect(provider.runAction("session-codex", "open_rollout")).rejects.toThrow(
-      "Codex thread does not expose a rollout path."
-    );
-
-    readThread.mockResolvedValueOnce({
-      path: "I:/rollouts/thread-1.md"
-    });
-    await expect(provider.runAction("session-codex", "open_rollout")).resolves.toEqual({
+    await expect(provider.runAction("session-1", "open_rollout")).resolves.toEqual({
       action: "open_rollout",
-      rolloutPath: "I:/rollouts/thread-1.md"
+      rolloutPath: "I:/rollouts/thread-1.md",
+      rolloutDisplayPath: "I:\\rollouts\\thread-1.md",
+      rolloutFileUrl: "file:///I:/rollouts/thread-1.md"
     });
-  });
-
-  it("rejects non-copy actions for unknown sessions", async () => {
-    const runtimeService = {
-      listSessions: vi.fn().mockReturnValue([])
-    } as unknown as WorkbenchRuntimeService;
-    const provider = new SessionActionsProvider({
-      runtimeService,
-      codexRuntimePort: {
-        getThreadIdForSession: vi.fn()
-      } as unknown as CodexAppServerRuntimePort,
-      sessionIndexStore: {
-        getEntry: vi.fn().mockReturnValue(undefined)
-      } as never
-    });
-
     await expect(provider.runAction("session-missing", "archive")).rejects.toThrow(
       "Unknown session: session-missing"
     );
-  });
-
-  it("prefers the provider-native session id when copying a codex session reference", async () => {
-    const runtimeService = {
-      listSessions: vi.fn().mockReturnValue([
-        createSession({
-          sessionId: "session-codex",
-          agentId: "codex"
-        })
-      ])
-    } as unknown as WorkbenchRuntimeService;
-    const provider = new SessionActionsProvider({
-      runtimeService,
-      codexRuntimePort: {
-        getThreadIdForSession: vi.fn().mockReturnValue("thread-123"),
-        readThread: vi.fn()
-      } as unknown as CodexAppServerRuntimePort,
-      sessionIndexStore: {
-        getEntry: vi.fn().mockReturnValue(undefined)
-      } as never
-    });
-
-    await expect(provider.runAction("session-codex", "copy_session_id")).resolves.toEqual({
-      action: "copy_session_id",
-      copiedText: "thread-123"
-    });
   });
 });

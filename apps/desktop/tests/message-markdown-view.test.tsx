@@ -65,4 +65,54 @@ describe("MessageMarkdownView", () => {
     expect(html).toContain("safe");
     expect(html).not.toContain("<script>");
   });
+
+  it("preserves local file images in markdown", () => {
+    const html = renderToStaticMarkup(
+      <MessageMarkdownView
+        participantDirectory={participantDirectory}
+        block={{
+          blockId: "message-3:md",
+          messageId: "message-3",
+          sessionId: "session-1",
+          turnId: "turn-1",
+          role: "user",
+          kind: "markdown",
+          text: "![image](file:///C:/Users/TestUser/Pictures/cat.png)",
+          actor: {
+            participantId: "participant-1",
+            agentId: "agent-codex"
+          },
+          startedAt: "2026-04-17T00:00:00.000Z"
+        }}
+      />
+    );
+
+    expect(html).toContain("<img");
+    expect(html).toContain('src="file:///C:/Users/TestUser/Pictures/cat.png"');
+  });
+
+  it("preserves data-url images in markdown", () => {
+    const html = renderToStaticMarkup(
+      <MessageMarkdownView
+        participantDirectory={participantDirectory}
+        block={{
+          blockId: "message-4:md",
+          messageId: "message-4",
+          sessionId: "session-1",
+          turnId: "turn-1",
+          role: "user",
+          kind: "markdown",
+          text: "![image](data:image/png;base64,AAAA)",
+          actor: {
+            participantId: "participant-1",
+            agentId: "agent-codex"
+          },
+          startedAt: "2026-04-17T00:00:00.000Z"
+        }}
+      />
+    );
+
+    expect(html).toContain("<img");
+    expect(html).toContain('src="data:image/png;base64,AAAA"');
+  });
 });

@@ -58,6 +58,13 @@ export type RendererStoreState = {
 
 export type RendererStoreAction =
   | { type: "store/hydrateSnapshot"; snapshot: DomainSnapshot }
+  | {
+      type: "store/hydrateSessionWindow";
+      sessionId: string;
+      snapshot: DomainSnapshot;
+      mode?: "replace" | "prepend";
+    }
+  | { type: "store/disposeSession"; sessionId: string }
   | { type: "store/ingestEvent"; event: RuntimeEvent }
   | { type: "store/ingestEnvelope"; envelope: EventEnvelope }
   | { type: "store/setActiveConversation"; conversationId?: string }

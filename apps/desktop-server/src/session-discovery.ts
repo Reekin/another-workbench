@@ -17,11 +17,13 @@ import {
   parseToolCall,
   parseTurn
 } from "@another-workbench/shared";
+import { isPathInsideWorkspace } from "@another-workbench/shared";
 import type { Thread } from "./codex-app-server-generated/v2/Thread.js";
 import type { CodexErrorInfo } from "./codex-app-server-generated/v2/CodexErrorInfo.js";
 import type { ThreadItem } from "./codex-app-server-generated/v2/ThreadItem.js";
 import type { SessionSource } from "./codex-app-server-generated/v2/SessionSource.js";
 import type { UserInput } from "./codex-app-server-generated/v2/UserInput.js";
+import { pathToFileURL } from "node:url";
 import type { CodexAppServerRuntimePort } from "./codex-app-server-runtime-port.js";
 import type {
   SessionIndexEntry,
@@ -108,14 +110,29 @@ const isUserMessageItem = (
 ): item is Extract<ThreadItem, { type: "userMessage" }> =>
   item.type === "userMessage";
 
-const summarizeUserInput = (input: UserInput): string | undefined => {
+const hydratedItemId = (sessionId: string, itemId: string): string =>
+  `hydrated:${sessionId}:${itemId}`;
+
+const toLocalImageMarkdownUrl = (value: string): string => {
+  if (/^[a-zA-Z]:[\\/]/.test(value)) {
+    return pathToFileURL(value).toString();
+  }
+  if (/^[a-zA-Z][a-zA-Z\\d+.-]*:/.test(value)) {
+    return value;
+  }
+  return pathToFileURL(value).toString();
+};
+
+const summarizeUserInput = (
+  input: UserInput
+): string | undefined => {
   switch (input.type) {
     case "text":
       return input.text;
     case "image":
       return `![image](${input.url})`;
     case "localImage":
-      return `[local image](${input.path})`;
+      return `![image](${toLocalImageMarkdownUrl(input.path)})`;
     case "skill":
       return `skill: ${input.name} (${input.path})`;
     case "mention":
@@ -198,7 +215,12 @@ export type HydratedSessionSnapshot = {
 export type SessionDiscoveryProvider = {
   readonly agentId: string;
   discoverWorkspace: (workspace: WorkspaceRecord) => Promise<DiscoveredWorkspaceResult>;
-  hydrateSession: (entry: SessionIndexEntry) => Promise<HydratedSessionSnapshot | undefined>;
+  hydrateSession: (
+    entry: SessionIndexEntry,
+    input?: {
+      isCancelled?: () => boolean;
+    }
+  ) => Promise<HydratedSessionSnapshot | undefined>;
 };
 
 export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
@@ -213,7 +235,9 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
   public async discoverWorkspace(
     workspace: WorkspaceRecord
   ): Promise<DiscoveredWorkspaceResult> {
-    const threads = await this.listAllThreads(workspace.absolutePath);
+    const threads = (await this.listAllThreads()).filter((thread) =>
+      isPathInsideWorkspace(thread.cwd, workspace.absolutePath)
+    );
     const sessions = threads.map((thread) =>
       this.toDiscoveredSessionRecord(thread)
     );
@@ -243,13 +267,19 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
   }
 
   public async hydrateSession(
-    entry: SessionIndexEntry
+    entry: SessionIndexEntry,
+    input: {
+      isCancelled?: () => boolean;
+    } = {}
   ): Promise<HydratedSessionSnapshot | undefined> {
     const threadId = entry.providerSessionId;
     if (!threadId) {
       return undefined;
     }
-    const thread = await this.codexRuntimePort.readThread(threadId, true);
+    const thread = await this.codexRuntimePort.resumeThread(threadId);
+    if (input.isCancelled?.()) {
+      return undefined;
+    }
     this.codexRuntimePort.attachThreadToSession(entry.sessionId, thread.id);
     const workspaceId = entry.workspaceId;
     const conversation = parseConversation({
@@ -285,7 +315,10 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
     const toolCalls: ToolCall[] = [];
     const terminalStreams: TerminalStream[] = [];
 
-    thread.turns.forEach((turn, turnIndex) => {
+    for (const [turnIndex, turn] of thread.turns.entries()) {
+      if (input.isCancelled?.()) {
+        return undefined;
+      }
       const startedAt = buildDeterministicTurnTimestamp(thread, turnIndex);
       const completedAt =
         turn.status === "inProgress"
@@ -295,14 +328,18 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
       const toolCallIds: string[] = [];
       const terminalIds: string[] = [];
 
-      turn.items.forEach((item, itemIndex) => {
+      for (const [itemIndex, item] of turn.items.entries()) {
+        if (input.isCancelled?.()) {
+          return undefined;
+        }
         const itemStartedAt = buildDeterministicTurnTimestamp(thread, turnIndex, itemIndex);
+        const itemEntityId = hydratedItemId(entry.sessionId, item.id);
         if (isUserMessageItem(item)) {
-          messageIds.push(item.id);
+          messageIds.push(itemEntityId);
           messageBlocks.push(
             parseMessageBlock({
-              blockId: `${item.id}:md`,
-              messageId: item.id,
+              blockId: `${itemEntityId}:md`,
+              messageId: itemEntityId,
               sessionId: entry.sessionId,
               turnId: turn.id,
               role: "user",
@@ -312,14 +349,14 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
               completedAt: itemStartedAt
             })
           );
-          return;
+          continue;
         }
         if (isAgentMessageItem(item)) {
-          messageIds.push(item.id);
+          messageIds.push(itemEntityId);
           messageBlocks.push(
             parseMessageBlock({
-              blockId: `${item.id}:md`,
-              messageId: item.id,
+              blockId: `${itemEntityId}:md`,
+              messageId: itemEntityId,
               sessionId: entry.sessionId,
               turnId: turn.id,
               role: "assistant",
@@ -329,14 +366,14 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
               completedAt: itemStartedAt
             })
           );
-          return;
+          continue;
         }
         if (isCommandExecutionItem(item)) {
-          toolCallIds.push(item.id);
-          terminalIds.push(item.id);
+          toolCallIds.push(itemEntityId);
+          terminalIds.push(itemEntityId);
           toolCalls.push(
             parseToolCall({
-              toolCallId: item.id,
+              toolCallId: itemEntityId,
               sessionId: entry.sessionId,
               turnId: turn.id,
               toolName: "commandExecution",
@@ -355,10 +392,10 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
           );
           terminalStreams.push(
             parseTerminalStream({
-              terminalId: item.id,
+              terminalId: itemEntityId,
               sessionId: entry.sessionId,
               turnId: turn.id,
-              toolCallId: item.id,
+              toolCallId: itemEntityId,
               status:
                 item.status === "failed"
                   ? "failed"
@@ -373,7 +410,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
             })
           );
         }
-      });
+      }
 
       if (turn.error) {
         const errorMessageId = `runtime-error:${turn.id}`;
@@ -414,7 +451,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
           approvalRequestIds: []
         })
       );
-    });
+    }
 
     const sessionRelations = this.buildHydratedRelations(thread);
 
@@ -434,12 +471,11 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
     };
   }
 
-  private async listAllThreads(cwd: string): Promise<Thread[]> {
+  private async listAllThreads(): Promise<Thread[]> {
     const threads: Thread[] = [];
     let cursor: string | null | undefined;
     do {
       const response = await this.codexRuntimePort.listThreads({
-        cwd,
         cursor,
         archived: false
       });
@@ -558,6 +594,23 @@ export class SessionReconciliationService {
           entries,
           relations
         });
+        const discoveredProviderSessionIds = new Set(
+          discovered.sessions.map((session) => session.providerSessionId)
+        );
+        const staleReconciledSessionIds = this.sessionIndexStore
+          .listEntries(workspace.workspaceId)
+          .filter(
+            (entry) =>
+              entry.agentId === provider.agentId &&
+              entry.source === "reconciled" &&
+              !entry.archivedAt &&
+              Boolean(entry.providerSessionId) &&
+              !discoveredProviderSessionIds.has(entry.providerSessionId!)
+          )
+          .map((entry) => entry.sessionId);
+        if (staleReconciledSessionIds.length > 0) {
+          await this.sessionIndexStore.archiveSessions(staleReconciledSessionIds);
+        }
         sessionCount += result.sessionCount;
         relationCount += result.relationCount;
       }
@@ -570,7 +623,12 @@ export class SessionReconciliationService {
     };
   }
 
-  public async ensureSessionLoaded(sessionId: string): Promise<boolean> {
+  public async ensureSessionLoaded(
+    sessionId: string,
+    input: {
+      isCancelled?: () => boolean;
+    } = {}
+  ): Promise<boolean> {
     const loaded = this.runtimeService
       .listSessions({ includeArchived: true })
       .some((session) => session.sessionId === sessionId);
@@ -587,7 +645,7 @@ export class SessionReconciliationService {
     if (!provider) {
       return false;
     }
-    const hydrated = await provider.hydrateSession(entry);
+    const hydrated = await provider.hydrateSession(entry, input);
     if (!hydrated) {
       return false;
     }

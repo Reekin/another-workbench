@@ -224,6 +224,9 @@ describe("SessionCatalogService", () => {
       displaySessionId: "session-beta",
       statusDot: "none"
     });
+    expect(
+      alphaWorkspace?.sessions.some((item) => item.sessionId === "session-archived")
+    ).toBe(false);
   });
 
   it("marks unread sessions as read through the backing index store", async () => {

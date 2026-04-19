@@ -201,6 +201,43 @@ const hydrateFromSnapshot = (
   };
 };
 
+const mergeSnapshotIntoState = (
+  initialState: RendererStoreState,
+  snapshot: DomainSnapshot
+): RendererStoreState => {
+  let state = initialState;
+
+  for (const conversation of snapshot.conversations) {
+    state = upsertConversation(state, conversation);
+  }
+  for (const session of snapshot.sessions) {
+    state = upsertSession(state, session);
+  }
+  for (const turn of snapshot.turns) {
+    state = upsertTurn(state, turn);
+  }
+  for (const block of normalizeSnapshotMessageBlocks(snapshot.messageBlocks)) {
+    state = upsertMessageBlock(state, block);
+  }
+  for (const toolCall of snapshot.toolCalls) {
+    state = upsertToolCall(state, toolCall);
+  }
+  for (const terminal of snapshot.terminalStreams) {
+    state = upsertTerminalStream(state, terminal);
+  }
+  for (const approval of snapshot.approvalRequests) {
+    state = upsertApprovalRequest(state, approval);
+  }
+  for (const participant of snapshot.participants) {
+    state = upsertParticipant(state, participant);
+  }
+  for (const relation of snapshot.sessionRelations) {
+    state = upsertSessionRelation(state, relation);
+  }
+
+  return state;
+};
+
 const buildMessageDeltaBlock = (
   event: Extract<RuntimeEvent, { type: "message.delta" }>,
   timestamp: string
@@ -650,6 +687,7 @@ const applyRuntimeEvent = (
         withEventType(state, event.type),
         {
           ...base,
+          text: event.finalText ?? base.text ?? "",
           actor: base.actor ?? buildActorRef(event),
           completedAt: timestamp
         }
@@ -979,6 +1017,15 @@ export const rendererStoreReducer = (
   switch (action.type) {
     case "store/hydrateSnapshot":
       return hydrateFromSnapshot(state, action.snapshot);
+    case "store/hydrateSessionWindow": {
+      const baseState =
+        action.mode === "prepend"
+          ? state
+          : disposeSessionState(state, action.sessionId);
+      return mergeSnapshotIntoState(baseState, action.snapshot);
+    }
+    case "store/disposeSession":
+      return disposeSessionState(state, action.sessionId);
     case "store/ingestEvent":
       return applyRuntimeEvent(state, action.event);
     case "store/ingestEnvelope": {

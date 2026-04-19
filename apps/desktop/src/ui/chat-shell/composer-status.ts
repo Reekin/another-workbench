@@ -13,7 +13,8 @@ export type ComposerStatusNotice = {
     | "workspace-add"
     | "session-browser"
     | "session-action"
-    | "chat-tree";
+    | "chat-tree"
+    | "settings";
 };
 
 export type ResolveComposerStatusInput = {

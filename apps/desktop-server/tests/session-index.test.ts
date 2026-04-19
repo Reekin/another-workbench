@@ -118,6 +118,49 @@ describe("SessionIndexStore", () => {
     });
   });
 
+  it("finds and archives all aliases that share the same provider session id", async () => {
+    const baseDir = await createTempDir();
+    const store = new SessionIndexStore({
+      baseDir
+    });
+
+    await store.upsertSession({
+      workspaceId: "workspace-1",
+      session: {
+        sessionId: "session-local",
+        conversationId: "conversation-1",
+        agentId: "codex",
+        createdAt: "2026-04-18T00:00:01Z",
+        updatedAt: "2026-04-18T00:00:01Z"
+      },
+      providerSessionId: "thread-1"
+    });
+    await store.upsertSession({
+      workspaceId: "workspace-1",
+      session: {
+        sessionId: "codex-thread:thread-1",
+        conversationId: "conversation-legacy",
+        agentId: "codex",
+        createdAt: "2026-04-18T00:00:02Z",
+        updatedAt: "2026-04-18T00:00:02Z"
+      },
+      providerSessionId: "thread-1",
+      source: "reconciled"
+    });
+
+    expect(
+      store.listEntriesByProviderSessionId("thread-1", "workspace-1").map((entry) => entry.sessionId)
+    ).toEqual(["codex-thread:thread-1", "session-local"]);
+
+    await store.archiveSessions(
+      store.listEntriesByProviderSessionId("thread-1", "workspace-1").map((entry) => entry.sessionId),
+      "2026-04-18T00:00:03Z"
+    );
+
+    expect(store.getEntry("session-local")?.archivedAt).toBe("2026-04-18T00:00:03Z");
+    expect(store.getEntry("codex-thread:thread-1")?.archivedAt).toBe("2026-04-18T00:00:03Z");
+  });
+
   it("repairs invalid persisted data by resetting to an empty document", async () => {
     const baseDir = await createTempDir();
     const filePath = join(baseDir, "session-index.json");

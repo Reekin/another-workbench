@@ -139,7 +139,50 @@ describe("session browser transport contracts", () => {
             method: "sessionBrowser.open",
             ok: true,
             result: {
-              sessionId: request.params.sessionId
+              page: {
+                sessionId: request.params.sessionId,
+                snapshot: {
+                  conversations: [],
+                  sessions: [],
+                  turns: [],
+                  messageBlocks: [],
+                  toolCalls: [],
+                  terminalStreams: [],
+                  approvalRequests: [],
+                  participants: [],
+                  sessionRelations: []
+                },
+                windowStartTurnId: "turn-2",
+                windowEndTurnId: "turn-3",
+                hasOlder: true,
+                hasNewer: false
+              }
+            }
+          } as const;
+        case "sessionBrowser.loadOlder":
+          return {
+            id: request.id,
+            method: "sessionBrowser.loadOlder",
+            ok: true,
+            result: {
+              page: {
+                sessionId: request.params.sessionId,
+                snapshot: {
+                  conversations: [],
+                  sessions: [],
+                  turns: [],
+                  messageBlocks: [],
+                  toolCalls: [],
+                  terminalStreams: [],
+                  approvalRequests: [],
+                  participants: [],
+                  sessionRelations: []
+                },
+                windowStartTurnId: "turn-1",
+                windowEndTurnId: "turn-2",
+                hasOlder: false,
+                hasNewer: true
+              }
             }
           } as const;
         case "sessionBrowser.toggleExpanded":
@@ -177,6 +220,11 @@ describe("session browser transport contracts", () => {
     const tree = await transport.sessionBrowser.listTree("workspace-1");
     const reconcile = await transport.sessionBrowser.reconcile("workspace-1");
     const openResult = await transport.sessionBrowser.open("session-child");
+    const olderPage = await transport.sessionBrowser.loadOlder({
+      sessionId: "session-child",
+      beforeTurnId: "turn-2",
+      limit: 8
+    });
     const sessionToggle = await transport.sessionBrowser.toggleExpanded("session-root");
     const createResult = await transport.sessionBrowser.create({
       workspaceId: "workspace-1",
@@ -206,7 +254,22 @@ describe("session browser transport contracts", () => {
       relations: 1
     });
     expect(openResult).toEqual({
-      sessionId: "session-child"
+      page: expect.objectContaining({
+        sessionId: "session-child",
+        windowStartTurnId: "turn-2",
+        windowEndTurnId: "turn-3",
+        hasOlder: true,
+        hasNewer: false
+      })
+    });
+    expect(olderPage).toEqual({
+      page: expect.objectContaining({
+        sessionId: "session-child",
+        windowStartTurnId: "turn-1",
+        windowEndTurnId: "turn-2",
+        hasOlder: false,
+        hasNewer: true
+      })
     });
     expect(sessionToggle).toEqual({
       sessionId: "session-root",
@@ -228,6 +291,7 @@ describe("session browser transport contracts", () => {
       "sessionBrowser.listTree",
       "sessionBrowser.reconcile",
       "sessionBrowser.open",
+      "sessionBrowser.loadOlder",
       "sessionBrowser.toggleExpanded",
       "sessionBrowser.create"
     ]);
@@ -293,7 +357,9 @@ describe("session browser transport contracts", () => {
               ok: true,
               result: {
                 action: "open_rollout",
-                rolloutPath: "I:\\logs\\session-1.md"
+                rolloutPath: "I:\\logs\\session-1.md",
+                rolloutDisplayPath: "I:\\logs\\session-1.md",
+                rolloutFileUrl: "file:///I:/logs/session-1.md"
               }
             } as const;
           case "reload":
@@ -354,7 +420,9 @@ describe("session browser transport contracts", () => {
     });
     expect(openRollout).toEqual({
       action: "open_rollout",
-      rolloutPath: "I:\\logs\\session-1.md"
+      rolloutPath: "I:\\logs\\session-1.md",
+      rolloutDisplayPath: "I:\\logs\\session-1.md",
+      rolloutFileUrl: "file:///I:/logs/session-1.md"
     });
     expect(reload).toEqual({
       action: "reload",

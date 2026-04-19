@@ -1,7 +1,117 @@
 import { describe, expect, it, vi } from "vitest";
 import { WorkbenchShellService } from "../src/workbench-shell-service.js";
 
+const buildSessionSnapshot = (sessionId = "session-1") => ({
+  conversations: [
+    {
+      conversationId: "conversation-1",
+      workspaceId: "workspace-1",
+      participantAgentIds: ["codex"],
+      activeSessionId: sessionId,
+      sessionIds: [sessionId],
+      createdAt: "2026-04-19T00:00:00.000Z",
+      updatedAt: "2026-04-19T00:00:00.000Z"
+    }
+  ],
+  sessions: [
+    {
+      sessionId,
+      conversationId: "conversation-1",
+      agentId: "codex",
+      status: "idle",
+      createdAt: "2026-04-19T00:00:00.000Z",
+      updatedAt: "2026-04-19T00:00:00.000Z"
+    }
+  ],
+  turns: [
+    {
+      turnId: "turn-1",
+      sessionId,
+      status: "completed",
+      finishReason: "completed",
+      startedAt: "2026-04-19T00:00:00.000Z",
+      completedAt: "2026-04-19T00:00:02.000Z",
+      messageIds: [],
+      toolCallIds: [],
+      terminalIds: [],
+      approvalRequestIds: []
+    },
+    {
+      turnId: "turn-2",
+      sessionId,
+      status: "completed",
+      finishReason: "completed",
+      startedAt: "2026-04-19T00:01:00.000Z",
+      completedAt: "2026-04-19T00:01:02.000Z",
+      messageIds: [],
+      toolCallIds: [],
+      terminalIds: [],
+      approvalRequestIds: []
+    }
+  ],
+  messageBlocks: [],
+  toolCalls: [],
+  terminalStreams: [],
+  approvalRequests: [],
+  participants: [
+    {
+      participantId: "participant-codex",
+      conversationId: "conversation-1",
+      agentId: "codex",
+      displayName: "Codex",
+      activeSessionIds: [sessionId],
+      joinedAt: "2026-04-19T00:00:00.000Z"
+    }
+  ],
+  sessionRelations: []
+});
+
 describe("WorkbenchShellService", () => {
+  it("reads and updates persisted shell settings through the workspace registry", async () => {
+    const ready = vi.fn().mockResolvedValue(undefined);
+    const getState = vi.fn().mockReturnValue({
+      defaultNewSessionAgentId: "pi"
+    });
+    const updateSettings = vi.fn().mockResolvedValue(undefined);
+    const selectAgent = vi.fn().mockReturnValue({
+      selectedAgentId: "codex"
+    });
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        getWorkspaceRegistry: () => ({
+          ready,
+          getState,
+          updateSettings
+        }),
+        selectAgent
+      } as never,
+      sessionCatalog: {} as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never
+    });
+
+    await expect(service.getSettings()).resolves.toEqual({
+      defaultNewSessionAgentId: "pi"
+    });
+
+    getState.mockReturnValue({
+      defaultNewSessionAgentId: "codex"
+    });
+    await expect(
+      service.updateSettings({
+        defaultNewSessionAgentId: "codex"
+      })
+    ).resolves.toEqual({
+      defaultNewSessionAgentId: "codex"
+    });
+    expect(updateSettings).toHaveBeenCalledWith({
+      defaultNewSessionAgentId: "codex"
+    });
+    expect(selectAgent).toHaveBeenCalledWith({
+      agentId: "codex"
+    });
+  });
+
   it("delegates workspace directory picking to the host callback when available", async () => {
     const pickWorkspaceDirectory = vi.fn().mockResolvedValue({
       canceled: false,
@@ -51,6 +161,29 @@ describe("WorkbenchShellService", () => {
     const setLastActiveSelection = vi.fn().mockResolvedValue(undefined);
     const markSessionRead = vi.fn().mockResolvedValue(undefined);
     const ensureSessionLoaded = vi.fn().mockResolvedValue(true);
+    const getChatTree = vi.fn().mockResolvedValue({
+      sessionId: "session-1",
+      agentId: "codex",
+      supportsJump: true,
+      currentNodeId: "node-2",
+      nodes: [
+        {
+          nodeId: "node-1",
+          label: "turn-1",
+          turnId: "turn-1",
+          order: 0,
+          isCurrent: false
+        },
+        {
+          nodeId: "node-2",
+          label: "turn-2",
+          turnId: "turn-2",
+          order: 1,
+          isCurrent: true
+        }
+      ],
+      fetchedAt: "2026-04-19T00:00:00.000Z"
+    });
     const service = new WorkbenchShellService({
       runtimeService: {
         listSessions: () => [
@@ -58,6 +191,7 @@ describe("WorkbenchShellService", () => {
             sessionId: "session-1"
           }
         ],
+        getSnapshot: () => buildSessionSnapshot(),
         getWorkspaceRegistry: () => ({
           setLastActiveSelection
         }),
@@ -72,21 +206,186 @@ describe("WorkbenchShellService", () => {
         markSessionRead
       } as never,
       sessionActions: {} as never,
-      chatTreeProvider: {} as never,
+      chatTreeProvider: {
+        get: getChatTree
+      } as never,
       sessionReconciliation: {
         ensureSessionLoaded
       } as never
     });
 
     await expect(service.openSession("session-1")).resolves.toEqual({
-      sessionId: "session-1"
+      page: expect.objectContaining({
+        sessionId: "session-1",
+        windowStartTurnId: "turn-1",
+        windowEndTurnId: "turn-2",
+        hasOlder: false,
+        hasNewer: false
+      })
     });
-    expect(ensureSessionLoaded).toHaveBeenCalledWith("session-1");
+    expect(ensureSessionLoaded).toHaveBeenCalledWith(
+      "session-1",
+      expect.objectContaining({
+        isCancelled: expect.any(Function)
+      })
+    );
     expect(setLastActiveSelection).toHaveBeenCalledWith({
       workspaceId: "workspace-1",
       sessionId: "session-1"
     });
     expect(markSessionRead).toHaveBeenCalledWith("session-1");
+    expect(getChatTree).toHaveBeenCalledWith("session-1");
+  });
+
+  it("anchors session opening from provider chat tree truth instead of persisted view state", async () => {
+    const setLastActiveSelection = vi.fn().mockResolvedValue(undefined);
+    const markSessionRead = vi.fn().mockResolvedValue(undefined);
+    const ensureSessionLoaded = vi.fn().mockResolvedValue(true);
+    const getChatTree = vi.fn().mockResolvedValue({
+      sessionId: "session-1",
+      agentId: "codex",
+      supportsJump: true,
+      currentNodeId: "node-4",
+      nodes: Array.from({ length: 10 }, (_value, index) => ({
+        nodeId: `node-${index + 1}`,
+        label: `turn-${index + 1}`,
+        turnId: `turn-${index + 1}`,
+        order: index,
+        isCurrent: index === 3
+      })),
+      fetchedAt: "2026-04-19T00:00:00.000Z"
+    });
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        listSessions: () => [
+          {
+            sessionId: "session-1"
+          }
+        ],
+        getSnapshot: () => ({
+          ...buildSessionSnapshot(),
+          turns: Array.from({ length: 10 }, (_value, index) => ({
+            turnId: `turn-${index + 1}`,
+            sessionId: "session-1",
+            status: "completed" as const,
+            finishReason: "completed" as const,
+            startedAt: `2026-04-19T00:${String(index).padStart(2, "0")}:00.000Z`,
+            completedAt: `2026-04-19T00:${String(index).padStart(2, "0")}:10.000Z`,
+            messageIds: [],
+            toolCallIds: [],
+            terminalIds: [],
+            approvalRequestIds: []
+          }))
+        }),
+        getWorkspaceRegistry: () => ({
+          setLastActiveSelection
+        }),
+        getSessionIndexStore: () => ({
+          getEntry: () => ({
+            sessionId: "session-1",
+            workspaceId: "workspace-1"
+          })
+        })
+      } as never,
+      sessionCatalog: {
+        markSessionRead
+      } as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {
+        get: getChatTree
+      } as never,
+      sessionReconciliation: {
+        ensureSessionLoaded
+      } as never
+    });
+
+    await expect(service.openSession("session-1")).resolves.toEqual({
+      page: expect.objectContaining({
+        sessionId: "session-1",
+        windowStartTurnId: "turn-1",
+        windowEndTurnId: "turn-4",
+        hasOlder: false,
+        hasNewer: true
+      })
+    });
+    expect(markSessionRead).toHaveBeenCalledWith("session-1");
+    expect(getChatTree).toHaveBeenCalledWith("session-1");
+  });
+
+  it("loads older turns using the paged window contract", async () => {
+    const ensureSessionLoaded = vi.fn().mockResolvedValue(true);
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        getSnapshot: () => ({
+          ...buildSessionSnapshot(),
+          turns: [
+            {
+              turnId: "turn-1",
+              sessionId: "session-1",
+              status: "completed",
+              finishReason: "completed",
+              startedAt: "2026-04-19T00:00:00.000Z",
+              completedAt: "2026-04-19T00:00:02.000Z",
+              messageIds: [],
+              toolCallIds: [],
+              terminalIds: [],
+              approvalRequestIds: []
+            },
+            {
+              turnId: "turn-2",
+              sessionId: "session-1",
+              status: "completed",
+              finishReason: "completed",
+              startedAt: "2026-04-19T00:01:00.000Z",
+              completedAt: "2026-04-19T00:01:02.000Z",
+              messageIds: [],
+              toolCallIds: [],
+              terminalIds: [],
+              approvalRequestIds: []
+            },
+            {
+              turnId: "turn-3",
+              sessionId: "session-1",
+              status: "completed",
+              finishReason: "completed",
+              startedAt: "2026-04-19T00:02:00.000Z",
+              completedAt: "2026-04-19T00:02:02.000Z",
+              messageIds: [],
+              toolCallIds: [],
+              terminalIds: [],
+              approvalRequestIds: []
+            }
+          ]
+        }),
+        getWorkspaceRegistry: () => ({
+          ready: vi.fn(),
+          getState: vi.fn().mockReturnValue({})
+        })
+      } as never,
+      sessionCatalog: {} as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never,
+      sessionReconciliation: {
+        ensureSessionLoaded
+      } as never
+    });
+
+    await expect(
+      service.loadOlderSessionTurns({
+        sessionId: "session-1",
+        beforeTurnId: "turn-3",
+        limit: 1
+      })
+    ).resolves.toEqual({
+      page: expect.objectContaining({
+        sessionId: "session-1",
+        windowStartTurnId: "turn-2",
+        windowEndTurnId: "turn-2",
+        hasOlder: true,
+        hasNewer: true
+      })
+    });
+    expect(ensureSessionLoaded).toHaveBeenCalledWith("session-1");
   });
 
   it("creates browser sessions through the runtime service and returns the concrete session id", async () => {

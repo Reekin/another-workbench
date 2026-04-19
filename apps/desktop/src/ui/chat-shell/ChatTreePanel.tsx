@@ -207,12 +207,6 @@ export const ChatTreePanel = ({
 
   return (
     <div className="awb-chat-tree">
-      <div className="awb-detail-card">
-        <strong>Branch graph</strong>
-        <p>
-          {chatTree.nodes.length} node(s) · current {chatTree.currentNodeId ?? "none"}
-        </p>
-      </div>
       <div
         className="awb-chat-tree__graph-shell"
         style={{

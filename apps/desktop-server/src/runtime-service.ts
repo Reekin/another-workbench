@@ -753,7 +753,8 @@ export class WorkbenchRuntimeService {
       type: "message.completed",
       sessionId: command.sessionId,
       turnId,
-      messageId: command.messageId
+      messageId: command.messageId,
+      finalText: command.content
     });
     this.commitRuntimeEvent({
       type: "turn.completed",
@@ -1169,7 +1170,7 @@ export class WorkbenchRuntimeService {
             turnId: event.turnId,
             role: current?.role ?? "assistant",
             kind: "markdown",
-            text: current?.text ?? "",
+            text: event.finalText ?? current?.text ?? "",
             actor: current?.actor ?? actor,
             startedAt: current?.startedAt ?? timestamp,
             completedAt: timestamp
@@ -1454,6 +1455,7 @@ export class WorkbenchRuntimeService {
       participantIds
     });
   }
+
 
   private resolveNextActiveSessionId(
     conversationId: string,

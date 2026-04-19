@@ -271,6 +271,143 @@ describe("desktop store reducer", () => {
     });
   });
 
+  it("disposes one session without disturbing the others", () => {
+    let state = createInitialRendererStoreState();
+
+    state = rendererStoreReducer(state, {
+      type: "store/hydrateSnapshot",
+      snapshot: {
+        conversations: [
+          {
+            conversationId: "conversation-a",
+            participantAgentIds: ["agent-a"],
+            activeSessionId: "session-a",
+            sessionIds: ["session-a"]
+          },
+          {
+            conversationId: "conversation-b",
+            participantAgentIds: ["agent-b"],
+            activeSessionId: "session-b",
+            sessionIds: ["session-b"]
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-a",
+            conversationId: "conversation-a",
+            agentId: "agent-a",
+            status: "idle",
+            createdAt: "2026-04-19T00:00:00.000Z",
+            updatedAt: "2026-04-19T00:00:00.000Z"
+          },
+          {
+            sessionId: "session-b",
+            conversationId: "conversation-b",
+            agentId: "agent-b",
+            status: "idle",
+            createdAt: "2026-04-19T00:00:01.000Z",
+            updatedAt: "2026-04-19T00:00:01.000Z"
+          }
+        ],
+        turns: [
+          {
+            turnId: "turn-a",
+            sessionId: "session-a",
+            status: "completed",
+            startedAt: "2026-04-19T00:00:00.000Z",
+            completedAt: "2026-04-19T00:00:02.000Z",
+            messageIds: [],
+            toolCallIds: [],
+            terminalIds: [],
+            approvalRequestIds: []
+          },
+          {
+            turnId: "turn-b",
+            sessionId: "session-b",
+            status: "completed",
+            startedAt: "2026-04-19T00:00:01.000Z",
+            completedAt: "2026-04-19T00:00:03.000Z",
+            messageIds: [],
+            toolCallIds: [],
+            terminalIds: [],
+            approvalRequestIds: []
+          }
+        ],
+        messageBlocks: [],
+        toolCalls: [],
+        terminalStreams: [],
+        approvalRequests: [],
+        participants: [],
+        sessionRelations: []
+      }
+    });
+
+    state = rendererStoreReducer(state, {
+      type: "store/disposeSession",
+      sessionId: "session-a"
+    });
+
+    expect(state.entities.sessions["session-a"]).toBeUndefined();
+    expect(state.entities.turns["turn-a"]).toBeUndefined();
+    expect(state.entities.sessions["session-b"]).toBeDefined();
+    expect(state.entities.turns["turn-b"]).toBeDefined();
+  });
+
+  it("reconciles message text from message.completed finalText", () => {
+    let state = createInitialRendererStoreState();
+
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-session-created-final-text", "1", {
+          type: "session.created",
+          conversationId: "conversation-a",
+          sessionId: "session-a",
+          agentId: "agent-a",
+          status: "running"
+        })
+      )
+    );
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-turn-started-final-text", "2", {
+          type: "turn.started",
+          sessionId: "session-a",
+          turnId: "turn-a"
+        })
+      )
+    );
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-message-delta-final-text", "3", {
+          type: "message.delta",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          messageId: "message-a",
+          delta: "更精确的。验证",
+          agentId: "agent-a"
+        })
+      )
+    );
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-message-completed-final-text", "4", {
+          type: "message.completed",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          messageId: "message-a",
+          finalText: "更精确的验证。",
+          agentId: "agent-a"
+        })
+      )
+    );
+
+    expect(state.entities.messageBlocks["message-a:md"]?.text).toBe("更精确的验证。");
+  });
+
   it("persists session relations from live session.created events", () => {
     let state = createInitialRendererStoreState();
 

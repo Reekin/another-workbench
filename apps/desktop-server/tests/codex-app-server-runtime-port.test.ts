@@ -44,10 +44,14 @@ describe("Codex app-server runtime port", () => {
 
     const events: string[] = [];
     const chunks: string[] = [];
+    const completedMessages: Array<Record<string, unknown>> = [];
     port.subscribe((event) => {
       events.push(event.method);
       if (event.method === "message.delta") {
         chunks.push(String(event.params.delta));
+      }
+      if (event.method === "message.completed") {
+        completedMessages.push(event.params);
       }
       if (event.method === "terminal.output") {
         chunks.push(String(event.params.chunk));
@@ -84,6 +88,13 @@ describe("Codex app-server runtime port", () => {
     );
     expect(chunks.join("")).toContain("Real Codex says: hello from test");
     expect(chunks.join("")).toContain("D:/workspace");
+    expect(completedMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          finalText: expect.stringContaining("Real Codex says: hello from test")
+        })
+      ])
+    );
   });
 
   it("round-trips approval requests and resumes the turn after server confirmation", async () => {
@@ -174,5 +185,90 @@ describe("Codex app-server runtime port", () => {
         })
       ])
     );
+  });
+
+  it("does not override codex sandbox and approval defaults unless explicitly selected", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const completedMessages: Array<Record<string, unknown>> = [];
+    port.subscribe((event) => {
+      if (event.method === "message.completed") {
+        completedMessages.push(event.params);
+      }
+    });
+
+    await port.start({
+      cwd: "D:/workspace/another-workbench/apps/desktop"
+    });
+    await port.request({
+      id: "turn-thread-start-defaults",
+      method: "turn/start",
+      params: {
+        sessionId: "session-1",
+        content: "__THREAD_START_PARAMS__"
+      }
+    });
+
+    await waitFor(() =>
+      completedMessages.some((params) => typeof params.finalText === "string")
+    );
+
+    const finalText = String(
+      completedMessages.find((params) => typeof params.finalText === "string")?.finalText
+    );
+
+    expect(finalText).toContain('"cwd":"D:/workspace/another-workbench/apps/desktop"');
+    expect(finalText).not.toContain('"sandbox":"workspace-write"');
+    expect(finalText).not.toContain('"approvalPolicy":"on-request"');
+  });
+
+  it("passes through explicit sandbox and approval selections", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const completedMessages: Array<Record<string, unknown>> = [];
+    port.subscribe((event) => {
+      if (event.method === "message.completed") {
+        completedMessages.push(event.params);
+      }
+    });
+
+    await port.start({
+      cwd: "D:/workspace/another-workbench/apps/desktop",
+      metadata: {
+        selectedConfig: {
+          sandbox: "danger-full-access",
+          approvalPolicy: "never"
+        }
+      }
+    });
+    await port.request({
+      id: "turn-thread-start-explicit",
+      method: "turn/start",
+      params: {
+        sessionId: "session-1",
+        content: "__THREAD_START_PARAMS__"
+      }
+    });
+
+    await waitFor(() =>
+      completedMessages.some((params) => typeof params.finalText === "string")
+    );
+
+    const finalText = String(
+      completedMessages.find((params) => typeof params.finalText === "string")?.finalText
+    );
+
+    expect(finalText).toContain('"sandbox":"danger-full-access"');
+    expect(finalText).toContain('"approvalPolicy":"never"');
   });
 });

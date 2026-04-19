@@ -52,6 +52,9 @@ describe("WorkspaceRegistryService", () => {
       workspaceId: beta.workspaceId,
       sessionId: "session-42"
     });
+    await service.updateSettings({
+      defaultNewSessionAgentId: "pi"
+    });
 
     const reloaded = new WorkspaceRegistryService({
       baseDir
@@ -65,6 +68,7 @@ describe("WorkspaceRegistryService", () => {
     expect(reloaded.getState()).toMatchObject({
       expandedWorkspaceIds: [beta.workspaceId],
       expandedSessionIds: ["session-42"],
+      defaultNewSessionAgentId: "pi",
       lastActiveWorkspaceId: beta.workspaceId,
       lastActiveSessionId: "session-42"
     });
@@ -88,6 +92,32 @@ describe("WorkspaceRegistryService", () => {
     expect(second.workspaceId).toBe(first.workspaceId);
     expect(service.listWorkspaces()).toHaveLength(1);
     expect(service.getWorkspace(first.workspaceId)?.label).toBe("Workbench");
+  });
+
+  it("treats windows extended-length paths as the same workspace identity", async () => {
+    const baseDir = await createTempDir();
+    const service = new WorkspaceRegistryService({
+      baseDir,
+      createWorkspaceId: (() => {
+        let index = 0;
+        return () => `workspace-${++index}`;
+      })()
+    });
+
+    const first = await service.registerWorkspace({
+      absolutePath: "D:/workspace"
+    });
+    const second = await service.registerWorkspace({
+      absolutePath: "\\\\?\\I:\\gpt-projects\\agent-wrappers",
+      label: "Agent Wrappers"
+    });
+
+    expect(second.workspaceId).toBe(first.workspaceId);
+    expect(service.listWorkspaces()).toHaveLength(1);
+    expect(service.getWorkspace(first.workspaceId)).toMatchObject({
+      absolutePath: "I:\\gpt-projects\\agent-wrappers",
+      label: "Agent Wrappers"
+    });
   });
 
   it("recovers from invalid persisted data by resetting to an empty registry", async () => {

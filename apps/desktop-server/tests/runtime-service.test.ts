@@ -285,6 +285,7 @@ describe("WorkbenchRuntimeService", () => {
     });
   });
 
+
   it("forks sessions and records the session relation in the snapshot", async () => {
     const service = createService();
     const received: string[] = [];
@@ -618,6 +619,65 @@ describe("WorkbenchRuntimeService", () => {
       expect.objectContaining({
         blockId: "message-1:md",
         text: "hello"
+      })
+    ]);
+  });
+
+  it("reconciles assistant message text from message.completed finalText", async () => {
+    const service = createService();
+    await service.executeCommand({
+      commandId: "cmd-create",
+      command: {
+        type: "createSession",
+        agentId: "codex",
+        conversationId: "conversation-main"
+      }
+    });
+
+    const applyRuntimeEvent = (
+      service as unknown as {
+        applyRuntimeEvent: (event: unknown, occurredAt?: string) => void;
+      }
+    ).applyRuntimeEvent.bind(service);
+
+    applyRuntimeEvent(
+      {
+        type: "message.started",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        messageId: "message-1",
+        role: "assistant",
+        agentId: "codex"
+      },
+      "2026-04-18T00:00:20Z"
+    );
+    applyRuntimeEvent(
+      {
+        type: "message.delta",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        messageId: "message-1",
+        delta: "更精确的。验证",
+        agentId: "codex"
+      },
+      "2026-04-18T00:00:21Z"
+    );
+    applyRuntimeEvent(
+      {
+        type: "message.completed",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        messageId: "message-1",
+        finalText: "更精确的验证。",
+        agentId: "codex"
+      },
+      "2026-04-18T00:00:22Z"
+    );
+
+    expect(service.getSnapshot().messageBlocks).toEqual([
+      expect.objectContaining({
+        blockId: "message-1:md",
+        text: "更精确的验证。"
       })
     ]);
   });

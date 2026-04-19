@@ -52,6 +52,22 @@ const createPreloadMock = (config?: {
         }
       } as const;
     }
+    if (payload.method === "settings.get") {
+      return {
+        id: payload.id,
+        method: "settings.get",
+        ok: true,
+        result: {}
+      } as const;
+    }
+    if (payload.method === "settings.update") {
+      return {
+        id: payload.id,
+        method: "settings.update",
+        ok: true,
+        result: payload.params
+      } as const;
+    }
     if (payload.method === "session.list") {
       return {
         id: payload.id,
@@ -223,6 +239,25 @@ describe("Desktop transport facade", () => {
     }
     expect(request.params.conversationId).toBe("conversation-1");
     expect(request.params.includeArchived).toBe(false);
+  });
+
+  it("maps shell settings through typed get/update RPC contracts", async () => {
+    const preload = createPreloadMock();
+    const transport = createDesktopTransport(preload.api);
+
+    await expect(transport.settings.get()).resolves.toEqual({});
+    await expect(
+      transport.settings.update({
+        defaultNewSessionAgentId: "codex"
+      })
+    ).resolves.toEqual({
+      defaultNewSessionAgentId: "codex"
+    });
+
+    const getRequest = preload.request.mock.calls[0][0] as WorkbenchRpcRequest;
+    const updateRequest = preload.request.mock.calls[1][0] as WorkbenchRpcRequest;
+    expect(getRequest.method).toBe("settings.get");
+    expect(updateRequest.method).toBe("settings.update");
   });
 
   it("throws DesktopTransportError when low-level request fails", async () => {

@@ -19,6 +19,12 @@ export type RendererStore = {
   dispatch: (action: RendererStoreAction) => RendererStoreState;
   subscribe: (listener: Listener) => () => void;
   hydrateSnapshot: (snapshot: DomainSnapshot) => RendererStoreState;
+  hydrateSessionWindow: (
+    sessionId: string,
+    snapshot: DomainSnapshot,
+    mode?: "replace" | "prepend"
+  ) => RendererStoreState;
+  disposeSession: (sessionId: string) => RendererStoreState;
   ingestEvent: (event: RuntimeEvent) => RendererStoreState;
   ingestEnvelope: (envelope: EventEnvelope) => RendererStoreState;
 };
@@ -48,6 +54,18 @@ export const createRendererStore = (
     },
     hydrateSnapshot: (snapshot: DomainSnapshot) =>
       dispatch(createHydrateSnapshotAction(snapshot)),
+    hydrateSessionWindow: (sessionId, snapshot, mode = "replace") =>
+      dispatch({
+        type: "store/hydrateSessionWindow",
+        sessionId,
+        snapshot,
+        mode
+      }),
+    disposeSession: (sessionId) =>
+      dispatch({
+        type: "store/disposeSession",
+        sessionId
+      }),
     ingestEvent: (event: RuntimeEvent) =>
       dispatch(createIngestEventAction(event)),
     ingestEnvelope: (envelope: EventEnvelope) =>

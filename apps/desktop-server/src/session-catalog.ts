@@ -97,7 +97,9 @@ const toSeedFromRuntime = (
 const isBrowserVisibleSeed = (
   seed: SessionCatalogSeed,
   runtimeSessionIds: ReadonlySet<string>
-): boolean => runtimeSessionIds.has(seed.sessionId) || Boolean(seed.providerSessionId);
+): boolean =>
+  !seed.archivedAt &&
+  (runtimeSessionIds.has(seed.sessionId) || Boolean(seed.providerSessionId));
 
 export class SessionCatalogService {
   private readonly runtimeService: WorkbenchRuntimeService;
@@ -252,7 +254,9 @@ export class SessionCatalogService {
     const childIds = input.childrenByParentId.get(input.seed.sessionId) ?? [];
     const children = childIds
       .map((childId) => input.bySessionId.get(childId))
-      .filter((seed): seed is SessionCatalogSeed => Boolean(seed))
+      .filter(
+        (seed): seed is SessionCatalogSeed => Boolean(seed && !seed.archivedAt)
+      )
       .sort((left, right) => compareIsoDesc(left.updatedAt, right.updatedAt))
       .map((seed) =>
         this.buildSessionNode({

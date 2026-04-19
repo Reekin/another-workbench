@@ -1,15 +1,18 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type ReactElement
 } from "react";
+import { createPortal } from "react-dom";
 import type {
   AgentDescriptor,
   ChatTreeSnapshotRpc,
   SessionActionDescriptorRpc,
+  SessionWindowRpc,
   WorkspaceRecordRpc,
   WorkspaceBrowserNodeRpc
 } from "@another-workbench/shared";
@@ -22,7 +25,6 @@ import type { RendererStore } from "../../store/store.js";
 import type { DesktopTransport } from "../../transport/desktop-transport.js";
 import { connectDesktopTransportToStore } from "../../transport/store-bridge.js";
 import { MessageMarkdownView } from "./MessageMarkdownView.js";
-import { ParticipantIdentityBadge } from "./ParticipantIdentityBadge.js";
 import { ChatTreePanel } from "./ChatTreePanel.js";
 import { TurnProcessPanel } from "./TurnProcessPanel.js";
 import { buildParticipantDirectory } from "./participant-directory.js";
@@ -33,6 +35,7 @@ import {
 import { filterTranscriptRowsForChatTree } from "./chat-tree-transcript.js";
 import { buildTurnTranscriptRows } from "./transcript-view-model.js";
 import { useRendererStoreState } from "./use-renderer-store-state.js";
+import { prioritizeWorkspaceIdsForReconciliation } from "./workspace-reconciliation.js";
 import "./chat-shell.css";
 
 type SessionMenuState = {
@@ -40,6 +43,26 @@ type SessionMenuState = {
   x: number;
   y: number;
   actions: SessionActionDescriptorRpc[];
+};
+
+const resolveSessionMenuViewportStyle = (
+  sessionMenu: SessionMenuState
+): CSSProperties => {
+  const estimatedWidth = 188;
+  const estimatedHeight = sessionMenu.actions.length * 37 + 8;
+  const gutter = 8;
+  if (typeof window === "undefined") {
+    return {
+      left: sessionMenu.x,
+      top: sessionMenu.y
+    };
+  }
+  const maxLeft = Math.max(gutter, window.innerWidth - estimatedWidth - gutter);
+  const maxTop = Math.max(gutter, window.innerHeight - estimatedHeight - gutter);
+  return {
+    left: Math.min(sessionMenu.x, maxLeft),
+    top: Math.min(sessionMenu.y, maxTop)
+  };
 };
 
 export type ChatShellAppProps = {
@@ -194,14 +217,47 @@ export const ChatShellApp = ({
   const [chatTree, setChatTree] = useState<ChatTreeSnapshotRpc | undefined>();
   const [chatTreeLoading, setChatTreeLoading] = useState(false);
   const [chatTreeError, setChatTreeError] = useState<string | undefined>();
-  const [expandedCompletedTurnIds, setExpandedCompletedTurnIds] = useState<Record<string, true>>(
-    {}
-  );
+  const [sessionWindows, setSessionWindows] = useState<
+    Record<string, SessionWindowRpc | undefined>
+  >({});
+  const [loadingOlderSessionId, setLoadingOlderSessionId] = useState<
+    string | undefined
+  >();
   const [sessionMenu, setSessionMenu] = useState<SessionMenuState | undefined>();
-  const [pendingRestoreSessionId, setPendingRestoreSessionId] = useState<string | undefined>();
-  const [startupRestoreState, setStartupRestoreState] = useState<
-    "idle" | "scheduled" | "done"
-  >("idle");
+  const [browserSelectedSessionId, setBrowserSelectedSessionId] = useState<
+    string | undefined
+  >();
+  const [openingSessionId, setOpeningSessionId] = useState<string | undefined>();
+  const [inspectedTurnId, setInspectedTurnId] = useState<string | undefined>();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsDraftAgentId, setSettingsDraftAgentId] = useState("");
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const reconcileQueueRef = useRef<string[]>([]);
+  const reconcileQueuedIdsRef = useRef(new Set<string>());
+  const reconcileAttemptedIdsRef = useRef(new Set<string>());
+  const reconcileRunningRef = useRef(false);
+  const mountedRef = useRef(true);
+  const openingSessionIdRef = useRef<string | undefined>(undefined);
+  const openSessionRequestIdRef = useRef(0);
+  const transcriptRef = useRef<HTMLElement | null>(null);
+  const displayedSessionIdRef = useRef<string | undefined>(undefined);
+  const pendingPrependScrollRef = useRef<
+    | {
+        sessionId: string;
+        previousScrollHeight: number;
+        previousScrollTop: number;
+      }
+    | undefined
+  >(undefined);
+  const pendingViewportTargetRef = useRef<
+    | {
+        sessionId: string;
+        type: "bottom" | "turn";
+        turnId?: string;
+      }
+    | undefined
+  >(undefined);
 
   const activeWorkspace = workspaceTree.find((workspace) => workspace.isActive);
   const activeSessionNode =
@@ -210,23 +266,43 @@ export const ChatShellApp = ({
       ? findSessionNode(workspaceTree, state.activeSessionId)
       : undefined);
   const activeSessionId = state.activeSessionId ?? activeSessionNode?.sessionId;
+  const displayedSessionId =
+    openingSessionId ?? browserSelectedSessionId ?? activeSessionId;
+  const displayedSessionNode = displayedSessionId
+    ? findSessionNode(workspaceTree, displayedSessionId)
+    : activeSessionNode;
+  const displayedSession = displayedSessionId
+    ? state.entities.sessions[displayedSessionId]
+    : undefined;
   const activeSession = activeSessionId
     ? state.entities.sessions[activeSessionId]
     : undefined;
+  const displayedConversationId =
+    displayedSession?.conversationId ?? displayedSessionNode?.conversationId;
+  const highlightedSessionId = displayedSessionId;
+  const isOpeningSelectedSession =
+    Boolean(openingSessionId) && openingSessionId === displayedSessionId;
+  const activeSessionWindow =
+    displayedSessionId ? sessionWindows[displayedSessionId] : undefined;
+  const loadingOlderTurns = loadingOlderSessionId === displayedSessionId;
+  const activeChatTree =
+    chatTree?.sessionId === displayedSessionId ? chatTree : undefined;
+  const browsedSessionId =
+    displayedSessionId && !isOpeningSelectedSession ? displayedSessionId : undefined;
   const activeConversation =
-    ((activeSession?.conversationId ?? activeSessionNode?.conversationId)
+    (displayedConversationId
       ? state.entities.conversations[
-          (activeSession?.conversationId ?? activeSessionNode?.conversationId)!
+          displayedConversationId
         ]
       : undefined) ??
-    (activeSession?.conversationId
-      ? state.entities.conversations[activeSession.conversationId]
+    (displayedSession?.conversationId
+      ? state.entities.conversations[displayedSession.conversationId]
       : undefined) ??
     (state.activeConversationId
       ? state.entities.conversations[state.activeConversationId]
       : undefined);
-  const turns = activeSessionId
-    ? selectTurnsForSession(state, activeSessionId)
+  const turns = displayedSessionId
+    ? selectTurnsForSession(state, displayedSessionId)
     : [];
   const participants = activeConversation
     ? selectParticipantsForConversation(state, activeConversation.conversationId)
@@ -240,9 +316,25 @@ export const ChatShellApp = ({
     [state, turns, participantDirectory]
   );
   const visibleTranscriptRows = useMemo(
-    () => filterTranscriptRowsForChatTree(transcriptRows, chatTree),
-    [transcriptRows, chatTree]
+    () => filterTranscriptRowsForChatTree(transcriptRows, activeChatTree),
+    [transcriptRows, activeChatTree]
   );
+  const renderedTranscriptRows = isOpeningSelectedSession ? [] : visibleTranscriptRows;
+  const inspectedRow = useMemo(() => {
+    const assistantRows = renderedTranscriptRows.filter(
+      (row) => row.messageRole !== "user"
+    );
+    if (assistantRows.length === 0) {
+      return undefined;
+    }
+    if (inspectedTurnId) {
+      return (
+        assistantRows.find((row) => row.turn.turnId === inspectedTurnId) ??
+        assistantRows[assistantRows.length - 1]
+      );
+    }
+    return assistantRows[assistantRows.length - 1];
+  }, [renderedTranscriptRows, inspectedTurnId]);
 
   const fallbackAgents = useMemo(
     () => buildWorkspaceAgentFallbacks(workspaceTree),
@@ -261,34 +353,159 @@ export const ChatShellApp = ({
       (activeSessionId
         ? ({
             sessionId: activeSessionId,
-            conversationId: activeConversation?.conversationId ?? "",
-            agentId: activeSessionNode?.agentId ?? selectedAgentId,
+            conversationId: displayedConversationId ?? "",
+            agentId: displayedSessionNode?.agentId ?? selectedAgentId,
             status: "idle",
             createdAt: "",
             updatedAt: ""
           } as NonNullable<typeof activeSession>)
         : undefined),
-    approvals: visibleTranscriptRows.at(-1)?.approvals ?? [],
+    approvals: renderedTranscriptRows.at(-1)?.approvals ?? [],
     notice: statusNotice
   });
 
-  const hydrateOpenedSession = async (sessionId: string): Promise<void> => {
+  const activateLoadedSession = (sessionId: string): boolean => {
+    const session = store.getState().entities.sessions[sessionId];
+    if (!session) {
+      return false;
+    }
+    store.dispatch({
+      type: "store/setActiveConversation",
+      conversationId: session.conversationId
+    });
+    store.dispatch({
+      type: "store/setActiveSession",
+      sessionId
+    });
+    return true;
+  };
+
+  const releaseSessionCache = async (
+    sessionId: string | undefined
+  ): Promise<void> => {
+    if (!sessionId) {
+      return;
+    }
+    store.disposeSession(sessionId);
+    setSessionWindows((current) => {
+      if (!current[sessionId]) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+    if (chatTree?.sessionId === sessionId) {
+      setChatTree(undefined);
+    }
+    setChatTreeError(undefined);
+    pendingPrependScrollRef.current = undefined;
+    pendingViewportTargetRef.current = undefined;
+  };
+
+  const resetSessionSwitchState = (): void => {
+    setLoadingOlderSessionId(undefined);
+    setChatTreeError(undefined);
+    setInspectedTurnId(undefined);
+  };
+
+  const applySessionWindow = (
+    page: SessionWindowRpc,
+    mode: "replace" | "prepend" = "replace",
+    options: {
+      activate?: boolean;
+    } = {}
+  ): void => {
+    store.hydrateSessionWindow(page.sessionId, page.snapshot, mode);
+    setSessionWindows((current) => {
+      const existing = current[page.sessionId];
+      if (mode === "prepend" && existing?.sessionId === page.sessionId) {
+        return {
+          ...current,
+          [page.sessionId]: {
+            ...existing,
+            windowStartTurnId: page.windowStartTurnId ?? existing.windowStartTurnId,
+            hasOlder: page.hasOlder,
+            snapshot: existing.snapshot,
+            hasNewer: existing.hasNewer
+          }
+        };
+      }
+      return {
+        ...current,
+        [page.sessionId]: page
+      };
+    });
+    if (mode === "replace") {
+      setInspectedTurnId(page.windowEndTurnId);
+      pendingViewportTargetRef.current = {
+        sessionId: page.sessionId,
+        type: page.windowEndTurnId && page.hasNewer ? "turn" : "bottom",
+        turnId: page.windowEndTurnId && page.hasNewer ? page.windowEndTurnId : undefined
+      };
+    }
+    if (options.activate ?? true) {
+      activateLoadedSession(page.sessionId);
+    }
+  };
+
+  const hydrateOpenedSession = async (
+    sessionId: string,
+    requestId: number
+  ): Promise<void> => {
     if (!transport) {
       return;
     }
-    await transport.sessionBrowser.open(sessionId);
-    const snapshotResult = await transport.domain.snapshot();
-    store.hydrateSnapshot(snapshotResult.snapshot);
-    const session = store.getState().entities.sessions[sessionId];
-    if (session) {
-      store.dispatch({
-        type: "store/setActiveConversation",
-        conversationId: session.conversationId
+    const result = await transport.sessionBrowser.open(sessionId);
+    if (openSessionRequestIdRef.current !== requestId) {
+      return;
+    }
+    applySessionWindow(result.page, "replace");
+  };
+
+  const onLoadOlder = async (): Promise<void> => {
+    if (
+      !transport ||
+      !displayedSessionId ||
+      !activeSessionWindow?.hasOlder ||
+      !activeSessionWindow.windowStartTurnId ||
+      loadingOlderSessionId === displayedSessionId ||
+      isOpeningSelectedSession
+    ) {
+      return;
+    }
+
+    const element = transcriptRef.current;
+    const previousScrollHeight = element?.scrollHeight ?? 0;
+    const previousScrollTop = element?.scrollTop ?? 0;
+    setLoadingOlderSessionId(displayedSessionId);
+    try {
+      const result = await transport.sessionBrowser.loadOlder({
+        sessionId: displayedSessionId,
+        beforeTurnId: activeSessionWindow.windowStartTurnId,
+        limit: 8
       });
-      store.dispatch({
-        type: "store/setActiveSession",
-        sessionId
+      if (displayedSessionIdRef.current !== displayedSessionId) {
+        return;
+      }
+      pendingPrependScrollRef.current = {
+        sessionId: displayedSessionId,
+        previousScrollHeight,
+        previousScrollTop
+      };
+      applySessionWindow(result.page, "prepend", {
+        activate: false
       });
+    } catch (error) {
+      setStatusNotice({
+        message: `Load earlier turns failed: ${(error as Error).message}`,
+        persistent: true,
+        source: "session-browser"
+      });
+    } finally {
+      setLoadingOlderSessionId((current) =>
+        current === displayedSessionId ? undefined : current
+      );
     }
   };
 
@@ -308,14 +525,6 @@ export const ChatShellApp = ({
     );
     if (workspaceState.lastActiveWorkspaceId) {
       visibleWorkspaceIds.add(workspaceState.lastActiveWorkspaceId);
-    }
-    if (
-      startupRestoreState === "idle" &&
-      !state.activeSessionId &&
-      workspaceState.lastActiveSessionId
-    ) {
-      setPendingRestoreSessionId(workspaceState.lastActiveSessionId);
-      setStartupRestoreState("scheduled");
     }
 
     const mode = input?.mode ?? "visible";
@@ -344,7 +553,159 @@ export const ChatShellApp = ({
         )
       )
     );
+
+    const reconciliationCandidates = prioritizeWorkspaceIdsForReconciliation(
+      workspaceState.workspaces,
+      workspaceState.lastActiveWorkspaceId
+    );
+    for (const workspaceId of reconciliationCandidates) {
+      if (
+        reconcileAttemptedIdsRef.current.has(workspaceId) ||
+        reconcileQueuedIdsRef.current.has(workspaceId)
+      ) {
+        continue;
+      }
+      reconcileQueueRef.current.push(workspaceId);
+      reconcileQueuedIdsRef.current.add(workspaceId);
+    }
   };
+
+  const runBackgroundReconciliation = async (): Promise<void> => {
+    if (!transport || reconcileRunningRef.current) {
+      return;
+    }
+    reconcileRunningRef.current = true;
+    try {
+      while (reconcileQueueRef.current.length > 0) {
+        if (openingSessionIdRef.current) {
+          break;
+        }
+        const workspaceId = reconcileQueueRef.current.shift();
+        if (!workspaceId) {
+          continue;
+        }
+        reconcileQueuedIdsRef.current.delete(workspaceId);
+        reconcileAttemptedIdsRef.current.add(workspaceId);
+        try {
+          await transport.sessionBrowser.reconcile(workspaceId);
+          if (!mountedRef.current) {
+            return;
+          }
+          await refreshSessionBrowser({
+            mode: "workspace",
+            workspaceId
+          });
+        } catch (error) {
+          if (!mountedRef.current) {
+            return;
+          }
+          setStatusNotice({
+            message: `Background session sync failed: ${(error as Error).message}`,
+            source: "session-browser"
+          });
+        }
+      }
+    } finally {
+      reconcileRunningRef.current = false;
+      if (reconcileQueueRef.current.length > 0 && mountedRef.current) {
+        void runBackgroundReconciliation();
+      }
+    }
+  };
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    openingSessionIdRef.current = openingSessionId;
+  }, [openingSessionId]);
+
+  useEffect(() => {
+    displayedSessionIdRef.current = displayedSessionId;
+  }, [displayedSessionId]);
+
+  useEffect(() => {
+    if (!openingSessionId) {
+      return;
+    }
+    if (!sessionWindows[openingSessionId]) {
+      return;
+    }
+    setOpeningSessionId((current) =>
+      current === openingSessionId ? undefined : current
+    );
+    setStatusNotice((current) =>
+      current?.source === "session-browser" ? undefined : current
+    );
+  }, [openingSessionId, sessionWindows]);
+
+  useEffect(() => {
+    const pending = pendingPrependScrollRef.current;
+    const element = transcriptRef.current;
+    if (
+      !pending ||
+      !element ||
+      displayedSessionId !== pending.sessionId ||
+      isOpeningSelectedSession
+    ) {
+      return;
+    }
+    pendingPrependScrollRef.current = undefined;
+    const animationFrameId = window.requestAnimationFrame(() => {
+      element.scrollTop =
+        element.scrollHeight -
+        pending.previousScrollHeight +
+        pending.previousScrollTop;
+    });
+    return () => window.cancelAnimationFrame(animationFrameId);
+  }, [displayedSessionId, isOpeningSelectedSession, activeSessionWindow?.windowStartTurnId]);
+
+  useEffect(() => {
+    const pendingTarget = pendingViewportTargetRef.current;
+    const element = transcriptRef.current;
+    if (
+      !pendingTarget ||
+      !element ||
+      displayedSessionId !== pendingTarget.sessionId ||
+      isOpeningSelectedSession
+    ) {
+      return;
+    }
+
+    pendingViewportTargetRef.current = undefined;
+    const animationFrameId = window.requestAnimationFrame(() => {
+      if (pendingTarget.type === "turn" && pendingTarget.turnId) {
+        const targetRow = element.querySelector<HTMLElement>(
+          `[data-turn-id="${pendingTarget.turnId}"]`
+        );
+        if (targetRow) {
+          targetRow.scrollIntoView({
+            block: "start"
+          });
+          return;
+        }
+      }
+      element.scrollTop = element.scrollHeight;
+    });
+
+    return () => window.cancelAnimationFrame(animationFrameId);
+  }, [
+    displayedSessionId,
+    isOpeningSelectedSession,
+    activeSessionWindow?.windowEndTurnId,
+    renderedTranscriptRows.length
+  ]);
+
+  useEffect(() => {
+    reconcileQueueRef.current = [];
+    reconcileQueuedIdsRef.current = new Set();
+    reconcileAttemptedIdsRef.current = new Set();
+    reconcileRunningRef.current = false;
+  }, [transport]);
 
   useEffect(() => {
     if (!statusNotice || statusNotice.persistent) {
@@ -369,7 +730,14 @@ export const ChatShellApp = ({
         source: "session-browser"
       });
     });
-  }, [transport, state.eventStream.lastCursor, startupRestoreState]);
+  }, [transport, state.eventStream.lastCursor]);
+
+  useEffect(() => {
+    if (!transport || reconcileQueueRef.current.length === 0 || openingSessionId) {
+      return;
+    }
+    void runBackgroundReconciliation();
+  }, [transport, workspaceTree, openingSessionId]);
 
   useEffect(() => {
     const handleWindowClick = () => setSessionMenu(undefined);
@@ -404,10 +772,43 @@ export const ChatShellApp = ({
   }, [transport]);
 
   useEffect(() => {
-    if (!selectedAgentId && agents.length > 0) {
+    if (settingsHydrated && !selectedAgentId && agents.length > 0) {
       setSelectedAgentId(agents[0]!.agentId);
     }
-  }, [agents, selectedAgentId]);
+  }, [agents, selectedAgentId, settingsHydrated]);
+
+  useEffect(() => {
+    if (!transport) {
+      setSettingsHydrated(true);
+      return;
+    }
+    let disposed = false;
+    void transport.settings
+      .get()
+      .then((settings) => {
+        if (disposed) {
+          return;
+        }
+        if (settings.defaultNewSessionAgentId) {
+          setSelectedAgentId(settings.defaultNewSessionAgentId);
+          setSettingsDraftAgentId(settings.defaultNewSessionAgentId);
+        }
+        setSettingsHydrated(true);
+      })
+      .catch((error) => {
+        if (!disposed) {
+          setSettingsHydrated(true);
+          setStatusNotice({
+            message: `Settings load failed: ${(error as Error).message}`,
+            persistent: true,
+            source: "settings"
+          });
+        }
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [transport]);
 
   useEffect(() => {
     if (!transport || !selectedAgentId) {
@@ -470,65 +871,7 @@ export const ChatShellApp = ({
   }, [transport, store]);
 
   useEffect(() => {
-    if (
-      !transport ||
-      !pendingRestoreSessionId ||
-      state.activeSessionId ||
-      startupRestoreState !== "scheduled"
-    ) {
-      return;
-    }
-    if (!findSessionNode(workspaceTree, pendingRestoreSessionId)) {
-      return;
-    }
-    let disposed = false;
-    const restoreTimeoutId = window.setTimeout(() => {
-      if (disposed) {
-        return;
-      }
-      setStatusNotice({
-        message: "Restoring last session…",
-        persistent: true,
-        source: "session-browser"
-      });
-      void hydrateOpenedSession(pendingRestoreSessionId)
-        .then(async () => {
-          if (disposed) {
-            return;
-          }
-          setPendingRestoreSessionId(undefined);
-          setStartupRestoreState("done");
-          await refreshSessionBrowser({
-            mode: "workspace",
-            workspaceId: findSessionNode(workspaceTree, pendingRestoreSessionId)?.workspaceId
-          });
-        })
-        .catch((error) => {
-          if (!disposed) {
-            setStatusNotice({
-              message: `Restore session failed: ${(error as Error).message}`,
-              persistent: true,
-              source: "session-browser"
-            });
-            setPendingRestoreSessionId(undefined);
-            setStartupRestoreState("done");
-          }
-        });
-    }, 1_500);
-    return () => {
-      disposed = true;
-      window.clearTimeout(restoreTimeoutId);
-    };
-  }, [
-    transport,
-    pendingRestoreSessionId,
-    startupRestoreState,
-    state.activeSessionId,
-    workspaceTree
-  ]);
-
-  useEffect(() => {
-    if (!transport || !activeSessionId) {
+    if (!transport || !browsedSessionId) {
       setChatTree(undefined);
       setChatTreeError(undefined);
       setChatTreeLoading(false);
@@ -538,16 +881,24 @@ export const ChatShellApp = ({
     setChatTreeLoading(true);
     setChatTreeError(undefined);
     void transport.chatTree
-      .get(activeSessionId)
+      .get(browsedSessionId)
       .then((nextTree) => {
         if (!disposed) {
-          setChatTree(nextTree);
+          if (displayedSessionIdRef.current === browsedSessionId) {
+            setChatTree(nextTree);
+          }
           setChatTreeError(undefined);
         }
       })
       .catch((error) => {
         if (!disposed) {
-          setChatTreeError((error as Error).message);
+          if (displayedSessionIdRef.current === browsedSessionId) {
+            setChatTreeError(undefined);
+            setStatusNotice({
+              message: `Chat tree refresh failed: ${(error as Error).message}`,
+              source: "chat-tree"
+            });
+          }
         }
       })
       .finally(() => {
@@ -558,7 +909,7 @@ export const ChatShellApp = ({
     return () => {
       disposed = true;
     };
-  }, [transport, activeSessionId, state.eventStream.lastCursor]);
+  }, [transport, browsedSessionId, state.eventStream.lastCursor]);
 
   const onSend = async (): Promise<void> => {
     const text = draft.trim();
@@ -619,12 +970,43 @@ export const ChatShellApp = ({
     }
   };
 
+  const onOpenSettings = (): void => {
+    setSettingsDraftAgentId(selectedAgentId);
+    setSettingsOpen(true);
+  };
+
+  const onSaveSettings = async (): Promise<void> => {
+    if (!transport) {
+      return;
+    }
+    setSettingsSaving(true);
+    try {
+      const result = await transport.settings.update({
+        defaultNewSessionAgentId: settingsDraftAgentId || undefined
+      });
+      setSelectedAgentId(result.defaultNewSessionAgentId ?? "");
+      setSettingsOpen(false);
+      setStatusNotice({
+        message: result.defaultNewSessionAgentId
+          ? `Default agent set to ${result.defaultNewSessionAgentId}`
+          : "Default agent cleared.",
+        source: "settings"
+      });
+    } catch (error) {
+      setStatusNotice({
+        message: `Settings save failed: ${(error as Error).message}`,
+        persistent: true,
+        source: "settings"
+      });
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
   const onToggleWorkspace = async (workspaceId: string): Promise<void> => {
     if (!transport) {
       return;
     }
-    setPendingRestoreSessionId(undefined);
-    setStartupRestoreState("done");
     await transport.workspace.select(workspaceId);
     await transport.workspace.toggleExpanded(workspaceId);
     await refreshSessionBrowser({
@@ -637,19 +1019,29 @@ export const ChatShellApp = ({
     if (!transport || !selectedAgentId) {
       return;
     }
-    setPendingRestoreSessionId(undefined);
-    setStartupRestoreState("done");
     setStatusNotice({
       message: "Creating session…",
       persistent: true,
       source: "create-session"
     });
+    let requestId: number | undefined;
     try {
+      const previousSessionId = displayedSessionIdRef.current;
+      if (previousSessionId) {
+        await releaseSessionCache(previousSessionId);
+      }
+      resetSessionSwitchState();
       const created = await transport.sessionBrowser.create({
         workspaceId,
         agentId: selectedAgentId
       });
-      await hydrateOpenedSession(created.sessionId);
+      requestId = ++openSessionRequestIdRef.current;
+      setBrowserSelectedSessionId(created.sessionId);
+      setOpeningSessionId(created.sessionId);
+      await hydrateOpenedSession(created.sessionId, requestId);
+      if (openSessionRequestIdRef.current !== requestId) {
+        return;
+      }
       await refreshSessionBrowser({
         mode: "workspace",
         workspaceId
@@ -659,6 +1051,10 @@ export const ChatShellApp = ({
         source: "create-session"
       });
     } catch (error) {
+      if (requestId && openSessionRequestIdRef.current !== requestId) {
+        return;
+      }
+      setOpeningSessionId(undefined);
       setStatusNotice({
         message: `Create session failed: ${(error as Error).message}`,
         persistent: true,
@@ -671,21 +1067,34 @@ export const ChatShellApp = ({
     if (!transport) {
       return;
     }
-    setPendingRestoreSessionId(undefined);
-    setStartupRestoreState("done");
+    const previousSessionId = displayedSessionIdRef.current;
+    if (previousSessionId && previousSessionId !== sessionId) {
+      await releaseSessionCache(previousSessionId);
+    }
+    resetSessionSwitchState();
+    setBrowserSelectedSessionId(sessionId);
+    setOpeningSessionId(sessionId);
+    const requestId = ++openSessionRequestIdRef.current;
     setStatusNotice({
       message: "Opening session…",
       persistent: true,
       source: "session-browser"
     });
     try {
-      await hydrateOpenedSession(sessionId);
+      await hydrateOpenedSession(sessionId, requestId);
+      if (openSessionRequestIdRef.current !== requestId) {
+        return;
+      }
       await refreshSessionBrowser({
         mode: "workspace",
         workspaceId: findSessionNode(workspaceTree, sessionId)?.workspaceId
       });
       setStatusNotice(undefined);
     } catch (error) {
+      if (openSessionRequestIdRef.current !== requestId) {
+        return;
+      }
+      setOpeningSessionId(undefined);
       setStatusNotice({
         message: `Open session failed: ${(error as Error).message}`,
         persistent: true,
@@ -749,12 +1158,9 @@ export const ChatShellApp = ({
         return;
       }
       if (result.action === "open_rollout") {
-        const fileUrl = encodeURI(
-          `file:///${result.rolloutPath.replace(/\\/g, "/").replace(/^([A-Za-z]):/, "$1:")}`
-        );
-        window.open(fileUrl, "_blank", "noopener,noreferrer");
+        window.open(result.rolloutFileUrl, "_blank", "noopener,noreferrer");
         setStatusNotice({
-          message: `Opened rollout ${result.rolloutPath}`,
+          message: `Opened rollout ${result.rolloutDisplayPath}`,
           source: "session-action"
         });
         return;
@@ -784,33 +1190,40 @@ export const ChatShellApp = ({
   };
 
   const onJumpChatTree = async (nodeId: string): Promise<void> => {
-    if (!transport || !activeSessionId) {
+    if (!transport || !displayedSessionId || isOpeningSelectedSession) {
       return;
     }
-    await transport.chatTree.jump({
-      sessionId: activeSessionId,
-      nodeId
-    });
-    const nextTree = await transport.chatTree.get(activeSessionId);
-    setChatTree(nextTree);
-    setStatusNotice({
-      message: `Jumped to ${nodeId}`,
-      source: "chat-tree"
-    });
-  };
-
-  const toggleCompletedTurnProcess = (turnId: string): void => {
-    setExpandedCompletedTurnIds((current) => {
-      if (current[turnId]) {
-        const next = { ...current };
-        delete next[turnId];
-        return next;
+    try {
+      await transport.chatTree.jump({
+        sessionId: displayedSessionId,
+        nodeId
+      });
+      const nextTree = await transport.chatTree.get(displayedSessionId);
+      setChatTree(nextTree);
+      setChatTreeError(undefined);
+      const currentNode =
+        nextTree.nodes.find((node) => node.nodeId === nextTree.currentNodeId) ??
+        nextTree.nodes.find((node) => node.nodeId === nodeId);
+      if (currentNode?.turnId) {
+        const requestId = ++openSessionRequestIdRef.current;
+        setInspectedTurnId(currentNode.turnId);
+        const result = await transport.sessionBrowser.open(displayedSessionId);
+        if (openSessionRequestIdRef.current === requestId) {
+          applySessionWindow(result.page, "replace");
+        }
       }
-      return {
-        ...current,
-        [turnId]: true
-      };
-    });
+      setStatusNotice({
+        message: `Jumped to ${nodeId}`,
+        source: "chat-tree"
+      });
+    } catch (error) {
+      setChatTreeError(undefined);
+      setStatusNotice({
+        message: `Chat tree jump failed: ${(error as Error).message}`,
+        persistent: true,
+        source: "chat-tree"
+      });
+    }
   };
 
   const renderSessionNode = (
@@ -821,7 +1234,11 @@ export const ChatShellApp = ({
     return (
       <li key={session.sessionId} className="awb-tree__item">
         <div
-          className={`awb-tree__session ${session.isActive ? "is-active" : ""}`}
+          className={`awb-tree__session ${
+            session.isActive || session.sessionId === highlightedSessionId
+              ? "is-active"
+              : ""
+          }`}
           style={{ "--awb-tree-depth": `${depth}` } as CSSProperties}
           onClick={() => void onOpenSession(session.sessionId)}
           onContextMenu={(event) => void onOpenSessionMenu(event, session.sessionId)}
@@ -861,25 +1278,60 @@ export const ChatShellApp = ({
     );
   };
 
-  return (
-    <div className="awb-shell">
-      <aside className="awb-shell__sidebar">
-        <header className="awb-sidebar__header">
-          <h1>{title}</h1>
-          <p>Workspace-centered multi-agent shell</p>
-        </header>
+  const sessionMenuMarkup = sessionMenu ? (
+    <div
+      className="awb-session-menu"
+      style={resolveSessionMenuViewportStyle(sessionMenu)}
+      onClick={(event) => event.stopPropagation()}
+    >
+      {sessionMenu.actions.map((action) => (
+        <button
+          key={action.action}
+          type="button"
+          disabled={action.disabled}
+          title={action.reason}
+          onClick={() => void onRunSessionAction(sessionMenu.sessionId, action.action)}
+        >
+          {sessionActionLabel(action)}
+        </button>
+      ))}
+    </div>
+  ) : null;
 
-        <section className="awb-sidebar__section">
-          <div className="awb-sidebar__section-header">
-            <h2>Agent</h2>
+  const settingsModalMarkup = settingsOpen ? (
+    <div
+      className="awb-modal-scrim"
+      role="presentation"
+      onClick={() => setSettingsOpen(false)}
+    >
+      <section
+        className="awb-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="awb-settings-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="awb-modal__header">
+          <div>
+            <span className="awb-detail__eyebrow">Settings</span>
+            <h2 id="awb-settings-title">Preferences</h2>
           </div>
+          <button
+            type="button"
+            className="awb-ghost-button"
+            onClick={() => setSettingsOpen(false)}
+          >
+            Close
+          </button>
+        </header>
+        <div className="awb-modal__body">
           <label className="awb-field">
             <span>New session agent</span>
             <select
-              value={selectedAgentId}
-              onChange={(event) => setSelectedAgentId(event.target.value)}
+              value={settingsDraftAgentId}
+              onChange={(event) => setSettingsDraftAgentId(event.target.value)}
             >
-              <option value="">Select an agent</option>
+              <option value="">Follow first available agent</option>
               {agents.map((agent) => (
                 <option key={agent.agentId} value={agent.agentId}>
                   {agent.displayName}
@@ -887,192 +1339,258 @@ export const ChatShellApp = ({
               ))}
             </select>
           </label>
-        </section>
+        </div>
+        <footer className="awb-modal__footer">
+          <button
+            type="button"
+            className="awb-ghost-button"
+            onClick={() => setSettingsOpen(false)}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="awb-secondary-button"
+            onClick={() => void onSaveSettings()}
+            disabled={settingsSaving}
+          >
+            Save
+          </button>
+        </footer>
+      </section>
+    </div>
+  ) : null;
 
-        <section className="awb-sidebar__section awb-sidebar__section--grow">
-          <div className="awb-sidebar__section-header">
-            <h2>Workspaces</h2>
+  return (
+    <>
+      <div className="awb-shell">
+        <aside className="awb-shell__sidebar">
+          <header className="awb-sidebar__header">
+            <span className="awb-sidebar__eyebrow">Another Workbench</span>
+            <h1>{title}</h1>
+          </header>
+
+          <section className="awb-sidebar__section awb-sidebar__section--grow">
+            <div className="awb-sidebar__section-header">
+              <h2>Workspaces</h2>
+              <button
+                type="button"
+                className="awb-secondary-button"
+                onClick={() => void onAddWorkspace()}
+              >
+                Add workspace
+              </button>
+            </div>
+
+            <div className="awb-workspace-tree">
+              {workspaceTree.length === 0 && (
+                <p className="awb-list__empty">No workspace yet</p>
+              )}
+              {workspaceTree.map((workspace) => (
+                <section key={workspace.workspaceId} className="awb-workspace">
+                  <header
+                    className={`awb-workspace__header ${workspace.isActive ? "is-active" : ""}`}
+                    onClick={() => void onToggleWorkspace(workspace.workspaceId)}
+                  >
+                    <div>
+                      <strong>{workspace.label}</strong>
+                      <span>{workspace.rootPath}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="awb-workspace__add"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void onCreateSession(workspace.workspaceId);
+                      }}
+                      title="Create session in workspace"
+                    >
+                      +
+                    </button>
+                  </header>
+                  {workspace.isExpanded && (
+                    <ul className="awb-tree__branch awb-tree__branch--workspace">
+                      {workspace.sessions.map((session) => renderSessionNode(session))}
+                    </ul>
+                  )}
+                </section>
+              ))}
+            </div>
+          </section>
+
+          <footer className="awb-sidebar__footer">
             <button
               type="button"
-              className="awb-secondary-button"
-              onClick={() => void onAddWorkspace()}
+              className="awb-sidebar__settings"
+              onClick={onOpenSettings}
+              aria-label="Open settings"
+              title="Settings"
             >
-              Add workspace
+              <span aria-hidden="true">⚙</span>
             </button>
-          </div>
+          </footer>
+        </aside>
 
-          <div className="awb-workspace-tree">
-            {workspaceTree.length === 0 && (
-              <p className="awb-list__empty">No workspace yet</p>
-            )}
-            {workspaceTree.map((workspace) => (
-              <section key={workspace.workspaceId} className="awb-workspace">
-                <header
-                  className={`awb-workspace__header ${workspace.isActive ? "is-active" : ""}`}
-                  onClick={() => void onToggleWorkspace(workspace.workspaceId)}
-                >
-                  <div>
-                    <strong>{workspace.label}</strong>
-                    <span>{workspace.rootPath}</span>
-                  </div>
-                  <button
-                    type="button"
-                    className="awb-workspace__add"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void onCreateSession(workspace.workspaceId);
-                    }}
-                    title="Create session in workspace"
-                  >
-                    +
-                  </button>
-                </header>
-                {workspace.isExpanded && (
-                  <ul className="awb-tree__branch awb-tree__branch--workspace">
-                    {workspace.sessions.map((session) => renderSessionNode(session))}
-                  </ul>
-                )}
-              </section>
-            ))}
-          </div>
-        </section>
-      </aside>
-
-      <main className="awb-shell__main">
-        <header className="awb-main__header">
-          <div>
-            <h2>Transcript</h2>
-            <p>
-              {activeSessionId
-                ? `${activeSessionNode?.displaySessionId ?? activeSessionId} · ${turns.length} turn(s)`
-                : "Select a session to view transcript"}
-            </p>
-          </div>
-        </header>
-
-        <section className="awb-transcript">
-          {visibleTranscriptRows.length === 0 && (
-            <div className="awb-transcript__empty">
-              <h3>{activeSessionId ? "No messages yet" : "No transcript yet"}</h3>
+        <main className="awb-shell__main">
+          <header className="awb-main__header">
+            <div>
+              <span className="awb-main__eyebrow">Thread</span>
+              <h2>{displayedSessionNode?.title ?? "Thread"}</h2>
               <p>
-                {activeSessionId
-                  ? "This session is selected and ready. Send a message to start the conversation."
-                  : "Open a session from the workspace tree or create a new one to start."}
+                {displayedSessionId
+                  ? `${displayedSessionNode?.displaySessionId ?? displayedSessionId} · ${turns.length} turn(s)`
+                  : "Open a session from the workspace tree"}
               </p>
             </div>
-          )}
+          </header>
 
-          {visibleTranscriptRows.map((row) => {
-            const isUserTurn = row.messageRole === "user";
-            const processExpanded =
-              !isUserTurn &&
-              (row.turn.status !== "completed" ||
-                Boolean(expandedCompletedTurnIds[row.turn.turnId]));
-            return (
-              <article
-                key={row.rowId}
-                className={`awb-chat-entry ${isUserTurn ? "is-user" : "is-assistant"}`}
-              >
-                <div className="awb-chat-entry__messages">
-                  {row.blocks.length === 0 && (
-                    <p className="awb-turn__empty">
-                      {isUserTurn ? "No message content." : "Waiting for response…"}
-                    </p>
-                  )}
-                  {row.blocks.map((block) => (
-                    <MessageMarkdownView
-                      key={block.blockId}
-                      block={block}
-                      participantDirectory={participantDirectory}
-                    />
-                  ))}
+          <div className="awb-main__body">
+            <section className="awb-transcript" ref={transcriptRef}>
+              {renderedTranscriptRows.length === 0 && (
+                <div className="awb-transcript__empty">
+                  {isOpeningSelectedSession && <div className="awb-loading-spinner" aria-hidden="true" />}
+                  <h3>
+                    {isOpeningSelectedSession
+                      ? "Loading thread"
+                      : activeSessionId
+                        ? "Empty thread"
+                        : "No thread selected"}
+                  </h3>
+                  <p>
+                    {isOpeningSelectedSession
+                      ? "Loading conversation history for the selected session."
+                      : activeSessionId
+                        ? "Send a message to start the next turn in this session."
+                        : "Open an existing session or create a new one from the workspace pane."}
+                  </p>
                 </div>
+              )}
 
-                {!isUserTurn && row.hasProcessDetails && (
-                  <section className={`awb-turn__process ${processExpanded ? "is-expanded" : ""}`}>
-                    <div className="awb-turn__process-summary">
-                      <span>
-                        {row.turn.status === "completed"
-                          ? "Process details hidden by default after completion."
-                          : "Process details stay open while the turn is still running."}
-                      </span>
-                      {row.turn.status === "completed" && (
-                        <button
-                          type="button"
-                          className="awb-secondary-button awb-secondary-button--small"
-                          onClick={() => toggleCompletedTurnProcess(row.turn.turnId)}
-                        >
-                          {processExpanded ? "Hide process" : "Show process"}
-                        </button>
+              {activeSessionWindow?.hasOlder && renderedTranscriptRows.length > 0 && (
+                <div className="awb-transcript__load-earlier">
+                  <button
+                    type="button"
+                    className="awb-transcript__load-earlier-button"
+                    onClick={() => void onLoadOlder()}
+                    disabled={loadingOlderTurns || isOpeningSelectedSession}
+                  >
+                    {loadingOlderTurns ? "Loading earlier…" : "Load earlier"}
+                  </button>
+                </div>
+              )}
+
+              {renderedTranscriptRows.map((row) => {
+                const isUserTurn = row.messageRole === "user";
+                const isInspected =
+                  !isUserTurn && inspectedRow?.turn.turnId === row.turn.turnId;
+                return (
+                  <article
+                    key={row.rowId}
+                    data-turn-id={row.turn.turnId}
+                    className={`awb-chat-entry ${isUserTurn ? "is-user" : "is-assistant"}${isInspected ? " is-inspected" : ""}`}
+                    onClick={() => {
+                      if (!isUserTurn) {
+                        setInspectedTurnId(row.turn.turnId);
+                      }
+                    }}
+                  >
+                    <div className="awb-chat-entry__messages">
+                      {row.blocks.length === 0 && (
+                        <p className="awb-turn__empty">
+                          {isUserTurn ? "No message content." : "Waiting for response…"}
+                        </p>
                       )}
+                      {row.blocks.map((block) => (
+                        <MessageMarkdownView
+                          key={block.blockId}
+                          block={block}
+                          participantDirectory={participantDirectory}
+                        />
+                      ))}
                     </div>
-                    {processExpanded && (
-                      <TurnProcessPanel
-                        row={row}
-                        participantDirectory={participantDirectory}
-                        onRespondApproval={transport ? onRespondApproval : undefined}
-                      />
-                    )}
-                  </section>
-                )}
-                <footer className="awb-chat-entry__meta">
-                  <ParticipantIdentityBadge identity={row.turnIdentity} compact />
-                  <span>{formatTimestamp(row.turn.completedAt ?? row.turn.startedAt)}</span>
-                </footer>
-              </article>
-            );
-          })}
-        </section>
-
-        <footer className="awb-composer">
-          <textarea
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder="Type a prompt for the active session..."
-          />
-          <div className="awb-composer__actions">
-            <span className="awb-status">{status}</span>
-            <button type="button" onClick={() => void onSend()}>
-              Send
-            </button>
+                    <footer className="awb-chat-entry__meta">
+                      <span>{formatTimestamp(row.turn.completedAt ?? row.turn.startedAt)}</span>
+                    </footer>
+                  </article>
+                );
+              })}
+            </section>
           </div>
-        </footer>
-      </main>
 
-      <aside className="awb-shell__detail">
-        <header className="awb-detail__header">
-          <h2>Chat Tree</h2>
-        </header>
+          <footer className="awb-composer">
+            <textarea
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder="Message the active session..."
+              disabled={isOpeningSelectedSession}
+            />
+            <div className="awb-composer__actions">
+              <span className="awb-status">{status}</span>
+              <button
+                type="button"
+                onClick={() => void onSend()}
+                disabled={isOpeningSelectedSession}
+              >
+                Send
+              </button>
+            </div>
+          </footer>
+        </main>
 
-        <section className="awb-detail__body">
-          <ChatTreePanel
-            chatTree={chatTree}
-            loading={chatTreeLoading}
-            error={chatTreeError}
-            onJump={(nodeId) => void onJumpChatTree(nodeId)}
-          />
-        </section>
-      </aside>
+        <aside className="awb-shell__detail">
+          <header className="awb-detail__header">
+            <div>
+              <span className="awb-detail__eyebrow">Inspector</span>
+              <h2>Inspector</h2>
+            </div>
+          </header>
 
-      {sessionMenu && (
-        <div
-          className="awb-session-menu"
-          style={{ left: sessionMenu.x, top: sessionMenu.y }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          {sessionMenu.actions.map((action) => (
-            <button
-              key={action.action}
-              type="button"
-              disabled={action.disabled}
-              title={action.reason}
-              onClick={() => void onRunSessionAction(sessionMenu.sessionId, action.action)}
-            >
-              {sessionActionLabel(action)}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+          <section className="awb-detail__body">
+            <div className="awb-inspector">
+              <section className="awb-inspector__section">
+                <header className="awb-inspector__section-header">
+                  <span>Turn process</span>
+                  <strong>{inspectedRow?.turn.turnId ?? "No turn selected"}</strong>
+                </header>
+                {inspectedRow ? (
+                  inspectedRow.hasProcessDetails ? (
+                    <TurnProcessPanel
+                      row={inspectedRow}
+                      participantDirectory={participantDirectory}
+                      onRespondApproval={transport ? onRespondApproval : undefined}
+                    />
+                  ) : (
+                    <p className="awb-detail__empty">
+                      This turn has no tool, terminal, or approval activity.
+                    </p>
+                  )
+                ) : (
+                  <p className="awb-detail__empty">
+                    Select an assistant turn to inspect its process details.
+                  </p>
+                )}
+              </section>
+
+              <section className="awb-inspector__section">
+                <ChatTreePanel
+                  chatTree={activeChatTree}
+                  loading={chatTreeLoading}
+                  error={chatTreeError}
+                  onJump={(nodeId) => void onJumpChatTree(nodeId)}
+                />
+              </section>
+            </div>
+          </section>
+        </aside>
+      </div>
+      {sessionMenuMarkup &&
+        (typeof document === "undefined"
+          ? sessionMenuMarkup
+          : createPortal(sessionMenuMarkup, document.body))}
+      {settingsModalMarkup &&
+        (typeof document === "undefined"
+          ? settingsModalMarkup
+          : createPortal(settingsModalMarkup, document.body))}
+    </>
   );
 };

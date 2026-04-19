@@ -147,6 +147,19 @@ export class SessionIndexStore {
     return this.document.entries.find((entry) => entry.sessionId === sessionId);
   }
 
+  public listEntriesByProviderSessionId(
+    providerSessionId: string,
+    workspaceId?: string
+  ): SessionIndexEntry[] {
+    return sortEntries(
+      this.document.entries.filter(
+        (entry) =>
+          entry.providerSessionId === providerSessionId &&
+          (!workspaceId || entry.workspaceId === workspaceId)
+      )
+    );
+  }
+
   public async upsertSession(input: UpsertSessionIndexInput): Promise<SessionIndexEntry> {
     await this.ready();
     const existing = this.getEntry(input.session.sessionId);
@@ -230,6 +243,37 @@ export class SessionIndexStore {
     };
     await this.persist();
     return archived;
+  }
+
+  public async archiveSessions(
+    sessionIds: readonly string[],
+    archivedAt = this.now()
+  ): Promise<SessionIndexEntry[]> {
+    await this.ready();
+    if (sessionIds.length === 0) {
+      return [];
+    }
+    const targetIds = new Set(sessionIds);
+    const archivedEntries: SessionIndexEntry[] = [];
+    this.document = {
+      ...this.document,
+      entries: sortEntries(
+        this.document.entries.map((entry) => {
+          if (!targetIds.has(entry.sessionId)) {
+            return entry;
+          }
+          const archived = sessionIndexEntrySchema.parse({
+            ...entry,
+            archivedAt,
+            updatedAt: archivedAt
+          });
+          archivedEntries.push(archived);
+          return archived;
+        })
+      )
+    };
+    await this.persist();
+    return archivedEntries;
   }
 
   public async removeWorkspace(workspaceId: string): Promise<void> {

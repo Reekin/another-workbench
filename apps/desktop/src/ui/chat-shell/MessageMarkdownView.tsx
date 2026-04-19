@@ -1,6 +1,6 @@
 import { useDeferredValue, type ReactElement } from "react";
 import ReactMarkdown from "react-markdown";
-import rehypeSanitize from "rehype-sanitize";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import type { MessageBlock } from "@another-workbench/shared";
 import { ParticipantIdentityBadge } from "./ParticipantIdentityBadge.js";
@@ -16,6 +16,15 @@ export type MessageMarkdownViewProps = {
 };
 
 const defaultDirectory = buildParticipantDirectory([]);
+const sanitizeSchema = {
+  ...defaultSchema,
+  protocols: {
+    ...defaultSchema.protocols,
+    href: [...(defaultSchema.protocols?.href ?? []), "file"],
+    src: [...(defaultSchema.protocols?.src ?? []), "file", "data"]
+  }
+};
+const allowLocalFileUrls = (url: string): string => url;
 
 const isRenderableMarkdownBlock = (block: MessageBlock): boolean =>
   block.kind === "markdown" || block.kind === "plain_text";
@@ -67,7 +76,11 @@ export const MessageMarkdownView = ({
           </p>
         )}
         {isRenderableMarkdownBlock(block) && !isEmpty && (
-          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            rehypePlugins={[[rehypeSanitize, sanitizeSchema]]}
+            urlTransform={allowLocalFileUrls}
+          >
             {deferredText}
           </ReactMarkdown>
         )}

@@ -15,6 +15,8 @@ import { eventTypes, zEventEnvelopeSchema } from "./events.js";
 export const workbenchRpcMethods = [
   "agent.list",
   "agent.select",
+  "settings.get",
+  "settings.update",
   "domain.snapshot",
   "session.list",
   "workspace.list",
@@ -28,6 +30,7 @@ export const workbenchRpcMethods = [
   "sessionBrowser.toggleExpanded",
   "sessionBrowser.create",
   "sessionBrowser.open",
+  "sessionBrowser.loadOlder",
   "sessionBrowser.getActions",
   "sessionBrowser.runAction",
   "chatTree.get",
@@ -55,6 +58,10 @@ const zWorkspaceRecordSchema = z.object({
   label: z.string().min(1),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1)
+});
+
+const zWorkbenchSettingsSchema = z.object({
+  defaultNewSessionAgentId: zAgentId.optional()
 });
 
 const zSessionStatusDotSchema = z.enum(["none", "running", "unread_completed"]);
@@ -113,7 +120,9 @@ const zSessionActionResultSchema = z.discriminatedUnion("action", [
   }),
   z.object({
     action: z.literal("open_rollout"),
-    rolloutPath: z.string().min(1)
+    rolloutPath: z.string().min(1),
+    rolloutDisplayPath: z.string().min(1),
+    rolloutFileUrl: z.string().url()
   }),
   z.object({
     action: z.literal("reload"),
@@ -139,6 +148,15 @@ const zChatTreeSnapshotSchema = z.object({
   fetchedAt: z.string().min(1)
 });
 
+const zSessionWindowSchema = z.object({
+  sessionId: zSessionId,
+  snapshot: zDomainSnapshotSchema,
+  windowStartTurnId: zTurnId.optional(),
+  windowEndTurnId: zTurnId.optional(),
+  hasOlder: z.boolean(),
+  hasNewer: z.boolean()
+});
+
 const zAgentListRequestSchema = z.object({
   id: zRequestId,
   method: z.literal("agent.list"),
@@ -158,6 +176,20 @@ const zDomainSnapshotRequestSchema = z.object({
   id: zRequestId,
   method: z.literal("domain.snapshot"),
   params: z.object({})
+});
+
+const zSettingsGetRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("settings.get"),
+  params: z.object({})
+});
+
+const zSettingsUpdateRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("settings.update"),
+  params: z.object({
+    defaultNewSessionAgentId: zAgentId.optional()
+  })
 });
 
 const zRuntimeCommandRequestSchema = z.object({
@@ -265,6 +297,16 @@ const zSessionBrowserOpenRequestSchema = z.object({
   })
 });
 
+const zSessionBrowserLoadOlderRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.loadOlder"),
+  params: z.object({
+    sessionId: zSessionId,
+    beforeTurnId: zTurnId.optional(),
+    limit: z.number().int().positive().max(50).optional()
+  })
+});
+
 const zSessionBrowserGetActionsRequestSchema = z.object({
   id: zRequestId,
   method: z.literal("sessionBrowser.getActions"),
@@ -336,6 +378,8 @@ const zEventsReplayRequestSchema = z.object({
 export const zWorkbenchRpcRequestSchema = z.discriminatedUnion("method", [
   zAgentListRequestSchema,
   zAgentSelectRequestSchema,
+  zSettingsGetRequestSchema,
+  zSettingsUpdateRequestSchema,
   zDomainSnapshotRequestSchema,
   zSessionListRequestSchema,
   zWorkspaceListRequestSchema,
@@ -349,6 +393,7 @@ export const zWorkbenchRpcRequestSchema = z.discriminatedUnion("method", [
   zSessionBrowserToggleExpandedRequestSchema,
   zSessionBrowserCreateRequestSchema,
   zSessionBrowserOpenRequestSchema,
+  zSessionBrowserLoadOlderRequestSchema,
   zSessionBrowserGetActionsRequestSchema,
   zSessionBrowserRunActionRequestSchema,
   zChatTreeGetRequestSchema,
@@ -385,6 +430,20 @@ const zDomainSnapshotResponseSchema = z.object({
     snapshot: zDomainSnapshotSchema,
     cursor: zCursor.optional()
   })
+});
+
+const zSettingsGetResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("settings.get"),
+  ok: z.literal(true),
+  result: zWorkbenchSettingsSchema
+});
+
+const zSettingsUpdateResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("settings.update"),
+  ok: z.literal(true),
+  result: zWorkbenchSettingsSchema
 });
 
 const zSessionListResponseSchema = z.object({
@@ -501,7 +560,16 @@ const zSessionBrowserOpenResponseSchema = z.object({
   method: z.literal("sessionBrowser.open"),
   ok: z.literal(true),
   result: z.object({
-    sessionId: zSessionId
+    page: zSessionWindowSchema
+  })
+});
+
+const zSessionBrowserLoadOlderResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.loadOlder"),
+  ok: z.literal(true),
+  result: z.object({
+    page: zSessionWindowSchema
   })
 });
 
@@ -595,6 +663,8 @@ const zWorkbenchRpcErrorResponseSchema = z.object({
 export const zWorkbenchRpcResponseSchema = z.union([
   zAgentListResponseSchema,
   zAgentSelectResponseSchema,
+  zSettingsGetResponseSchema,
+  zSettingsUpdateResponseSchema,
   zDomainSnapshotResponseSchema,
   zSessionListResponseSchema,
   zWorkspaceListResponseSchema,
@@ -608,6 +678,7 @@ export const zWorkbenchRpcResponseSchema = z.union([
   zSessionBrowserToggleExpandedResponseSchema,
   zSessionBrowserCreateResponseSchema,
   zSessionBrowserOpenResponseSchema,
+  zSessionBrowserLoadOlderResponseSchema,
   zSessionBrowserGetActionsResponseSchema,
   zSessionBrowserRunActionResponseSchema,
   zChatTreeGetResponseSchema,
@@ -626,6 +697,7 @@ export const zWorkbenchEventPushSchema = z.object({
 });
 
 export type AgentDescriptor = z.infer<typeof zAgentDescriptorSchema>;
+export type WorkbenchSettingsRpc = z.infer<typeof zWorkbenchSettingsSchema>;
 export type WorkbenchEventSubscriptionFilter = z.infer<
   typeof zWorkbenchEventSubscriptionFilterSchema
 >;
@@ -639,6 +711,7 @@ export type SessionActionKindRpc = z.infer<typeof zSessionActionKindSchema>;
 export type SessionActionDescriptorRpc = z.infer<typeof zSessionActionDescriptorSchema>;
 export type SessionActionResultRpc = z.infer<typeof zSessionActionResultSchema>;
 export type ChatTreeSnapshotRpc = z.infer<typeof zChatTreeSnapshotSchema>;
+export type SessionWindowRpc = z.infer<typeof zSessionWindowSchema>;
 
 export type WorkbenchEventHandler = (event: WorkbenchEventPush) => void;
 

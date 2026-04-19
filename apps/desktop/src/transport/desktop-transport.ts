@@ -8,9 +8,11 @@ import type {
   SessionActionDescriptorRpc,
   SessionActionKindRpc,
   SessionActionResultRpc,
+  SessionWindowRpc,
   WorkbenchClientApi,
   WorkbenchEventPush,
   WorkbenchEventSubscriptionFilter,
+  WorkbenchSettingsRpc,
   WorkspaceBrowserNodeRpc,
   WorkspaceRecordRpc,
   WorkbenchRpcResponse
@@ -134,6 +136,12 @@ export type DesktopTransport = {
     list: () => Promise<AgentDescriptor[]>;
     select: (input: AgentSelectInput) => Promise<{ selectedAgentId: string }>;
   };
+  settings: {
+    get: () => Promise<WorkbenchSettingsRpc>;
+    update: (input: {
+      defaultNewSessionAgentId?: string;
+    }) => Promise<WorkbenchSettingsRpc>;
+  };
   domain: {
     snapshot: () => Promise<{ snapshot: DomainSnapshot; cursor?: string }>;
   };
@@ -182,7 +190,12 @@ export type DesktopTransport = {
       conversationId?: string;
       metadata?: Record<string, unknown>;
     }) => Promise<{ sessionId: string; conversationId: string }>;
-    open: (sessionId: string) => Promise<{ sessionId: string }>;
+    open: (sessionId: string) => Promise<{ page: SessionWindowRpc }>;
+    loadOlder: (input: {
+      sessionId: string;
+      beforeTurnId?: string;
+      limit?: number;
+    }) => Promise<{ page: SessionWindowRpc }>;
     getActions: (
       sessionId: string
     ) => Promise<{ actions: SessionActionDescriptorRpc[] }>;
@@ -353,6 +366,62 @@ export const createDesktopTransport = (
       throw toTransportError("domain.snapshot", requestId, response.error);
     }
     return response.result;
+  };
+
+  const requestSettingsGet = async (): Promise<WorkbenchSettingsRpc> => {
+    const requestId = createId();
+    const response = await preloadApi.request({
+      id: requestId,
+      method: "settings.get",
+      params: {}
+    });
+    if (response.method !== "settings.get") {
+      throw new DesktopTransportError({
+        method: "settings.get",
+        code: "IPC_METHOD_MISMATCH",
+        details: {
+          expectedMethod: "settings.get",
+          actualMethod: response.method
+        },
+        requestId
+      });
+    }
+    if (!response.ok) {
+      throw toTransportError("settings.get", requestId, response.error);
+    }
+    return response.result as Extract<
+      WorkbenchRpcResponse,
+      { method: "settings.get"; ok: true }
+    >["result"];
+  };
+
+  const requestSettingsUpdate = async (input: {
+    defaultNewSessionAgentId?: string;
+  }): Promise<WorkbenchSettingsRpc> => {
+    const requestId = createId();
+    const response = await preloadApi.request({
+      id: requestId,
+      method: "settings.update",
+      params: input
+    });
+    if (response.method !== "settings.update") {
+      throw new DesktopTransportError({
+        method: "settings.update",
+        code: "IPC_METHOD_MISMATCH",
+        details: {
+          expectedMethod: "settings.update",
+          actualMethod: response.method
+        },
+        requestId
+      });
+    }
+    if (!response.ok) {
+      throw toTransportError("settings.update", requestId, response.error);
+    }
+    return response.result as Extract<
+      WorkbenchRpcResponse,
+      { method: "settings.update"; ok: true }
+    >["result"];
   };
 
   const sendCommand = async (command: Command): Promise<CommandReceipt> => {
@@ -573,6 +642,10 @@ export const createDesktopTransport = (
       list: requestAgentList,
       select: requestAgentSelect
     },
+    settings: {
+      get: requestSettingsGet,
+      update: requestSettingsUpdate
+    },
     domain: {
       snapshot: requestDomainSnapshot
     },
@@ -787,6 +860,32 @@ export const createDesktopTransport = (
         return response.result as Extract<
           WorkbenchRpcResponse,
           { method: "sessionBrowser.open"; ok: true }
+        >["result"];
+      },
+      loadOlder: async (input) => {
+        const requestId = createId();
+        const response = await preloadApi.request({
+          id: requestId,
+          method: "sessionBrowser.loadOlder",
+          params: input
+        });
+        if (response.method !== "sessionBrowser.loadOlder") {
+          throw new DesktopTransportError({
+            method: "sessionBrowser.loadOlder",
+            code: "IPC_METHOD_MISMATCH",
+            details: {
+              expectedMethod: "sessionBrowser.loadOlder",
+              actualMethod: response.method
+            },
+            requestId
+          });
+        }
+        if (!response.ok) {
+          throw toTransportError("sessionBrowser.loadOlder", requestId, response.error);
+        }
+        return response.result as Extract<
+          WorkbenchRpcResponse,
+          { method: "sessionBrowser.loadOlder"; ok: true }
         >["result"];
       },
       getActions: async (sessionId: string) => {

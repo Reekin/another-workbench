@@ -5,3 +5,4 @@ export * from "./commands.js";
 export * from "./events.js";
 export * from "./domain.js";
 export * from "./ipc.js";
+export * from "./paths.js";

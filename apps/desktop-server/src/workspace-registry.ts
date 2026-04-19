@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
+import { arePathsEquivalent, toDisplayPath } from "@another-workbench/shared";
 import { loadJsonFile, saveJsonFile } from "./persistence-store.js";
 
 const workspaceRecordSchema = z.object({
@@ -16,6 +17,7 @@ const workspaceRegistryDocumentSchema = z.object({
   workspaces: z.array(workspaceRecordSchema).default([]),
   expandedWorkspaceIds: z.array(z.string().min(1)).default([]),
   expandedSessionIds: z.array(z.string().min(1)).default([]),
+  defaultNewSessionAgentId: z.string().min(1).optional(),
   lastActiveWorkspaceId: z.string().min(1).optional(),
   lastActiveSessionId: z.string().min(1).optional()
 });
@@ -94,9 +96,9 @@ export class WorkspaceRegistryService {
     input: WorkspaceRegistrationInput
   ): Promise<WorkspaceRecord> {
     await this.ready();
-    const normalizedPath = resolve(input.absolutePath);
+    const normalizedPath = resolve(toDisplayPath(input.absolutePath));
     const existing = this.document.workspaces.find(
-      (workspace) => workspace.absolutePath === normalizedPath
+      (workspace) => arePathsEquivalent(workspace.absolutePath, normalizedPath)
     );
     const timestamp = this.now();
     if (existing) {
@@ -225,6 +227,17 @@ export class WorkspaceRegistryService {
     await this.persist();
   }
 
+  public async updateSettings(input: {
+    defaultNewSessionAgentId?: string;
+  }): Promise<void> {
+    await this.ready();
+    this.document = {
+      ...this.document,
+      defaultNewSessionAgentId: input.defaultNewSessionAgentId
+    };
+    await this.persist();
+  }
+
   private async load(): Promise<void> {
     const loaded = await loadJsonFile<unknown>(this.filePath, {
       version: 1,
@@ -232,6 +245,10 @@ export class WorkspaceRegistryService {
       expandedWorkspaceIds: [],
       expandedSessionIds: []
     });
+    const hadLegacySessionViewState =
+      typeof loaded.value === "object" &&
+      loaded.value !== null &&
+      "sessionViewStateBySessionId" in loaded.value;
     const parsed = workspaceRegistryDocumentSchema.safeParse(loaded.value);
     this.document = parsed.success
       ? parsed.data
@@ -241,7 +258,7 @@ export class WorkspaceRegistryService {
           expandedWorkspaceIds: [],
           expandedSessionIds: []
         };
-    if (loaded.corrupted || !parsed.success) {
+    if (loaded.corrupted || !parsed.success || hadLegacySessionViewState) {
       await this.persist();
     }
   }

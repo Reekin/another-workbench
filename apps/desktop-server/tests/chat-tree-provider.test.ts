@@ -1,7 +1,6 @@
 import type { ChatSession } from "@another-workbench/shared";
 import { describe, expect, it, vi } from "vitest";
 import { ChatTreeProvider } from "../src/chat-tree-provider.js";
-import type { CodexAppServerRuntimePort } from "../src/codex-app-server-runtime-port.js";
 import type { WorkbenchRuntimeService } from "../src/runtime-service.js";
 
 const createSession = (input: {
@@ -23,12 +22,6 @@ describe("ChatTreeProvider", () => {
       runtimeService: {
         listSessions: vi.fn().mockReturnValue([])
       } as unknown as WorkbenchRuntimeService,
-      codexRuntimePort: {
-        getThreadIdForSession: vi.fn(),
-        readChatTree: vi.fn(),
-        setCurrentChatTreeNode: vi.fn(),
-        setCurrentChatTreeNodeForSession: vi.fn()
-      } as unknown as CodexAppServerRuntimePort,
       sessionIndexStore: {
         getEntry: vi.fn().mockReturnValue(undefined)
       } as never
@@ -42,9 +35,7 @@ describe("ChatTreeProvider", () => {
     );
   });
 
-  it("returns a non-jumpable empty snapshot for non-codex sessions", async () => {
-    const readChatTreeForSession = vi.fn();
-    const setCurrentChatTreeNodeForSession = vi.fn();
+  it("returns a non-jumpable snapshot for agents without a registered provider", async () => {
     const provider = new ChatTreeProvider({
       runtimeService: {
         listSessions: vi.fn().mockReturnValue([
@@ -54,11 +45,6 @@ describe("ChatTreeProvider", () => {
           })
         ])
       } as unknown as WorkbenchRuntimeService,
-      codexRuntimePort: {
-        getThreadIdForSession: vi.fn(),
-        readChatTree: readChatTreeForSession,
-        setCurrentChatTreeNodeForSession
-      } as unknown as CodexAppServerRuntimePort,
       sessionIndexStore: {
         getEntry: vi.fn().mockReturnValue(undefined)
       } as never,
@@ -75,118 +61,71 @@ describe("ChatTreeProvider", () => {
     await expect(provider.jump("session-acp", "node-1")).resolves.toEqual({
       jumped: false
     });
-    expect(readChatTreeForSession).not.toHaveBeenCalled();
-    expect(setCurrentChatTreeNodeForSession).not.toHaveBeenCalled();
   });
 
-  it("maps codex chat tree nodes and delegates node jumps", async () => {
-    const getThreadIdForSession = vi.fn().mockReturnValue("thread-1");
-    const readChatTree = vi.fn().mockResolvedValue({
-      threadId: "thread-1",
-      chatTree: {
-        currentNodeId: "node-2",
-        nodes: [
-          {
-            nodeId: "node-1",
-            parentNodeId: null,
-            summary: "Start plan",
-            turnId: "turn-1",
-            order: 1
-          },
-          {
-            nodeId: "node-2",
-            parentNodeId: "node-1",
-            summary: null,
-            turnId: "turn-2",
-            order: 2
-          }
-        ]
-      }
-    });
-    const setCurrentChatTreeNodeForSession = vi.fn().mockResolvedValue(true);
-    const provider = new ChatTreeProvider({
-      runtimeService: {
-        listSessions: vi.fn().mockReturnValue([
-          createSession({
-            sessionId: "session-codex",
-            agentId: "codex"
-          })
-        ])
-      } as unknown as WorkbenchRuntimeService,
-      codexRuntimePort: {
-        getThreadIdForSession,
-        readChatTree,
-        setCurrentChatTreeNodeForSession
-      } as unknown as CodexAppServerRuntimePort,
-      sessionIndexStore: {
-        getEntry: vi.fn().mockReturnValue(undefined)
-      } as never,
-      now: () => "2026-04-18T00:10:01Z"
-    });
-
-    const snapshot = await provider.get("session-codex");
-    expect(snapshot).toEqual({
-      sessionId: "session-codex",
-      agentId: "codex",
+  it("delegates chat tree reads and jumps to the matching agent provider", async () => {
+    const get = vi.fn().mockResolvedValue({
+      sessionId: "session-custom",
+      agentId: "custom",
       supportsJump: true,
-      currentNodeId: "node-2",
+      currentNodeId: "node-1",
       nodes: [
         {
           nodeId: "node-1",
-          parentNodeId: undefined,
-          label: "Start plan",
-          turnId: "turn-1",
+          label: "Node 1",
           order: 1,
-          isCurrent: false
-        },
-        {
-          nodeId: "node-2",
-          parentNodeId: "node-1",
-          label: "node-2",
-          turnId: "turn-2",
-          order: 2,
           isCurrent: true
         }
       ],
       fetchedAt: "2026-04-18T00:10:01Z"
     });
-
-    await expect(provider.jump("session-codex", "node-1")).resolves.toEqual({
-      jumped: true
-    });
-    expect(setCurrentChatTreeNodeForSession).toHaveBeenCalledWith(
-      "session-codex",
-      "node-1"
-    );
-  });
-
-  it("returns non-jumpable snapshots when a codex session has no chat tree", async () => {
+    const jump = vi.fn().mockResolvedValue(true);
     const provider = new ChatTreeProvider({
       runtimeService: {
         listSessions: vi.fn().mockReturnValue([
           createSession({
-            sessionId: "session-codex",
-            agentId: "codex"
+            sessionId: "session-custom",
+            agentId: "custom"
           })
         ])
       } as unknown as WorkbenchRuntimeService,
-      codexRuntimePort: {
-        getThreadIdForSession: vi.fn().mockReturnValue("thread-1"),
-        readChatTree: vi.fn().mockResolvedValue(undefined),
-        setCurrentChatTreeNodeForSession: vi.fn()
-      } as unknown as CodexAppServerRuntimePort,
       sessionIndexStore: {
         getEntry: vi.fn().mockReturnValue(undefined)
       } as never,
-      now: () => "2026-04-18T00:10:02Z"
+      providers: [
+        {
+          agentId: "custom",
+          get,
+          jump
+        }
+      ]
     });
 
-    await expect(provider.get("session-codex")).resolves.toEqual({
-      sessionId: "session-codex",
-      agentId: "codex",
-      supportsJump: false,
-      nodes: [],
-      fetchedAt: "2026-04-18T00:10:02Z"
+    await expect(provider.get("session-custom")).resolves.toEqual({
+      sessionId: "session-custom",
+      agentId: "custom",
+      supportsJump: true,
+      currentNodeId: "node-1",
+      nodes: [
+        {
+          nodeId: "node-1",
+          label: "Node 1",
+          order: 1,
+          isCurrent: true
+        }
+      ],
+      fetchedAt: "2026-04-18T00:10:01Z"
     });
+    await expect(provider.jump("session-custom", "node-2")).resolves.toEqual({
+      jumped: true
+    });
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(jump).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "session-custom",
+        agentId: "custom"
+      }),
+      "node-2"
+    );
   });
 });

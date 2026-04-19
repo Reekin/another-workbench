@@ -15,6 +15,8 @@ import {
 } from "./session-discovery.js";
 import { WorkbenchShellService } from "./workbench-shell-service.js";
 import { WorkspaceRegistryService } from "./workspace-registry.js";
+import { CodexSessionActionsProvider } from "./codex-session-actions-provider.js";
+import { CodexChatTreeAgentProvider } from "./codex-chat-tree-provider.js";
 
 export type CreateWorkbenchRuntimeServiceOptions = {
   codexCommandPath?: string;
@@ -120,13 +122,22 @@ export const createWorkbenchRuntimeService = (
   });
   const sessionActions = new SessionActionsProvider({
     runtimeService,
-    codexRuntimePort,
-    sessionIndexStore
+    sessionIndexStore,
+    providers: [
+      new CodexSessionActionsProvider({
+        codexRuntimePort
+      })
+    ]
   });
   const chatTreeProvider = new ChatTreeProvider({
     runtimeService,
-    codexRuntimePort,
     sessionIndexStore,
+    providers: [
+      new CodexChatTreeAgentProvider({
+        codexRuntimePort,
+        now: options.now
+      })
+    ],
     now: options.now
   });
 

@@ -1,0 +1,571 @@
+import type { ProviderSessionHandle } from "@another-workbench/shared";
+import type { SessionIndexStore } from "./session-index.js";
+import {
+  SessionIdentityRegistry,
+  type ResolvedSessionContext
+} from "./session-identity-registry.js";
+import type { SessionDiscoveryProvider } from "./session-discovery.js";
+import type { WorkbenchRuntimeService } from "./runtime-service.js";
+
+export type SessionActionKind =
+  | "archive"
+  | "copy_session_id"
+  | "open_rollout"
+  | "reload";
+
+export type SessionActionDescriptor = {
+  action: SessionActionKind;
+  label: string;
+  disabled?: boolean;
+  reason?: string;
+};
+
+export type SessionActionResult =
+  | { action: "archive"; archived: true }
+  | { action: "copy_session_id"; copiedText: string }
+  | {
+      action: "open_rollout";
+      rolloutPath: string;
+      rolloutDisplayPath: string;
+      rolloutFileUrl: string;
+    }
+  | { action: "reload"; resumed: true };
+
+export type ConversationGraphNodeSnapshot = {
+  nodeId: string;
+  providerNodeId?: string;
+  parentNodeId?: string;
+  label: string;
+  summary?: string;
+  turnId?: string;
+  order: number;
+  isCurrent: boolean;
+};
+
+export type ConversationGraphSnapshot = {
+  sessionId: string;
+  agentId: string;
+  supportsJump: boolean;
+  currentNodeId?: string;
+  nodes: ConversationGraphNodeSnapshot[];
+  fetchedAt: string;
+};
+
+export type DelegationNodeSnapshot = {
+  nodeId: string;
+  providerNodeId?: string;
+  label: string;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  role: "root" | "delegate";
+  parentNodeId?: string;
+  linkedSessionId?: string;
+  summary?: string;
+  startedAt?: string;
+  completedAt?: string;
+};
+
+export type DelegationEdgeSnapshot = {
+  edgeId: string;
+  fromNodeId: string;
+  toNodeId: string;
+  relation: "spawn" | "handoff" | "wait" | "resume";
+};
+
+export type DelegationSnapshot = {
+  sessionId: string;
+  agentId: string;
+  supported: boolean;
+  supportsControl: boolean;
+  currentActiveNodeId?: string;
+  nodes: DelegationNodeSnapshot[];
+  edges: DelegationEdgeSnapshot[];
+  fetchedAt: string;
+};
+
+export type WorktreeSnapshot = {
+  sessionId: string;
+  agentId: string;
+  supported: boolean;
+  workspaceRoot?: string;
+  rolloutPath?: string;
+  gitBranch?: string;
+  gitSha?: string;
+  gitOriginUrl?: string;
+  diffToRemoteSha?: string;
+  diffToRemote?: string;
+  fetchedAt: string;
+};
+
+export type CheckpointEntrySnapshot = {
+  checkpointId: string;
+  providerCheckpointId?: string;
+  label: string;
+  summary?: string;
+  turnId?: string;
+  order: number;
+  isCurrent: boolean;
+};
+
+export type CheckpointSnapshot = {
+  sessionId: string;
+  agentId: string;
+  supported: boolean;
+  supportsRestore: boolean;
+  currentCheckpointId?: string;
+  checkpoints: CheckpointEntrySnapshot[];
+  fetchedAt: string;
+};
+
+export type DiagnosticsSnapshot = {
+  sessionId: string;
+  agentId: string;
+  supported: boolean;
+  authenticated: boolean;
+  authMethod?: string | null;
+  requiresOpenaiAuth?: boolean | null;
+  gitBranch?: string;
+  gitSha?: string;
+  diffToRemoteSha?: string;
+  diffToRemote?: string;
+  summaryText?: string;
+  fetchedAt: string;
+};
+
+export type BackgroundRunSnapshot = {
+  sessionId: string;
+  agentId: string;
+  supported: boolean;
+  status: "unsupported" | "attached" | "detached";
+  resumeToken?: string;
+  fetchedAt: string;
+};
+
+export type SessionCapabilityContext = ResolvedSessionContext & {
+  runtimeService: WorkbenchRuntimeService;
+  sessionIndexStore: SessionIndexStore;
+  sessionIdentity: SessionIdentityRegistry;
+};
+
+export type SessionActionsCapability = {
+  resolveDisplayedSessionId?: (input: SessionCapabilityContext) => string | undefined;
+  listAdditionalActions?: (
+    input: SessionCapabilityContext
+  ) => Promise<SessionActionDescriptor[]>;
+  prepareArchive?: (input: SessionCapabilityContext) => Promise<void>;
+  runAction?: (
+    input: SessionCapabilityContext & { action: SessionActionKind }
+  ) => Promise<SessionActionResult | undefined>;
+};
+
+export type ConversationGraphCapability = {
+  get: (input: SessionCapabilityContext) => Promise<ConversationGraphSnapshot>;
+  jump?: (
+    input: SessionCapabilityContext,
+    nodeId: string
+  ) => Promise<boolean>;
+};
+
+export type DelegationCapability = {
+  get: (input: SessionCapabilityContext) => Promise<DelegationSnapshot>;
+};
+
+export type WorktreeCapability = {
+  get: (input: SessionCapabilityContext) => Promise<WorktreeSnapshot>;
+};
+
+export type CheckpointCapability = {
+  get: (input: SessionCapabilityContext) => Promise<CheckpointSnapshot>;
+};
+
+export type DiagnosticsCapability = {
+  get: (input: SessionCapabilityContext) => Promise<DiagnosticsSnapshot>;
+};
+
+export type BackgroundRunCapability = {
+  get: (input: SessionCapabilityContext) => Promise<BackgroundRunSnapshot>;
+};
+
+export type AgentWorkbenchCapabilities = {
+  readonly agentId: string;
+  readonly sessionActions?: SessionActionsCapability;
+  readonly conversationGraph?: ConversationGraphCapability;
+  readonly delegation?: DelegationCapability;
+  readonly worktree?: WorktreeCapability;
+  readonly checkpoint?: CheckpointCapability;
+  readonly diagnostics?: DiagnosticsCapability;
+  readonly backgroundRun?: BackgroundRunCapability;
+  readonly sessionDiscovery?: SessionDiscoveryProvider;
+};
+
+type CapabilityRegistryOptions = {
+  runtimeService: WorkbenchRuntimeService;
+  sessionIndexStore: SessionIndexStore;
+  sessionIdentity: SessionIdentityRegistry;
+  capabilities?: AgentWorkbenchCapabilities[];
+  now?: () => string;
+};
+
+const unsupportedConversationGraph = (
+  sessionId: string,
+  agentId: string,
+  fetchedAt: string
+): ConversationGraphSnapshot => ({
+  sessionId,
+  agentId,
+  supportsJump: false,
+  nodes: [],
+  fetchedAt
+});
+
+const unsupportedDelegation = (
+  sessionId: string,
+  agentId: string,
+  fetchedAt: string
+): DelegationSnapshot => ({
+  sessionId,
+  agentId,
+  supported: false,
+  supportsControl: false,
+  nodes: [],
+  edges: [],
+  fetchedAt
+});
+
+const unsupportedWorktree = (
+  sessionId: string,
+  agentId: string,
+  fetchedAt: string
+): WorktreeSnapshot => ({
+  sessionId,
+  agentId,
+  supported: false,
+  fetchedAt
+});
+
+const unsupportedCheckpoint = (
+  sessionId: string,
+  agentId: string,
+  fetchedAt: string
+): CheckpointSnapshot => ({
+  sessionId,
+  agentId,
+  supported: false,
+  supportsRestore: false,
+  checkpoints: [],
+  fetchedAt
+});
+
+const unsupportedDiagnostics = (
+  sessionId: string,
+  agentId: string,
+  fetchedAt: string
+): DiagnosticsSnapshot => ({
+  sessionId,
+  agentId,
+  supported: false,
+  authenticated: false,
+  fetchedAt
+});
+
+const unsupportedBackgroundRun = (
+  sessionId: string,
+  agentId: string,
+  fetchedAt: string
+): BackgroundRunSnapshot => ({
+  sessionId,
+  agentId,
+  supported: false,
+  status: "unsupported",
+  fetchedAt
+});
+
+export class CapabilityRegistry {
+  private readonly runtimeService: WorkbenchRuntimeService;
+  private readonly sessionIndexStore: SessionIndexStore;
+  private readonly sessionIdentity: SessionIdentityRegistry;
+  private readonly capabilitiesByAgentId: Map<string, AgentWorkbenchCapabilities>;
+  private readonly now: () => string;
+
+  public constructor(options: CapabilityRegistryOptions) {
+    this.runtimeService = options.runtimeService;
+    this.sessionIndexStore = options.sessionIndexStore;
+    this.sessionIdentity = options.sessionIdentity;
+    this.capabilitiesByAgentId = new Map(
+      (options.capabilities ?? []).map((entry) => [entry.agentId, entry] as const)
+    );
+    this.now = options.now ?? (() => new Date().toISOString());
+  }
+
+  public resolveContext(sessionId: string): SessionCapabilityContext {
+    return {
+      ...this.sessionIdentity.resolveContext(sessionId),
+      runtimeService: this.runtimeService,
+      sessionIndexStore: this.sessionIndexStore,
+      sessionIdentity: this.sessionIdentity
+    };
+  }
+
+  public getAgentCapabilities(
+    agentId: string | undefined
+  ): AgentWorkbenchCapabilities | undefined {
+    return agentId ? this.capabilitiesByAgentId.get(agentId) : undefined;
+  }
+
+  public getSessionDiscoveryProvider(
+    agentId: string | undefined
+  ): SessionDiscoveryProvider | undefined {
+    return this.getAgentCapabilities(agentId)?.sessionDiscovery;
+  }
+
+  public listSessionDiscoveryProviders(): SessionDiscoveryProvider[] {
+    return [...this.capabilitiesByAgentId.values()]
+      .map((entry) => entry.sessionDiscovery)
+      .filter((entry): entry is SessionDiscoveryProvider => Boolean(entry));
+  }
+
+  public async listSessionActions(
+    sessionId: string
+  ): Promise<SessionActionDescriptor[]> {
+    const context = this.resolveContext(sessionId);
+    const { session, indexEntry } = context;
+    const actions: SessionActionDescriptor[] = [
+      {
+        action: "copy_session_id",
+        label: "Copy session id"
+      }
+    ];
+    if (!session && !indexEntry) {
+      return actions;
+    }
+
+    actions.push({
+      action: "archive",
+      label: "Archive",
+      disabled: Boolean(session?.archivedAt ?? indexEntry?.archivedAt),
+      reason:
+        session?.archivedAt ?? indexEntry?.archivedAt
+          ? "Session is already archived."
+          : undefined
+    });
+    actions.push({
+      action: "reload",
+      label: "Reload"
+    });
+
+    const provider = this.getAgentCapabilities(context.agentId)?.sessionActions;
+    if (provider?.listAdditionalActions) {
+      actions.push(...(await provider.listAdditionalActions(context)));
+    }
+
+    return actions;
+  }
+
+  public async runSessionAction(
+    sessionId: string,
+    action: SessionActionKind
+  ): Promise<SessionActionResult> {
+    const context = this.resolveContext(sessionId);
+    const { session, indexEntry } = context;
+    if (!session && !indexEntry && action !== "copy_session_id") {
+      throw new Error(`Unknown session: ${sessionId}`);
+    }
+
+    const provider = this.getAgentCapabilities(context.agentId)?.sessionActions;
+    switch (action) {
+      case "copy_session_id":
+        return {
+          action,
+          copiedText:
+            provider?.resolveDisplayedSessionId?.(context) ??
+            context.providerHandle?.providerSessionId ??
+            sessionId
+        };
+      case "archive":
+        await provider?.prepareArchive?.(context);
+        await this.archiveProviderAliases({
+          handle: context.providerHandle,
+          providerSessionId:
+            provider?.resolveDisplayedSessionId?.(context) ??
+            context.indexEntry?.providerSessionId ??
+            (typeof context.session?.metadata?.providerSessionId === "string"
+              ? context.session.metadata.providerSessionId
+              : undefined),
+          workspaceId: context.indexEntry?.workspaceId
+        });
+        if (!session && indexEntry) {
+          return {
+            action,
+            archived: true
+          };
+        }
+        await this.runtimeService.executeCommand({
+          commandId: `archive-${sessionId}`,
+          command: {
+            type: "archiveSession",
+            sessionId
+          }
+        });
+        return {
+          action,
+          archived: true
+        };
+      case "reload":
+        if (!session && indexEntry) {
+          return {
+            action,
+            resumed: true
+          };
+        }
+        await this.runtimeService.executeCommand({
+          commandId: `resume-${sessionId}`,
+          command: {
+            type: "resumeSession",
+            sessionId
+          }
+        });
+        return {
+          action,
+          resumed: true
+        };
+      case "open_rollout": {
+        const result = await provider?.runAction?.({
+          ...context,
+          action
+        });
+        if (result) {
+          return result;
+        }
+        throw new Error(
+          `Open rollout is not supported for ${context.agentId ?? "unknown"} sessions.`
+        );
+      }
+      default: {
+        const exhaustive: never = action;
+        return exhaustive;
+      }
+    }
+  }
+
+  public async getConversationGraph(
+    sessionId: string
+  ): Promise<ConversationGraphSnapshot> {
+    const context = this.resolveContext(sessionId);
+    if (!context.agentId) {
+      throw new Error(`Unknown session: ${sessionId}`);
+    }
+    const capability = this.getAgentCapabilities(context.agentId)?.conversationGraph;
+    if (!capability) {
+      return unsupportedConversationGraph(sessionId, context.agentId, this.now());
+    }
+    return capability.get(context);
+  }
+
+  public async jumpConversationGraph(
+    sessionId: string,
+    nodeId: string
+  ): Promise<{ jumped: boolean }> {
+    const context = this.resolveContext(sessionId);
+    if (!context.agentId) {
+      throw new Error(`Unknown session: ${sessionId}`);
+    }
+    const capability = this.getAgentCapabilities(context.agentId)?.conversationGraph;
+    if (!capability?.jump) {
+      return {
+        jumped: false
+      };
+    }
+    return {
+      jumped: await capability.jump(context, nodeId)
+    };
+  }
+
+  public async getDelegation(sessionId: string): Promise<DelegationSnapshot> {
+    const context = this.resolveContext(sessionId);
+    if (!context.agentId) {
+      throw new Error(`Unknown session: ${sessionId}`);
+    }
+    const capability = this.getAgentCapabilities(context.agentId)?.delegation;
+    if (!capability) {
+      return unsupportedDelegation(sessionId, context.agentId, this.now());
+    }
+    return capability.get(context);
+  }
+
+  public async getWorktree(sessionId: string): Promise<WorktreeSnapshot> {
+    const context = this.resolveContext(sessionId);
+    if (!context.agentId) {
+      throw new Error(`Unknown session: ${sessionId}`);
+    }
+    const capability = this.getAgentCapabilities(context.agentId)?.worktree;
+    if (!capability) {
+      return unsupportedWorktree(sessionId, context.agentId, this.now());
+    }
+    return capability.get(context);
+  }
+
+  public async getCheckpoint(sessionId: string): Promise<CheckpointSnapshot> {
+    const context = this.resolveContext(sessionId);
+    if (!context.agentId) {
+      throw new Error(`Unknown session: ${sessionId}`);
+    }
+    const capability = this.getAgentCapabilities(context.agentId)?.checkpoint;
+    if (!capability) {
+      return unsupportedCheckpoint(sessionId, context.agentId, this.now());
+    }
+    return capability.get(context);
+  }
+
+  public async getDiagnostics(sessionId: string): Promise<DiagnosticsSnapshot> {
+    const context = this.resolveContext(sessionId);
+    if (!context.agentId) {
+      throw new Error(`Unknown session: ${sessionId}`);
+    }
+    const capability = this.getAgentCapabilities(context.agentId)?.diagnostics;
+    if (!capability) {
+      return unsupportedDiagnostics(sessionId, context.agentId, this.now());
+    }
+    return capability.get(context);
+  }
+
+  public async getBackgroundRun(sessionId: string): Promise<BackgroundRunSnapshot> {
+    const context = this.resolveContext(sessionId);
+    if (!context.agentId) {
+      throw new Error(`Unknown session: ${sessionId}`);
+    }
+    const capability = this.getAgentCapabilities(context.agentId)?.backgroundRun;
+    if (!capability) {
+      return unsupportedBackgroundRun(sessionId, context.agentId, this.now());
+    }
+    return capability.get(context);
+  }
+
+  private async archiveProviderAliases(
+    input: {
+      handle: ProviderSessionHandle | undefined;
+      providerSessionId?: string;
+      workspaceId?: string;
+    }
+  ): Promise<void> {
+    if (input.handle) {
+      const aliases = this.sessionIdentity.listSessionIdsByProviderHandle(
+        input.handle,
+        input.workspaceId
+      );
+      if (aliases.length > 0) {
+        await this.sessionIndexStore.archiveSessions(aliases);
+        return;
+      }
+    }
+
+    if (!input.providerSessionId) {
+      return;
+    }
+    const aliases = this.sessionIndexStore
+      .listEntriesByProviderSessionId(input.providerSessionId, input.workspaceId)
+      .map((entry) => entry.sessionId);
+    if (aliases.length === 0) {
+      return;
+    }
+    await this.sessionIndexStore.archiveSessions(aliases);
+  }
+}

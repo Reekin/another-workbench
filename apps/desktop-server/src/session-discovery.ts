@@ -33,6 +33,8 @@ import type {
 } from "./session-index.js";
 import type { WorkspaceRecord, WorkspaceRegistryService } from "./workspace-registry.js";
 import type { WorkbenchRuntimeService } from "./runtime-service.js";
+import { CapabilityRegistry } from "./capability-registry.js";
+import { SessionIdentityRegistry } from "./session-identity-registry.js";
 
 const codexProviderKind = "codex-thread";
 const codexAgentId = "codex";
@@ -604,18 +606,29 @@ export class SessionReconciliationService {
   private readonly sessionIndexStore: SessionIndexStore;
   private readonly runtimeService: WorkbenchRuntimeService;
   private readonly providersByAgentId: Map<string, SessionDiscoveryProvider>;
+  private readonly sessionIdentity: SessionIdentityRegistry;
 
   public constructor(options: {
     workspaceRegistry: WorkspaceRegistryService;
     sessionIndexStore: SessionIndexStore;
     runtimeService: WorkbenchRuntimeService;
+    sessionIdentity?: SessionIdentityRegistry;
+    capabilityRegistry?: CapabilityRegistry;
     providers?: SessionDiscoveryProvider[];
   }) {
     this.workspaceRegistry = options.workspaceRegistry;
     this.sessionIndexStore = options.sessionIndexStore;
     this.runtimeService = options.runtimeService;
+    this.sessionIdentity =
+      options.sessionIdentity ??
+      new SessionIdentityRegistry({
+        runtimeService: options.runtimeService,
+        sessionIndexStore: options.sessionIndexStore
+      });
     this.providersByAgentId = new Map(
-      (options.providers ?? []).map((provider) => [provider.agentId, provider] as const)
+      (options.providers ?? options.capabilityRegistry?.listSessionDiscoveryProviders() ?? []).map(
+        (provider) => [provider.agentId, provider] as const
+      )
     );
   }
 
@@ -720,16 +733,16 @@ export class SessionReconciliationService {
     workspaceId: string,
     sessions: DiscoveredSessionRecord[]
   ): Map<string, string> {
-    const existingEntries = this.sessionIndexStore.listEntries(workspaceId);
-    const sessionIdByProviderSessionId = new Map(
-      existingEntries
-        .filter((entry) => Boolean(entry.providerSessionId))
-        .map((entry) => [entry.providerSessionId!, entry.sessionId] as const)
-    );
     const aliases = new Map<string, string>();
 
     for (const session of sessions) {
-      const existingSessionId = sessionIdByProviderSessionId.get(session.providerSessionId);
+      const existingSessionId = this.sessionIdentity.resolveWorkbenchSessionId(
+        {
+          providerKind: session.providerKind,
+          providerSessionId: session.providerSessionId
+        },
+        workspaceId
+      );
       if (existingSessionId) {
         aliases.set(session.sessionId, existingSessionId);
       }

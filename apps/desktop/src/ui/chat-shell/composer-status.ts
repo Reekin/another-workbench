@@ -14,6 +14,7 @@ export type ComposerStatusNotice = {
     | "session-browser"
     | "session-action"
     | "chat-tree"
+    | "delegation"
     | "settings";
 };
 

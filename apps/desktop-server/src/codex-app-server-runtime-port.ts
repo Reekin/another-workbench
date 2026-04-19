@@ -8,6 +8,10 @@ import type {
 } from "@another-workbench/adapters";
 import type { AgentAdapterRuntimeConfig } from "@another-workbench/adapters";
 import type { Attachment, EventType } from "@another-workbench/shared";
+import type { GetAuthStatusParams } from "./codex-app-server-generated/GetAuthStatusParams.js";
+import type { GetAuthStatusResponse } from "./codex-app-server-generated/GetAuthStatusResponse.js";
+import type { GitDiffToRemoteParams } from "./codex-app-server-generated/GitDiffToRemoteParams.js";
+import type { GitDiffToRemoteResponse } from "./codex-app-server-generated/GitDiffToRemoteResponse.js";
 import type { AskForApproval } from "./codex-app-server-generated/v2/AskForApproval.js";
 import type { SandboxMode } from "./codex-app-server-generated/v2/SandboxMode.js";
 import type { ReasoningEffort } from "./codex-app-server-generated/ReasoningEffort.js";
@@ -543,6 +547,21 @@ export class CodexAppServerRuntimePort
     await this.rpc("thread/archive", {
       threadId
     } satisfies ThreadArchiveParams);
+  }
+
+  public async readAuthStatus(): Promise<GetAuthStatusResponse> {
+    await this.start(this.startConfig);
+    return (await this.rpc("getAuthStatus", {
+      includeToken: false,
+      refreshToken: false
+    } satisfies GetAuthStatusParams)) as GetAuthStatusResponse;
+  }
+
+  public async readGitDiffToRemote(cwd: string): Promise<GitDiffToRemoteResponse> {
+    await this.start(this.startConfig);
+    return (await this.rpc("gitDiffToRemote", {
+      cwd
+    } satisfies GitDiffToRemoteParams)) as GitDiffToRemoteResponse;
   }
 
   private async handleTurnStart(payload: CodexRuntimeRequest): Promise<void> {

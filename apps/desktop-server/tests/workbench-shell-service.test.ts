@@ -157,6 +157,36 @@ describe("WorkbenchShellService", () => {
     expect(removeIndexedWorkspace).toHaveBeenCalledWith("workspace-1");
   });
 
+  it("preserves the active session when reselecting the current workspace", async () => {
+    const ready = vi.fn().mockResolvedValue(undefined);
+    const getState = vi.fn().mockReturnValue({
+      lastActiveWorkspaceId: "workspace-1",
+      lastActiveSessionId: "session-1"
+    });
+    const setLastActiveSelection = vi.fn().mockResolvedValue(undefined);
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        getWorkspaceRegistry: () => ({
+          ready,
+          getState,
+          setLastActiveSelection
+        })
+      } as never,
+      sessionCatalog: {} as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never
+    });
+
+    await expect(service.selectWorkspace("workspace-1")).resolves.toEqual({
+      workspaceId: "workspace-1",
+      activeSessionId: "session-1"
+    });
+    expect(setLastActiveSelection).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      sessionId: "session-1"
+    });
+  });
+
   it("marks a session as active and read when opening it from the browser tree", async () => {
     const setLastActiveSelection = vi.fn().mockResolvedValue(undefined);
     const markSessionRead = vi.fn().mockResolvedValue(undefined);

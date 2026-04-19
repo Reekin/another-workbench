@@ -1,9 +1,13 @@
 import type {
   AgentDescriptor,
   Attachment,
+  BackgroundRunSnapshotRpc,
+  CheckpointSnapshotRpc,
   ChatTreeSnapshotRpc,
   ChatSession,
   Command,
+  DelegationSnapshotRpc,
+  DiagnosticsSnapshotRpc,
   DomainSnapshot,
   SessionActionDescriptorRpc,
   SessionActionKindRpc,
@@ -13,11 +17,13 @@ import type {
   WorkbenchEventPush,
   WorkbenchEventSubscriptionFilter,
   WorkbenchSettingsRpc,
+  WorktreeSnapshotRpc,
   WorkspaceBrowserNodeRpc,
   WorkspaceRecordRpc,
   WorkbenchRpcResponse
 } from "@another-workbench/shared";
 import { safeParseWorkbenchRpcResponse } from "@another-workbench/shared";
+import { createTransportRpcHelper } from "./transport-rpc-helper.js";
 
 const createOpaqueId = (): string =>
   `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -212,6 +218,21 @@ export type DesktopTransport = {
       nodeId: string;
     }) => Promise<{ jumped: boolean }>;
   };
+  delegation: {
+    get: (sessionId: string) => Promise<DelegationSnapshotRpc>;
+  };
+  worktree: {
+    get: (sessionId: string) => Promise<WorktreeSnapshotRpc>;
+  };
+  checkpoint: {
+    get: (sessionId: string) => Promise<CheckpointSnapshotRpc>;
+  };
+  diagnostics: {
+    get: (sessionId: string) => Promise<DiagnosticsSnapshotRpc>;
+  };
+  backgroundRun: {
+    get: (sessionId: string) => Promise<BackgroundRunSnapshotRpc>;
+  };
   approval: {
     respond: (input: ApprovalRespondInput) => Promise<CommandReceipt>;
   };
@@ -249,65 +270,24 @@ export const createDesktopTransport = (
 ): DesktopTransport => {
   const createId = options.createId ?? createOpaqueId;
   const now = options.now ?? (() => new Date().toISOString());
+  const rpc = createTransportRpcHelper(
+    preloadApi,
+    createId,
+    (input) => new DesktopTransportError(input)
+  );
 
   const requestAgentList = async (): Promise<AgentDescriptor[]> => {
-    const requestId = createId();
-    const response = await preloadApi.request({
-      id: requestId,
-      method: "agent.list",
-      params: {}
-    });
-    if (response.method !== "agent.list") {
-      throw new DesktopTransportError({
-        method: "agent.list",
-        code: "IPC_METHOD_MISMATCH",
-        details: {
-          expectedMethod: "agent.list",
-          actualMethod: response.method
-        },
-        requestId
-      });
-    }
-    if (!response.ok) {
-      throw toTransportError("agent.list", requestId, response.error);
-    }
-    const result = response.result as Extract<
-      WorkbenchRpcResponse,
-      { method: "agent.list"; ok: true }
-    >["result"];
+    const result = await rpc.request("agent.list", {});
     return result.agents;
   };
 
   const requestAgentSelect = async (
     input: AgentSelectInput
   ): Promise<{ selectedAgentId: string }> => {
-    const requestId = createId();
-    const response = await preloadApi.request({
-      id: requestId,
-      method: "agent.select",
-      params: {
-        agentId: input.agentId,
-        config: input.config
-      }
+    return rpc.request("agent.select", {
+      agentId: input.agentId,
+      config: input.config
     });
-    if (response.method !== "agent.select") {
-      throw new DesktopTransportError({
-        method: "agent.select",
-        code: "IPC_METHOD_MISMATCH",
-        details: {
-          expectedMethod: "agent.select",
-          actualMethod: response.method
-        },
-        requestId
-      });
-    }
-    if (!response.ok) {
-      throw toTransportError("agent.select", requestId, response.error);
-    }
-    return response.result as Extract<
-      WorkbenchRpcResponse,
-      { method: "agent.select"; ok: true }
-    >["result"];
   };
 
   const requestDomainSnapshot = async (): Promise<{
@@ -369,59 +349,13 @@ export const createDesktopTransport = (
   };
 
   const requestSettingsGet = async (): Promise<WorkbenchSettingsRpc> => {
-    const requestId = createId();
-    const response = await preloadApi.request({
-      id: requestId,
-      method: "settings.get",
-      params: {}
-    });
-    if (response.method !== "settings.get") {
-      throw new DesktopTransportError({
-        method: "settings.get",
-        code: "IPC_METHOD_MISMATCH",
-        details: {
-          expectedMethod: "settings.get",
-          actualMethod: response.method
-        },
-        requestId
-      });
-    }
-    if (!response.ok) {
-      throw toTransportError("settings.get", requestId, response.error);
-    }
-    return response.result as Extract<
-      WorkbenchRpcResponse,
-      { method: "settings.get"; ok: true }
-    >["result"];
+    return rpc.request("settings.get", {});
   };
 
   const requestSettingsUpdate = async (input: {
     defaultNewSessionAgentId?: string;
   }): Promise<WorkbenchSettingsRpc> => {
-    const requestId = createId();
-    const response = await preloadApi.request({
-      id: requestId,
-      method: "settings.update",
-      params: input
-    });
-    if (response.method !== "settings.update") {
-      throw new DesktopTransportError({
-        method: "settings.update",
-        code: "IPC_METHOD_MISMATCH",
-        details: {
-          expectedMethod: "settings.update",
-          actualMethod: response.method
-        },
-        requestId
-      });
-    }
-    if (!response.ok) {
-      throw toTransportError("settings.update", requestId, response.error);
-    }
-    return response.result as Extract<
-      WorkbenchRpcResponse,
-      { method: "settings.update"; ok: true }
-    >["result"];
+    return rpc.request("settings.update", input);
   };
 
   const sendCommand = async (command: Command): Promise<CommandReceipt> => {
@@ -460,181 +394,45 @@ export const createDesktopTransport = (
   const requestSessionList = async (
     input: SessionListInput = {}
   ): Promise<ChatSession[]> => {
-    const requestId = createId();
-    const response = await preloadApi.request({
-      id: requestId,
-      method: "session.list",
-      params: {
-        conversationId: input.conversationId,
-        includeArchived: input.includeArchived ?? false
-      }
+    const result = await rpc.request("session.list", {
+      conversationId: input.conversationId,
+      includeArchived: input.includeArchived ?? false
     });
-    if (response.method !== "session.list") {
-      throw new DesktopTransportError({
-        method: "session.list",
-        code: "IPC_METHOD_MISMATCH",
-        details: {
-          expectedMethod: "session.list",
-          actualMethod: response.method
-        },
-        requestId
-      });
-    }
-    if (!response.ok) {
-      throw toTransportError("session.list", requestId, response.error);
-    }
-    return (response.result as Extract<
-      WorkbenchRpcResponse,
-      { method: "session.list"; ok: true }
-    >["result"]).sessions;
+    return result.sessions;
   };
 
   const requestWorkspaceList = async () => {
-    const requestId = createId();
-    const response = await preloadApi.request({
-      id: requestId,
-      method: "workspace.list",
-      params: {}
-    });
-    if (response.method !== "workspace.list") {
-      throw new DesktopTransportError({
-        method: "workspace.list",
-        code: "IPC_METHOD_MISMATCH",
-        details: {
-          expectedMethod: "workspace.list",
-          actualMethod: response.method
-        },
-        requestId
-      });
-    }
-    if (!response.ok) {
-      throw toTransportError("workspace.list", requestId, response.error);
-    }
-    return response.result as Extract<
-      WorkbenchRpcResponse,
-      { method: "workspace.list"; ok: true }
-    >["result"];
+    return rpc.request("workspace.list", {});
   };
 
   const requestWorkspaceAdd = async (
     input: WorkspaceAddInput
   ): Promise<WorkspaceRecordRpc> => {
-    const requestId = createId();
-    const response = await preloadApi.request({
-      id: requestId,
-      method: "workspace.add",
-      params: input
-    });
-    if (response.method !== "workspace.add") {
-      throw new DesktopTransportError({
-        method: "workspace.add",
-        code: "IPC_METHOD_MISMATCH",
-        details: {
-          expectedMethod: "workspace.add",
-          actualMethod: response.method
-        },
-        requestId
-      });
-    }
-    if (!response.ok) {
-      throw toTransportError("workspace.add", requestId, response.error);
-    }
-    return (response.result as Extract<
-      WorkbenchRpcResponse,
-      { method: "workspace.add"; ok: true }
-    >["result"]).workspace;
+    const result = await rpc.request("workspace.add", input);
+    return result.workspace;
   };
 
   const requestWorkspacePickDirectory = async (): Promise<{
     canceled: boolean;
     rootPath?: string;
   }> => {
-    const requestId = createId();
-    const response = await preloadApi.request({
-      id: requestId,
-      method: "workspace.pickDirectory",
-      params: {}
-    });
-    if (response.method !== "workspace.pickDirectory") {
-      throw new DesktopTransportError({
-        method: "workspace.pickDirectory",
-        code: "IPC_METHOD_MISMATCH",
-        details: {
-          expectedMethod: "workspace.pickDirectory",
-          actualMethod: response.method
-        },
-        requestId
-      });
-    }
-    if (!response.ok) {
-      throw toTransportError("workspace.pickDirectory", requestId, response.error);
-    }
-    return response.result as Extract<
-      WorkbenchRpcResponse,
-      { method: "workspace.pickDirectory"; ok: true }
-    >["result"];
+    return rpc.request("workspace.pickDirectory", {});
   };
 
   const requestWorkspaceRemove = async (
     input: WorkspaceRemoveInput
   ): Promise<{ workspaceId: string; removed: boolean }> => {
-    const requestId = createId();
-    const response = await preloadApi.request({
-      id: requestId,
-      method: "workspace.remove",
-      params: {
-        workspaceId: input.workspaceId
-      }
+    return rpc.request("workspace.remove", {
+      workspaceId: input.workspaceId
     });
-    if (response.method !== "workspace.remove") {
-      throw new DesktopTransportError({
-        method: "workspace.remove",
-        code: "IPC_METHOD_MISMATCH",
-        details: {
-          expectedMethod: "workspace.remove",
-          actualMethod: response.method
-        },
-        requestId
-      });
-    }
-    if (!response.ok) {
-      throw toTransportError("workspace.remove", requestId, response.error);
-    }
-    return response.result as Extract<
-      WorkbenchRpcResponse,
-      { method: "workspace.remove"; ok: true }
-    >["result"];
   };
 
   const requestSessionTree = async (workspaceId?: string): Promise<{
     workspaces: WorkspaceBrowserNodeRpc[];
   }> => {
-    const requestId = createId();
-    const response = await preloadApi.request({
-      id: requestId,
-      method: "sessionBrowser.listTree",
-      params: {
-        workspaceId
-      }
+    return rpc.request("sessionBrowser.listTree", {
+      workspaceId
     });
-    if (response.method !== "sessionBrowser.listTree") {
-      throw new DesktopTransportError({
-        method: "sessionBrowser.listTree",
-        code: "IPC_METHOD_MISMATCH",
-        details: {
-          expectedMethod: "sessionBrowser.listTree",
-          actualMethod: response.method
-        },
-        requestId
-      });
-    }
-    if (!response.ok) {
-      throw toTransportError("sessionBrowser.listTree", requestId, response.error);
-    }
-    return response.result as Extract<
-      WorkbenchRpcResponse,
-      { method: "sessionBrowser.listTree"; ok: true }
-    >["result"];
   };
 
   return {
@@ -681,272 +479,37 @@ export const createDesktopTransport = (
       pickDirectory: requestWorkspacePickDirectory,
       add: requestWorkspaceAdd,
       remove: requestWorkspaceRemove,
-      toggleExpanded: async (workspaceId: string) => {
-        const requestId = createId();
-        const response = await preloadApi.request({
-          id: requestId,
-          method: "workspace.toggleExpanded",
-          params: {
-            workspaceId
-          }
-        });
-        if (response.method !== "workspace.toggleExpanded") {
-          throw new DesktopTransportError({
-            method: "workspace.toggleExpanded",
-            code: "IPC_METHOD_MISMATCH",
-            details: {
-              expectedMethod: "workspace.toggleExpanded",
-              actualMethod: response.method
-            },
-            requestId
-          });
-        }
-        if (!response.ok) {
-          throw toTransportError(
-            "workspace.toggleExpanded",
-            requestId,
-            response.error
-          );
-        }
-        return response.result as Extract<
-          WorkbenchRpcResponse,
-          { method: "workspace.toggleExpanded"; ok: true }
-        >["result"];
-      },
-      select: async (workspaceId: string) => {
-        const requestId = createId();
-        const response = await preloadApi.request({
-          id: requestId,
-          method: "workspace.select",
-          params: {
-            workspaceId
-          }
-        });
-        if (response.method !== "workspace.select") {
-          throw new DesktopTransportError({
-            method: "workspace.select",
-            code: "IPC_METHOD_MISMATCH",
-            details: {
-              expectedMethod: "workspace.select",
-              actualMethod: response.method
-            },
-            requestId
-          });
-        }
-        if (!response.ok) {
-          throw toTransportError("workspace.select", requestId, response.error);
-        }
-        return response.result as Extract<
-          WorkbenchRpcResponse,
-          { method: "workspace.select"; ok: true }
-        >["result"];
-      }
+      toggleExpanded: (workspaceId: string) =>
+        rpc.request("workspace.toggleExpanded", {
+          workspaceId
+        }),
+      select: (workspaceId: string) =>
+        rpc.request("workspace.select", {
+          workspaceId
+        })
     },
     sessionBrowser: {
       listTree: requestSessionTree,
-      reconcile: async (workspaceId?: string) => {
-        const requestId = createId();
-        const response = await preloadApi.request({
-          id: requestId,
-          method: "sessionBrowser.reconcile",
-          params: {
-            workspaceId
-          }
-        });
-        if (response.method !== "sessionBrowser.reconcile") {
-          throw new DesktopTransportError({
-            method: "sessionBrowser.reconcile",
-            code: "IPC_METHOD_MISMATCH",
-            details: {
-              expectedMethod: "sessionBrowser.reconcile",
-              actualMethod: response.method
-            },
-            requestId
-          });
-        }
-        if (!response.ok) {
-          throw toTransportError("sessionBrowser.reconcile", requestId, response.error);
-        }
-        return response.result as Extract<
-          WorkbenchRpcResponse,
-          { method: "sessionBrowser.reconcile"; ok: true }
-        >["result"];
-      },
-      toggleExpanded: async (sessionId: string) => {
-        const requestId = createId();
-        const response = await preloadApi.request({
-          id: requestId,
-          method: "sessionBrowser.toggleExpanded",
-          params: {
-            sessionId
-          }
-        });
-        if (response.method !== "sessionBrowser.toggleExpanded") {
-          throw new DesktopTransportError({
-            method: "sessionBrowser.toggleExpanded",
-            code: "IPC_METHOD_MISMATCH",
-            details: {
-              expectedMethod: "sessionBrowser.toggleExpanded",
-              actualMethod: response.method
-            },
-            requestId
-          });
-        }
-        if (!response.ok) {
-          throw toTransportError(
-            "sessionBrowser.toggleExpanded",
-            requestId,
-            response.error
-          );
-        }
-        return response.result as Extract<
-          WorkbenchRpcResponse,
-          { method: "sessionBrowser.toggleExpanded"; ok: true }
-        >["result"];
-      },
-      create: async (input) => {
-        const requestId = createId();
-        const response = await preloadApi.request({
-          id: requestId,
-          method: "sessionBrowser.create",
-          params: input
-        });
-        if (response.method !== "sessionBrowser.create") {
-          throw new DesktopTransportError({
-            method: "sessionBrowser.create",
-            code: "IPC_METHOD_MISMATCH",
-            details: {
-              expectedMethod: "sessionBrowser.create",
-              actualMethod: response.method
-            },
-            requestId
-          });
-        }
-        if (!response.ok) {
-          throw toTransportError(
-            "sessionBrowser.create",
-            requestId,
-            response.error
-          );
-        }
-        return response.result as Extract<
-          WorkbenchRpcResponse,
-          { method: "sessionBrowser.create"; ok: true }
-        >["result"];
-      },
-      open: async (sessionId: string) => {
-        const requestId = createId();
-        const response = await preloadApi.request({
-          id: requestId,
-          method: "sessionBrowser.open",
-          params: {
-            sessionId
-          }
-        });
-        if (response.method !== "sessionBrowser.open") {
-          throw new DesktopTransportError({
-            method: "sessionBrowser.open",
-            code: "IPC_METHOD_MISMATCH",
-            details: {
-              expectedMethod: "sessionBrowser.open",
-              actualMethod: response.method
-            },
-            requestId
-          });
-        }
-        if (!response.ok) {
-          throw toTransportError("sessionBrowser.open", requestId, response.error);
-        }
-        return response.result as Extract<
-          WorkbenchRpcResponse,
-          { method: "sessionBrowser.open"; ok: true }
-        >["result"];
-      },
-      loadOlder: async (input) => {
-        const requestId = createId();
-        const response = await preloadApi.request({
-          id: requestId,
-          method: "sessionBrowser.loadOlder",
-          params: input
-        });
-        if (response.method !== "sessionBrowser.loadOlder") {
-          throw new DesktopTransportError({
-            method: "sessionBrowser.loadOlder",
-            code: "IPC_METHOD_MISMATCH",
-            details: {
-              expectedMethod: "sessionBrowser.loadOlder",
-              actualMethod: response.method
-            },
-            requestId
-          });
-        }
-        if (!response.ok) {
-          throw toTransportError("sessionBrowser.loadOlder", requestId, response.error);
-        }
-        return response.result as Extract<
-          WorkbenchRpcResponse,
-          { method: "sessionBrowser.loadOlder"; ok: true }
-        >["result"];
-      },
-      getActions: async (sessionId: string) => {
-        const requestId = createId();
-        const response = await preloadApi.request({
-          id: requestId,
-          method: "sessionBrowser.getActions",
-          params: {
-            sessionId
-          }
-        });
-        if (response.method !== "sessionBrowser.getActions") {
-          throw new DesktopTransportError({
-            method: "sessionBrowser.getActions",
-            code: "IPC_METHOD_MISMATCH",
-            details: {
-              expectedMethod: "sessionBrowser.getActions",
-              actualMethod: response.method
-            },
-            requestId
-          });
-        }
-        if (!response.ok) {
-          throw toTransportError(
-            "sessionBrowser.getActions",
-            requestId,
-            response.error
-          );
-        }
-        return response.result as Extract<
-          WorkbenchRpcResponse,
-          { method: "sessionBrowser.getActions"; ok: true }
-        >["result"];
-      },
-      runAction: async (input: SessionBrowserActionInput) => {
-        const requestId = createId();
-        const response = await preloadApi.request({
-          id: requestId,
-          method: "sessionBrowser.runAction",
-          params: input
-        });
-        if (response.method !== "sessionBrowser.runAction") {
-          throw new DesktopTransportError({
-            method: "sessionBrowser.runAction",
-            code: "IPC_METHOD_MISMATCH",
-            details: {
-              expectedMethod: "sessionBrowser.runAction",
-              actualMethod: response.method
-            },
-            requestId
-          });
-        }
-        if (!response.ok) {
-          throw toTransportError(
-            "sessionBrowser.runAction",
-            requestId,
-            response.error
-          );
-        }
-        return response.result as SessionActionResultRpc;
-      }
+      reconcile: (workspaceId?: string) =>
+        rpc.request("sessionBrowser.reconcile", {
+          workspaceId
+        }),
+      toggleExpanded: (sessionId: string) =>
+        rpc.request("sessionBrowser.toggleExpanded", {
+          sessionId
+        }),
+      create: (input) => rpc.request("sessionBrowser.create", input),
+      open: (sessionId: string) =>
+        rpc.request("sessionBrowser.open", {
+          sessionId
+        }),
+      loadOlder: (input) => rpc.request("sessionBrowser.loadOlder", input),
+      getActions: (sessionId: string) =>
+        rpc.request("sessionBrowser.getActions", {
+          sessionId
+        }),
+      runAction: (input: SessionBrowserActionInput) =>
+        rpc.request("sessionBrowser.runAction", input) as Promise<SessionActionResultRpc>
     },
     chat: {
       send: (input: ChatSendInput) =>
@@ -967,58 +530,52 @@ export const createDesktopTransport = (
     },
     chatTree: {
       get: async (sessionId: string) => {
-        const requestId = createId();
-        const response = await preloadApi.request({
-          id: requestId,
-          method: "chatTree.get",
-          params: {
-            sessionId
-          }
+        const result = await rpc.request("chatTree.get", {
+          sessionId
         });
-        if (response.method !== "chatTree.get") {
-          throw new DesktopTransportError({
-            method: "chatTree.get",
-            code: "IPC_METHOD_MISMATCH",
-            details: {
-              expectedMethod: "chatTree.get",
-              actualMethod: response.method
-            },
-            requestId
-          });
-        }
-        if (!response.ok) {
-          throw toTransportError("chatTree.get", requestId, response.error);
-        }
-        return (response.result as Extract<
-          WorkbenchRpcResponse,
-          { method: "chatTree.get"; ok: true }
-        >["result"]).chatTree;
+        return result.chatTree;
       },
-      jump: async (input: { sessionId: string; nodeId: string }) => {
-        const requestId = createId();
-        const response = await preloadApi.request({
-          id: requestId,
-          method: "chatTree.jump",
-          params: input
+      jump: (input: { sessionId: string; nodeId: string }) =>
+        rpc.request("chatTree.jump", input)
+    },
+    delegation: {
+      get: async (sessionId: string) => {
+        const result = await rpc.request("delegation.get", {
+          sessionId
         });
-        if (response.method !== "chatTree.jump") {
-          throw new DesktopTransportError({
-            method: "chatTree.jump",
-            code: "IPC_METHOD_MISMATCH",
-            details: {
-              expectedMethod: "chatTree.jump",
-              actualMethod: response.method
-            },
-            requestId
-          });
-        }
-        if (!response.ok) {
-          throw toTransportError("chatTree.jump", requestId, response.error);
-        }
-        return response.result as Extract<
-          WorkbenchRpcResponse,
-          { method: "chatTree.jump"; ok: true }
-        >["result"];
+        return result.delegation;
+      }
+    },
+    worktree: {
+      get: async (sessionId: string) => {
+        const result = await rpc.request("worktree.get", {
+          sessionId
+        });
+        return result.worktree;
+      }
+    },
+    checkpoint: {
+      get: async (sessionId: string) => {
+        const result = await rpc.request("checkpoint.get", {
+          sessionId
+        });
+        return result.checkpoint;
+      }
+    },
+    diagnostics: {
+      get: async (sessionId: string) => {
+        const result = await rpc.request("diagnostics.get", {
+          sessionId
+        });
+        return result.diagnostics;
+      }
+    },
+    backgroundRun: {
+      get: async (sessionId: string) => {
+        const result = await rpc.request("backgroundRun.get", {
+          sessionId
+        });
+        return result.backgroundRun;
       }
     },
     approval: {
@@ -1045,34 +602,11 @@ export const createDesktopTransport = (
           }
         ),
       replay: async (input: EventReplayInput) => {
-        const requestId = createId();
-        const response = await preloadApi.request({
-          id: requestId,
-          method: "events.replay",
-          params: {
-            fromCursor: input.fromCursor,
-            toCursor: input.toCursor,
-            filter: input.filter
-          }
+        const result = await rpc.request("events.replay", {
+          fromCursor: input.fromCursor,
+          toCursor: input.toCursor,
+          filter: input.filter
         });
-        if (response.method !== "events.replay") {
-          throw new DesktopTransportError({
-            method: "events.replay",
-            code: "IPC_METHOD_MISMATCH",
-            details: {
-              expectedMethod: "events.replay",
-              actualMethod: response.method
-            },
-            requestId
-          });
-        }
-        if (!response.ok) {
-          throw toTransportError("events.replay", requestId, response.error);
-        }
-        const result = response.result as Extract<
-          WorkbenchRpcResponse,
-          { method: "events.replay"; ok: true }
-        >["result"];
         return {
           ...result,
           envelopes: result.envelopes ?? []

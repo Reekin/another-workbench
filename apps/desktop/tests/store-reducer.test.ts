@@ -686,4 +686,155 @@ describe("desktop store reducer", () => {
     expect(state.eventStream.seenEventIds["evt-2"]).toBeUndefined();
     expect(state.eventStream.seenEventIds["evt-2050"]).toBe(true);
   });
+
+  it("disposes a session by pruning session-scoped entities and rebuilding indexes only", () => {
+    let state = createInitialRendererStoreState();
+
+    state = rendererStoreReducer(state, {
+      type: "store/hydrateSnapshot",
+      snapshot: {
+        conversations: [
+          {
+            conversationId: "conversation-a",
+            participantAgentIds: ["agent-a"],
+            sessionIds: ["session-a"],
+            activeSessionId: "session-a",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          },
+          {
+            conversationId: "conversation-b",
+            participantAgentIds: ["agent-b"],
+            sessionIds: ["session-b"],
+            activeSessionId: "session-b",
+            createdAt: "2026-04-17T00:01:00.000Z",
+            updatedAt: "2026-04-17T00:01:00.000Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-a",
+            conversationId: "conversation-a",
+            agentId: "agent-a",
+            status: "completed",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:02.000Z"
+          },
+          {
+            sessionId: "session-b",
+            conversationId: "conversation-b",
+            agentId: "agent-b",
+            status: "idle",
+            createdAt: "2026-04-17T00:01:00.000Z",
+            updatedAt: "2026-04-17T00:01:02.000Z"
+          }
+        ],
+        turns: [
+          {
+            turnId: "turn-a",
+            sessionId: "session-a",
+            status: "completed",
+            startedAt: "2026-04-17T00:00:00.000Z",
+            completedAt: "2026-04-17T00:00:02.000Z",
+            messageIds: ["message-a"],
+            toolCallIds: ["tool-a"],
+            terminalIds: ["terminal-a"],
+            approvalRequestIds: ["approval-a"]
+          },
+          {
+            turnId: "turn-b",
+            sessionId: "session-b",
+            status: "completed",
+            startedAt: "2026-04-17T00:01:00.000Z",
+            completedAt: "2026-04-17T00:01:02.000Z",
+            messageIds: [],
+            toolCallIds: [],
+            terminalIds: [],
+            approvalRequestIds: []
+          }
+        ],
+        messageBlocks: [
+          {
+            blockId: "message-a:md",
+            messageId: "message-a",
+            sessionId: "session-a",
+            turnId: "turn-a",
+            role: "assistant",
+            kind: "markdown",
+            text: "hello",
+            startedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        toolCalls: [
+          {
+            toolCallId: "tool-a",
+            sessionId: "session-a",
+            turnId: "turn-a",
+            toolName: "search",
+            status: "completed",
+            startedAt: "2026-04-17T00:00:00.000Z",
+            completedAt: "2026-04-17T00:00:01.000Z"
+          }
+        ],
+        terminalStreams: [
+          {
+            terminalId: "terminal-a",
+            sessionId: "session-a",
+            turnId: "turn-a",
+            status: "completed",
+            outputText: "ok",
+            startedAt: "2026-04-17T00:00:00.000Z",
+            completedAt: "2026-04-17T00:00:01.000Z"
+          }
+        ],
+        approvalRequests: [
+          {
+            requestId: "approval-a",
+            sessionId: "session-a",
+            turnId: "turn-a",
+            approvalKind: "tool",
+            status: "approved",
+            title: "Need approval",
+            requestedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        participants: [
+          {
+            participantId: "participant-a",
+            conversationId: "conversation-a",
+            agentId: "agent-a",
+            activeSessionIds: ["session-a"],
+            joinedAt: "2026-04-17T00:00:00.000Z"
+          },
+          {
+            participantId: "participant-b",
+            conversationId: "conversation-b",
+            agentId: "agent-b",
+            activeSessionIds: ["session-b"],
+            joinedAt: "2026-04-17T00:01:00.000Z"
+          }
+        ],
+        sessionRelations: []
+      }
+    });
+
+    state = rendererStoreReducer(state, {
+      type: "store/disposeSession",
+      sessionId: "session-a"
+    });
+
+    expect(state.entities.sessions["session-a"]).toBeUndefined();
+    expect(state.entities.turns["turn-a"]).toBeUndefined();
+    expect(state.entities.messageBlocks["message-a:md"]).toBeUndefined();
+    expect(state.entities.toolCalls["tool-a"]).toBeUndefined();
+    expect(state.entities.terminalStreams["terminal-a"]).toBeUndefined();
+    expect(state.entities.approvalRequests["approval-a"]).toBeUndefined();
+    expect(state.entities.conversations["conversation-a"]).toBeUndefined();
+    expect(state.entities.participants["participant-a"]).toBeUndefined();
+    expect(state.indexes.turnIdsBySession["session-a"]).toBeUndefined();
+    expect(state.indexes.sessionIdsByConversation["conversation-a"]).toBeUndefined();
+    expect(state.activeSessionId).toBe("session-b");
+    expect(state.entities.sessions["session-b"]).toBeDefined();
+    expect(state.entities.turns["turn-b"]).toBeDefined();
+  });
 });

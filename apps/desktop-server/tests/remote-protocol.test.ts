@@ -451,6 +451,36 @@ describe("createRemoteRpcHandler", () => {
       }),
       jumpChatTree: vi.fn().mockResolvedValue({
         jumped: true
+      }),
+      getWorktree: vi.fn().mockResolvedValue({
+        sessionId: "session-1",
+        agentId: "codex",
+        supported: true,
+        workspaceRoot: "I:/repo",
+        fetchedAt: "2026-04-18T00:00:00Z"
+      }),
+      getCheckpoint: vi.fn().mockResolvedValue({
+        sessionId: "session-1",
+        agentId: "codex",
+        supported: true,
+        supportsRestore: true,
+        currentCheckpointId: "node-1",
+        checkpoints: [],
+        fetchedAt: "2026-04-18T00:00:00Z"
+      }),
+      getDiagnostics: vi.fn().mockResolvedValue({
+        sessionId: "session-1",
+        agentId: "codex",
+        supported: true,
+        authenticated: true,
+        fetchedAt: "2026-04-18T00:00:00Z"
+      }),
+      getBackgroundRun: vi.fn().mockResolvedValue({
+        sessionId: "session-1",
+        agentId: "codex",
+        supported: false,
+        status: "unsupported",
+        fetchedAt: "2026-04-18T00:00:00Z"
       })
     } as unknown as WorkbenchRuntimeService;
 
@@ -501,6 +531,34 @@ describe("createRemoteRpcHandler", () => {
     const chatTreeResponse = await handler.handleRequest({
       id: "req-chat-tree",
       method: "chatTree.get",
+      params: {
+        sessionId: "session-1"
+      }
+    });
+    const worktreeResponse = await handler.handleRequest({
+      id: "req-worktree",
+      method: "worktree.get",
+      params: {
+        sessionId: "session-1"
+      }
+    });
+    const checkpointResponse = await handler.handleRequest({
+      id: "req-checkpoint",
+      method: "checkpoint.get",
+      params: {
+        sessionId: "session-1"
+      }
+    });
+    const diagnosticsResponse = await handler.handleRequest({
+      id: "req-diagnostics",
+      method: "diagnostics.get",
+      params: {
+        sessionId: "session-1"
+      }
+    });
+    const backgroundRunResponse = await handler.handleRequest({
+      id: "req-background-run",
+      method: "backgroundRun.get",
       params: {
         sessionId: "session-1"
       }
@@ -581,6 +639,46 @@ describe("createRemoteRpcHandler", () => {
         }
       }
     });
+    expect(worktreeResponse).toMatchObject({
+      id: "req-worktree",
+      method: "worktree.get",
+      ok: true,
+      result: {
+        worktree: {
+          workspaceRoot: "I:/repo"
+        }
+      }
+    });
+    expect(checkpointResponse).toMatchObject({
+      id: "req-checkpoint",
+      method: "checkpoint.get",
+      ok: true,
+      result: {
+        checkpoint: {
+          currentCheckpointId: "node-1"
+        }
+      }
+    });
+    expect(diagnosticsResponse).toMatchObject({
+      id: "req-diagnostics",
+      method: "diagnostics.get",
+      ok: true,
+      result: {
+        diagnostics: {
+          authenticated: true
+        }
+      }
+    });
+    expect(backgroundRunResponse).toMatchObject({
+      id: "req-background-run",
+      method: "backgroundRun.get",
+      ok: true,
+      result: {
+        backgroundRun: {
+          status: "unsupported"
+        }
+      }
+    });
     expect((shellService as any).listSessionTree).toHaveBeenCalledWith("workspace-1");
     expect((shellService as any).pickWorkspaceDirectory).toHaveBeenCalledTimes(1);
     expect((shellService as any).reconcileSessionBrowser).toHaveBeenCalledWith(
@@ -594,5 +692,9 @@ describe("createRemoteRpcHandler", () => {
     });
     expect((shellService as any).removeWorkspace).toHaveBeenCalledWith("workspace-1");
     expect((shellService as any).getChatTree).toHaveBeenCalledWith("session-1");
+    expect((shellService as any).getWorktree).toHaveBeenCalledWith("session-1");
+    expect((shellService as any).getCheckpoint).toHaveBeenCalledWith("session-1");
+    expect((shellService as any).getDiagnostics).toHaveBeenCalledWith("session-1");
+    expect((shellService as any).getBackgroundRun).toHaveBeenCalledWith("session-1");
   });
 });

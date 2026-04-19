@@ -6,20 +6,29 @@ import type {
   EventEnvelope
 } from "@another-workbench/shared";
 import type { RuntimeEventFilter, RuntimeEventReplayInput } from "@another-workbench/core";
-import { ChatTreeProvider, type ChatTreeSnapshot } from "./chat-tree-provider.js";
 import {
-  SessionActionsProvider,
+  type BackgroundRunSnapshot,
+  CapabilityRegistry,
+  type CheckpointSnapshot,
+  type ConversationGraphSnapshot as ChatTreeSnapshot,
+  type DelegationSnapshot,
+  type DiagnosticsSnapshot,
   type SessionActionDescriptor,
   type SessionActionKind,
-  type SessionActionResult
-} from "./session-actions.js";
+  type SessionActionResult,
+  type WorktreeSnapshot
+} from "./capability-registry.js";
+import { ChatTreeProvider } from "./chat-tree-provider.js";
 import {
   SessionCatalogService,
   type WorkspaceBrowserNode
 } from "./session-catalog.js";
 import { SessionReconciliationService } from "./session-discovery.js";
+import { SessionIdentityRegistry } from "./session-identity-registry.js";
+import { SessionActionsProvider } from "./session-actions.js";
 import type { WorkbenchRuntimeService } from "./runtime-service.js";
 import type { WorkspaceRecord } from "./workspace-registry.js";
+import { WorkspaceSelectionService } from "./workspace-selection-service.js";
 import {
   buildSessionWindowSnapshot,
   type SessionWindowSnapshot
@@ -30,8 +39,10 @@ const defaultSessionWindowLimit = 8;
 export type WorkbenchShellServiceOptions = {
   runtimeService: WorkbenchRuntimeService;
   sessionCatalog: SessionCatalogService;
-  sessionActions: SessionActionsProvider;
-  chatTreeProvider: ChatTreeProvider;
+  capabilities?: CapabilityRegistry;
+  sessionIdentity?: SessionIdentityRegistry;
+  sessionActions?: SessionActionsProvider;
+  chatTreeProvider?: ChatTreeProvider;
   sessionReconciliation?: SessionReconciliationService;
   pickWorkspaceDirectory?: () => Promise<{
     canceled: boolean;
@@ -42,8 +53,10 @@ export type WorkbenchShellServiceOptions = {
 export class WorkbenchShellService {
   private readonly runtimeService: WorkbenchRuntimeService;
   private readonly sessionCatalog: SessionCatalogService;
-  private readonly sessionActions: SessionActionsProvider;
-  private readonly chatTreeProvider: ChatTreeProvider;
+  private readonly capabilities: CapabilityRegistry | undefined;
+  private readonly sessionActions: SessionActionsProvider | undefined;
+  private readonly chatTreeProvider: ChatTreeProvider | undefined;
+  private readonly sessionIdentity: SessionIdentityRegistry;
   private readonly sessionReconciliation: SessionReconciliationService | undefined;
   private readonly pickWorkspaceDirectoryImpl:
     | (() => Promise<{ canceled: boolean; rootPath?: string }>)
@@ -53,8 +66,21 @@ export class WorkbenchShellService {
   public constructor(options: WorkbenchShellServiceOptions) {
     this.runtimeService = options.runtimeService;
     this.sessionCatalog = options.sessionCatalog;
+    this.capabilities = options.capabilities;
     this.sessionActions = options.sessionActions;
     this.chatTreeProvider = options.chatTreeProvider;
+    const sessionIndexStore = options.runtimeService.getSessionIndexStore?.();
+    this.sessionIdentity =
+      options.sessionIdentity ??
+      new SessionIdentityRegistry({
+        runtimeService: options.runtimeService,
+        sessionIndexStore:
+          sessionIndexStore ??
+          ({
+            getEntry: () => undefined,
+            listEntries: () => []
+          } as never)
+      });
     this.sessionReconciliation = options.sessionReconciliation;
     this.pickWorkspaceDirectoryImpl = options.pickWorkspaceDirectory;
   }
@@ -210,18 +236,7 @@ export class WorkbenchShellService {
     workspaceId: string;
     activeSessionId?: string;
   }> {
-    const registry = this.requireWorkspaceRegistry();
-    const state = registry.getState();
-    await registry.setLastActiveSelection({
-      workspaceId,
-      sessionId:
-        state.lastActiveWorkspaceId === workspaceId ? state.lastActiveSessionId : undefined
-    });
-    return {
-      workspaceId,
-      activeSessionId:
-        state.lastActiveWorkspaceId === workspaceId ? state.lastActiveSessionId : undefined
-    };
+    return this.createWorkspaceSelectionService().selectWorkspace(workspaceId);
   }
 
   public async listSessionTree(workspaceId?: string): Promise<{ workspaces: WorkspaceBrowserNode[] }> {
@@ -287,18 +302,14 @@ export class WorkbenchShellService {
     await this.sessionReconciliation?.ensureSessionLoaded(sessionId, {
       isCancelled
     });
-    const loadedSession = this.runtimeService.listSessions({
-      includeArchived: true
-    }).find((session) => session.sessionId === sessionId);
-    const indexedSession = this.runtimeService.getSessionIndexStore()?.getEntry(sessionId);
-    if (!loadedSession && !indexedSession?.providerSessionId) {
+    const context = this.sessionIdentity.resolveContext(sessionId);
+    if (!context.session && !context.providerHandle) {
       throw new Error(
         "This session does not expose a loadable provider session id. It was likely created by an older build and can no longer be reopened."
       );
     }
-    const registry = this.requireWorkspaceRegistry();
-    const workspaceId = indexedSession?.workspaceId;
-    await registry.setLastActiveSelection({
+    const workspaceId = context.indexEntry?.workspaceId;
+    await this.createWorkspaceSelectionService().activateSelection({
       workspaceId,
       sessionId
     });
@@ -330,7 +341,9 @@ export class WorkbenchShellService {
     sessionId: string
   ): Promise<{ actions: SessionActionDescriptor[] }> {
     return {
-      actions: await this.sessionActions.listActions(sessionId)
+      actions: this.capabilities
+        ? await this.capabilities.listSessionActions(sessionId)
+        : await this.requireSessionActions().listActions(sessionId)
     };
   }
 
@@ -338,7 +351,9 @@ export class WorkbenchShellService {
     sessionId: string;
     action: SessionActionKind;
   }): Promise<SessionActionResult> {
-    const result = await this.sessionActions.runAction(input.sessionId, input.action);
+    const result = this.capabilities
+      ? await this.capabilities.runSessionAction(input.sessionId, input.action)
+      : await this.requireSessionActions().runAction(input.sessionId, input.action);
     if (input.action === "reload") {
       await this.sessionCatalog.markSessionRead(input.sessionId);
     }
@@ -346,14 +361,105 @@ export class WorkbenchShellService {
   }
 
   public async getChatTree(sessionId: string): Promise<ChatTreeSnapshot> {
-    return this.chatTreeProvider.get(sessionId);
+    return this.capabilities
+      ? this.capabilities.getConversationGraph(sessionId)
+      : this.requireChatTreeProvider().get(sessionId);
   }
 
   public async jumpChatTree(input: {
     sessionId: string;
     nodeId: string;
   }): Promise<{ jumped: boolean }> {
-    return this.chatTreeProvider.jump(input.sessionId, input.nodeId);
+    return this.capabilities
+      ? this.capabilities.jumpConversationGraph(input.sessionId, input.nodeId)
+      : this.requireChatTreeProvider().jump(input.sessionId, input.nodeId);
+  }
+
+  public async getDelegation(sessionId: string): Promise<DelegationSnapshot> {
+    if (!this.capabilities) {
+      const context = this.sessionIdentity.resolveContext(sessionId);
+      if (!context.agentId) {
+        throw new Error(`Unknown session: ${sessionId}`);
+      }
+      return {
+        sessionId,
+        agentId: context.agentId,
+        supported: false,
+        supportsControl: false,
+        nodes: [],
+        edges: [],
+        fetchedAt: new Date().toISOString()
+      };
+    }
+    return this.capabilities.getDelegation(sessionId);
+  }
+
+  public async getWorktree(sessionId: string): Promise<WorktreeSnapshot> {
+    if (!this.capabilities) {
+      const context = this.sessionIdentity.resolveContext(sessionId);
+      if (!context.agentId) {
+        throw new Error(`Unknown session: ${sessionId}`);
+      }
+      return {
+        sessionId,
+        agentId: context.agentId,
+        supported: false,
+        fetchedAt: new Date().toISOString()
+      };
+    }
+    return this.capabilities.getWorktree(sessionId);
+  }
+
+  public async getCheckpoint(sessionId: string): Promise<CheckpointSnapshot> {
+    if (!this.capabilities) {
+      const context = this.sessionIdentity.resolveContext(sessionId);
+      if (!context.agentId) {
+        throw new Error(`Unknown session: ${sessionId}`);
+      }
+      return {
+        sessionId,
+        agentId: context.agentId,
+        supported: false,
+        supportsRestore: false,
+        checkpoints: [],
+        fetchedAt: new Date().toISOString()
+      };
+    }
+    return this.capabilities.getCheckpoint(sessionId);
+  }
+
+  public async getDiagnostics(sessionId: string): Promise<DiagnosticsSnapshot> {
+    if (!this.capabilities) {
+      const context = this.sessionIdentity.resolveContext(sessionId);
+      if (!context.agentId) {
+        throw new Error(`Unknown session: ${sessionId}`);
+      }
+      return {
+        sessionId,
+        agentId: context.agentId,
+        supported: false,
+        authenticated: false,
+        fetchedAt: new Date().toISOString()
+      };
+    }
+    return this.capabilities.getDiagnostics(sessionId);
+  }
+
+  public async getBackgroundRun(sessionId: string): Promise<BackgroundRunSnapshot> {
+    if (!this.capabilities) {
+      const context = this.sessionIdentity.resolveContext(sessionId);
+      if (!context.agentId) {
+        throw new Error(`Unknown session: ${sessionId}`);
+      }
+      return {
+        sessionId,
+        agentId: context.agentId,
+        supported: false,
+        status: "unsupported",
+        fetchedAt: new Date().toISOString()
+      };
+    }
+    return this.capabilities.getBackgroundRun(sessionId);
   }
 
   private requireWorkspaceRegistry() {
@@ -364,11 +470,33 @@ export class WorkbenchShellService {
     return registry;
   }
 
+  private createWorkspaceSelectionService(): WorkspaceSelectionService {
+    return new WorkspaceSelectionService({
+      workspaceRegistry: this.requireWorkspaceRegistry()
+    });
+  }
+
+  private requireSessionActions(): SessionActionsProvider {
+    if (!this.sessionActions) {
+      throw new Error("Session actions are unavailable.");
+    }
+    return this.sessionActions;
+  }
+
+  private requireChatTreeProvider(): ChatTreeProvider {
+    if (!this.chatTreeProvider) {
+      throw new Error("Conversation graph is unavailable.");
+    }
+    return this.chatTreeProvider;
+  }
+
   private async resolveProviderAnchorTurnId(
     sessionId: string
   ): Promise<string | undefined> {
     try {
-      const chatTree = await this.chatTreeProvider.get(sessionId);
+      const chatTree = this.capabilities
+        ? await this.capabilities.getConversationGraph(sessionId)
+        : await this.requireChatTreeProvider().get(sessionId);
       if (!chatTree.currentNodeId) {
         return undefined;
       }

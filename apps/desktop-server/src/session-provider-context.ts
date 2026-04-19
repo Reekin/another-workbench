@@ -1,18 +1,16 @@
-import type { ChatSession } from "@another-workbench/shared";
+import type { SessionIndexStore } from "./session-index.js";
 import type { WorkbenchRuntimeService } from "./runtime-service.js";
-import type { SessionIndexEntry, SessionIndexStore } from "./session-index.js";
+import {
+  SessionIdentityRegistry,
+  type ResolvedSessionContext
+} from "./session-identity-registry.js";
 
-export type ResolvedSessionContext = {
-  sessionId: string;
-  session?: ChatSession;
-  indexEntry?: SessionIndexEntry;
-  agentId?: string;
-};
+export type { ResolvedSessionContext } from "./session-identity-registry.js";
 
 export const findRuntimeSession = (
   runtimeService: WorkbenchRuntimeService,
   sessionId: string
-): ChatSession | undefined =>
+) =>
   runtimeService
     .listSessions({
       includeArchived: true
@@ -23,13 +21,8 @@ export const resolveSessionContext = (
   runtimeService: WorkbenchRuntimeService,
   sessionIndexStore: SessionIndexStore,
   sessionId: string
-): ResolvedSessionContext => {
-  const session = findRuntimeSession(runtimeService, sessionId);
-  const indexEntry = sessionIndexStore.getEntry(sessionId);
-  return {
-    sessionId,
-    session,
-    indexEntry,
-    agentId: session?.agentId ?? indexEntry?.agentId
-  };
-};
+): ResolvedSessionContext =>
+  new SessionIdentityRegistry({
+    runtimeService,
+    sessionIndexStore
+  }).resolveContext(sessionId);

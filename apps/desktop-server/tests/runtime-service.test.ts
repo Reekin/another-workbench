@@ -15,6 +15,10 @@ const createTempDir = async (): Promise<string> => {
   return dir;
 };
 
+const flushAsyncEffects = async (): Promise<void> => {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+};
+
 const createService = (options: {
   persistenceBaseDir?: string;
   agentBindings?: ConstructorParameters<typeof WorkbenchRuntimeService>[0]["agentBindings"];
@@ -75,7 +79,7 @@ afterEach(async () => {
 });
 
 describe("WorkbenchRuntimeService", () => {
-  it("persists workspace-backed session index entries for created, archived, and forked sessions", async () => {
+  it("persists workspace-backed session index entries for created, archived, and forked sessions via SessionIndexSyncService", async () => {
     const baseDir = await createTempDir();
     const workspaceRegistry = new WorkspaceRegistryService({
       baseDir,
@@ -224,6 +228,47 @@ describe("WorkbenchRuntimeService", () => {
     });
   });
 
+  it("marks workspace-backed sessions unread when a turn completes", async () => {
+    const baseDir = await createTempDir();
+    const workspaceRegistry = new WorkspaceRegistryService({
+      baseDir,
+      createWorkspaceId: () => "workspace-1"
+    });
+    await workspaceRegistry.registerWorkspace({
+      workspaceId: "workspace-1",
+      absolutePath: "D:/workspace/another-workbench"
+    });
+
+    const service = createService({
+      persistenceBaseDir: baseDir
+    });
+
+    await service.executeCommand({
+      commandId: "cmd-create",
+      command: {
+        type: "createSession",
+        agentId: "codex",
+        workspaceId: "workspace-1"
+      }
+    });
+
+    await service.executeCommand({
+      commandId: "cmd-send",
+      command: {
+        type: "sendUserMessage",
+        sessionId: "session-1",
+        messageId: "msg-1",
+        content: "hello",
+        attachments: []
+      }
+    });
+    await flushAsyncEffects();
+
+    expect(service.getSessionIndexStore()?.getEntry("session-1")).toMatchObject({
+      unreadState: "unread_completed"
+    });
+  });
+
   it("creates, lists, archives, and resumes sessions while maintaining participants", async () => {
     const service = createService();
 
@@ -352,6 +397,68 @@ describe("WorkbenchRuntimeService", () => {
     expect(block?.text).toBe(
       "Please review these files.\n\n![reference.png](file:///C:/Users/TestUser/Pictures/reference.png)\n[README.md](file:///D:/workspace/another-workbench/README.md)"
     );
+  });
+
+  it("keeps a session running after sendUserMessage when the adapter accepts but has not emitted runtime events yet", async () => {
+    let listener: Parameters<AgentAdapter["subscribe"]>[0] | undefined;
+    const adapter: AgentAdapter = {
+      id: "codex-adapter",
+      kind: "codex",
+      getLifecycleState: () => "idle",
+      initialize: async () => {},
+      executeCommand: async (envelope) => ({
+        commandId: envelope.commandId,
+        commandType: envelope.command.type,
+        accepted: true
+      }),
+      subscribe: (next) => {
+        listener = next;
+        return () => {
+          listener = undefined;
+        };
+      },
+      dispose: async () => {}
+    };
+
+    const service = createService({
+      agentBindings: [
+        {
+          descriptor: {
+            agentId: "codex",
+            displayName: "Codex",
+            capabilities: ["chat", "terminal"]
+          },
+          adapter,
+          providerKind: "codex-thread"
+        }
+      ]
+    });
+
+    await service.executeCommand({
+      commandId: "cmd-create",
+      command: {
+        type: "createSession",
+        agentId: "codex",
+        workspaceId: "workspace-1"
+      }
+    });
+
+    await service.executeCommand({
+      commandId: "cmd-send",
+      command: {
+        type: "sendUserMessage",
+        sessionId: "session-1",
+        messageId: "msg-running",
+        content: "hello",
+        attachments: []
+      }
+    });
+
+    expect(listener).toBeTypeOf("function");
+    expect(service.getSnapshot().sessions.find((session) => session.sessionId === "session-1"))
+      .toMatchObject({
+        status: "running"
+      });
   });
 
 

@@ -1,6 +1,7 @@
 import type {
   ChatSession,
   DomainSnapshot,
+  ProviderSessionHandle,
   SessionRelation
 } from "@another-workbench/shared";
 import type { WorkbenchRuntimeService } from "./runtime-service.js";
@@ -20,6 +21,7 @@ export type SessionBrowserNode = {
   sessionId: string;
   displaySessionId: string;
   providerSessionId?: string;
+  providerHandle?: ProviderSessionHandle;
   workspaceId: string;
   conversationId?: string;
   agentId: string;
@@ -51,6 +53,7 @@ type SessionCatalogServiceOptions = {
 
 type SessionCatalogSeed = {
   sessionId: string;
+  providerKind?: string;
   providerSessionId?: string;
   workspaceId: string;
   conversationId?: string;
@@ -127,6 +130,7 @@ export class SessionCatalogService {
     for (const entry of indexState.entries) {
       bySessionId.set(entry.sessionId, {
         sessionId: entry.sessionId,
+        providerKind: entry.providerKind,
         providerSessionId: entry.providerSessionId,
         workspaceId: entry.workspaceId,
         conversationId: entry.conversationId,
@@ -270,6 +274,13 @@ export class SessionCatalogService {
       sessionId: input.seed.sessionId,
       displaySessionId: input.seed.providerSessionId ?? input.seed.sessionId,
       providerSessionId: input.seed.providerSessionId,
+      providerHandle:
+        input.seed.providerKind && input.seed.providerSessionId
+          ? {
+              providerKind: input.seed.providerKind,
+              providerSessionId: input.seed.providerSessionId
+            }
+          : undefined,
       workspaceId: input.seed.workspaceId,
       conversationId: input.seed.conversationId,
       agentId: input.seed.agentId,

@@ -439,4 +439,100 @@ describe("session browser transport contracts", () => {
       "reload"
     ]);
   });
+
+  it("reads worktree, checkpoint, diagnostics, and background-run summaries through typed rpc methods", async () => {
+    const preload = createPreloadMock(async (request) => {
+      switch (request.method) {
+        case "worktree.get":
+          return {
+            id: request.id,
+            method: "worktree.get",
+            ok: true,
+            result: {
+              worktree: {
+                sessionId: request.params.sessionId,
+                agentId: "codex",
+                supported: true,
+                workspaceRoot: "I:\\repo-a",
+                gitBranch: "main",
+                gitSha: "abc123",
+                fetchedAt: "2026-04-20T00:00:00.000Z"
+              }
+            }
+          } as const;
+        case "checkpoint.get":
+          return {
+            id: request.id,
+            method: "checkpoint.get",
+            ok: true,
+            result: {
+              checkpoint: {
+                sessionId: request.params.sessionId,
+                agentId: "codex",
+                supported: true,
+                supportsRestore: true,
+                currentCheckpointId: "node-1",
+                checkpoints: [
+                  {
+                    checkpointId: "node-1",
+                    label: "Checkpoint 1",
+                    order: 0,
+                    isCurrent: true
+                  }
+                ],
+                fetchedAt: "2026-04-20T00:00:00.000Z"
+              }
+            }
+          } as const;
+        case "diagnostics.get":
+          return {
+            id: request.id,
+            method: "diagnostics.get",
+            ok: true,
+            result: {
+              diagnostics: {
+                sessionId: request.params.sessionId,
+                agentId: "codex",
+                supported: true,
+                authenticated: true,
+                authMethod: "chatgpt",
+                summaryText: "auth=chatgpt",
+                fetchedAt: "2026-04-20T00:00:00.000Z"
+              }
+            }
+          } as const;
+        case "backgroundRun.get":
+          return {
+            id: request.id,
+            method: "backgroundRun.get",
+            ok: true,
+            result: {
+              backgroundRun: {
+                sessionId: request.params.sessionId,
+                agentId: "codex",
+                supported: false,
+                status: "unsupported",
+                fetchedAt: "2026-04-20T00:00:00.000Z"
+              }
+            }
+          } as const;
+        default:
+          throw new Error(`Unexpected method: ${request.method}`);
+      }
+    });
+    const transport = createDesktopTransport(preload.api);
+
+    const worktree = await transport.worktree.get("session-1");
+    const checkpoint = await transport.checkpoint.get("session-1");
+    const diagnostics = await transport.diagnostics.get("session-1");
+    const backgroundRun = await transport.backgroundRun.get("session-1");
+
+    expect(worktree).toMatchObject({
+      workspaceRoot: "I:\\repo-a",
+      gitBranch: "main"
+    });
+    expect(checkpoint.currentCheckpointId).toBe("node-1");
+    expect(diagnostics.authenticated).toBe(true);
+    expect(backgroundRun.status).toBe("unsupported");
+  });
 });

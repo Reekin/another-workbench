@@ -13,6 +13,7 @@ const resolveThreadId = (
   codexRuntimePort: CodexAppServerRuntimePort
 ): string | undefined =>
   codexRuntimePort.getThreadIdForSession(input.sessionId) ??
+  input.providerHandle?.providerSessionId ??
   input.indexEntry?.providerSessionId;
 
 export class CodexSessionActionsProvider implements SessionAgentActionsProvider {

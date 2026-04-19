@@ -8,17 +8,13 @@ import {
   type ChangeEvent as ReactChangeEvent,
   type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent,
-  type MouseEvent as ReactMouseEvent,
   type ReactElement,
   type RefObject
 } from "react";
 import { createPortal } from "react-dom";
 import type {
   AgentDescriptor,
-  ChatTreeSnapshotRpc,
-  SessionActionDescriptorRpc,
   SessionWindowRpc,
-  WorkspaceRecordRpc,
   WorkspaceBrowserNodeRpc
 } from "@another-workbench/shared";
 import "xterm/css/xterm.css";
@@ -51,15 +47,19 @@ import {
 import { filterTranscriptRowsForChatTree } from "./chat-tree-transcript.js";
 import { buildTurnTranscriptRows } from "./transcript-view-model.js";
 import { useRendererStoreState } from "./use-renderer-store-state.js";
-import { prioritizeWorkspaceIdsForReconciliation } from "./workspace-reconciliation.js";
+import {
+  findActiveSessionNode,
+  findSessionNode
+} from "./workspace-browser-tree.js";
+import { useTranscriptViewportController } from "./use-transcript-viewport-controller.js";
+import { useWorkspaceBrowserController } from "./use-workspace-browser-controller.js";
+import { useSessionOpenController } from "./use-session-open-controller.js";
+import {
+  useSessionActionsController,
+  type SessionMenuState
+} from "./use-session-actions-controller.js";
+import { useChatTreeController } from "./use-chat-tree-controller.js";
 import "./chat-shell.css";
-
-type SessionMenuState = {
-  sessionId: string;
-  x: number;
-  y: number;
-  actions: SessionActionDescriptorRpc[];
-};
 
 type SettingsLauncherProps = {
   agents: AgentDescriptor[];
@@ -181,74 +181,6 @@ const buildWorkspaceAgentFallbacks = (
   }));
 };
 
-const mergeWorkspaceBrowserTree = (
-  previous: WorkspaceBrowserNodeRpc[],
-  workspaceState: {
-    workspaces: WorkspaceRecordRpc[];
-    lastActiveWorkspaceId?: string;
-  },
-  loadedById: Map<string, WorkspaceBrowserNodeRpc>
-): WorkspaceBrowserNodeRpc[] => {
-  const previousById = new Map(
-    previous.map((workspace) => [workspace.workspaceId, workspace] as const)
-  );
-
-  return workspaceState.workspaces.map((workspace) => {
-    const loaded = loadedById.get(workspace.workspaceId);
-    const previousNode = previousById.get(workspace.workspaceId);
-    return {
-      workspaceId: workspace.workspaceId,
-      label: workspace.label,
-      rootPath: workspace.absolutePath,
-      isExpanded:
-        loaded?.isExpanded ??
-        previousNode?.isExpanded ??
-        workspaceState.lastActiveWorkspaceId === workspace.workspaceId,
-      isActive: workspaceState.lastActiveWorkspaceId === workspace.workspaceId,
-      sessions: loaded?.sessions ?? previousNode?.sessions ?? []
-    };
-  });
-};
-
-const findSessionNode = (
-  workspaces: WorkspaceBrowserNodeRpc[],
-  sessionId: string
-): WorkspaceBrowserNodeRpc["sessions"][number] | undefined => {
-  for (const workspace of workspaces) {
-    const stack = [...workspace.sessions];
-    while (stack.length > 0) {
-      const session = stack.pop();
-      if (!session) {
-        continue;
-      }
-      if (session.sessionId === sessionId) {
-        return session;
-      }
-      stack.push(...session.children);
-    }
-  }
-  return undefined;
-};
-
-const findActiveSessionNode = (
-  workspaces: WorkspaceBrowserNodeRpc[]
-): WorkspaceBrowserNodeRpc["sessions"][number] | undefined => {
-  for (const workspace of workspaces) {
-    const stack = [...workspace.sessions];
-    while (stack.length > 0) {
-      const session = stack.pop();
-      if (!session) {
-        continue;
-      }
-      if (session.isActive) {
-        return session;
-      }
-      stack.push(...session.children);
-    }
-  }
-  return undefined;
-};
-
 const resolveStatusDotLabel = (
   statusDot: WorkspaceBrowserNodeRpc["sessions"][number]["statusDot"]
 ): string | undefined => {
@@ -262,15 +194,9 @@ const resolveStatusDotLabel = (
   }
 };
 
-const sessionActionLabel = (action: SessionActionDescriptorRpc): string => action.label;
-
-const defaultChatTreePaneHeight = (): number =>
-  typeof window === "undefined" ? 420 : Math.round(window.innerHeight * 0.6);
-
-const clampChatTreePaneHeight = (height: number, viewportHeight?: number): number => {
-  const maxHeight = Math.max(220, Math.floor((viewportHeight ?? 900) * 0.82));
-  return Math.min(Math.max(height, 220), maxHeight);
-};
+const sessionActionLabel = (
+  action: SessionMenuState["actions"][number]
+): string => action.label;
 
 const summarizeProcessToggle = (input: {
   toolCount: number;
@@ -549,7 +475,6 @@ export const ChatShellApp = ({
 }: ChatShellAppProps): ReactElement => {
   const state = useRendererStoreState(store);
   const [availableAgents, setAvailableAgents] = useState<AgentDescriptor[]>([]);
-  const [workspaceTree, setWorkspaceTree] = useState<WorkspaceBrowserNodeRpc[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
   const [draft, setDraft] = useState("");
   const [composerAttachments, setComposerAttachments] = useState<ComposerAttachment[]>(
@@ -558,14 +483,12 @@ export const ChatShellApp = ({
   const [isSendingComposer, setIsSendingComposer] = useState(false);
   const [isComposerDropTarget, setIsComposerDropTarget] = useState(false);
   const [statusNotice, setStatusNotice] = useState<ComposerStatusNotice | undefined>();
-  const [chatTree, setChatTree] = useState<ChatTreeSnapshotRpc | undefined>();
   const [sessionWindows, setSessionWindows] = useState<
     Record<string, SessionWindowRpc | undefined>
   >({});
   const [loadingOlderSessionId, setLoadingOlderSessionId] = useState<
     string | undefined
   >();
-  const [sessionMenu, setSessionMenu] = useState<SessionMenuState | undefined>();
   const [browserSelectedSessionId, setBrowserSelectedSessionId] = useState<
     string | undefined
   >();
@@ -573,47 +496,23 @@ export const ChatShellApp = ({
   const [processVisibilityByTurnId, setProcessVisibilityByTurnId] = useState<
     Record<string, ProcessVisibilityOverride>
   >({});
-  const [isResizingChatTree, setIsResizingChatTree] = useState(false);
   const [settingsHydrated, setSettingsHydrated] = useState(false);
-  const reconcileQueueRef = useRef<string[]>([]);
-  const reconcileQueuedIdsRef = useRef(new Set<string>());
-  const reconcileAttemptedIdsRef = useRef(new Set<string>());
-  const reconcileRunningRef = useRef(false);
   const mountedRef = useRef(true);
-  const openingSessionIdRef = useRef<string | undefined>(undefined);
-  const openSessionRequestIdRef = useRef(0);
   const composerAttachmentsRef = useRef<ComposerAttachment[]>([]);
   const composerFileInputRef = useRef<HTMLInputElement | null>(null);
   const composerDropDepthRef = useRef(0);
-  const transcriptRef = useRef<HTMLElement | null>(null);
-  const displayedSessionIdRef = useRef<string | undefined>(undefined);
-  const pendingPrependScrollRef = useRef<
-    | {
-        sessionId: string;
-        previousScrollHeight: number;
-        previousScrollTop: number;
-      }
-    | undefined
-  >(undefined);
-  const pendingViewportTargetRef = useRef<
-    | {
-        sessionId: string;
-        type: "bottom" | "turn";
-        turnId?: string;
-      }
-    | undefined
-  >(undefined);
-  const detailRef = useRef<HTMLElement | null>(null);
-  const chatTreePaneManualRef = useRef(false);
-  const chatTreeDragState = useRef<
-    | {
-        pointerId: number;
-      }
-    | undefined
-  >(undefined);
-  const [chatTreePaneHeight, setChatTreePaneHeight] = useState<number>(() =>
-    clampChatTreePaneHeight(defaultChatTreePaneHeight())
-  );
+
+  const {
+    workspaceTree,
+    refreshSessionBrowser,
+    onAddWorkspace,
+    onToggleWorkspace,
+    onToggleSessionTree
+  } = useWorkspaceBrowserController({
+    transport,
+    eventCursor: state.eventStream.lastCursor,
+    onStatusNotice: setStatusNotice
+  });
 
   const activeWorkspace = workspaceTree.find((workspace) => workspace.isActive);
   const activeSessionNode =
@@ -624,6 +523,9 @@ export const ChatShellApp = ({
   const activeSessionId = state.activeSessionId ?? activeSessionNode?.sessionId;
   const displayedSessionId =
     openingSessionId ?? browserSelectedSessionId ?? activeSessionId;
+  const activeSessionWindow =
+    displayedSessionId ? sessionWindows[displayedSessionId] : undefined;
+  const loadingOlderTurns = loadingOlderSessionId === displayedSessionId;
   const displayedSessionNode = displayedSessionId
     ? findSessionNode(workspaceTree, displayedSessionId)
     : activeSessionNode;
@@ -638,11 +540,6 @@ export const ChatShellApp = ({
   const highlightedSessionId = displayedSessionId;
   const isOpeningSelectedSession =
     Boolean(openingSessionId) && openingSessionId === displayedSessionId;
-  const activeSessionWindow =
-    displayedSessionId ? sessionWindows[displayedSessionId] : undefined;
-  const loadingOlderTurns = loadingOlderSessionId === displayedSessionId;
-  const activeChatTree =
-    chatTree?.sessionId === displayedSessionId ? chatTree : undefined;
   const browsedSessionId =
     displayedSessionId && !isOpeningSelectedSession ? displayedSessionId : undefined;
   const activeConversation =
@@ -671,15 +568,70 @@ export const ChatShellApp = ({
     () => buildTurnTranscriptRows(state, turns, participantDirectory),
     [state, turns, participantDirectory]
   );
+
+  const viewport = useTranscriptViewportController({
+    displayedSessionId,
+    isOpeningSelectedSession,
+    windowStartTurnId: activeSessionWindow?.windowStartTurnId,
+    windowEndTurnId: activeSessionWindow?.windowEndTurnId,
+    renderedTranscriptRowCount: transcriptRows.length
+  });
+
+  const resetSessionSwitchState = (): void => {
+    setLoadingOlderSessionId(undefined);
+    setProcessVisibilityByTurnId({});
+  };
+
+  const { reloadSessionWindow, onLoadOlder, onCreateSession, onOpenSession } =
+    useSessionOpenController({
+      store,
+      transport,
+      workspaceTree,
+      sessionWindows,
+      setSessionWindows,
+      loadingOlderSessionId,
+      setLoadingOlderSessionId,
+      browserSelectedSessionId,
+      setBrowserSelectedSessionId,
+      openingSessionId,
+      setOpeningSessionId,
+      displayedSessionId,
+      activeSessionWindow,
+      isOpeningSelectedSession,
+      viewport,
+      onResetSessionSwitchState: resetSessionSwitchState,
+      onStatusNotice: setStatusNotice,
+      refreshSessionBrowser
+    });
+
+  const {
+    chatTree,
+    onJumpChatTree
+  } = useChatTreeController({
+    transport,
+    browsedSessionId,
+    displayedSessionId,
+    displayedSessionIdRef: viewport.displayedSessionIdRef,
+    isOpeningSelectedSession,
+    eventCursor: state.eventStream.lastCursor,
+    onStatusNotice: setStatusNotice,
+    reloadSessionWindow
+  });
+  const activeChatTree =
+    chatTree?.sessionId === displayedSessionId ? chatTree : undefined;
   const visibleTranscriptRows = useMemo(
     () => filterTranscriptRowsForChatTree(transcriptRows, activeChatTree),
     [transcriptRows, activeChatTree]
   );
   const renderedTranscriptRows = isOpeningSelectedSession ? [] : visibleTranscriptRows;
-  const resolvedChatTreePaneHeight = clampChatTreePaneHeight(
-    chatTreePaneHeight,
-    typeof window === "undefined" ? undefined : window.innerHeight
-  );
+
+  const { sessionMenu, onOpenSessionMenu, onRunSessionAction } =
+    useSessionActionsController({
+      transport,
+      workspaceTree,
+      refreshSessionBrowser,
+      onStatusNotice: setStatusNotice
+    });
 
   const fallbackAgents = useMemo(
     () => buildWorkspaceAgentFallbacks(workspaceTree),
@@ -731,357 +683,11 @@ export const ChatShellApp = ({
   }, [activeSessionId]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || chatTreePaneManualRef.current) {
-      return;
-    }
-    const onResize = (): void => {
-      setChatTreePaneHeight(clampChatTreePaneHeight(defaultChatTreePaneHeight()));
-    };
-    window.addEventListener("resize", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-    };
-  }, []);
-
-  const activateLoadedSession = (sessionId: string): boolean => {
-    const session = store.getState().entities.sessions[sessionId];
-    if (!session) {
-      return false;
-    }
-    store.dispatch({
-      type: "store/setActiveConversation",
-      conversationId: session.conversationId
-    });
-    store.dispatch({
-      type: "store/setActiveSession",
-      sessionId
-    });
-    return true;
-  };
-
-  const releaseSessionCache = async (
-    sessionId: string | undefined
-  ): Promise<void> => {
-    if (!sessionId) {
-      return;
-    }
-    store.disposeSession(sessionId);
-    setSessionWindows((current) => {
-      if (!current[sessionId]) {
-        return current;
-      }
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
-    if (chatTree?.sessionId === sessionId) {
-      setChatTree(undefined);
-    }
-    pendingPrependScrollRef.current = undefined;
-    pendingViewportTargetRef.current = undefined;
-  };
-
-  const resetSessionSwitchState = (): void => {
-    setLoadingOlderSessionId(undefined);
-    setProcessVisibilityByTurnId({});
-  };
-
-  const applySessionWindow = (
-    page: SessionWindowRpc,
-    mode: "replace" | "prepend" = "replace",
-    options: {
-      activate?: boolean;
-    } = {}
-  ): void => {
-    store.hydrateSessionWindow(page.sessionId, page.snapshot, mode);
-    setSessionWindows((current) => {
-      const existing = current[page.sessionId];
-      if (mode === "prepend" && existing?.sessionId === page.sessionId) {
-        return {
-          ...current,
-          [page.sessionId]: {
-            ...existing,
-            windowStartTurnId: page.windowStartTurnId ?? existing.windowStartTurnId,
-            hasOlder: page.hasOlder,
-            snapshot: existing.snapshot,
-            hasNewer: existing.hasNewer
-          }
-        };
-      }
-      return {
-        ...current,
-        [page.sessionId]: page
-      };
-    });
-    if (mode === "replace") {
-      pendingViewportTargetRef.current = {
-        sessionId: page.sessionId,
-        type: page.windowEndTurnId && page.hasNewer ? "turn" : "bottom",
-        turnId: page.windowEndTurnId && page.hasNewer ? page.windowEndTurnId : undefined
-      };
-    }
-    if (options.activate ?? true) {
-      activateLoadedSession(page.sessionId);
-    }
-  };
-
-  const hydrateOpenedSession = async (
-    sessionId: string,
-    requestId: number
-  ): Promise<void> => {
-    if (!transport) {
-      return;
-    }
-    const result = await transport.sessionBrowser.open(sessionId);
-    if (openSessionRequestIdRef.current !== requestId) {
-      return;
-    }
-    applySessionWindow(result.page, "replace");
-  };
-
-  const onLoadOlder = async (): Promise<void> => {
-    if (
-      !transport ||
-      !displayedSessionId ||
-      !activeSessionWindow?.hasOlder ||
-      !activeSessionWindow.windowStartTurnId ||
-      loadingOlderSessionId === displayedSessionId ||
-      isOpeningSelectedSession
-    ) {
-      return;
-    }
-
-    const element = transcriptRef.current;
-    const previousScrollHeight = element?.scrollHeight ?? 0;
-    const previousScrollTop = element?.scrollTop ?? 0;
-    setLoadingOlderSessionId(displayedSessionId);
-    try {
-      const result = await transport.sessionBrowser.loadOlder({
-        sessionId: displayedSessionId,
-        beforeTurnId: activeSessionWindow.windowStartTurnId,
-        limit: 8
-      });
-      if (displayedSessionIdRef.current !== displayedSessionId) {
-        return;
-      }
-      pendingPrependScrollRef.current = {
-        sessionId: displayedSessionId,
-        previousScrollHeight,
-        previousScrollTop
-      };
-      applySessionWindow(result.page, "prepend", {
-        activate: false
-      });
-    } catch (error) {
-      setStatusNotice({
-        message: `Load earlier turns failed: ${(error as Error).message}`,
-        persistent: true,
-        source: "session-browser"
-      });
-    } finally {
-      setLoadingOlderSessionId((current) =>
-        current === displayedSessionId ? undefined : current
-      );
-    }
-  };
-
-  const refreshSessionBrowser = async (input?: {
-    mode?: "all" | "visible" | "workspace";
-    workspaceId?: string;
-  }): Promise<void> => {
-    if (!transport) {
-      setWorkspaceTree([]);
-      return;
-    }
-    const workspaceState = await transport.workspace.list();
-    const visibleWorkspaceIds = new Set(
-      workspaceTree
-        .filter((workspace) => workspace.isExpanded || workspace.isActive)
-        .map((workspace) => workspace.workspaceId)
-    );
-    if (workspaceState.lastActiveWorkspaceId) {
-      visibleWorkspaceIds.add(workspaceState.lastActiveWorkspaceId);
-    }
-
-    const mode = input?.mode ?? "visible";
-    const workspaceIdsToLoad =
-      mode === "all"
-        ? workspaceState.workspaces.map((workspace) => workspace.workspaceId)
-        : mode === "workspace" && input?.workspaceId
-          ? [input.workspaceId]
-          : [...visibleWorkspaceIds];
-
-    const loadedWorkspaces = await Promise.all(
-      workspaceIdsToLoad.map(async (workspaceId) => {
-        const tree = await transport.sessionBrowser.listTree(workspaceId);
-        return tree.workspaces[0];
-      })
-    );
-
-    setWorkspaceTree((current) =>
-      mergeWorkspaceBrowserTree(
-        current,
-        workspaceState,
-        new Map(
-          loadedWorkspaces
-            .filter((workspace): workspace is WorkspaceBrowserNodeRpc => Boolean(workspace))
-            .map((workspace) => [workspace.workspaceId, workspace] as const)
-        )
-      )
-    );
-
-    const reconciliationCandidates = prioritizeWorkspaceIdsForReconciliation(
-      workspaceState.workspaces,
-      workspaceState.lastActiveWorkspaceId
-    );
-    for (const workspaceId of reconciliationCandidates) {
-      if (
-        reconcileAttemptedIdsRef.current.has(workspaceId) ||
-        reconcileQueuedIdsRef.current.has(workspaceId)
-      ) {
-        continue;
-      }
-      reconcileQueueRef.current.push(workspaceId);
-      reconcileQueuedIdsRef.current.add(workspaceId);
-    }
-  };
-
-  const runBackgroundReconciliation = async (): Promise<void> => {
-    if (!transport || reconcileRunningRef.current) {
-      return;
-    }
-    reconcileRunningRef.current = true;
-    try {
-      while (reconcileQueueRef.current.length > 0) {
-        if (openingSessionIdRef.current) {
-          break;
-        }
-        const workspaceId = reconcileQueueRef.current.shift();
-        if (!workspaceId) {
-          continue;
-        }
-        reconcileQueuedIdsRef.current.delete(workspaceId);
-        reconcileAttemptedIdsRef.current.add(workspaceId);
-        try {
-          await transport.sessionBrowser.reconcile(workspaceId);
-          if (!mountedRef.current) {
-            return;
-          }
-          await refreshSessionBrowser({
-            mode: "workspace",
-            workspaceId
-          });
-        } catch (error) {
-          if (!mountedRef.current) {
-            return;
-          }
-          setStatusNotice({
-            message: `Background session sync failed: ${(error as Error).message}`,
-            source: "session-browser"
-          });
-        }
-      }
-    } finally {
-      reconcileRunningRef.current = false;
-      if (reconcileQueueRef.current.length > 0 && mountedRef.current) {
-        void runBackgroundReconciliation();
-      }
-    }
-  };
-
-  useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
     };
   }, []);
-
-  useEffect(() => {
-    openingSessionIdRef.current = openingSessionId;
-  }, [openingSessionId]);
-
-  useEffect(() => {
-    displayedSessionIdRef.current = displayedSessionId;
-  }, [displayedSessionId]);
-
-  useEffect(() => {
-    if (!openingSessionId) {
-      return;
-    }
-    if (!sessionWindows[openingSessionId]) {
-      return;
-    }
-    setOpeningSessionId((current) =>
-      current === openingSessionId ? undefined : current
-    );
-    setStatusNotice((current) =>
-      current?.source === "session-browser" ? undefined : current
-    );
-  }, [openingSessionId, sessionWindows]);
-
-  useEffect(() => {
-    const pending = pendingPrependScrollRef.current;
-    const element = transcriptRef.current;
-    if (
-      !pending ||
-      !element ||
-      displayedSessionId !== pending.sessionId ||
-      isOpeningSelectedSession
-    ) {
-      return;
-    }
-    pendingPrependScrollRef.current = undefined;
-    const animationFrameId = window.requestAnimationFrame(() => {
-      element.scrollTop =
-        element.scrollHeight -
-        pending.previousScrollHeight +
-        pending.previousScrollTop;
-    });
-    return () => window.cancelAnimationFrame(animationFrameId);
-  }, [displayedSessionId, isOpeningSelectedSession, activeSessionWindow?.windowStartTurnId]);
-
-  useEffect(() => {
-    const pendingTarget = pendingViewportTargetRef.current;
-    const element = transcriptRef.current;
-    if (
-      !pendingTarget ||
-      !element ||
-      displayedSessionId !== pendingTarget.sessionId ||
-      isOpeningSelectedSession
-    ) {
-      return;
-    }
-
-    pendingViewportTargetRef.current = undefined;
-    const animationFrameId = window.requestAnimationFrame(() => {
-      if (pendingTarget.type === "turn" && pendingTarget.turnId) {
-        const targetRow = element.querySelector<HTMLElement>(
-          `[data-turn-id="${pendingTarget.turnId}"]`
-        );
-        if (targetRow) {
-          targetRow.scrollIntoView({
-            block: "start"
-          });
-          return;
-        }
-      }
-      element.scrollTop = element.scrollHeight;
-    });
-
-    return () => window.cancelAnimationFrame(animationFrameId);
-  }, [
-    displayedSessionId,
-    isOpeningSelectedSession,
-    activeSessionWindow?.windowEndTurnId,
-    renderedTranscriptRows.length
-  ]);
-
-  useEffect(() => {
-    reconcileQueueRef.current = [];
-    reconcileQueuedIdsRef.current = new Set();
-    reconcileAttemptedIdsRef.current = new Set();
-    reconcileRunningRef.current = false;
-  }, [transport]);
 
   useEffect(() => {
     if (!statusNotice || statusNotice.persistent) {
@@ -1092,34 +698,6 @@ export const ChatShellApp = ({
     }, 2_000);
     return () => clearTimeout(timeoutId);
   }, [statusNotice]);
-
-  useEffect(() => {
-    if (!transport) {
-      return;
-    }
-    void refreshSessionBrowser({
-      mode: "visible"
-    }).catch((error) => {
-      setStatusNotice({
-        message: `Session browser failed: ${(error as Error).message}`,
-        persistent: true,
-        source: "session-browser"
-      });
-    });
-  }, [transport, state.eventStream.lastCursor]);
-
-  useEffect(() => {
-    if (!transport || reconcileQueueRef.current.length === 0 || openingSessionId) {
-      return;
-    }
-    void runBackgroundReconciliation();
-  }, [transport, workspaceTree, openingSessionId]);
-
-  useEffect(() => {
-    const handleWindowClick = () => setSessionMenu(undefined);
-    window.addEventListener("click", handleWindowClick);
-    return () => window.removeEventListener("click", handleWindowClick);
-  }, []);
 
   useEffect(() => {
     if (!transport) {
@@ -1244,36 +822,6 @@ export const ChatShellApp = ({
       }
     };
   }, [transport, store]);
-
-  useEffect(() => {
-    if (!transport || !browsedSessionId) {
-      setChatTree(undefined);
-      return;
-    }
-    let disposed = false;
-    void transport.chatTree
-      .get(browsedSessionId)
-      .then((nextTree) => {
-        if (!disposed) {
-          if (displayedSessionIdRef.current === browsedSessionId) {
-            setChatTree(nextTree);
-          }
-        }
-      })
-      .catch((error) => {
-        if (!disposed) {
-          if (displayedSessionIdRef.current === browsedSessionId) {
-            setStatusNotice({
-              message: `Chat tree refresh failed: ${(error as Error).message}`,
-              source: "chat-tree"
-            });
-          }
-        }
-      });
-    return () => {
-      disposed = true;
-    };
-  }, [transport, browsedSessionId, state.eventStream.lastCursor]);
 
   const overwriteComposerAttachments = (attachments: ComposerAttachment[]): void => {
     composerAttachmentsRef.current = attachments;
@@ -1458,211 +1006,6 @@ export const ChatShellApp = ({
     }
   };
 
-  const onAddWorkspace = async (): Promise<void> => {
-    if (!transport) {
-      return;
-    }
-    try {
-      const picked = await transport.workspace.pickDirectory();
-      if (picked.canceled || !picked.rootPath) {
-        return;
-      }
-      const rootPath = picked.rootPath;
-      const workspace = await transport.workspace.add({
-        rootPath
-      });
-      await transport.sessionBrowser.reconcile(workspace.workspaceId);
-      await refreshSessionBrowser({
-        mode: "all"
-      });
-      setStatusNotice({
-        message: `Added workspace ${rootPath}`,
-        source: "workspace-add"
-      });
-    } catch (error) {
-      setStatusNotice({
-        message: `Add workspace failed: ${(error as Error).message}`,
-        persistent: true,
-        source: "workspace-add"
-      });
-    }
-  };
-
-  const onToggleWorkspace = async (workspaceId: string): Promise<void> => {
-    if (!transport) {
-      return;
-    }
-    await transport.workspace.select(workspaceId);
-    await transport.workspace.toggleExpanded(workspaceId);
-    await refreshSessionBrowser({
-      mode: "workspace",
-      workspaceId
-    });
-  };
-
-  const onCreateSession = async (workspaceId: string): Promise<void> => {
-    if (!transport || !selectedAgentId) {
-      return;
-    }
-    setStatusNotice({
-      message: "Creating session…",
-      persistent: true,
-      source: "create-session"
-    });
-    let requestId: number | undefined;
-    try {
-      const previousSessionId = displayedSessionIdRef.current;
-      if (previousSessionId) {
-        await releaseSessionCache(previousSessionId);
-      }
-      resetSessionSwitchState();
-      const created = await transport.sessionBrowser.create({
-        workspaceId,
-        agentId: selectedAgentId
-      });
-      requestId = ++openSessionRequestIdRef.current;
-      setBrowserSelectedSessionId(created.sessionId);
-      setOpeningSessionId(created.sessionId);
-      await hydrateOpenedSession(created.sessionId, requestId);
-      if (openSessionRequestIdRef.current !== requestId) {
-        return;
-      }
-      await refreshSessionBrowser({
-        mode: "workspace",
-        workspaceId
-      });
-      setStatusNotice({
-        message: `Created session for ${selectedAgentId}`,
-        source: "create-session"
-      });
-    } catch (error) {
-      if (requestId && openSessionRequestIdRef.current !== requestId) {
-        return;
-      }
-      setOpeningSessionId(undefined);
-      setStatusNotice({
-        message: `Create session failed: ${(error as Error).message}`,
-        persistent: true,
-        source: "create-session"
-      });
-    }
-  };
-
-  const onOpenSession = async (sessionId: string): Promise<void> => {
-    if (!transport) {
-      return;
-    }
-    const previousSessionId = displayedSessionIdRef.current;
-    if (previousSessionId && previousSessionId !== sessionId) {
-      await releaseSessionCache(previousSessionId);
-    }
-    resetSessionSwitchState();
-    setBrowserSelectedSessionId(sessionId);
-    setOpeningSessionId(sessionId);
-    const requestId = ++openSessionRequestIdRef.current;
-    setStatusNotice({
-      message: "Opening session…",
-      persistent: true,
-      source: "session-browser"
-    });
-    try {
-      await hydrateOpenedSession(sessionId, requestId);
-      if (openSessionRequestIdRef.current !== requestId) {
-        return;
-      }
-      await refreshSessionBrowser({
-        mode: "workspace",
-        workspaceId: findSessionNode(workspaceTree, sessionId)?.workspaceId
-      });
-      setStatusNotice(undefined);
-    } catch (error) {
-      if (openSessionRequestIdRef.current !== requestId) {
-        return;
-      }
-      setOpeningSessionId(undefined);
-      setStatusNotice({
-        message: `Open session failed: ${(error as Error).message}`,
-        persistent: true,
-        source: "session-browser"
-      });
-    }
-  };
-
-  const onToggleSessionTree = async (sessionId: string): Promise<void> => {
-    if (!transport) {
-      return;
-    }
-    await transport.sessionBrowser.toggleExpanded(sessionId);
-    await refreshSessionBrowser({
-      mode: "workspace",
-      workspaceId: findSessionNode(workspaceTree, sessionId)?.workspaceId
-    });
-  };
-
-  const onOpenSessionMenu = async (
-    event: ReactMouseEvent,
-    sessionId: string
-  ): Promise<void> => {
-    if (!transport) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    const result = await transport.sessionBrowser.getActions(sessionId);
-    setSessionMenu({
-      sessionId,
-      x: event.clientX,
-      y: event.clientY,
-      actions: result.actions
-    });
-  };
-
-  const onRunSessionAction = async (
-    sessionId: string,
-    action: SessionActionDescriptorRpc["action"]
-  ): Promise<void> => {
-    if (!transport) {
-      return;
-    }
-    try {
-      const result = await transport.sessionBrowser.runAction({
-        sessionId,
-        action
-      });
-      setSessionMenu(undefined);
-      await refreshSessionBrowser({
-        mode: "workspace",
-        workspaceId: findSessionNode(workspaceTree, sessionId)?.workspaceId
-      });
-      if (result.action === "copy_session_id") {
-        await navigator.clipboard?.writeText(result.copiedText);
-        setStatusNotice({
-          message: `Copied ${result.copiedText}`,
-          source: "session-action"
-        });
-        return;
-      }
-      if (result.action === "open_rollout") {
-        window.open(result.rolloutFileUrl, "_blank", "noopener,noreferrer");
-        setStatusNotice({
-          message: `Opened rollout ${result.rolloutDisplayPath}`,
-          source: "session-action"
-        });
-        return;
-      }
-      setStatusNotice({
-        message: `${action} completed.`,
-        source: "session-action"
-      });
-    } catch (error) {
-      setStatusNotice({
-        message: `${action} failed: ${(error as Error).message}`,
-        persistent: true,
-        source: "session-action"
-      });
-    }
-  };
-
   const onRespondApproval = async (input: {
     sessionId: string;
     requestId: string;
@@ -1682,91 +1025,6 @@ export const ChatShellApp = ({
     setProcessVisibilityByTurnId((current) =>
       toggleProcessVisibility(current, turnId, row.defaultProcessExpanded)
     );
-  };
-
-  const stopChatTreeResize = (): void => {
-    chatTreeDragState.current = undefined;
-    setIsResizingChatTree(false);
-    if (typeof document !== "undefined") {
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
-    }
-  };
-
-  const onChatTreeResizeStart = (event: ReactMouseEvent<HTMLButtonElement>): void => {
-    if (!detailRef.current) {
-      return;
-    }
-    chatTreeDragState.current = {
-      pointerId: event.button
-    };
-    chatTreePaneManualRef.current = true;
-    setIsResizingChatTree(true);
-    if (typeof document !== "undefined") {
-      document.body.style.userSelect = "none";
-      document.body.style.cursor = "ns-resize";
-    }
-    event.preventDefault();
-  };
-
-  useEffect(() => {
-    const onPointerMove = (event: MouseEvent): void => {
-      if (!chatTreeDragState.current || !detailRef.current) {
-        return;
-      }
-      const rect = detailRef.current.getBoundingClientRect();
-      const nextHeight = clampChatTreePaneHeight(rect.bottom - event.clientY, rect.height);
-      setChatTreePaneHeight(nextHeight);
-    };
-
-    const onPointerUp = (): void => {
-      if (!chatTreeDragState.current) {
-        return;
-      }
-      stopChatTreeResize();
-    };
-
-    window.addEventListener("mousemove", onPointerMove);
-    window.addEventListener("mouseup", onPointerUp);
-    return () => {
-      window.removeEventListener("mousemove", onPointerMove);
-      window.removeEventListener("mouseup", onPointerUp);
-      stopChatTreeResize();
-    };
-  }, []);
-
-  const onJumpChatTree = async (nodeId: string): Promise<void> => {
-    if (!transport || !displayedSessionId || isOpeningSelectedSession) {
-      return;
-    }
-    try {
-      await transport.chatTree.jump({
-        sessionId: displayedSessionId,
-        nodeId
-      });
-      const nextTree = await transport.chatTree.get(displayedSessionId);
-      setChatTree(nextTree);
-      const currentNode =
-        nextTree.nodes.find((node) => node.nodeId === nextTree.currentNodeId) ??
-        nextTree.nodes.find((node) => node.nodeId === nodeId);
-      if (currentNode?.turnId) {
-        const requestId = ++openSessionRequestIdRef.current;
-        const result = await transport.sessionBrowser.open(displayedSessionId);
-        if (openSessionRequestIdRef.current === requestId) {
-          applySessionWindow(result.page, "replace");
-        }
-      }
-      setStatusNotice({
-        message: `Jumped to ${nodeId}`,
-        source: "chat-tree"
-      });
-    } catch (error) {
-      setStatusNotice({
-        message: `Chat tree jump failed: ${(error as Error).message}`,
-        persistent: true,
-        source: "chat-tree"
-      });
-    }
   };
 
   const renderSessionNode = (
@@ -1886,7 +1144,7 @@ export const ChatShellApp = ({
                       className="awb-workspace__add"
                       onClick={(event) => {
                         event.stopPropagation();
-                        void onCreateSession(workspace.workspaceId);
+                        void onCreateSession(workspace.workspaceId, selectedAgentId);
                       }}
                       title="Create session in workspace"
                     >
@@ -1929,7 +1187,7 @@ export const ChatShellApp = ({
 
           <div className="awb-main__body">
             <TranscriptPane
-              transcriptRef={transcriptRef}
+              transcriptRef={viewport.transcriptRef}
               renderedTranscriptRows={renderedTranscriptRows}
               participantDirectory={participantDirectory}
               activeSessionWindow={activeSessionWindow}
@@ -2025,18 +1283,9 @@ export const ChatShellApp = ({
           </footer>
         </main>
 
-        <aside className="awb-shell__detail" aria-label="Chat tree" ref={detailRef}>
+        <aside className="awb-shell__detail" aria-label="Session details">
           <div className="awb-detail__spacer" aria-hidden="true" />
-          <section
-            className="awb-detail__graph"
-            style={{ flexBasis: `${resolvedChatTreePaneHeight}px` }}
-          >
-            <button
-              type="button"
-              className={`awb-detail__resize-handle${isResizingChatTree ? " is-dragging" : ""}`}
-              aria-label="Resize chat tree"
-              onMouseDown={onChatTreeResizeStart}
-            />
+          <section className="awb-detail__graph">
             <ChatTreePanel
               chatTree={activeChatTree}
               onJump={transport ? (nodeId) => void onJumpChatTree(nodeId) : undefined}

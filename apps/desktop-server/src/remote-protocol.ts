@@ -351,6 +351,86 @@ export const createRemoteRpcHandler = (
               ok: true,
               result: await shellService.jumpChatTree(request.params)
             });
+          case "delegation.get":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "DELEGATION_UNAVAILABLE",
+                "Delegation APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: {
+                delegation: await shellService.getDelegation(request.params.sessionId)
+              }
+            });
+          case "worktree.get":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "WORKTREE_UNAVAILABLE",
+                "Worktree APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: {
+                worktree: await shellService.getWorktree(request.params.sessionId)
+              }
+            });
+          case "checkpoint.get":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "CHECKPOINT_UNAVAILABLE",
+                "Checkpoint APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: {
+                checkpoint: await shellService.getCheckpoint(request.params.sessionId)
+              }
+            });
+          case "diagnostics.get":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "DIAGNOSTICS_UNAVAILABLE",
+                "Diagnostics APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: {
+                diagnostics: await shellService.getDiagnostics(request.params.sessionId)
+              }
+            });
+          case "backgroundRun.get":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "BACKGROUND_RUN_UNAVAILABLE",
+                "Background run APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: {
+                backgroundRun: await shellService.getBackgroundRun(request.params.sessionId)
+              }
+            });
           case "runtime.command": {
             const receipt = await service.executeCommand(request.params.envelope);
             return parseWorkbenchRpcResponse({

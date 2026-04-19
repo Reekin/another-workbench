@@ -4,23 +4,94 @@ const timeoutMs = Number(process.env.AWB_SMOKE_TIMEOUT_MS ?? "120000");
 const conversationId = `smoke-${Date.now().toString(36)}`;
 
 const waitFor = async (
+  deadlineAt: number,
   predicate: () => boolean,
   description: string
 ): Promise<void> => {
-  const startedAt = Date.now();
   for (;;) {
     if (predicate()) {
       return;
     }
-    if (Date.now() - startedAt > timeoutMs) {
+    if (Date.now() > deadlineAt) {
       throw new Error(`Timed out waiting for ${description}.`);
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
 };
 
+const readSessionObservations = (
+  service: ReturnType<typeof createCodexWorkbenchRuntimeService>,
+  sessionId: string,
+  toolNames: readonly string[],
+  terminalChunks: readonly string[]
+) => {
+  const snapshot = service.getSnapshot();
+  const session = snapshot.sessions.find((entry) => entry.sessionId === sessionId);
+  const assistantTranscriptText = snapshot.messageBlocks
+    .filter((block) => block.sessionId === sessionId && block.role !== "user")
+    .map((block) => block.text)
+    .join("\n");
+  const terminalStreams = snapshot.terminalStreams.filter(
+    (stream) => stream.sessionId === sessionId
+  );
+  const terminalText = terminalStreams.map((stream) => stream.outputText).join("\n");
+  const toolObserved =
+    toolNames.length > 0 ||
+    snapshot.toolCalls.some((toolCall) => toolCall.sessionId === sessionId);
+  const terminalObserved =
+    terminalStreams.length > 0 ||
+    terminalText.trim().length > 0 ||
+    terminalChunks.join("").trim().length > 0;
+  const assistantTranscriptObserved = assistantTranscriptText.trim().length > 0;
+  const realActivityObserved =
+    assistantTranscriptObserved || toolObserved || terminalObserved;
+
+  return {
+    snapshot,
+    session,
+    assistantTranscriptText,
+    terminalText,
+    toolObserved,
+    terminalObserved,
+    assistantTranscriptObserved,
+    realActivityObserved
+  };
+};
+
+const describeObservations = (
+  observations: ReturnType<typeof readSessionObservations>,
+  toolNames: readonly string[],
+  terminalChunks: readonly string[]
+): string =>
+  JSON.stringify(
+    {
+      sessionStatus: observations.session?.status,
+      lastTurnId: observations.session?.lastTurnId,
+      assistantTranscriptObserved: observations.assistantTranscriptObserved,
+      toolObserved: observations.toolObserved,
+      terminalObserved: observations.terminalObserved,
+      toolNames,
+      terminalStreamCount: observations.snapshot.terminalStreams.filter(
+        (stream) => stream.sessionId === observations.session?.sessionId
+      ).length,
+      terminalChunkCount: terminalChunks.length,
+      sessionTurnStatuses: observations.snapshot.turns
+        .filter((turn) => turn.sessionId === observations.session?.sessionId)
+        .map((turn) => ({
+          turnId: turn.turnId,
+          status: turn.status,
+          finishReason: turn.finishReason
+        })),
+      transcriptPreview: observations.assistantTranscriptText.slice(0, 400),
+      terminalPreview: observations.terminalText.slice(0, 400)
+    },
+    null,
+    2
+  );
+
 const run = async (): Promise<void> => {
   const service = createCodexWorkbenchRuntimeService();
+  const deadlineAt = Date.now() + timeoutMs;
 
   try {
   await service.executeCommand({
@@ -72,24 +143,44 @@ const run = async (): Promise<void> => {
   });
 
   await waitFor(
-    () =>
-      service
-        .getSnapshot()
-        .turns.some(
-          (turn) => turn.sessionId === sessionId && turn.status === "completed"
-        ),
-    "completed real Codex turn"
+    deadlineAt,
+    () => {
+      const observations = readSessionObservations(
+        service,
+        sessionId,
+        toolNames,
+        terminalChunks
+      );
+      return observations.realActivityObserved;
+    },
+    "real Codex runtime activity beyond the optimistic user turn"
   );
 
-  const snapshot = service.getSnapshot();
-  const transcriptText = snapshot.messageBlocks
-    .filter((block) => block.sessionId === sessionId)
-    .map((block) => block.text)
-    .join("\n");
-  const terminalText = snapshot.terminalStreams
-    .filter((stream) => stream.sessionId === sessionId)
-    .map((stream) => stream.outputText)
-    .join("\n");
+  await waitFor(
+    deadlineAt,
+    () => {
+      const observations = readSessionObservations(
+        service,
+        sessionId,
+        toolNames,
+        terminalChunks
+      );
+      return (
+        observations.session?.status === "idle" ||
+        observations.session?.status === "error"
+      );
+    },
+    "the real Codex runtime turn to settle"
+  );
+
+  const observations = readSessionObservations(
+    service,
+    sessionId,
+    toolNames,
+    terminalChunks
+  );
+  const transcriptText = observations.assistantTranscriptText;
+  const terminalText = observations.terminalText;
 
   if (!transcriptText.trim()) {
     throw new Error("Real smoke test did not capture any assistant transcript text.");
@@ -97,11 +188,26 @@ const run = async (): Promise<void> => {
   if (transcriptText.includes("Codex response")) {
     throw new Error("Real smoke test still saw demo placeholder text.");
   }
-  if (toolNames.length === 0 && snapshot.toolCalls.length === 0) {
+  if (!observations.toolObserved) {
     throw new Error("Real smoke test did not observe any tool execution.");
   }
-  if (!terminalText.trim() && terminalChunks.length === 0) {
-    throw new Error("Real smoke test did not observe any terminal output.");
+  if (!observations.terminalObserved) {
+    throw new Error(
+      `Real smoke test did not observe any terminal output.\n${describeObservations(
+        observations,
+        toolNames,
+        terminalChunks
+      )}`
+    );
+  }
+  if (!observations.assistantTranscriptObserved) {
+    throw new Error(
+      `Real smoke test did not capture any assistant transcript text.\n${describeObservations(
+        observations,
+        toolNames,
+        terminalChunks
+      )}`
+    );
   }
 
   console.log(

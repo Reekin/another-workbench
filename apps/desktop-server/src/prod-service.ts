@@ -7,8 +7,7 @@ import { createPiAcpRuntimePort } from "./pi-acp-runtime-port.js";
 import { WorkbenchRuntimeService } from "./runtime-service.js";
 import { SessionIndexStore } from "./session-index.js";
 import { SessionCatalogService } from "./session-catalog.js";
-import { SessionActionsProvider } from "./session-actions.js";
-import { ChatTreeProvider } from "./chat-tree-provider.js";
+import { CapabilityRegistry } from "./capability-registry.js";
 import {
   CodexSessionDiscoveryProvider,
   SessionReconciliationService
@@ -17,6 +16,11 @@ import { WorkbenchShellService } from "./workbench-shell-service.js";
 import { WorkspaceRegistryService } from "./workspace-registry.js";
 import { CodexSessionActionsProvider } from "./codex-session-actions-provider.js";
 import { CodexChatTreeAgentProvider } from "./codex-chat-tree-provider.js";
+import { SessionIdentityRegistry } from "./session-identity-registry.js";
+import { CodexDelegationProvider } from "./codex-delegation-provider.js";
+import { CodexWorktreeProvider } from "./codex-worktree-provider.js";
+import { CodexCheckpointProvider } from "./codex-checkpoint-provider.js";
+import { CodexDiagnosticsProvider } from "./codex-diagnostics-provider.js";
 
 export type CreateWorkbenchRuntimeServiceOptions = {
   codexCommandPath?: string;
@@ -110,42 +114,60 @@ export const createWorkbenchRuntimeService = (
     workspaceRegistry,
     sessionIndexStore
   });
+  const sessionIdentity = new SessionIdentityRegistry({
+    runtimeService,
+    sessionIndexStore
+  });
+  const capabilities = new CapabilityRegistry({
+    runtimeService,
+    sessionIndexStore,
+    sessionIdentity,
+    capabilities: [
+      {
+        agentId: codexAgentId,
+        sessionDiscovery: new CodexSessionDiscoveryProvider({
+          codexRuntimePort
+        }),
+        sessionActions: new CodexSessionActionsProvider({
+          codexRuntimePort
+        }),
+        conversationGraph: new CodexChatTreeAgentProvider({
+          codexRuntimePort,
+          now: options.now
+        }),
+        delegation: new CodexDelegationProvider(),
+        worktree: new CodexWorktreeProvider({
+          codexRuntimePort,
+          now: options.now
+        }),
+        checkpoint: new CodexCheckpointProvider({
+          codexRuntimePort,
+          now: options.now
+        }),
+        diagnostics: new CodexDiagnosticsProvider({
+          codexRuntimePort,
+          now: options.now
+        })
+      },
+      {
+        agentId: piAgentId
+      }
+    ],
+    now: options.now
+  });
   const sessionReconciliation = new SessionReconciliationService({
     runtimeService,
     workspaceRegistry,
     sessionIndexStore,
-    providers: [
-      new CodexSessionDiscoveryProvider({
-        codexRuntimePort
-      })
-    ]
-  });
-  const sessionActions = new SessionActionsProvider({
-    runtimeService,
-    sessionIndexStore,
-    providers: [
-      new CodexSessionActionsProvider({
-        codexRuntimePort
-      })
-    ]
-  });
-  const chatTreeProvider = new ChatTreeProvider({
-    runtimeService,
-    sessionIndexStore,
-    providers: [
-      new CodexChatTreeAgentProvider({
-        codexRuntimePort,
-        now: options.now
-      })
-    ],
-    now: options.now
+    sessionIdentity,
+    capabilityRegistry: capabilities
   });
 
   return new WorkbenchShellService({
     runtimeService,
     sessionCatalog,
-    sessionActions,
-    chatTreeProvider,
+    capabilities,
+    sessionIdentity,
     sessionReconciliation,
     pickWorkspaceDirectory: options.pickWorkspaceDirectory
   });

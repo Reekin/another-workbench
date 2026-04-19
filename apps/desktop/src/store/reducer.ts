@@ -6,6 +6,7 @@ import type {
 } from "@another-workbench/shared";
 import type { RendererStoreAction, RendererStoreState } from "./types.js";
 import {
+  createEmptyIndexes,
   createInitialRendererStoreState,
   upsertApprovalRequest,
   upsertConversation,
@@ -349,150 +350,145 @@ const sortByIsoAsc = <T>(
     return selectId(left).localeCompare(selectId(right));
   });
 
-const buildSnapshotFromState = (
-  state: RendererStoreState,
-  options: {
-    excludeSessionId?: string;
-  } = {}
-): DomainSnapshot => {
-  const sessions = sortByIsoAsc(
-    Object.values(state.entities.sessions).filter(
-      (session) => session.sessionId !== options.excludeSessionId
-    ),
-    (session) => session.createdAt,
-    (session) => session.sessionId
-  );
-  const sessionIds = new Set(sessions.map((session) => session.sessionId));
-  const sessionsByConversationId = new Map<string, string[]>();
+const rebuildIndexesFromEntities = (
+  entities: RendererStoreState["entities"]
+): RendererStoreState["indexes"] => {
+  let state: RendererStoreState = {
+    ...createInitialRendererStoreState(),
+    entities,
+    indexes: createEmptyIndexes()
+  };
 
-  for (const session of sessions) {
-    const bucket = sessionsByConversationId.get(session.conversationId);
-    if (bucket) {
-      bucket.push(session.sessionId);
-    } else {
-      sessionsByConversationId.set(session.conversationId, [session.sessionId]);
-    }
+  for (const conversation of Object.values(entities.conversations)) {
+    state = upsertConversation(state, conversation);
+  }
+  for (const session of Object.values(entities.sessions)) {
+    state = upsertSession(state, session);
+  }
+  for (const turn of Object.values(entities.turns)) {
+    state = upsertTurn(state, turn);
+  }
+  for (const block of Object.values(entities.messageBlocks)) {
+    state = upsertMessageBlock(state, block);
+  }
+  for (const participant of Object.values(entities.participants)) {
+    state = upsertParticipant(state, participant);
+  }
+  for (const relation of Object.values(entities.sessionRelations)) {
+    state = upsertSessionRelation(state, relation);
   }
 
-  return {
-    conversations: sortByIsoAsc(
-      Object.values(state.entities.conversations).map((conversation) => {
-        const nextSessionIds = sessionsByConversationId.get(conversation.conversationId) ?? [];
-        const activeSessionId =
-          conversation.activeSessionId && sessionIds.has(conversation.activeSessionId)
-            ? conversation.activeSessionId
-            : nextSessionIds[0];
-        return {
-          ...conversation,
-          activeSessionId,
-          sessionIds: nextSessionIds
-        };
-      }),
-      (conversation) => conversation.createdAt,
-      (conversation) => conversation.conversationId
-    ),
-    sessions,
-    turns: sortByIsoAsc(
-      Object.values(state.entities.turns).filter((turn) => sessionIds.has(turn.sessionId)),
-      (turn) => turn.startedAt,
-      (turn) => turn.turnId
-    ),
-    messageBlocks: normalizeSnapshotMessageBlocks(
-      sortByIsoAsc(
-        Object.values(state.entities.messageBlocks).filter((block) =>
-          sessionIds.has(block.sessionId)
-        ),
-        (block) => block.startedAt,
-        (block) => block.blockId
-      )
-    ),
-    toolCalls: sortByIsoAsc(
-      Object.values(state.entities.toolCalls).filter((toolCall) =>
-        sessionIds.has(toolCall.sessionId)
-      ),
-      (toolCall) => toolCall.startedAt,
-      (toolCall) => toolCall.toolCallId
-    ),
-    terminalStreams: sortByIsoAsc(
-      Object.values(state.entities.terminalStreams).filter((terminalStream) =>
-        sessionIds.has(terminalStream.sessionId)
-      ),
-      (terminalStream) => terminalStream.startedAt,
-      (terminalStream) => terminalStream.terminalId
-    ),
-    approvalRequests: sortByIsoAsc(
-      Object.values(state.entities.approvalRequests).filter((approvalRequest) =>
-        sessionIds.has(approvalRequest.sessionId)
-      ),
-      (approvalRequest) => approvalRequest.requestedAt,
-      (approvalRequest) => approvalRequest.requestId
-    ),
-    participants: Object.values(state.entities.participants)
-      .map((participant) => ({
-        ...participant,
-        activeSessionIds: sessions
-          .filter(
-            (session) =>
-              session.conversationId === participant.conversationId &&
-              session.agentId === participant.agentId &&
-              !session.archivedAt
-          )
-          .map((session) => session.sessionId)
-      }))
-      .sort((left, right) => left.participantId.localeCompare(right.participantId)),
-    sessionRelations: sortByIsoAsc(
-      Object.values(state.entities.sessionRelations).filter(
-        (relation) =>
-          sessionIds.has(relation.parentSessionId) && sessionIds.has(relation.childSessionId)
-      ),
-      (relation) => relation.createdAt,
-      (relation) => relation.relationId
-    )
-  };
-};
-
-const buildSelectionFromSnapshot = (
-  state: RendererStoreState,
-  snapshot: DomainSnapshot
-): Pick<RendererStoreState, "activeConversationId" | "activeSessionId"> => {
-  const activeConversationId =
-    state.activeConversationId &&
-    snapshot.conversations.some(
-      (conversation) => conversation.conversationId === state.activeConversationId
-    )
-      ? state.activeConversationId
-      : snapshot.conversations[0]?.conversationId;
-  const activeConversation = activeConversationId
-    ? snapshot.conversations.find(
-        (conversation) => conversation.conversationId === activeConversationId
-      )
-    : undefined;
-  const activeSessionId =
-    state.activeSessionId &&
-    snapshot.sessions.some((session) => session.sessionId === state.activeSessionId)
-      ? state.activeSessionId
-      : activeConversation?.activeSessionId ?? snapshot.sessions[0]?.sessionId;
-
-  return {
-    activeConversationId,
-    activeSessionId
-  };
+  return state.indexes;
 };
 
 const disposeSessionState = (
   state: RendererStoreState,
   sessionId: string
 ): RendererStoreState => {
-  const snapshot = buildSnapshotFromState(state, {
-    excludeSessionId: sessionId
-  });
-  return hydrateFromSnapshot(
-    {
-      ...state,
-      ...buildSelectionFromSnapshot(state, snapshot)
-    },
-    snapshot
+  const removedSession = state.entities.sessions[sessionId];
+  if (!removedSession) {
+    return state;
+  }
+
+  const nextSessions = Object.fromEntries(
+    Object.entries(state.entities.sessions).filter(([id]) => id !== sessionId)
   );
+  const remainingSessionIds = new Set(Object.keys(nextSessions));
+
+  const nextTurns = Object.fromEntries(
+    Object.entries(state.entities.turns).filter(([, turn]) => turn.sessionId !== sessionId)
+  );
+  const nextMessageBlocks = Object.fromEntries(
+    Object.entries(state.entities.messageBlocks).filter(
+      ([, block]) => block.sessionId !== sessionId
+    )
+  );
+  const nextToolCalls = Object.fromEntries(
+    Object.entries(state.entities.toolCalls).filter(
+      ([, toolCall]) => toolCall.sessionId !== sessionId
+    )
+  );
+  const nextTerminalStreams = Object.fromEntries(
+    Object.entries(state.entities.terminalStreams).filter(
+      ([, terminal]) => terminal.sessionId !== sessionId
+    )
+  );
+  const nextApprovalRequests = Object.fromEntries(
+    Object.entries(state.entities.approvalRequests).filter(
+      ([, approval]) => approval.sessionId !== sessionId
+    )
+  );
+  const nextSessionRelations = Object.fromEntries(
+    Object.entries(state.entities.sessionRelations).filter(
+      ([, relation]) =>
+        relation.parentSessionId !== sessionId && relation.childSessionId !== sessionId
+    )
+  );
+
+  const nextConversations: RendererStoreState["entities"]["conversations"] = {};
+  for (const [conversationId, conversation] of Object.entries(
+    state.entities.conversations
+  )) {
+    const sessionIds = conversation.sessionIds.filter(
+      (candidate) => candidate !== sessionId && remainingSessionIds.has(candidate)
+    );
+    if (sessionIds.length === 0) {
+      continue;
+    }
+    nextConversations[conversationId] = {
+      ...conversation,
+      sessionIds,
+      activeSessionId: sessionIds.includes(conversation.activeSessionId ?? "")
+        ? conversation.activeSessionId
+        : sessionIds[0]
+    };
+  }
+
+  const remainingConversationIds = new Set(Object.keys(nextConversations));
+  const nextParticipants: RendererStoreState["entities"]["participants"] = {};
+  for (const [participantId, participant] of Object.entries(state.entities.participants)) {
+    if (!remainingConversationIds.has(participant.conversationId)) {
+      continue;
+    }
+    nextParticipants[participantId] = {
+      ...participant,
+      activeSessionIds: participant.activeSessionIds.filter((candidate) =>
+        remainingSessionIds.has(candidate)
+      )
+    };
+  }
+
+  const nextEntities: RendererStoreState["entities"] = {
+    conversations: nextConversations,
+    sessions: nextSessions,
+    turns: nextTurns,
+    messageBlocks: nextMessageBlocks,
+    toolCalls: nextToolCalls,
+    terminalStreams: nextTerminalStreams,
+    approvalRequests: nextApprovalRequests,
+    participants: nextParticipants,
+    sessionRelations: nextSessionRelations
+  };
+
+  const nextActiveConversationId =
+    state.activeConversationId &&
+    remainingConversationIds.has(state.activeConversationId)
+      ? state.activeConversationId
+      : Object.keys(nextConversations)[0];
+  const nextActiveSessionId =
+    state.activeSessionId && remainingSessionIds.has(state.activeSessionId)
+      ? state.activeSessionId
+      : nextActiveConversationId
+        ? nextConversations[nextActiveConversationId]?.activeSessionId
+        : Object.keys(nextSessions)[0];
+
+  return {
+    ...state,
+    entities: nextEntities,
+    indexes: rebuildIndexesFromEntities(nextEntities),
+    activeConversationId: nextActiveConversationId,
+    activeSessionId: nextActiveSessionId
+  };
 };
 
 const applyRuntimeEvent = (

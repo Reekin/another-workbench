@@ -1,0 +1,280 @@
+import { describe, expect, it, vi } from "vitest";
+import type { AgentAdapter } from "@another-workbench/adapters";
+import type { RuntimeEvent } from "@another-workbench/shared";
+import { DomainService } from "../src/domain-service.js";
+import { RuntimeOrchestrator } from "../src/runtime-orchestrator.js";
+
+describe("RuntimeOrchestrator", () => {
+  it("initializes adapters once and forwards selected config metadata", async () => {
+    const initialize = vi.fn().mockResolvedValue(undefined);
+    const subscribe = vi.fn().mockReturnValue(() => {});
+    const adapter: AgentAdapter = {
+      id: "codex-adapter",
+      kind: "codex",
+      getLifecycleState: () => "idle",
+      initialize,
+      executeCommand: vi.fn().mockResolvedValue({
+        commandId: "noop",
+        commandType: "initialize",
+        accepted: true
+      }),
+      subscribe,
+      dispose: vi.fn().mockResolvedValue(undefined)
+    };
+
+    let orchestrator: RuntimeOrchestrator | undefined;
+    const publishedEvents: RuntimeEvent[] = [];
+    const domainService = new DomainService({
+      now: () => "2026-04-20T00:02:00Z",
+      resolveAgentDescriptor: (agentId) =>
+        orchestrator?.getAgentDescriptor(agentId),
+      publishRuntimeEvent: (event) => {
+        publishedEvents.push(event);
+      }
+    });
+
+    orchestrator = new RuntimeOrchestrator({
+      domainService,
+      sessionIndexSyncService: {
+        syncSession: vi.fn().mockResolvedValue(undefined),
+        syncRelation: vi.fn().mockResolvedValue(undefined),
+        markSessionUnreadCompleted: vi.fn().mockResolvedValue(undefined)
+      } as never,
+      workspaceSelectionService: {
+        activateSelection: vi.fn().mockResolvedValue(undefined),
+        selectWorkspace: vi.fn().mockResolvedValue({
+          workspaceId: "workspace-1"
+        })
+      } as never,
+      publishRuntimeEvent: (event) => {
+        publishedEvents.push(event);
+      },
+      agentBindings: [
+        {
+          descriptor: {
+            agentId: "codex",
+            displayName: "Codex",
+            capabilities: ["chat", "terminal"]
+          },
+          adapter
+        }
+      ]
+    });
+
+    orchestrator.selectAgent({
+      agentId: "codex",
+      config: {
+        approvalPolicy: "auto"
+      }
+    });
+
+    await orchestrator.executeCommand({
+      commandId: "init-1",
+      command: {
+        type: "initialize"
+      }
+    });
+    await orchestrator.executeCommand({
+      commandId: "init-2",
+      command: {
+        type: "initialize"
+      }
+    });
+
+    expect(initialize).toHaveBeenCalledTimes(1);
+    expect(initialize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          selectedConfig: {
+            approvalPolicy: "auto"
+          }
+        })
+      })
+    );
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    expect(publishedEvents).toEqual([]);
+  });
+
+  it("creates sessions and coordinates index plus workspace side effects", async () => {
+    const syncSession = vi.fn().mockResolvedValue(undefined);
+    const activateSelection = vi.fn().mockResolvedValue(undefined);
+
+    let orchestrator: RuntimeOrchestrator | undefined;
+    const domainService = new DomainService({
+      now: (() => {
+        let tick = 0;
+        return () => `2026-04-20T00:03:${String(++tick).padStart(2, "0")}Z`;
+      })(),
+      createSessionId: () => "session-1",
+      resolveAgentDescriptor: (agentId) =>
+        orchestrator?.getAgentDescriptor(agentId),
+      publishRuntimeEvent: () => {}
+    });
+
+    orchestrator = new RuntimeOrchestrator({
+      domainService,
+      sessionIndexSyncService: {
+        syncSession,
+        syncRelation: vi.fn().mockResolvedValue(undefined),
+        markSessionUnreadCompleted: vi.fn().mockResolvedValue(undefined)
+      } as never,
+      workspaceSelectionService: {
+        activateSelection,
+        selectWorkspace: vi.fn().mockResolvedValue({
+          workspaceId: "workspace-1"
+        })
+      } as never,
+      publishRuntimeEvent: () => {},
+      createConversationId: () => "conversation-1",
+      agentBindings: [
+        {
+          descriptor: {
+            agentId: "codex",
+            displayName: "Codex",
+            capabilities: ["chat", "terminal"]
+          }
+        }
+      ]
+    });
+
+    const session = await orchestrator.createSession({
+      agentId: "codex",
+      workspaceId: "workspace-1"
+    });
+
+    expect(session).toMatchObject({
+      sessionId: "session-1",
+      conversationId: "conversation-1",
+      agentId: "codex"
+    });
+    expect(syncSession).toHaveBeenCalledWith("session-1");
+    expect(activateSelection).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      sessionId: "session-1"
+    });
+    expect(domainService.getSnapshot()).toMatchObject({
+      conversations: [
+        expect.objectContaining({
+          conversationId: "conversation-1",
+          workspaceId: "workspace-1"
+        })
+      ],
+      sessions: [
+        expect.objectContaining({
+          sessionId: "session-1",
+          conversationId: "conversation-1"
+        })
+      ]
+    });
+  });
+
+  it("persists adapter-emitted subagent relations into the session index", async () => {
+    const syncSession = vi.fn().mockResolvedValue(undefined);
+    const syncRelation = vi.fn().mockResolvedValue(undefined);
+    const subscribe = vi.fn();
+    const adapter: AgentAdapter = {
+      id: "codex-adapter",
+      kind: "codex",
+      getLifecycleState: () => "idle",
+      initialize: vi.fn().mockResolvedValue(undefined),
+      executeCommand: vi.fn().mockResolvedValue({
+        commandId: "noop",
+        commandType: "initialize",
+        accepted: true
+      }),
+      subscribe,
+      dispose: vi.fn().mockResolvedValue(undefined)
+    };
+
+    let adapterListener:
+      | ((envelope: {
+          occurredAt: string;
+          event: RuntimeEvent;
+        }) => void | Promise<void>)
+      | undefined;
+    subscribe.mockImplementation((listener) => {
+      adapterListener = listener;
+      return () => {};
+    });
+
+    let orchestrator: RuntimeOrchestrator | undefined;
+    const domainService = new DomainService({
+      now: (() => {
+        let tick = 0;
+        return () => `2026-04-20T00:04:${String(++tick).padStart(2, "0")}Z`;
+      })(),
+      createSessionId: () => "session-root",
+      resolveAgentDescriptor: (agentId) =>
+        orchestrator?.getAgentDescriptor(agentId),
+      publishRuntimeEvent: () => {}
+    });
+
+    orchestrator = new RuntimeOrchestrator({
+      domainService,
+      sessionIndexSyncService: {
+        syncSession,
+        syncRelation,
+        markSessionUnreadCompleted: vi.fn().mockResolvedValue(undefined)
+      } as never,
+      workspaceSelectionService: {
+        activateSelection: vi.fn().mockResolvedValue(undefined),
+        selectWorkspace: vi.fn().mockResolvedValue({
+          workspaceId: "workspace-1"
+        })
+      } as never,
+      publishRuntimeEvent: () => {},
+      createConversationId: () => "conversation-1",
+      agentBindings: [
+        {
+          descriptor: {
+            agentId: "codex",
+            displayName: "Codex",
+            capabilities: ["chat", "terminal"]
+          },
+          adapter
+        }
+      ]
+    });
+
+    await orchestrator.createSession({
+      agentId: "codex",
+      workspaceId: "workspace-1"
+    });
+    await orchestrator.executeCommand({
+      commandId: "init-relations",
+      command: {
+        type: "initialize"
+      }
+    });
+
+    expect(adapterListener).toBeTypeOf("function");
+    await adapterListener?.({
+      occurredAt: "2026-04-20T00:04:10Z",
+      event: {
+        type: "session.created",
+        conversationId: "conversation-1",
+        sessionId: "session-child",
+        agentId: "codex",
+        status: "running",
+        relation: {
+          relationId: "relation-subagent",
+          parentSessionId: "session-root",
+          childSessionId: "session-child",
+          relationType: "subagent",
+          sourceTurnId: "turn-1",
+          createdAt: "2026-04-20T00:04:10Z"
+        }
+      }
+    });
+
+    expect(syncSession).toHaveBeenCalledWith("session-child");
+    expect(syncRelation).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      parentSessionId: "session-root",
+      childSessionId: "session-child",
+      relationType: "subagent",
+      sourceTurnId: "turn-1",
+      createdAt: "2026-04-20T00:04:10Z"
+    });
+  });
+});

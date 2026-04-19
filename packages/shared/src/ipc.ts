@@ -35,6 +35,11 @@ export const workbenchRpcMethods = [
   "sessionBrowser.runAction",
   "chatTree.get",
   "chatTree.jump",
+  "delegation.get",
+  "worktree.get",
+  "checkpoint.get",
+  "diagnostics.get",
+  "backgroundRun.get",
   "runtime.command",
   "events.subscribe",
   "events.unsubscribe",
@@ -66,11 +71,17 @@ const zWorkbenchSettingsSchema = z.object({
 
 const zSessionStatusDotSchema = z.enum(["none", "running", "unread_completed"]);
 
+export const zProviderSessionHandleSchema = z.object({
+  providerKind: z.string().min(1),
+  providerSessionId: z.string().min(1)
+});
+
 const zSessionBrowserNodeSchema: z.ZodType = z.lazy(() =>
   z.object({
     sessionId: zSessionId,
     displaySessionId: z.string().min(1),
     providerSessionId: z.string().min(1).optional(),
+    providerHandle: zProviderSessionHandleSchema.optional(),
     workspaceId: z.string().min(1),
     conversationId: zConversationId.optional(),
     agentId: zAgentId,
@@ -139,12 +150,115 @@ const zChatTreeNodeSchema = z.object({
   isCurrent: z.boolean()
 });
 
+const zConversationGraphNodeSchema = zChatTreeNodeSchema.extend({
+  providerNodeId: z.string().min(1).optional(),
+  summary: z.string().min(1).optional()
+});
+
+const zConversationGraphSnapshotSchema = z.object({
+  sessionId: zSessionId,
+  agentId: zAgentId,
+  supportsJump: z.boolean(),
+  currentNodeId: z.string().min(1).optional(),
+  nodes: z.array(zConversationGraphNodeSchema).default([]),
+  fetchedAt: z.string().min(1)
+});
+
 const zChatTreeSnapshotSchema = z.object({
   sessionId: zSessionId,
   agentId: zAgentId,
   supportsJump: z.boolean(),
   currentNodeId: z.string().min(1).optional(),
   nodes: z.array(zChatTreeNodeSchema).default([]),
+  fetchedAt: z.string().min(1)
+});
+
+const zDelegationNodeSchema = z.object({
+  nodeId: z.string().min(1),
+  providerNodeId: z.string().min(1).optional(),
+  label: z.string().min(1),
+  status: z.enum(["pending", "running", "completed", "failed", "cancelled"]),
+  role: z.enum(["root", "delegate"]),
+  parentNodeId: z.string().min(1).optional(),
+  linkedSessionId: zSessionId.optional(),
+  summary: z.string().min(1).optional(),
+  startedAt: z.string().min(1).optional(),
+  completedAt: z.string().min(1).optional()
+});
+
+const zDelegationEdgeSchema = z.object({
+  edgeId: z.string().min(1),
+  fromNodeId: z.string().min(1),
+  toNodeId: z.string().min(1),
+  relation: z.enum(["spawn", "handoff", "wait", "resume"])
+});
+
+const zDelegationSnapshotSchema = z.object({
+  sessionId: zSessionId,
+  agentId: zAgentId,
+  supported: z.boolean(),
+  supportsControl: z.boolean(),
+  currentActiveNodeId: z.string().min(1).optional(),
+  nodes: z.array(zDelegationNodeSchema).default([]),
+  edges: z.array(zDelegationEdgeSchema).default([]),
+  fetchedAt: z.string().min(1)
+});
+
+const zWorktreeSnapshotSchema = z.object({
+  sessionId: zSessionId,
+  agentId: zAgentId,
+  supported: z.boolean(),
+  workspaceRoot: z.string().min(1).optional(),
+  rolloutPath: z.string().min(1).optional(),
+  gitBranch: z.string().min(1).optional(),
+  gitSha: z.string().min(1).optional(),
+  gitOriginUrl: z.string().min(1).optional(),
+  diffToRemoteSha: z.string().min(1).optional(),
+  diffToRemote: z.string().optional(),
+  fetchedAt: z.string().min(1)
+});
+
+const zCheckpointEntrySchema = z.object({
+  checkpointId: z.string().min(1),
+  providerCheckpointId: z.string().min(1).optional(),
+  label: z.string().min(1),
+  summary: z.string().min(1).optional(),
+  turnId: zTurnId.optional(),
+  order: z.number().int(),
+  isCurrent: z.boolean()
+});
+
+const zCheckpointSnapshotSchema = z.object({
+  sessionId: zSessionId,
+  agentId: zAgentId,
+  supported: z.boolean(),
+  supportsRestore: z.boolean(),
+  currentCheckpointId: z.string().min(1).optional(),
+  checkpoints: z.array(zCheckpointEntrySchema).default([]),
+  fetchedAt: z.string().min(1)
+});
+
+const zDiagnosticsSnapshotSchema = z.object({
+  sessionId: zSessionId,
+  agentId: zAgentId,
+  supported: z.boolean(),
+  authenticated: z.boolean(),
+  authMethod: z.string().min(1).nullable().optional(),
+  requiresOpenaiAuth: z.boolean().nullable().optional(),
+  gitBranch: z.string().min(1).optional(),
+  gitSha: z.string().min(1).optional(),
+  diffToRemoteSha: z.string().min(1).optional(),
+  diffToRemote: z.string().optional(),
+  summaryText: z.string().min(1).optional(),
+  fetchedAt: z.string().min(1)
+});
+
+const zBackgroundRunSnapshotSchema = z.object({
+  sessionId: zSessionId,
+  agentId: zAgentId,
+  supported: z.boolean(),
+  status: z.enum(["unsupported", "attached", "detached"]),
+  resumeToken: z.string().min(1).optional(),
   fetchedAt: z.string().min(1)
 });
 
@@ -341,6 +455,46 @@ const zChatTreeJumpRequestSchema = z.object({
   })
 });
 
+const zDelegationGetRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("delegation.get"),
+  params: z.object({
+    sessionId: zSessionId
+  })
+});
+
+const zWorktreeGetRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("worktree.get"),
+  params: z.object({
+    sessionId: zSessionId
+  })
+});
+
+const zCheckpointGetRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("checkpoint.get"),
+  params: z.object({
+    sessionId: zSessionId
+  })
+});
+
+const zDiagnosticsGetRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("diagnostics.get"),
+  params: z.object({
+    sessionId: zSessionId
+  })
+});
+
+const zBackgroundRunGetRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("backgroundRun.get"),
+  params: z.object({
+    sessionId: zSessionId
+  })
+});
+
 export const zWorkbenchEventSubscriptionFilterSchema = z.object({
   sessionId: zSessionId.optional(),
   conversationId: zConversationId.optional(),
@@ -398,6 +552,11 @@ export const zWorkbenchRpcRequestSchema = z.discriminatedUnion("method", [
   zSessionBrowserRunActionRequestSchema,
   zChatTreeGetRequestSchema,
   zChatTreeJumpRequestSchema,
+  zDelegationGetRequestSchema,
+  zWorktreeGetRequestSchema,
+  zCheckpointGetRequestSchema,
+  zDiagnosticsGetRequestSchema,
+  zBackgroundRunGetRequestSchema,
   zRuntimeCommandRequestSchema,
   zEventsSubscribeRequestSchema,
   zEventsUnsubscribeRequestSchema,
@@ -607,6 +766,51 @@ const zChatTreeJumpResponseSchema = z.object({
   })
 });
 
+const zDelegationGetResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("delegation.get"),
+  ok: z.literal(true),
+  result: z.object({
+    delegation: zDelegationSnapshotSchema
+  })
+});
+
+const zWorktreeGetResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("worktree.get"),
+  ok: z.literal(true),
+  result: z.object({
+    worktree: zWorktreeSnapshotSchema
+  })
+});
+
+const zCheckpointGetResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("checkpoint.get"),
+  ok: z.literal(true),
+  result: z.object({
+    checkpoint: zCheckpointSnapshotSchema
+  })
+});
+
+const zDiagnosticsGetResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("diagnostics.get"),
+  ok: z.literal(true),
+  result: z.object({
+    diagnostics: zDiagnosticsSnapshotSchema
+  })
+});
+
+const zBackgroundRunGetResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("backgroundRun.get"),
+  ok: z.literal(true),
+  result: z.object({
+    backgroundRun: zBackgroundRunSnapshotSchema
+  })
+});
+
 const zRuntimeCommandResponseSchema = z.object({
   id: zRequestId,
   method: z.literal("runtime.command"),
@@ -683,6 +887,11 @@ export const zWorkbenchRpcResponseSchema = z.union([
   zSessionBrowserRunActionResponseSchema,
   zChatTreeGetResponseSchema,
   zChatTreeJumpResponseSchema,
+  zDelegationGetResponseSchema,
+  zWorktreeGetResponseSchema,
+  zCheckpointGetResponseSchema,
+  zDiagnosticsGetResponseSchema,
+  zBackgroundRunGetResponseSchema,
   zRuntimeCommandResponseSchema,
   zEventsSubscribeResponseSchema,
   zEventsUnsubscribeResponseSchema,
@@ -705,12 +914,21 @@ export type WorkbenchRpcRequest = z.infer<typeof zWorkbenchRpcRequestSchema>;
 export type WorkbenchRpcResponse = z.infer<typeof zWorkbenchRpcResponseSchema>;
 export type WorkbenchEventPush = z.infer<typeof zWorkbenchEventPushSchema>;
 export type WorkspaceRecordRpc = z.infer<typeof zWorkspaceRecordSchema>;
+export type ProviderSessionHandle = z.infer<typeof zProviderSessionHandleSchema>;
 export type SessionBrowserNodeRpc = z.infer<typeof zSessionBrowserNodeSchema>;
 export type WorkspaceBrowserNodeRpc = z.infer<typeof zWorkspaceBrowserNodeSchema>;
 export type SessionActionKindRpc = z.infer<typeof zSessionActionKindSchema>;
 export type SessionActionDescriptorRpc = z.infer<typeof zSessionActionDescriptorSchema>;
 export type SessionActionResultRpc = z.infer<typeof zSessionActionResultSchema>;
+export type ConversationGraphSnapshotRpc = z.infer<
+  typeof zConversationGraphSnapshotSchema
+>;
 export type ChatTreeSnapshotRpc = z.infer<typeof zChatTreeSnapshotSchema>;
+export type DelegationSnapshotRpc = z.infer<typeof zDelegationSnapshotSchema>;
+export type WorktreeSnapshotRpc = z.infer<typeof zWorktreeSnapshotSchema>;
+export type CheckpointSnapshotRpc = z.infer<typeof zCheckpointSnapshotSchema>;
+export type DiagnosticsSnapshotRpc = z.infer<typeof zDiagnosticsSnapshotSchema>;
+export type BackgroundRunSnapshotRpc = z.infer<typeof zBackgroundRunSnapshotSchema>;
 export type SessionWindowRpc = z.infer<typeof zSessionWindowSchema>;
 
 export type WorkbenchEventHandler = (event: WorkbenchEventPush) => void;

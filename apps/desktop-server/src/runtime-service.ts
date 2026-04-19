@@ -44,6 +44,7 @@ import type {
 } from "./session-index.js";
 import type { HydratedSessionSnapshot } from "./session-discovery.js";
 import type { WorkspaceRegistryService } from "./workspace-registry.js";
+import { buildLocalEchoMessageText } from "./attachment-inputs.js";
 
 type Clock = () => string;
 type IdFactory = () => string;
@@ -727,6 +728,10 @@ export class WorkbenchRuntimeService {
   private commitLocalUserMessage(
     command: Extract<Command, { type: "sendUserMessage" }>
   ): void {
+    const renderedContent = buildLocalEchoMessageText(
+      command.content,
+      command.attachments
+    );
     const turnId = `user-turn-${command.messageId}`;
     this.commitRuntimeEvent({
       type: "turn.started",
@@ -740,13 +745,13 @@ export class WorkbenchRuntimeService {
       messageId: command.messageId,
       role: "user"
     });
-    if (command.content.length > 0) {
+    if (renderedContent.length > 0) {
       this.commitRuntimeEvent({
         type: "message.delta",
         sessionId: command.sessionId,
         turnId,
         messageId: command.messageId,
-        delta: command.content
+        delta: renderedContent
       });
     }
     this.commitRuntimeEvent({
@@ -754,7 +759,7 @@ export class WorkbenchRuntimeService {
       sessionId: command.sessionId,
       turnId,
       messageId: command.messageId,
-      finalText: command.content
+      finalText: renderedContent
     });
     this.commitRuntimeEvent({
       type: "turn.completed",

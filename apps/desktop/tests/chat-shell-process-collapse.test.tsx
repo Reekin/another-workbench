@@ -13,9 +13,29 @@ vi.mock("xterm", () => ({
 }));
 
 import { ChatShellApp } from "../src/ui/chat-shell/ChatShellApp.js";
+import {
+  resolveProcessExpanded,
+  toggleProcessVisibility
+} from "../src/ui/chat-shell/process-visibility.js";
 
-describe("ChatShellApp inspector layout", () => {
-  it("moves process details into the inspector and focuses the latest assistant turn", () => {
+describe("ChatShellApp inline process output", () => {
+  it("lets a running turn collapse even when process output defaults open", () => {
+    const initial = resolveProcessExpanded(true, undefined);
+    expect(initial).toBe(true);
+
+    const afterFirstToggle = toggleProcessVisibility({}, "turn-running", true);
+    expect(resolveProcessExpanded(true, afterFirstToggle["turn-running"])).toBe(false);
+
+    const afterSecondToggle = toggleProcessVisibility(
+      afterFirstToggle,
+      "turn-running",
+      true
+    );
+    expect(resolveProcessExpanded(true, afterSecondToggle["turn-running"])).toBe(true);
+    expect(afterSecondToggle).toEqual({});
+  });
+
+  it("renders process output controls inline under assistant turns", () => {
     const store = createRendererStore();
     store.hydrateSnapshot(
       parseDomainSnapshot({
@@ -112,12 +132,11 @@ describe("ChatShellApp inspector layout", () => {
 
     const html = renderToStaticMarkup(<ChatShellApp store={store} />);
 
-    expect(html).toContain(">Inspector<");
-    expect(html).toContain("Turn process");
-    expect(html).toContain(">turn-running<");
+    expect(html).not.toContain(">Inspector<");
+    expect(html).toContain("Show process output");
+    expect(html).toContain("Hide process output");
+    expect(html).toContain("1 tool");
     expect((html.match(/Tool activity/g) ?? []).length).toBe(1);
-    expect(html).not.toContain("Process details hidden by default after completion.");
-    expect(html).not.toContain("Process details stay open while the turn is still running.");
-    expect(html).not.toContain('class="awb-turn__process');
+    expect(html).toContain('class="awb-turn__process"');
   });
 });

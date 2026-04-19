@@ -285,6 +285,75 @@ describe("WorkbenchRuntimeService", () => {
     });
   });
 
+  it("renders local attachment markdown into the optimistic user message snapshot", async () => {
+    const adapter: AgentAdapter = {
+      id: "codex-adapter",
+      kind: "codex",
+      getLifecycleState: () => "idle",
+      initialize: async () => {},
+      executeCommand: async (envelope) => ({
+        commandId: envelope.commandId,
+        commandType: envelope.command.type,
+        accepted: true
+      }),
+      subscribe: () => () => {},
+      dispose: async () => {}
+    };
+
+    const service = createService({
+      agentBindings: [
+        {
+          descriptor: {
+            agentId: "codex",
+            displayName: "Codex",
+            capabilities: ["chat", "terminal"]
+          },
+          adapter,
+          providerKind: "codex-thread"
+        }
+      ]
+    });
+
+    await service.executeCommand({
+      commandId: "cmd-create",
+      command: {
+        type: "createSession",
+        agentId: "codex",
+        workspaceId: "workspace-1"
+      }
+    });
+
+    await service.executeCommand({
+      commandId: "cmd-send",
+      command: {
+        type: "sendUserMessage",
+        sessionId: "session-1",
+        messageId: "msg-1",
+        content: "Please review these files.",
+        attachments: [
+          {
+            attachmentId: "image-1",
+            mimeType: "image/png",
+            uri: "file:///C:/Users/TestUser/Pictures/reference.png",
+            name: "reference.png"
+          },
+          {
+            attachmentId: "file-1",
+            mimeType: "text/plain",
+            uri: "file:///D:/workspace/another-workbench/README.md",
+            name: "README.md"
+          }
+        ]
+      }
+    });
+
+    const snapshot = service.getSnapshot();
+    const block = snapshot.messageBlocks.find((entry) => entry.messageId === "msg-1");
+    expect(block?.text).toBe(
+      "Please review these files.\n\n![reference.png](file:///C:/Users/TestUser/Pictures/reference.png)\n[README.md](file:///D:/workspace/another-workbench/README.md)"
+    );
+  });
+
 
   it("forks sessions and records the session relation in the snapshot", async () => {
     const service = createService();

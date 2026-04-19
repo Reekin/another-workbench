@@ -22,6 +22,8 @@ import type {
   AcpRuntimeRequest,
   AcpRuntimeResponse
 } from "@another-workbench/adapters";
+import type { Attachment } from "@another-workbench/shared";
+import { buildAcpPromptContent } from "./attachment-inputs.js";
 
 type RuntimeListener = (event: AcpRuntimeEvent) => void;
 
@@ -456,6 +458,9 @@ class PiAcpRuntimePort
   ): Promise<AcpRuntimeResponse> {
     const sessionId = String(payload.params.sessionId ?? "");
     const content = String(payload.params.content ?? "");
+    const attachments = Array.isArray(payload.params.attachments)
+      ? (payload.params.attachments as Attachment[])
+      : [];
     if (!sessionId) {
       return {
         id: payload.id,
@@ -483,12 +488,7 @@ class PiAcpRuntimePort
 
       const response = await this.requireConnection().prompt({
         sessionId: backingSession.acpSessionId,
-        prompt: [
-          {
-            type: "text",
-            text: normalizePromptText(content)
-          }
-        ]
+        prompt: buildAcpPromptContent(normalizePromptText(content), attachments)
       });
 
       this.completeTurn(turnState, response.stopReason);

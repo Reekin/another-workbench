@@ -1,11 +1,16 @@
 import {
+  memo,
   useEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
+  type ChangeEvent as ReactChangeEvent,
+  type ClipboardEvent as ReactClipboardEvent,
+  type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
-  type ReactElement
+  type ReactElement,
+  type RefObject
 } from "react";
 import { createPortal } from "react-dom";
 import type {
@@ -25,8 +30,18 @@ import type { RendererStore } from "../../store/store.js";
 import type { DesktopTransport } from "../../transport/desktop-transport.js";
 import { connectDesktopTransportToStore } from "../../transport/store-bridge.js";
 import { MessageMarkdownView } from "./MessageMarkdownView.js";
-import { ChatTreePanel } from "./ChatTreePanel.js";
+import {
+  resolveProcessExpanded,
+  toggleProcessVisibility,
+  type ProcessVisibilityOverride
+} from "./process-visibility.js";
 import { TurnProcessPanel } from "./TurnProcessPanel.js";
+import {
+  createComposerAttachments,
+  mergeComposerAttachments,
+  releaseComposerAttachments,
+  type ComposerAttachment
+} from "./composer-attachments.js";
 import { buildParticipantDirectory } from "./participant-directory.js";
 import {
   resolveComposerStatus,
@@ -43,6 +58,32 @@ type SessionMenuState = {
   x: number;
   y: number;
   actions: SessionActionDescriptorRpc[];
+};
+
+type SettingsLauncherProps = {
+  agents: AgentDescriptor[];
+  currentAgentId: string;
+  transport?: DesktopTransport;
+  onAgentSaved: (agentId: string) => void;
+  onStatusNotice: (notice: ComposerStatusNotice) => void;
+};
+
+type TranscriptPaneProps = {
+  transcriptRef: RefObject<HTMLElement | null>;
+  renderedTranscriptRows: ReturnType<typeof buildTurnTranscriptRows>;
+  participantDirectory: ReturnType<typeof buildParticipantDirectory>;
+  activeSessionWindow?: SessionWindowRpc;
+  activeSessionId?: string;
+  isOpeningSelectedSession: boolean;
+  loadingOlderTurns: boolean;
+  onLoadOlder: () => void;
+  processVisibilityByTurnId: Readonly<Record<string, ProcessVisibilityOverride>>;
+  onToggleProcess: (turnId: string) => void;
+  onRespondApproval?: (input: {
+    sessionId: string;
+    requestId: string;
+    action: "approve" | "deny" | "defer";
+  }) => Promise<void>;
 };
 
 const resolveSessionMenuViewportStyle = (
@@ -95,6 +136,25 @@ const formatTimestamp = (iso: string | undefined): string => {
     return iso;
   }
   return date.toLocaleString();
+};
+
+const hasFileTransfer = (dataTransfer: DataTransfer | null): boolean =>
+  Array.from(dataTransfer?.types ?? []).includes("Files");
+
+const hasStringTransfer = (dataTransfer: DataTransfer | null): boolean =>
+  Array.from(dataTransfer?.items ?? []).some((item) => item.kind === "string");
+
+const collectPastedImageFiles = (dataTransfer: DataTransfer | null): File[] => {
+  if (!dataTransfer) {
+    return [];
+  }
+  return Array.from(dataTransfer.items)
+    .filter(
+      (item) =>
+        item.kind === "file" && item.type.toLowerCase().startsWith("image/")
+    )
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file));
 };
 
 const buildWorkspaceAgentFallbacks = (
@@ -203,6 +263,276 @@ const resolveStatusDotLabel = (
 
 const sessionActionLabel = (action: SessionActionDescriptorRpc): string => action.label;
 
+const summarizeProcessToggle = (input: {
+  toolCount: number;
+  terminalCount: number;
+  approvalCount: number;
+}): string => {
+  const parts: string[] = [];
+  if (input.toolCount > 0) {
+    parts.push(`${input.toolCount} tool${input.toolCount === 1 ? "" : "s"}`);
+  }
+  if (input.terminalCount > 0) {
+    parts.push(
+      `${input.terminalCount} terminal${input.terminalCount === 1 ? "" : "s"}`
+    );
+  }
+  if (input.approvalCount > 0) {
+    parts.push(
+      `${input.approvalCount} approval${input.approvalCount === 1 ? "" : "s"}`
+    );
+  }
+  return parts.join(" · ");
+};
+
+const TranscriptPane = memo(
+  ({
+    transcriptRef,
+    renderedTranscriptRows,
+    participantDirectory,
+    activeSessionWindow,
+    activeSessionId,
+    isOpeningSelectedSession,
+    loadingOlderTurns,
+    onLoadOlder,
+    processVisibilityByTurnId,
+    onToggleProcess,
+    onRespondApproval
+  }: TranscriptPaneProps): ReactElement => (
+    <section className="awb-transcript" ref={transcriptRef}>
+      {renderedTranscriptRows.length === 0 && (
+        <div className="awb-transcript__empty">
+          {isOpeningSelectedSession && <div className="awb-loading-spinner" aria-hidden="true" />}
+          <h3>
+            {isOpeningSelectedSession
+              ? "Loading thread"
+              : activeSessionId
+                ? "Empty thread"
+                : "No thread selected"}
+          </h3>
+          <p>
+            {isOpeningSelectedSession
+              ? "Loading conversation history for the selected session."
+              : activeSessionId
+                ? "Send a message to start the next turn in this session."
+                : "Open an existing session or create a new one from the workspace pane."}
+          </p>
+        </div>
+      )}
+
+      {activeSessionWindow?.hasOlder && renderedTranscriptRows.length > 0 && (
+        <div className="awb-transcript__load-earlier">
+          <button
+            type="button"
+            className="awb-transcript__load-earlier-button"
+            onClick={onLoadOlder}
+            disabled={loadingOlderTurns || isOpeningSelectedSession}
+          >
+            {loadingOlderTurns ? "Loading earlier…" : "Load earlier"}
+          </button>
+        </div>
+      )}
+
+      {renderedTranscriptRows.map((row) => {
+        const isUserTurn = row.messageRole === "user";
+        const isProcessExpanded =
+          !isUserTurn &&
+          row.hasProcessDetails &&
+          resolveProcessExpanded(
+            row.defaultProcessExpanded,
+            processVisibilityByTurnId[row.turn.turnId]
+          );
+        const processSummary = summarizeProcessToggle({
+          toolCount: row.toolCalls.length,
+          terminalCount: row.terminalStreams.length,
+          approvalCount: row.approvals.length
+        });
+        return (
+          <article
+            key={row.rowId}
+            data-turn-id={row.turn.turnId}
+            className={`awb-chat-entry ${isUserTurn ? "is-user" : "is-assistant"}`}
+          >
+            <div className="awb-chat-entry__messages">
+              {row.blocks.length === 0 && (
+                <p className="awb-turn__empty">
+                  {isUserTurn ? "No message content." : "Waiting for response…"}
+                </p>
+              )}
+              {row.blocks.map((block) => (
+                <MessageMarkdownView
+                  key={block.blockId}
+                  block={block}
+                  participantDirectory={participantDirectory}
+                />
+              ))}
+            </div>
+            {!isUserTurn && row.hasProcessDetails && (
+              <div className="awb-turn__process">
+                <button
+                  type="button"
+                  className="awb-turn__process-toggle"
+                  onClick={() => onToggleProcess(row.turn.turnId)}
+                  aria-expanded={isProcessExpanded}
+                >
+                  <span>
+                    {isProcessExpanded ? "Hide process output" : "Show process output"}
+                  </span>
+                  <span>{processSummary}</span>
+                </button>
+                {isProcessExpanded && (
+                  <TurnProcessPanel
+                    row={row}
+                    participantDirectory={participantDirectory}
+                    onRespondApproval={onRespondApproval}
+                  />
+                )}
+              </div>
+            )}
+            <footer className="awb-chat-entry__meta">
+              <span>{formatTimestamp(row.turn.completedAt ?? row.turn.startedAt)}</span>
+            </footer>
+          </article>
+        );
+      })}
+    </section>
+  ),
+  (previous, next) =>
+    previous.renderedTranscriptRows === next.renderedTranscriptRows &&
+    previous.participantDirectory === next.participantDirectory &&
+    previous.activeSessionWindow === next.activeSessionWindow &&
+    previous.activeSessionId === next.activeSessionId &&
+    previous.isOpeningSelectedSession === next.isOpeningSelectedSession &&
+    previous.loadingOlderTurns === next.loadingOlderTurns &&
+    previous.processVisibilityByTurnId === next.processVisibilityByTurnId &&
+    previous.transcriptRef === next.transcriptRef
+);
+
+const SettingsLauncher = ({
+  agents,
+  currentAgentId,
+  transport,
+  onAgentSaved,
+  onStatusNotice
+}: SettingsLauncherProps): ReactElement => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [draftAgentId, setDraftAgentId] = useState(currentAgentId);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setDraftAgentId(currentAgentId);
+    }
+  }, [currentAgentId, isOpen]);
+
+  const close = (): void => {
+    setIsOpen(false);
+  };
+
+  const open = (): void => {
+    setDraftAgentId(currentAgentId);
+    setIsOpen(true);
+  };
+
+  const onSave = async (): Promise<void> => {
+    if (!transport) {
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const result = await transport.settings.update({
+        defaultNewSessionAgentId: draftAgentId || undefined
+      });
+      const nextAgentId = result.defaultNewSessionAgentId ?? "";
+      onAgentSaved(nextAgentId);
+      close();
+      onStatusNotice({
+        message: result.defaultNewSessionAgentId
+          ? `Default agent set to ${result.defaultNewSessionAgentId}`
+          : "Default agent cleared.",
+        source: "settings"
+      });
+    } catch (error) {
+      onStatusNotice({
+        message: `Settings save failed: ${(error as Error).message}`,
+        persistent: true,
+        source: "settings"
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const modalMarkup = isOpen ? (
+    <div className="awb-modal-scrim" role="presentation" onClick={close}>
+      <section
+        className="awb-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="awb-settings-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="awb-modal__header">
+          <div>
+            <span className="awb-main__eyebrow">Settings</span>
+            <h2 id="awb-settings-title">Preferences</h2>
+          </div>
+          <button type="button" className="awb-ghost-button" onClick={close}>
+            Close
+          </button>
+        </header>
+        <div className="awb-modal__body">
+          <label className="awb-field">
+            <span>New session agent</span>
+            <select
+              value={draftAgentId}
+              onChange={(event) => setDraftAgentId(event.target.value)}
+            >
+              <option value="">Follow first available agent</option>
+              {agents.map((agent) => (
+                <option key={agent.agentId} value={agent.agentId}>
+                  {agent.displayName}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <footer className="awb-modal__footer">
+          <button type="button" className="awb-ghost-button" onClick={close}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="awb-secondary-button"
+            onClick={() => void onSave()}
+            disabled={isSaving}
+          >
+            Save
+          </button>
+        </footer>
+      </section>
+    </div>
+  ) : null;
+
+  return (
+    <>
+      <button
+        type="button"
+        className="awb-sidebar__settings"
+        onClick={open}
+        aria-label="Open settings"
+        title="Settings"
+      >
+        <span aria-hidden="true">⚙</span>
+      </button>
+      {modalMarkup &&
+        (typeof document === "undefined"
+          ? modalMarkup
+          : createPortal(modalMarkup, document.body))}
+    </>
+  );
+};
+
 export const ChatShellApp = ({
   store,
   transport,
@@ -213,10 +543,13 @@ export const ChatShellApp = ({
   const [workspaceTree, setWorkspaceTree] = useState<WorkspaceBrowserNodeRpc[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
   const [draft, setDraft] = useState("");
+  const [composerAttachments, setComposerAttachments] = useState<ComposerAttachment[]>(
+    []
+  );
+  const [isSendingComposer, setIsSendingComposer] = useState(false);
+  const [isComposerDropTarget, setIsComposerDropTarget] = useState(false);
   const [statusNotice, setStatusNotice] = useState<ComposerStatusNotice | undefined>();
   const [chatTree, setChatTree] = useState<ChatTreeSnapshotRpc | undefined>();
-  const [chatTreeLoading, setChatTreeLoading] = useState(false);
-  const [chatTreeError, setChatTreeError] = useState<string | undefined>();
   const [sessionWindows, setSessionWindows] = useState<
     Record<string, SessionWindowRpc | undefined>
   >({});
@@ -228,11 +561,10 @@ export const ChatShellApp = ({
     string | undefined
   >();
   const [openingSessionId, setOpeningSessionId] = useState<string | undefined>();
-  const [inspectedTurnId, setInspectedTurnId] = useState<string | undefined>();
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsDraftAgentId, setSettingsDraftAgentId] = useState("");
+  const [processVisibilityByTurnId, setProcessVisibilityByTurnId] = useState<
+    Record<string, ProcessVisibilityOverride>
+  >({});
   const [settingsHydrated, setSettingsHydrated] = useState(false);
-  const [settingsSaving, setSettingsSaving] = useState(false);
   const reconcileQueueRef = useRef<string[]>([]);
   const reconcileQueuedIdsRef = useRef(new Set<string>());
   const reconcileAttemptedIdsRef = useRef(new Set<string>());
@@ -240,6 +572,9 @@ export const ChatShellApp = ({
   const mountedRef = useRef(true);
   const openingSessionIdRef = useRef<string | undefined>(undefined);
   const openSessionRequestIdRef = useRef(0);
+  const composerAttachmentsRef = useRef<ComposerAttachment[]>([]);
+  const composerFileInputRef = useRef<HTMLInputElement | null>(null);
+  const composerDropDepthRef = useRef(0);
   const transcriptRef = useRef<HTMLElement | null>(null);
   const displayedSessionIdRef = useRef<string | undefined>(undefined);
   const pendingPrependScrollRef = useRef<
@@ -320,21 +655,6 @@ export const ChatShellApp = ({
     [transcriptRows, activeChatTree]
   );
   const renderedTranscriptRows = isOpeningSelectedSession ? [] : visibleTranscriptRows;
-  const inspectedRow = useMemo(() => {
-    const assistantRows = renderedTranscriptRows.filter(
-      (row) => row.messageRole !== "user"
-    );
-    if (assistantRows.length === 0) {
-      return undefined;
-    }
-    if (inspectedTurnId) {
-      return (
-        assistantRows.find((row) => row.turn.turnId === inspectedTurnId) ??
-        assistantRows[assistantRows.length - 1]
-      );
-    }
-    return assistantRows[assistantRows.length - 1];
-  }, [renderedTranscriptRows, inspectedTurnId]);
 
   const fallbackAgents = useMemo(
     () => buildWorkspaceAgentFallbacks(workspaceTree),
@@ -363,6 +683,27 @@ export const ChatShellApp = ({
     approvals: renderedTranscriptRows.at(-1)?.approvals ?? [],
     notice: statusNotice
   });
+  const hasDraftText = draft.trim().length > 0;
+  const isComposerBusy = isOpeningSelectedSession || isSendingComposer;
+  const canSendComposerPayload =
+    (hasDraftText || composerAttachments.length > 0) &&
+    Boolean(activeSessionId) &&
+    Boolean(transport) &&
+    !isComposerBusy;
+
+  useEffect(() => {
+    composerAttachmentsRef.current = composerAttachments;
+  }, [composerAttachments]);
+
+  useEffect(() => {
+    return () => {
+      releaseComposerAttachments(composerAttachmentsRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    clearComposerAttachments();
+  }, [activeSessionId]);
 
   const activateLoadedSession = (sessionId: string): boolean => {
     const session = store.getState().entities.sessions[sessionId];
@@ -398,15 +739,13 @@ export const ChatShellApp = ({
     if (chatTree?.sessionId === sessionId) {
       setChatTree(undefined);
     }
-    setChatTreeError(undefined);
     pendingPrependScrollRef.current = undefined;
     pendingViewportTargetRef.current = undefined;
   };
 
   const resetSessionSwitchState = (): void => {
     setLoadingOlderSessionId(undefined);
-    setChatTreeError(undefined);
-    setInspectedTurnId(undefined);
+    setProcessVisibilityByTurnId({});
   };
 
   const applySessionWindow = (
@@ -437,7 +776,6 @@ export const ChatShellApp = ({
       };
     });
     if (mode === "replace") {
-      setInspectedTurnId(page.windowEndTurnId);
       pendingViewportTargetRef.current = {
         sessionId: page.sessionId,
         type: page.windowEndTurnId && page.hasNewer ? "turn" : "bottom",
@@ -791,7 +1129,6 @@ export const ChatShellApp = ({
         }
         if (settings.defaultNewSessionAgentId) {
           setSelectedAgentId(settings.defaultNewSessionAgentId);
-          setSettingsDraftAgentId(settings.defaultNewSessionAgentId);
         }
         setSettingsHydrated(true);
       })
@@ -873,13 +1210,9 @@ export const ChatShellApp = ({
   useEffect(() => {
     if (!transport || !browsedSessionId) {
       setChatTree(undefined);
-      setChatTreeError(undefined);
-      setChatTreeLoading(false);
       return;
     }
     let disposed = false;
-    setChatTreeLoading(true);
-    setChatTreeError(undefined);
     void transport.chatTree
       .get(browsedSessionId)
       .then((nextTree) => {
@@ -887,23 +1220,16 @@ export const ChatShellApp = ({
           if (displayedSessionIdRef.current === browsedSessionId) {
             setChatTree(nextTree);
           }
-          setChatTreeError(undefined);
         }
       })
       .catch((error) => {
         if (!disposed) {
           if (displayedSessionIdRef.current === browsedSessionId) {
-            setChatTreeError(undefined);
             setStatusNotice({
               message: `Chat tree refresh failed: ${(error as Error).message}`,
               source: "chat-tree"
             });
           }
-        }
-      })
-      .finally(() => {
-        if (!disposed) {
-          setChatTreeLoading(false);
         }
       });
     return () => {
@@ -911,11 +1237,161 @@ export const ChatShellApp = ({
     };
   }, [transport, browsedSessionId, state.eventStream.lastCursor]);
 
-  const onSend = async (): Promise<void> => {
-    const text = draft.trim();
-    if (!text || !activeSessionId || !transport) {
+  const overwriteComposerAttachments = (attachments: ComposerAttachment[]): void => {
+    composerAttachmentsRef.current = attachments;
+    setComposerAttachments(attachments);
+  };
+
+  const clearComposerAttachments = (): void => {
+    releaseComposerAttachments(composerAttachmentsRef.current);
+    overwriteComposerAttachments([]);
+  };
+
+  const removeComposerAttachment = (attachmentId: string): void => {
+    const current = composerAttachmentsRef.current;
+    const removed = current.find(
+      (attachment) => attachment.attachment.attachmentId === attachmentId
+    );
+    if (!removed) {
       return;
     }
+    releaseComposerAttachments([removed]);
+    overwriteComposerAttachments(
+      current.filter(
+        (attachment) => attachment.attachment.attachmentId !== attachmentId
+      )
+    );
+  };
+
+  const appendComposerAttachments = async (
+    files: Iterable<File>,
+    origin: "picker" | "drop" | "paste"
+  ): Promise<void> => {
+    if (isComposerBusy) {
+      return;
+    }
+    const nextAttachments = await createComposerAttachments(files, origin);
+    if (!mountedRef.current) {
+      releaseComposerAttachments(nextAttachments);
+      return;
+    }
+    if (nextAttachments.length === 0) {
+      return;
+    }
+    const merged = mergeComposerAttachments(
+      composerAttachmentsRef.current,
+      nextAttachments
+    );
+    releaseComposerAttachments(merged.skipped);
+    overwriteComposerAttachments(merged.attachments);
+  };
+
+  const onComposerInputChange = (
+    event: ReactChangeEvent<HTMLInputElement>
+  ): void => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (files.length === 0 || isComposerBusy) {
+      return;
+    }
+    void appendComposerAttachments(files, "picker").catch((error) => {
+      setStatusNotice({
+        message: `Attachment failed: ${(error as Error).message}`,
+        persistent: true,
+        source: "send"
+      });
+    });
+  };
+
+  const onComposerPaste = (event: ReactClipboardEvent<HTMLTextAreaElement>): void => {
+    if (isComposerBusy) {
+      return;
+    }
+    const files = collectPastedImageFiles(event.clipboardData);
+    if (files.length === 0) {
+      return;
+    }
+    if (!hasStringTransfer(event.clipboardData)) {
+      event.preventDefault();
+    }
+    void appendComposerAttachments(files, "paste").catch((error) => {
+      setStatusNotice({
+        message: `Paste attachment failed: ${(error as Error).message}`,
+        persistent: true,
+        source: "send"
+      });
+    });
+  };
+
+  const onComposerDragEnter = (
+    event: ReactDragEvent<HTMLElement>
+  ): void => {
+    if (!hasFileTransfer(event.dataTransfer) || isComposerBusy) {
+      return;
+    }
+    event.preventDefault();
+    composerDropDepthRef.current += 1;
+    setIsComposerDropTarget(true);
+  };
+
+  const onComposerDragOver = (event: ReactDragEvent<HTMLElement>): void => {
+    if (!hasFileTransfer(event.dataTransfer) || isComposerBusy) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    if (!isComposerDropTarget) {
+      setIsComposerDropTarget(true);
+    }
+  };
+
+  const onComposerDragLeave = (
+    event: ReactDragEvent<HTMLElement>
+  ): void => {
+    if (!hasFileTransfer(event.dataTransfer) || isComposerBusy) {
+      return;
+    }
+    event.preventDefault();
+    composerDropDepthRef.current = Math.max(0, composerDropDepthRef.current - 1);
+    if (composerDropDepthRef.current === 0) {
+      setIsComposerDropTarget(false);
+    }
+  };
+
+  const onComposerDrop = (event: ReactDragEvent<HTMLElement>): void => {
+    if (!hasFileTransfer(event.dataTransfer) || isComposerBusy) {
+      return;
+    }
+    event.preventDefault();
+    composerDropDepthRef.current = 0;
+    setIsComposerDropTarget(false);
+    const files = Array.from(event.dataTransfer.files ?? []);
+    if (files.length === 0) {
+      return;
+    }
+    void appendComposerAttachments(files, "drop").catch((error) => {
+      setStatusNotice({
+        message: `Drop attachment failed: ${(error as Error).message}`,
+        persistent: true,
+        source: "send"
+      });
+    });
+  };
+
+  const onSend = async (): Promise<void> => {
+    const text = draft.trim();
+    const attachments = composerAttachmentsRef.current.map(
+      (attachment) => attachment.attachment
+    );
+    if (
+      isSendingComposer ||
+      (!text && attachments.length === 0) ||
+      !activeSessionId ||
+      !transport
+    ) {
+      return;
+    }
+    setIsSendingComposer(true);
     setStatusNotice({
       message: "Sending…",
       persistent: true,
@@ -924,9 +1400,11 @@ export const ChatShellApp = ({
     try {
       await transport.chat.send({
         sessionId: activeSessionId,
-        content: text
+        content: text,
+        attachments
       });
       setDraft("");
+      clearComposerAttachments();
       setStatusNotice({
         message: "Message sent.",
         source: "send"
@@ -937,6 +1415,8 @@ export const ChatShellApp = ({
         persistent: true,
         source: "send"
       });
+    } finally {
+      setIsSendingComposer(false);
     }
   };
 
@@ -967,39 +1447,6 @@ export const ChatShellApp = ({
         persistent: true,
         source: "workspace-add"
       });
-    }
-  };
-
-  const onOpenSettings = (): void => {
-    setSettingsDraftAgentId(selectedAgentId);
-    setSettingsOpen(true);
-  };
-
-  const onSaveSettings = async (): Promise<void> => {
-    if (!transport) {
-      return;
-    }
-    setSettingsSaving(true);
-    try {
-      const result = await transport.settings.update({
-        defaultNewSessionAgentId: settingsDraftAgentId || undefined
-      });
-      setSelectedAgentId(result.defaultNewSessionAgentId ?? "");
-      setSettingsOpen(false);
-      setStatusNotice({
-        message: result.defaultNewSessionAgentId
-          ? `Default agent set to ${result.defaultNewSessionAgentId}`
-          : "Default agent cleared.",
-        source: "settings"
-      });
-    } catch (error) {
-      setStatusNotice({
-        message: `Settings save failed: ${(error as Error).message}`,
-        persistent: true,
-        source: "settings"
-      });
-    } finally {
-      setSettingsSaving(false);
     }
   };
 
@@ -1189,41 +1636,14 @@ export const ChatShellApp = ({
     await transport.approval.respond(input);
   };
 
-  const onJumpChatTree = async (nodeId: string): Promise<void> => {
-    if (!transport || !displayedSessionId || isOpeningSelectedSession) {
+  const onToggleProcess = (turnId: string): void => {
+    const row = renderedTranscriptRows.find((candidate) => candidate.turn.turnId === turnId);
+    if (!row) {
       return;
     }
-    try {
-      await transport.chatTree.jump({
-        sessionId: displayedSessionId,
-        nodeId
-      });
-      const nextTree = await transport.chatTree.get(displayedSessionId);
-      setChatTree(nextTree);
-      setChatTreeError(undefined);
-      const currentNode =
-        nextTree.nodes.find((node) => node.nodeId === nextTree.currentNodeId) ??
-        nextTree.nodes.find((node) => node.nodeId === nodeId);
-      if (currentNode?.turnId) {
-        const requestId = ++openSessionRequestIdRef.current;
-        setInspectedTurnId(currentNode.turnId);
-        const result = await transport.sessionBrowser.open(displayedSessionId);
-        if (openSessionRequestIdRef.current === requestId) {
-          applySessionWindow(result.page, "replace");
-        }
-      }
-      setStatusNotice({
-        message: `Jumped to ${nodeId}`,
-        source: "chat-tree"
-      });
-    } catch (error) {
-      setChatTreeError(undefined);
-      setStatusNotice({
-        message: `Chat tree jump failed: ${(error as Error).message}`,
-        persistent: true,
-        source: "chat-tree"
-      });
-    }
+    setProcessVisibilityByTurnId((current) =>
+      toggleProcessVisibility(current, turnId, row.defaultProcessExpanded)
+    );
   };
 
   const renderSessionNode = (
@@ -1298,69 +1718,6 @@ export const ChatShellApp = ({
     </div>
   ) : null;
 
-  const settingsModalMarkup = settingsOpen ? (
-    <div
-      className="awb-modal-scrim"
-      role="presentation"
-      onClick={() => setSettingsOpen(false)}
-    >
-      <section
-        className="awb-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="awb-settings-title"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <header className="awb-modal__header">
-          <div>
-            <span className="awb-detail__eyebrow">Settings</span>
-            <h2 id="awb-settings-title">Preferences</h2>
-          </div>
-          <button
-            type="button"
-            className="awb-ghost-button"
-            onClick={() => setSettingsOpen(false)}
-          >
-            Close
-          </button>
-        </header>
-        <div className="awb-modal__body">
-          <label className="awb-field">
-            <span>New session agent</span>
-            <select
-              value={settingsDraftAgentId}
-              onChange={(event) => setSettingsDraftAgentId(event.target.value)}
-            >
-              <option value="">Follow first available agent</option>
-              {agents.map((agent) => (
-                <option key={agent.agentId} value={agent.agentId}>
-                  {agent.displayName}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <footer className="awb-modal__footer">
-          <button
-            type="button"
-            className="awb-ghost-button"
-            onClick={() => setSettingsOpen(false)}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="awb-secondary-button"
-            onClick={() => void onSaveSettings()}
-            disabled={settingsSaving}
-          >
-            Save
-          </button>
-        </footer>
-      </section>
-    </div>
-  ) : null;
-
   return (
     <>
       <div className="awb-shell">
@@ -1392,9 +1749,14 @@ export const ChatShellApp = ({
                     className={`awb-workspace__header ${workspace.isActive ? "is-active" : ""}`}
                     onClick={() => void onToggleWorkspace(workspace.workspaceId)}
                   >
-                    <div>
-                      <strong>{workspace.label}</strong>
-                      <span>{workspace.rootPath}</span>
+                    <div className="awb-workspace__main">
+                      <span className="awb-workspace__disclosure" aria-hidden="true">
+                        {workspace.isExpanded ? "▾" : "▸"}
+                      </span>
+                      <div>
+                        <strong>{workspace.label}</strong>
+                        <span>{workspace.rootPath}</span>
+                      </div>
                     </div>
                     <button
                       type="button"
@@ -1419,15 +1781,13 @@ export const ChatShellApp = ({
           </section>
 
           <footer className="awb-sidebar__footer">
-            <button
-              type="button"
-              className="awb-sidebar__settings"
-              onClick={onOpenSettings}
-              aria-label="Open settings"
-              title="Settings"
-            >
-              <span aria-hidden="true">⚙</span>
-            </button>
+            <SettingsLauncher
+              agents={agents}
+              currentAgentId={selectedAgentId}
+              transport={transport}
+              onAgentSaved={setSelectedAgentId}
+              onStatusNotice={setStatusNotice}
+            />
           </footer>
         </aside>
 
@@ -1445,152 +1805,107 @@ export const ChatShellApp = ({
           </header>
 
           <div className="awb-main__body">
-            <section className="awb-transcript" ref={transcriptRef}>
-              {renderedTranscriptRows.length === 0 && (
-                <div className="awb-transcript__empty">
-                  {isOpeningSelectedSession && <div className="awb-loading-spinner" aria-hidden="true" />}
-                  <h3>
-                    {isOpeningSelectedSession
-                      ? "Loading thread"
-                      : activeSessionId
-                        ? "Empty thread"
-                        : "No thread selected"}
-                  </h3>
-                  <p>
-                    {isOpeningSelectedSession
-                      ? "Loading conversation history for the selected session."
-                      : activeSessionId
-                        ? "Send a message to start the next turn in this session."
-                        : "Open an existing session or create a new one from the workspace pane."}
-                  </p>
-                </div>
-              )}
-
-              {activeSessionWindow?.hasOlder && renderedTranscriptRows.length > 0 && (
-                <div className="awb-transcript__load-earlier">
-                  <button
-                    type="button"
-                    className="awb-transcript__load-earlier-button"
-                    onClick={() => void onLoadOlder()}
-                    disabled={loadingOlderTurns || isOpeningSelectedSession}
-                  >
-                    {loadingOlderTurns ? "Loading earlier…" : "Load earlier"}
-                  </button>
-                </div>
-              )}
-
-              {renderedTranscriptRows.map((row) => {
-                const isUserTurn = row.messageRole === "user";
-                const isInspected =
-                  !isUserTurn && inspectedRow?.turn.turnId === row.turn.turnId;
-                return (
-                  <article
-                    key={row.rowId}
-                    data-turn-id={row.turn.turnId}
-                    className={`awb-chat-entry ${isUserTurn ? "is-user" : "is-assistant"}${isInspected ? " is-inspected" : ""}`}
-                    onClick={() => {
-                      if (!isUserTurn) {
-                        setInspectedTurnId(row.turn.turnId);
-                      }
-                    }}
-                  >
-                    <div className="awb-chat-entry__messages">
-                      {row.blocks.length === 0 && (
-                        <p className="awb-turn__empty">
-                          {isUserTurn ? "No message content." : "Waiting for response…"}
-                        </p>
-                      )}
-                      {row.blocks.map((block) => (
-                        <MessageMarkdownView
-                          key={block.blockId}
-                          block={block}
-                          participantDirectory={participantDirectory}
-                        />
-                      ))}
-                    </div>
-                    <footer className="awb-chat-entry__meta">
-                      <span>{formatTimestamp(row.turn.completedAt ?? row.turn.startedAt)}</span>
-                    </footer>
-                  </article>
-                );
-              })}
-            </section>
+            <TranscriptPane
+              transcriptRef={transcriptRef}
+              renderedTranscriptRows={renderedTranscriptRows}
+              participantDirectory={participantDirectory}
+              activeSessionWindow={activeSessionWindow}
+              activeSessionId={activeSessionId}
+              isOpeningSelectedSession={isOpeningSelectedSession}
+              loadingOlderTurns={loadingOlderTurns}
+              onLoadOlder={() => void onLoadOlder()}
+              processVisibilityByTurnId={processVisibilityByTurnId}
+              onToggleProcess={onToggleProcess}
+              onRespondApproval={transport ? onRespondApproval : undefined}
+            />
           </div>
 
-          <footer className="awb-composer">
+          <footer
+            className={`awb-composer${isComposerDropTarget ? " is-drop-target" : ""}`}
+            onDragEnter={onComposerDragEnter}
+            onDragOver={onComposerDragOver}
+            onDragLeave={onComposerDragLeave}
+            onDrop={onComposerDrop}
+          >
+            <input
+              ref={composerFileInputRef}
+              className="awb-composer__file-input"
+              type="file"
+              multiple
+              onChange={onComposerInputChange}
+            />
+            {composerAttachments.length > 0 ? (
+              <div className="awb-composer__attachments" aria-label="Composer attachments">
+                {composerAttachments.map((attachment) => (
+                  <article
+                    key={attachment.attachment.attachmentId}
+                    className="awb-composer__attachment"
+                  >
+                    {attachment.previewUrl ? (
+                      <img
+                        className="awb-composer__attachment-preview"
+                        src={attachment.previewUrl}
+                        alt={attachment.displayName}
+                      />
+                    ) : (
+                      <div className="awb-composer__attachment-icon" aria-hidden="true">
+                        FILE
+                      </div>
+                    )}
+                    <div className="awb-composer__attachment-copy">
+                      <strong>{attachment.displayName}</strong>
+                      <span>
+                        {attachment.mimeType} · {attachment.sizeLabel}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="awb-ghost-button awb-composer__attachment-remove"
+                      onClick={() =>
+                        removeComposerAttachment(attachment.attachment.attachmentId)
+                      }
+                      aria-label={`Remove ${attachment.displayName}`}
+                    >
+                      Remove
+                    </button>
+                  </article>
+                ))}
+              </div>
+            ) : null}
             <textarea
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-              placeholder="Message the active session..."
-              disabled={isOpeningSelectedSession}
+              onPaste={onComposerPaste}
+              placeholder="Message the active session, paste images, or drop files here..."
+              disabled={isComposerBusy}
             />
             <div className="awb-composer__actions">
               <span className="awb-status">{status}</span>
-              <button
-                type="button"
-                onClick={() => void onSend()}
-                disabled={isOpeningSelectedSession}
-              >
-                Send
-              </button>
+              <div className="awb-composer__buttons">
+                <button
+                  type="button"
+                  className="awb-ghost-button"
+                  onClick={() => composerFileInputRef.current?.click()}
+                  disabled={isComposerBusy}
+                >
+                  Attach files
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onSend()}
+                  disabled={!canSendComposerPayload}
+                >
+                  Send
+                </button>
+              </div>
             </div>
           </footer>
         </main>
-
-        <aside className="awb-shell__detail">
-          <header className="awb-detail__header">
-            <div>
-              <span className="awb-detail__eyebrow">Inspector</span>
-              <h2>Inspector</h2>
-            </div>
-          </header>
-
-          <section className="awb-detail__body">
-            <div className="awb-inspector">
-              <section className="awb-inspector__section">
-                <header className="awb-inspector__section-header">
-                  <span>Turn process</span>
-                  <strong>{inspectedRow?.turn.turnId ?? "No turn selected"}</strong>
-                </header>
-                {inspectedRow ? (
-                  inspectedRow.hasProcessDetails ? (
-                    <TurnProcessPanel
-                      row={inspectedRow}
-                      participantDirectory={participantDirectory}
-                      onRespondApproval={transport ? onRespondApproval : undefined}
-                    />
-                  ) : (
-                    <p className="awb-detail__empty">
-                      This turn has no tool, terminal, or approval activity.
-                    </p>
-                  )
-                ) : (
-                  <p className="awb-detail__empty">
-                    Select an assistant turn to inspect its process details.
-                  </p>
-                )}
-              </section>
-
-              <section className="awb-inspector__section">
-                <ChatTreePanel
-                  chatTree={activeChatTree}
-                  loading={chatTreeLoading}
-                  error={chatTreeError}
-                  onJump={(nodeId) => void onJumpChatTree(nodeId)}
-                />
-              </section>
-            </div>
-          </section>
-        </aside>
       </div>
       {sessionMenuMarkup &&
         (typeof document === "undefined"
           ? sessionMenuMarkup
           : createPortal(sessionMenuMarkup, document.body))}
-      {settingsModalMarkup &&
-        (typeof document === "undefined"
-          ? settingsModalMarkup
-          : createPortal(settingsModalMarkup, document.body))}
     </>
   );
 };

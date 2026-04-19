@@ -100,6 +100,11 @@ const isCommandExecutionItem = (
 ): item is Extract<ThreadItem, { type: "commandExecution" }> =>
   item.type === "commandExecution";
 
+const isCollabAgentToolCallItem = (
+  item: ThreadItem
+): item is Extract<ThreadItem, { type: "collabAgentToolCall" }> =>
+  item.type === "collabAgentToolCall";
+
 const isAgentMessageItem = (
   item: ThreadItem
 ): item is Extract<ThreadItem, { type: "agentMessage" }> =>
@@ -112,6 +117,55 @@ const isUserMessageItem = (
 
 const hydratedItemId = (sessionId: string, itemId: string): string =>
   `hydrated:${sessionId}:${itemId}`;
+
+const mapCollabToolLabel = (
+  tool: Extract<ThreadItem, { type: "collabAgentToolCall" }>["tool"]
+): string => {
+  switch (tool) {
+    case "spawnAgent":
+      return "subagent.spawn";
+    case "sendInput":
+      return "subagent.message";
+    case "resumeAgent":
+      return "subagent.resume";
+    case "wait":
+      return "subagent.wait";
+    case "closeAgent":
+      return "subagent.close";
+    default:
+      return `subagent.${tool}`;
+  }
+};
+
+const summarizeCollabInput = (
+  item: Extract<ThreadItem, { type: "collabAgentToolCall" }>
+): string | undefined => {
+  const parts = [
+    item.prompt?.trim(),
+    item.model ? `model: ${item.model}` : undefined,
+    item.reasoningEffort ? `reasoning: ${item.reasoningEffort}` : undefined,
+    item.receiverThreadIds.length > 0
+      ? `targets: ${item.receiverThreadIds.join(", ")}`
+      : undefined
+  ].filter((value): value is string => Boolean(value));
+  return parts.length > 0 ? parts.join("\n") : undefined;
+};
+
+const summarizeCollabOutput = (
+  item: Extract<ThreadItem, { type: "collabAgentToolCall" }>
+): string | undefined => {
+  const lines = item.receiverThreadIds.map((threadId) => {
+    const state = item.agentsStates[threadId];
+    if (!state) {
+      return `${threadId}: unknown`;
+    }
+    const detail = trimToUndefined(state.message);
+    return detail
+      ? `${threadId}: ${state.status} — ${detail}`
+      : `${threadId}: ${state.status}`;
+  });
+  return lines.length > 0 ? lines.join("\n") : undefined;
+};
 
 const toLocalImageMarkdownUrl = (value: string): string => {
   if (/^[a-zA-Z]:[\\/]/.test(value)) {
@@ -409,6 +463,30 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
                 item.status === "inProgress" ? undefined : itemStartedAt
             })
           );
+          continue;
+        }
+
+        if (isCollabAgentToolCallItem(item)) {
+          toolCallIds.push(itemEntityId);
+          toolCalls.push(
+            parseToolCall({
+              toolCallId: itemEntityId,
+              sessionId: entry.sessionId,
+              turnId: turn.id,
+              toolName: mapCollabToolLabel(item.tool),
+              inputSummary: summarizeCollabInput(item),
+              outputSummary: summarizeCollabOutput(item),
+              status:
+                item.status === "failed"
+                  ? "failed"
+                  : item.status === "completed"
+                    ? "completed"
+                    : "running",
+              startedAt: itemStartedAt,
+              completedAt:
+                item.status === "inProgress" ? undefined : itemStartedAt
+            })
+          );
         }
       }
 
@@ -558,11 +636,26 @@ export class SessionReconciliationService {
     for (const workspace of workspaces) {
       for (const provider of this.providersByAgentId.values()) {
         const discovered = await provider.discoverWorkspace(workspace);
-        const conversationIdBySessionId = buildConversationMap(
-          discovered.sessions,
-          discovered.relations
+        const sessionIdAliases = this.buildSessionIdAliases(
+          workspace.workspaceId,
+          discovered.sessions
         );
-        const entries: UpsertSessionIndexInput[] = discovered.sessions.map((session) => ({
+        const normalizedSessions = discovered.sessions.map((session) => ({
+          ...session,
+          sessionId: sessionIdAliases.get(session.sessionId) ?? session.sessionId
+        }));
+        const normalizedRelations = discovered.relations.map((relation) => ({
+          ...relation,
+          parentSessionId:
+            sessionIdAliases.get(relation.parentSessionId) ?? relation.parentSessionId,
+          childSessionId:
+            sessionIdAliases.get(relation.childSessionId) ?? relation.childSessionId
+        }));
+        const conversationIdBySessionId = buildConversationMap(
+          normalizedSessions,
+          normalizedRelations
+        );
+        const entries: UpsertSessionIndexInput[] = normalizedSessions.map((session) => ({
           workspaceId: workspace.workspaceId,
           session: {
             sessionId: session.sessionId,
@@ -581,7 +674,7 @@ export class SessionReconciliationService {
           summaryText: session.summaryText,
           source: "reconciled"
         }));
-        const relations: UpsertSessionRelationInput[] = discovered.relations.map((relation) => ({
+        const relations: UpsertSessionRelationInput[] = normalizedRelations.map((relation) => ({
           workspaceId: workspace.workspaceId,
           parentSessionId: relation.parentSessionId,
           childSessionId: relation.childSessionId,
@@ -621,6 +714,28 @@ export class SessionReconciliationService {
       sessions: sessionCount,
       relations: relationCount
     };
+  }
+
+  private buildSessionIdAliases(
+    workspaceId: string,
+    sessions: DiscoveredSessionRecord[]
+  ): Map<string, string> {
+    const existingEntries = this.sessionIndexStore.listEntries(workspaceId);
+    const sessionIdByProviderSessionId = new Map(
+      existingEntries
+        .filter((entry) => Boolean(entry.providerSessionId))
+        .map((entry) => [entry.providerSessionId!, entry.sessionId] as const)
+    );
+    const aliases = new Map<string, string>();
+
+    for (const session of sessions) {
+      const existingSessionId = sessionIdByProviderSessionId.get(session.providerSessionId);
+      if (existingSessionId) {
+        aliases.set(session.sessionId, existingSessionId);
+      }
+    }
+
+    return aliases;
   }
 
   public async ensureSessionLoaded(

@@ -155,6 +155,23 @@ describe("Session discovery and reconciliation", () => {
               text: "Hydrated root response",
               phase: null,
               memoryCitation: null
+            },
+            {
+              type: "collabAgentToolCall",
+              id: "collab-1",
+              tool: "spawnAgent",
+              status: "completed",
+              senderThreadId: "thread-root",
+              receiverThreadIds: ["thread-child"],
+              prompt: "Review this change",
+              model: "gpt-5",
+              reasoningEffort: "high",
+              agentsStates: {
+                "thread-child": {
+                  status: "completed",
+                  message: "Reviewed successfully"
+                }
+              }
             }
           ]
         },
@@ -270,6 +287,17 @@ describe("Session discovery and reconciliation", () => {
         })
       ])
     );
+    expect(runtimeService.getSnapshot().toolCalls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: "codex-thread:thread-root",
+          turnId: "turn-1",
+          toolName: "subagent.spawn",
+          inputSummary: expect.stringContaining("Review this change"),
+          outputSummary: expect.stringContaining("thread-child: completed")
+        })
+      ])
+    );
     expect(runtimeService.getSnapshot().turns).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -279,6 +307,93 @@ describe("Session discovery and reconciliation", () => {
         })
       ])
     );
+  });
+
+  it("aliases discovered subagent relations onto an existing local parent session by provider session id", async () => {
+    const baseDir = await createTempDir();
+    const workspaceRegistry = new WorkspaceRegistryService({
+      baseDir
+    });
+    const sessionIndexStore = new SessionIndexStore({
+      baseDir
+    });
+    const runtimeService = new WorkbenchRuntimeService({
+      agents: [
+        {
+          agentId: "codex",
+          displayName: "Codex",
+          capabilities: ["chat"]
+        }
+      ]
+    });
+
+    await workspaceRegistry.registerWorkspace({
+      workspaceId: "workspace-1",
+      absolutePath: "I:/workspace-alpha",
+      label: "Alpha"
+    });
+    await sessionIndexStore.upsertSession({
+      workspaceId: "workspace-1",
+      session: {
+        sessionId: "session-root-local",
+        conversationId: "conversation-1",
+        agentId: "codex",
+        title: "Local Root",
+        createdAt: "2026-04-18T00:00:01Z",
+        updatedAt: "2026-04-18T00:00:02Z"
+      },
+      providerKind: "codex-thread",
+      providerSessionId: "thread-root"
+    });
+
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        listThreads: vi.fn().mockResolvedValue({
+          data: [
+            createThread({
+              id: "thread-root",
+              name: "Root Thread"
+            }),
+            createThread({
+              id: "thread-child",
+              name: "Child Thread",
+              source: {
+                subAgent: {
+                  thread_spawn: {
+                    parent_thread_id: "thread-root",
+                    depth: 1,
+                    agent_nickname: "child",
+                    agent_role: "reviewer"
+                  }
+                }
+              }
+            })
+          ],
+          nextCursor: null
+        })
+      } as never
+    });
+
+    const reconciliation = new SessionReconciliationService({
+      workspaceRegistry,
+      sessionIndexStore,
+      runtimeService,
+      providers: [provider]
+    });
+
+    await reconciliation.reconcileWorkspace("workspace-1");
+
+    expect(sessionIndexStore.listRelations("workspace-1")).toEqual([
+      expect.objectContaining({
+        parentSessionId: "session-root-local",
+        childSessionId: "codex-thread:thread-child",
+        relationType: "subagent"
+      })
+    ]);
+    expect(sessionIndexStore.getEntry("codex-thread:thread-child")).toMatchObject({
+      conversationId: "conversation-discovered:session-root-local",
+      providerSessionId: "thread-child"
+    });
   });
 
   it("keeps hydrated message blocks distinct when different sessions reuse item ids", async () => {

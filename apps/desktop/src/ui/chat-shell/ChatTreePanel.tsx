@@ -207,65 +207,67 @@ export const ChatTreePanel = ({
 
   return (
     <div className="awb-chat-tree">
-      <div
-        className="awb-chat-tree__graph-shell"
-        style={{
-          minWidth: `${graphWidth}px`,
-          minHeight: `${graphHeight}px`
-        }}
-      >
-        <svg
-          className="awb-chat-tree__graph-svg"
-          width={graphWidth}
-          height={graphHeight}
-          viewBox={`0 0 ${graphWidth} ${graphHeight}`}
-          aria-hidden="true"
+      <div className="awb-chat-tree__graph-shell">
+        <div
+          className="awb-chat-tree__graph-canvas"
+          style={{
+            minWidth: `${graphWidth}px`,
+            minHeight: `${graphHeight}px`
+          }}
         >
-          {graph.edges.map((edge) => {
-            const fromNode = graphNodeById.get(edge.fromNodeId);
-            const toNode = graphNodeById.get(edge.toNodeId);
-            if (!fromNode || !toNode) {
-              return null;
-            }
-
-            const fromX = laneX(fromNode.lane);
-            const fromY = depthY(fromNode.depth);
-            const toX = laneX(toNode.lane);
-            const toY = depthY(toNode.depth);
-            const verticalGap = toY - fromY;
-            const splitY = fromY + Math.min(verticalGap * 0.5, CONNECTOR_CURVE_OFFSET);
-            const path =
-              Math.abs(fromX - toX) < 0.5
-                ? `M ${fromX} ${fromY + NODE_RADIUS} L ${toX} ${toY - NODE_RADIUS}`
-                : `M ${fromX} ${fromY + NODE_RADIUS} C ${fromX} ${splitY} ${toX} ${splitY} ${toX} ${toY - NODE_RADIUS}`;
-
-            return (
-              <path
-                key={`${edge.fromNodeId}->${edge.toNodeId}`}
-                className="awb-chat-tree__graph-connector"
-                d={path}
-              />
-            );
-          })}
-        </svg>
-        {graph.nodes.map((entry) => (
-          <button
-            key={entry.node.nodeId}
-            type="button"
-            className={`awb-chat-tree__graph-node${entry.isCurrent ? " is-current" : ""}`}
-            style={{
-              left: `${laneX(entry.lane)}px`,
-              top: `${depthY(entry.depth)}px`
-            }}
-            onDoubleClick={() => onJump?.(entry.node.nodeId)}
-            title={`${shortLabel(entry.node)}${
-              entry.isCurrent ? "\nCurrent branch." : "\nDouble-click to switch."
-            }`}
-            aria-label={shortLabel(entry.node)}
+          <svg
+            className="awb-chat-tree__graph-svg"
+            width={graphWidth}
+            height={graphHeight}
+            viewBox={`0 0 ${graphWidth} ${graphHeight}`}
+            aria-hidden="true"
           >
-            <span className="awb-chat-tree__graph-node-dot" />
-          </button>
-        ))}
+            {graph.edges.map((edge) => {
+              const fromNode = graphNodeById.get(edge.fromNodeId);
+              const toNode = graphNodeById.get(edge.toNodeId);
+              if (!fromNode || !toNode) {
+                return null;
+              }
+
+              const fromX = laneX(fromNode.lane);
+              const fromY = depthY(fromNode.depth);
+              const toX = laneX(toNode.lane);
+              const toY = depthY(toNode.depth);
+              const verticalGap = toY - fromY;
+              const splitY = fromY + Math.min(verticalGap * 0.5, CONNECTOR_CURVE_OFFSET);
+              const path =
+                Math.abs(fromX - toX) < 0.5
+                  ? `M ${fromX} ${fromY + NODE_RADIUS} L ${toX} ${toY - NODE_RADIUS}`
+                  : `M ${fromX} ${fromY + NODE_RADIUS} C ${fromX} ${splitY} ${toX} ${splitY} ${toX} ${toY - NODE_RADIUS}`;
+
+              return (
+                <path
+                  key={`${edge.fromNodeId}->${edge.toNodeId}`}
+                  className="awb-chat-tree__graph-connector"
+                  d={path}
+                />
+              );
+            })}
+          </svg>
+          {graph.nodes.map((entry) => (
+            <button
+              key={entry.node.nodeId}
+              type="button"
+              className={`awb-chat-tree__graph-node${entry.isCurrent ? " is-current" : ""}`}
+              style={{
+                left: `${laneX(entry.lane)}px`,
+                top: `${depthY(entry.depth)}px`
+              }}
+              onDoubleClick={() => onJump?.(entry.node.nodeId)}
+              title={`${shortLabel(entry.node)}${
+                entry.isCurrent ? "\nCurrent branch." : "\nDouble-click to switch."
+              }`}
+              aria-label={shortLabel(entry.node)}
+            >
+              <span className="awb-chat-tree__graph-node-dot" />
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

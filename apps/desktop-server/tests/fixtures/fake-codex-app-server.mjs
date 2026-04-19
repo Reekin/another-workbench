@@ -145,6 +145,89 @@ const emitHappyPath = ({ threadId, turnId, prompt }) => {
   });
 };
 
+const emitCollabPath = ({ threadId, turnId }) => {
+  const collabId = `collab-${turnId}`;
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "active" }
+    }
+  });
+  send({
+    method: "turn/started",
+    params: {
+      threadId,
+      turn: { id: turnId }
+    }
+  });
+  send({
+    method: "item/started",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "collabAgentToolCall",
+        id: collabId,
+        tool: "spawnAgent",
+        status: "inProgress",
+        senderThreadId: threadId,
+        receiverThreadIds: ["sub-thread-1"],
+        prompt: "Review this file",
+        model: "gpt-5",
+        reasoningEffort: "high",
+        agentsStates: {
+          "sub-thread-1": {
+            status: "pendingInit",
+            message: null
+          }
+        }
+      }
+    }
+  });
+  send({
+    method: "item/completed",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "collabAgentToolCall",
+        id: collabId,
+        tool: "spawnAgent",
+        status: "completed",
+        senderThreadId: threadId,
+        receiverThreadIds: ["sub-thread-1"],
+        prompt: "Review this file",
+        model: "gpt-5",
+        reasoningEffort: "high",
+        agentsStates: {
+          "sub-thread-1": {
+            status: "completed",
+            message: "Reviewed successfully"
+          }
+        }
+      }
+    }
+  });
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "idle" }
+    }
+  });
+  send({
+    method: "turn/completed",
+    params: {
+      threadId,
+      turn: {
+        id: turnId,
+        status: "completed"
+      }
+    }
+  });
+};
+
 const emitApprovalResolution = ({ threadId, turnId, requestId, action }) => {
   const commandId = `cmd-${turnId}`;
 
@@ -312,6 +395,11 @@ const handleRequest = (payload) => {
                 availableDecisions: ["acceptForSession", "decline", "cancel"]
               }
             });
+            return;
+          }
+
+          if (prompt.includes("subagent")) {
+            emitCollabPath({ threadId, turnId });
             return;
           }
 

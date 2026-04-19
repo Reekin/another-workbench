@@ -1,5 +1,6 @@
 export const SHARED_PACKAGE_NAME = "@another-workbench/shared";
 
+export * from "./attachments.js";
 export * from "./common.js";
 export * from "./commands.js";
 export * from "./events.js";

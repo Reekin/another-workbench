@@ -7,7 +7,7 @@ import type {
   CodexRuntimeResponse
 } from "@another-workbench/adapters";
 import type { AgentAdapterRuntimeConfig } from "@another-workbench/adapters";
-import type { EventType } from "@another-workbench/shared";
+import type { Attachment, EventType } from "@another-workbench/shared";
 import type { AskForApproval } from "./codex-app-server-generated/v2/AskForApproval.js";
 import type { SandboxMode } from "./codex-app-server-generated/v2/SandboxMode.js";
 import type { ReasoningEffort } from "./codex-app-server-generated/ReasoningEffort.js";
@@ -26,6 +26,7 @@ import type { ThreadResumeParams } from "./codex-app-server-generated/v2/ThreadR
 import type { ThreadResumeResponse } from "./codex-app-server-generated/v2/ThreadResumeResponse.js";
 import type { TurnStartResponse } from "./codex-app-server-generated/v2/TurnStartResponse.js";
 import type { ThreadItem } from "./codex-app-server-generated/v2/ThreadItem.js";
+import { buildCodexTurnInput } from "./attachment-inputs.js";
 
 type RuntimeListener = (event: CodexRuntimeEvent) => void;
 
@@ -191,6 +192,80 @@ const isCommandExecutionThreadItem = (
   item: ThreadItem | Record<string, unknown>
 ): item is Extract<ThreadItem, { type: "commandExecution" }> =>
   isRecord(item) && item.type === "commandExecution" && typeof item.id === "string";
+
+const isCollabAgentToolCallThreadItem = (
+  item: ThreadItem | Record<string, unknown>
+): item is Extract<ThreadItem, { type: "collabAgentToolCall" }> =>
+  isRecord(item) && item.type === "collabAgentToolCall" && typeof item.id === "string";
+
+const discoveredCodexSessionId = (threadId: string): string => `codex-thread:${threadId}`;
+
+const mapCollabToolLabel = (
+  tool: Extract<ThreadItem, { type: "collabAgentToolCall" }>["tool"]
+): string => {
+  switch (tool) {
+    case "spawnAgent":
+      return "subagent.spawn";
+    case "sendInput":
+      return "subagent.message";
+    case "resumeAgent":
+      return "subagent.resume";
+    case "wait":
+      return "subagent.wait";
+    case "closeAgent":
+      return "subagent.close";
+    default:
+      return `subagent.${tool}`;
+  }
+};
+
+const mapCollabAgentStatus = (
+  status: string | undefined
+): "idle" | "running" | "awaiting_approval" | "error" | "completed" => {
+  switch (status) {
+    case "pendingInit":
+    case "running":
+      return "running";
+    case "completed":
+    case "shutdown":
+      return "completed";
+    case "errored":
+      return "error";
+    case "interrupted":
+    case "notFound":
+    default:
+      return "idle";
+  }
+};
+
+const summarizeCollabInput = (
+  item: Extract<ThreadItem, { type: "collabAgentToolCall" }>
+): string | undefined => {
+  const parts = [
+    item.prompt?.trim(),
+    item.model ? `model: ${item.model}` : undefined,
+    item.reasoningEffort ? `reasoning: ${item.reasoningEffort}` : undefined,
+    item.receiverThreadIds.length > 0
+      ? `targets: ${item.receiverThreadIds.join(", ")}`
+      : undefined
+  ].filter((value): value is string => Boolean(value));
+  return parts.length > 0 ? parts.join("\n") : undefined;
+};
+
+const summarizeCollabOutput = (
+  item: Extract<ThreadItem, { type: "collabAgentToolCall" }>
+): string | undefined => {
+  const lines = item.receiverThreadIds.map((threadId) => {
+    const state = item.agentsStates[threadId];
+    if (!state) {
+      return `${threadId}: unknown`;
+    }
+    return state.message?.trim()
+      ? `${threadId}: ${state.status} — ${state.message.trim()}`
+      : `${threadId}: ${state.status}`;
+  });
+  return lines.length > 0 ? lines.join("\n") : undefined;
+};
 
 export class CodexAppServerRuntimePort
   implements
@@ -473,17 +548,15 @@ export class CodexAppServerRuntimePort
   private async handleTurnStart(payload: CodexRuntimeRequest): Promise<void> {
     const sessionId = String(payload.params.sessionId ?? "");
     const content = String(payload.params.content ?? "");
+    const attachments = Array.isArray(payload.params.attachments)
+      ? (payload.params.attachments as Attachment[])
+      : [];
     const threadId = await this.ensureThreadForSession(sessionId);
+    const input = buildCodexTurnInput(content, attachments);
 
     const result = (await this.rpc("turn/start", {
       threadId,
-      input: [
-        {
-          type: "text",
-          text: content,
-          text_elements: []
-        }
-      ]
+      input
     })) as TurnStartResponse;
 
     if (result?.turn?.id) {
@@ -934,7 +1007,78 @@ export class CodexAppServerRuntimePort
           typeof item.aggregatedOutput === "string"
             ? item.aggregatedOutput
             : undefined,
+          agentId: this.agentId
+      });
+      return;
+    }
+
+    if (isCollabAgentToolCallThreadItem(item)) {
+      this.syncCollabAgentSessions(sessionId, turnId, item);
+
+      if (method === "item/started") {
+        this.emitEvent("tool.started", {
+          sessionId,
+          turnId,
+          toolCallId: item.id,
+          toolName: mapCollabToolLabel(item.tool),
+          inputSummary: summarizeCollabInput(item),
+          agentId: this.agentId
+        });
+        return;
+      }
+
+      this.emitEvent("tool.completed", {
+        sessionId,
+        turnId,
+        toolCallId: item.id,
+        status: item.status === "failed" ? "failed" : "completed",
+        outputSummary: summarizeCollabOutput(item),
         agentId: this.agentId
+      });
+    }
+  }
+
+  private syncCollabAgentSessions(
+    parentSessionId: string,
+    turnId: string,
+    item: Extract<ThreadItem, { type: "collabAgentToolCall" }>
+  ): void {
+    const conversationId = this.resolveConversationIdBySessionId?.(parentSessionId);
+    if (!conversationId) {
+      return;
+    }
+
+    for (const receiverThreadId of item.receiverThreadIds) {
+      const childSessionId = discoveredCodexSessionId(receiverThreadId);
+      this.attachThreadToSession(childSessionId, receiverThreadId);
+
+      const childState = item.agentsStates[receiverThreadId];
+
+      if (item.tool === "spawnAgent") {
+        this.emitEvent("session.created", {
+          conversationId,
+          sessionId: childSessionId,
+          agentId: this.agentId,
+          status: mapCollabAgentStatus(childState?.status),
+          relation: {
+            relationId: `subagent:${parentSessionId}:${childSessionId}`,
+            parentSessionId,
+            childSessionId,
+            relationType: "subagent",
+            sourceTurnId: turnId,
+            createdAt: this.now()
+          }
+        });
+      }
+
+      this.emitEvent("session.updated", {
+        conversationId,
+        sessionId: childSessionId,
+        status: mapCollabAgentStatus(childState?.status),
+        metadata: {
+          providerKind: "codex-thread",
+          providerSessionId: receiverThreadId
+        }
       });
     }
   }

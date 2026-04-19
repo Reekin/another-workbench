@@ -227,6 +227,77 @@ describe("Codex app-server runtime port", () => {
     expect(finalText).not.toContain('"approvalPolicy":"on-request"');
   });
 
+  it("maps subagent collaboration items into tool activity and child session events", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+    port.subscribe((event) => {
+      events.push({
+        method: event.method,
+        params: event.params
+      });
+    });
+
+    await port.start();
+    await port.request({
+      id: "turn-collab",
+      method: "turn/start",
+      params: {
+        sessionId: "session-1",
+        content: "please trigger subagent"
+      }
+    });
+
+    await waitFor(() =>
+      events.some((event) => event.method === "turn.completed")
+    );
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "tool.started",
+          params: expect.objectContaining({
+            toolName: "subagent.spawn",
+            inputSummary: expect.stringContaining("Review this file")
+          })
+        }),
+        expect.objectContaining({
+          method: "session.created",
+          params: expect.objectContaining({
+            sessionId: "codex-thread:sub-thread-1",
+            relation: expect.objectContaining({
+              parentSessionId: "session-1",
+              childSessionId: "codex-thread:sub-thread-1",
+              relationType: "subagent"
+            })
+          })
+        }),
+        expect.objectContaining({
+          method: "session.updated",
+          params: expect.objectContaining({
+            sessionId: "codex-thread:sub-thread-1",
+            metadata: expect.objectContaining({
+              providerSessionId: "sub-thread-1"
+            })
+          })
+        }),
+        expect.objectContaining({
+          method: "tool.completed",
+          params: expect.objectContaining({
+            toolCallId: "collab-turn-1",
+            outputSummary: expect.stringContaining("sub-thread-1: completed")
+          })
+        })
+      ])
+    );
+    expect(port.getThreadIdForSession("codex-thread:sub-thread-1")).toBe("sub-thread-1");
+  });
+
   it("passes through explicit sandbox and approval selections", async () => {
     const port = createCodexAppServerRuntimePort({
       commandPath: process.execPath,

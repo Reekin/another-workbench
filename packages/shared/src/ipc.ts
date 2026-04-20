@@ -10,9 +10,16 @@ import {
 } from "./common.js";
 import { commandTypes, zCommandEnvelopeSchema } from "./commands.js";
 import { zChatSessionSchema, zDomainSnapshotSchema } from "./domain.js";
+import {
+  zEngineDefinitionRpcSchema,
+  zEngineSurfaceRpcSchema
+} from "./engine-control.js";
 import { eventTypes, zEventEnvelopeSchema } from "./events.js";
+import { zSessionExecutionProfileSchema } from "./session-profile.js";
 
 export const workbenchRpcMethods = [
+  "engine.list",
+  "engine.getSurface",
   "agent.list",
   "agent.select",
   "settings.get",
@@ -271,6 +278,20 @@ const zSessionWindowSchema = z.object({
   hasNewer: z.boolean()
 });
 
+const zEngineListRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("engine.list"),
+  params: z.object({})
+});
+
+const zEngineGetSurfaceRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("engine.getSurface"),
+  params: z.object({
+    engineId: zAgentId
+  })
+});
+
 const zAgentListRequestSchema = z.object({
   id: zRequestId,
   method: z.literal("agent.list"),
@@ -391,6 +412,7 @@ const zSessionBrowserCreateRequestSchema = z.object({
     workspaceId: z.string().min(1),
     agentId: zAgentId,
     conversationId: zConversationId.optional(),
+    sessionProfile: zSessionExecutionProfileSchema.optional(),
     metadata: zJsonRecord.optional()
   })
 });
@@ -531,6 +553,8 @@ const zEventsReplayRequestSchema = z.object({
 
 export const zWorkbenchRpcRequestSchema = z.discriminatedUnion("method", [
   zAgentListRequestSchema,
+  zEngineListRequestSchema,
+  zEngineGetSurfaceRequestSchema,
   zAgentSelectRequestSchema,
   zSettingsGetRequestSchema,
   zSettingsUpdateRequestSchema,
@@ -562,6 +586,24 @@ export const zWorkbenchRpcRequestSchema = z.discriminatedUnion("method", [
   zEventsUnsubscribeRequestSchema,
   zEventsReplayRequestSchema
 ]);
+
+const zEngineListResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("engine.list"),
+  ok: z.literal(true),
+  result: z.object({
+    engines: z.array(zEngineDefinitionRpcSchema)
+  })
+});
+
+const zEngineGetSurfaceResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("engine.getSurface"),
+  ok: z.literal(true),
+  result: z.object({
+    surface: zEngineSurfaceRpcSchema
+  })
+});
 
 const zAgentListResponseSchema = z.object({
   id: zRequestId,
@@ -866,6 +908,8 @@ const zWorkbenchRpcErrorResponseSchema = z.object({
 
 export const zWorkbenchRpcResponseSchema = z.union([
   zAgentListResponseSchema,
+  zEngineListResponseSchema,
+  zEngineGetSurfaceResponseSchema,
   zAgentSelectResponseSchema,
   zSettingsGetResponseSchema,
   zSettingsUpdateResponseSchema,

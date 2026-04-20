@@ -67,6 +67,44 @@ const buildSessionSnapshot = (sessionId = "session-1") => ({
 });
 
 describe("WorkbenchShellService", () => {
+  it("serves engine registry and surface from injected engine-control services", () => {
+    const service = new WorkbenchShellService({
+      runtimeService: {} as never,
+      sessionCatalog: {} as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never,
+      engineRegistry: {
+        list: () => [
+          {
+            engineId: "codex",
+            displayName: "Codex",
+            integrationTier: "native"
+          }
+        ]
+      } as never,
+      engineCapabilitySurface: {
+        get: (engineId: string) => ({
+          engineId,
+          sharedCapabilities: ["chat"],
+          extensions: []
+        })
+      } as never
+    });
+
+    expect(service.listEngines()).toEqual([
+      {
+        engineId: "codex",
+        displayName: "Codex",
+        integrationTier: "native"
+      }
+    ]);
+    expect(service.getEngineSurface("codex")).toEqual({
+      engineId: "codex",
+      sharedCapabilities: ["chat"],
+      extensions: []
+    });
+  });
+
   it("reads and updates persisted shell settings through the workspace registry", async () => {
     const ready = vi.fn().mockResolvedValue(undefined);
     const getState = vi.fn().mockReturnValue({
@@ -265,6 +303,51 @@ describe("WorkbenchShellService", () => {
     });
     expect(markSessionRead).toHaveBeenCalledWith("session-1");
     expect(getChatTree).toHaveBeenCalledWith("session-1");
+  });
+
+  it("passes sessionProfile through when creating a browser session", async () => {
+    const createSession = vi.fn().mockResolvedValue({
+      sessionId: "session-created",
+      conversationId: "conversation-created"
+    });
+    const markSessionRead = vi.fn().mockResolvedValue(undefined);
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        createSession
+      } as never,
+      sessionCatalog: {
+        markSessionRead
+      } as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never
+    });
+
+    await expect(
+      service.createBrowserSession({
+        workspaceId: "workspace-1",
+        agentId: "codex",
+        sessionProfile: {
+          engineId: "codex",
+          modeId: "danger-full-access"
+        }
+      })
+    ).resolves.toEqual({
+      sessionId: "session-created",
+      conversationId: "conversation-created"
+    });
+
+    expect(createSession).toHaveBeenCalledWith({
+      type: "createSession",
+      agentId: "codex",
+      workspaceId: "workspace-1",
+      conversationId: undefined,
+      sessionProfile: {
+        engineId: "codex",
+        modeId: "danger-full-access"
+      },
+      metadata: undefined
+    });
+    expect(markSessionRead).toHaveBeenCalledWith("session-created");
   });
 
   it("anchors session opening from provider chat tree truth instead of persisted view state", async () => {

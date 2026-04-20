@@ -8,6 +8,7 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
+    "check:native-engine-boundaries": "pnpm exec tsx ./scripts/check-native-engine-boundaries.ts",
     "smoke:codex": "pnpm exec tsx ./scripts/smoke-real-codex-runtime.ts",
     "smoke:pi": "pnpm exec tsx ./scripts/smoke-real-pi-acp-runtime.ts"
   },

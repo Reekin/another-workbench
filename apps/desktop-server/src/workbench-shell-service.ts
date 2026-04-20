@@ -3,6 +3,8 @@ import type {
   ChatSession,
   CommandEnvelope,
   DomainSnapshot,
+  EngineDefinitionRpc,
+  EngineSurfaceRpc,
   EventEnvelope
 } from "@another-workbench/shared";
 import type { RuntimeEventFilter, RuntimeEventReplayInput } from "@another-workbench/core";
@@ -29,6 +31,8 @@ import { SessionActionsProvider } from "./session-actions.js";
 import type { WorkbenchRuntimeService } from "./runtime-service.js";
 import type { WorkspaceRecord } from "./workspace-registry.js";
 import { WorkspaceSelectionService } from "./workspace-selection-service.js";
+import { EngineRegistryService } from "./engine-control/engine-registry.js";
+import { EngineCapabilitySurfaceService } from "./engine-control/capability-surface.js";
 import {
   buildSessionWindowSnapshot,
   type SessionWindowSnapshot
@@ -44,6 +48,8 @@ export type WorkbenchShellServiceOptions = {
   sessionActions?: SessionActionsProvider;
   chatTreeProvider?: ChatTreeProvider;
   sessionReconciliation?: SessionReconciliationService;
+  engineRegistry?: EngineRegistryService;
+  engineCapabilitySurface?: EngineCapabilitySurfaceService;
   pickWorkspaceDirectory?: () => Promise<{
     canceled: boolean;
     rootPath?: string;
@@ -58,6 +64,8 @@ export class WorkbenchShellService {
   private readonly chatTreeProvider: ChatTreeProvider | undefined;
   private readonly sessionIdentity: SessionIdentityRegistry;
   private readonly sessionReconciliation: SessionReconciliationService | undefined;
+  private readonly engineRegistry: EngineRegistryService | undefined;
+  private readonly engineCapabilitySurface: EngineCapabilitySurfaceService | undefined;
   private readonly pickWorkspaceDirectoryImpl:
     | (() => Promise<{ canceled: boolean; rootPath?: string }>)
     | undefined;
@@ -82,7 +90,21 @@ export class WorkbenchShellService {
           } as never)
       });
     this.sessionReconciliation = options.sessionReconciliation;
+    this.engineRegistry = options.engineRegistry;
+    this.engineCapabilitySurface = options.engineCapabilitySurface;
     this.pickWorkspaceDirectoryImpl = options.pickWorkspaceDirectory;
+  }
+
+  public listEngines(): EngineDefinitionRpc[] {
+    return this.engineRegistry?.list() ?? [];
+  }
+
+  public getEngineSurface(engineId: string): EngineSurfaceRpc {
+    return this.engineCapabilitySurface?.get(engineId) ?? {
+      engineId,
+      sharedCapabilities: [],
+      extensions: []
+    };
   }
 
   public listAgents(): AgentDescriptor[] {
@@ -277,6 +299,11 @@ export class WorkbenchShellService {
     workspaceId: string;
     agentId: string;
     conversationId?: string;
+    sessionProfile?: {
+      engineId: string;
+      modeId?: string;
+      modelId?: string;
+    };
     metadata?: Record<string, unknown>;
   }): Promise<{
     sessionId: string;
@@ -287,6 +314,7 @@ export class WorkbenchShellService {
       agentId: input.agentId,
       workspaceId: input.workspaceId,
       conversationId: input.conversationId,
+      sessionProfile: input.sessionProfile,
       metadata: input.metadata
     });
     await this.sessionCatalog.markSessionRead(session.sessionId);

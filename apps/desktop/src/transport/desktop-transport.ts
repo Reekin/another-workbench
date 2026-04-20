@@ -9,6 +9,8 @@ import type {
   DelegationSnapshotRpc,
   DiagnosticsSnapshotRpc,
   DomainSnapshot,
+  EngineDefinitionRpc,
+  EngineSurfaceRpc,
   SessionActionDescriptorRpc,
   SessionActionKindRpc,
   SessionActionResultRpc,
@@ -46,6 +48,11 @@ export type SessionCreateInput = {
   agentId: string;
   conversationId?: string;
   workspaceId?: string;
+  sessionProfile?: {
+    engineId: string;
+    modeId?: string;
+    modelId?: string;
+  };
   metadata?: Record<string, unknown>;
 };
 
@@ -138,6 +145,10 @@ export class DesktopTransportError extends Error {
 }
 
 export type DesktopTransport = {
+  engine: {
+    list: () => Promise<EngineDefinitionRpc[]>;
+    getSurface: (engineId: string) => Promise<EngineSurfaceRpc>;
+  };
   agent: {
     list: () => Promise<AgentDescriptor[]>;
     select: (input: AgentSelectInput) => Promise<{ selectedAgentId: string }>;
@@ -194,6 +205,11 @@ export type DesktopTransport = {
       workspaceId: string;
       agentId: string;
       conversationId?: string;
+      sessionProfile?: {
+        engineId: string;
+        modeId?: string;
+        modelId?: string;
+      };
       metadata?: Record<string, unknown>;
     }) => Promise<{ sessionId: string; conversationId: string }>;
     open: (sessionId: string) => Promise<{ page: SessionWindowRpc }>;
@@ -279,6 +295,20 @@ export const createDesktopTransport = (
   const requestAgentList = async (): Promise<AgentDescriptor[]> => {
     const result = await rpc.request("agent.list", {});
     return result.agents;
+  };
+
+  const requestEngineList = async (): Promise<EngineDefinitionRpc[]> => {
+    const result = await rpc.request("engine.list", {});
+    return result.engines;
+  };
+
+  const requestEngineSurface = async (
+    engineId: string
+  ): Promise<EngineSurfaceRpc> => {
+    const result = await rpc.request("engine.getSurface", {
+      engineId
+    });
+    return result.surface;
   };
 
   const requestAgentSelect = async (
@@ -436,6 +466,10 @@ export const createDesktopTransport = (
   };
 
   return {
+    engine: {
+      list: requestEngineList,
+      getSurface: requestEngineSurface
+    },
     agent: {
       list: requestAgentList,
       select: requestAgentSelect
@@ -454,6 +488,7 @@ export const createDesktopTransport = (
           agentId: input.agentId,
           conversationId: input.conversationId,
           workspaceId: input.workspaceId,
+          sessionProfile: input.sessionProfile,
           metadata: input.metadata
         }),
       list: requestSessionList,

@@ -18,3 +18,7 @@ export * from "./session-discovery.js";
 export * from "./session-actions.js";
 export * from "./chat-tree-provider.js";
 export * from "./workbench-shell-service.js";
+export * from "./engine-control/engine-definition.js";
+export * from "./engine-control/engine-registry.js";
+export * from "./engine-control/capability-surface.js";
+export * from "./engine-control/native-onboarding-contract.js";

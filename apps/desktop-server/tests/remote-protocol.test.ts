@@ -223,6 +223,25 @@ describe("createRemoteRpcHandler", () => {
 
   it("serves settings get and update through the shared RPC shape", async () => {
     const shellService = {
+      listEngines: () => [
+        {
+          engineId: "codex",
+          displayName: "Codex",
+          integrationTier: "native"
+        }
+      ],
+      getEngineSurface: () => ({
+        engineId: "codex",
+        sharedCapabilities: ["chat", "terminal"],
+        extensions: [
+          {
+            engineId: "codex",
+            key: "worktree",
+            displayName: "Worktree Inspector",
+            available: true
+          }
+        ]
+      }),
       listAgents: () => [],
       selectAgent: () => ({ selectedAgentId: "codex" }),
       listWorkspaces: vi.fn().mockResolvedValue({
@@ -280,6 +299,108 @@ describe("createRemoteRpcHandler", () => {
       ok: true,
       result: {
         defaultNewSessionAgentId: "codex"
+      }
+    });
+  });
+
+  it("serves engine registry and engine surface through shared RPC shapes", async () => {
+    const shellService = {
+      listEngines: () => [
+        {
+          engineId: "codex",
+          displayName: "Codex",
+          integrationTier: "native"
+        },
+        {
+          engineId: "pi-acp",
+          displayName: "Pi",
+          integrationTier: "fallback"
+        }
+      ],
+      getEngineSurface: (engineId: string) => ({
+        engineId,
+        sharedCapabilities: ["chat", "approval"],
+        extensions: [
+          {
+            engineId,
+            key: "diagnostics",
+            displayName: "Diagnostics Summary",
+            available: engineId === "codex"
+          }
+        ]
+      }),
+      listAgents: () => [],
+      selectAgent: () => ({ selectedAgentId: "codex" }),
+      listWorkspaces: vi.fn().mockResolvedValue({
+        workspaces: []
+      }),
+      getSnapshotResult: () => ({
+        snapshot: {
+          conversations: [],
+          sessions: [],
+          turns: [],
+          messageBlocks: [],
+          toolCalls: [],
+          terminalStreams: [],
+          approvalRequests: [],
+          participants: [],
+          sessionRelations: []
+        }
+      }),
+      listSessions: () => [],
+      getSettings: vi.fn().mockResolvedValue({}),
+      updateSettings: vi.fn().mockResolvedValue({}),
+      executeCommand: vi.fn(),
+      replay: vi.fn().mockReturnValue([])
+    };
+    const handler = createRemoteRpcHandler(shellService as never);
+
+    await expect(
+      handler.handleRequest({
+        id: "req-engines",
+        method: "engine.list",
+        params: {}
+      })
+    ).resolves.toMatchObject({
+      id: "req-engines",
+      method: "engine.list",
+      ok: true,
+      result: {
+        engines: [
+          expect.objectContaining({
+            engineId: "codex",
+            integrationTier: "native"
+          }),
+          expect.objectContaining({
+            engineId: "pi-acp",
+            integrationTier: "fallback"
+          })
+        ]
+      }
+    });
+
+    await expect(
+      handler.handleRequest({
+        id: "req-surface",
+        method: "engine.getSurface",
+        params: {
+          engineId: "codex"
+        }
+      })
+    ).resolves.toMatchObject({
+      id: "req-surface",
+      method: "engine.getSurface",
+      ok: true,
+      result: {
+        surface: {
+          engineId: "codex",
+          sharedCapabilities: ["chat", "approval"],
+          extensions: [
+            expect.objectContaining({
+              key: "diagnostics"
+            })
+          ]
+        }
       }
     });
   });

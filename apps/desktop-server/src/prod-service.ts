@@ -21,6 +21,8 @@ import { CodexDelegationProvider } from "./codex-delegation-provider.js";
 import { CodexWorktreeProvider } from "./codex-worktree-provider.js";
 import { CodexCheckpointProvider } from "./codex-checkpoint-provider.js";
 import { CodexDiagnosticsProvider } from "./codex-diagnostics-provider.js";
+import { EngineRegistryService } from "./engine-control/engine-registry.js";
+import { EngineCapabilitySurfaceService } from "./engine-control/capability-surface.js";
 
 export type CreateWorkbenchRuntimeServiceOptions = {
   codexCommandPath?: string;
@@ -80,6 +82,59 @@ export const createWorkbenchRuntimeService = (
     resolveConversationIdBySessionId: (sessionId: string) =>
       service?.resolveConversationIdForSession(sessionId)
   });
+  const engineRegistry = new EngineRegistryService({
+    engines: [
+      {
+        engineId: codexAgentId,
+        displayName: "Codex",
+        integrationTier: "native",
+        transportKind: "codex"
+      },
+      {
+        engineId: piAgentId,
+        displayName: "Pi",
+        integrationTier: "fallback",
+        transportKind: "acp"
+      }
+    ]
+  });
+  const engineCapabilitySurface = new EngineCapabilitySurfaceService({
+    surfaces: [
+      {
+        engineId: codexAgentId,
+        sharedCapabilities: [
+          "chat",
+          "tool",
+          "terminal",
+          "approval",
+          "conversationGraph",
+          "delegation",
+          "checkpoint"
+        ],
+        extensions: [
+          {
+            engineId: codexAgentId,
+            key: "worktree",
+            displayName: "Worktree Inspector",
+            description: "Codex-specific worktree and rollout context.",
+            available: true
+          },
+          {
+            engineId: codexAgentId,
+            key: "diagnostics",
+            displayName: "Diagnostics Summary",
+            description: "Codex-specific diagnostics snapshot surface.",
+            available: true
+          }
+        ]
+      },
+      {
+        engineId: piAgentId,
+        sharedCapabilities: ["chat", "tool", "approval"],
+        extensions: []
+      }
+    ]
+  });
 
   const runtimeService = new WorkbenchRuntimeService({
     now: options.now,
@@ -92,8 +147,12 @@ export const createWorkbenchRuntimeService = (
           displayName: "Codex",
           capabilities: ["chat", "tool", "terminal", "approval"]
         },
+        integrationTier: "native",
+        transportKind: "codex",
         adapter: codexAdapter,
         providerKind: "codex-thread",
+        sharedCapabilities: engineCapabilitySurface.get(codexAgentId).sharedCapabilities,
+        extensions: engineCapabilitySurface.get(codexAgentId).extensions,
         resolveProviderSessionId: (sessionId: string) =>
           codexRuntimePort.getThreadIdForSession(sessionId)
       },
@@ -103,6 +162,10 @@ export const createWorkbenchRuntimeService = (
           displayName: "Pi",
           capabilities: ["chat", "tool", "approval"]
         },
+        integrationTier: "fallback",
+        transportKind: "acp",
+        sharedCapabilities: engineCapabilitySurface.get(piAgentId).sharedCapabilities,
+        extensions: engineCapabilitySurface.get(piAgentId).extensions,
         adapter: piAdapter
       }
     ]
@@ -169,6 +232,8 @@ export const createWorkbenchRuntimeService = (
     capabilities,
     sessionIdentity,
     sessionReconciliation,
+    engineRegistry,
+    engineCapabilitySurface,
     pickWorkspaceDirectory: options.pickWorkspaceDirectory
   });
 };

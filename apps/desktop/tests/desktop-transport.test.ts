@@ -42,6 +42,30 @@ const createPreloadMock = (config?: {
         }
       } as const;
     }
+    if (payload.method === "engine.list") {
+      return {
+        id: payload.id,
+        method: "engine.list",
+        ok: true,
+        result: {
+          engines: []
+        }
+      } as const;
+    }
+    if (payload.method === "engine.getSurface") {
+      return {
+        id: payload.id,
+        method: "engine.getSurface",
+        ok: true,
+        result: {
+          surface: {
+            engineId: payload.params.engineId,
+            sharedCapabilities: [],
+            extensions: []
+          }
+        }
+      } as const;
+    }
     if (payload.method === "agent.select") {
       return {
         id: payload.id,
@@ -185,7 +209,11 @@ describe("Desktop transport facade", () => {
 
     const receipt = await transport.session.create({
       agentId: "agent-1",
-      conversationId: "conversation-1"
+      conversationId: "conversation-1",
+      sessionProfile: {
+        engineId: "agent-1",
+        modeId: "danger-full-access"
+      }
     });
 
     expect(receipt.commandType).toBe("createSession");
@@ -196,6 +224,62 @@ describe("Desktop transport facade", () => {
     }
     expect(request.params.envelope.command.type).toBe("createSession");
     expect(request.params.envelope.command.agentId).toBe("agent-1");
+    expect(request.params.envelope.command.sessionProfile).toEqual({
+      engineId: "agent-1",
+      modeId: "danger-full-access"
+    });
+  });
+
+  it("maps engine.list and engine.getSurface to dedicated typed RPC contracts", async () => {
+    const preload = createPreloadMock({
+      onRequest: async (request) => {
+        if (request.method === "engine.list") {
+          return {
+            id: request.id,
+            method: request.method,
+            ok: true,
+            result: {
+              engines: [
+                {
+                  engineId: "codex",
+                  displayName: "Codex",
+                  integrationTier: "native"
+                }
+              ]
+            }
+          } as const;
+        }
+        if (request.method === "engine.getSurface") {
+          return {
+            id: request.id,
+            method: request.method,
+            ok: true,
+            result: {
+              surface: {
+                engineId: request.params.engineId,
+                sharedCapabilities: ["chat", "terminal"],
+                extensions: []
+              }
+            }
+          } as const;
+        }
+        throw new Error(`Unexpected method: ${request.method}`);
+      }
+    });
+    const transport = createDesktopTransport(preload.api);
+
+    await expect(transport.engine.list()).resolves.toEqual([
+      {
+        engineId: "codex",
+        displayName: "Codex",
+        integrationTier: "native"
+      }
+    ]);
+    await expect(transport.engine.getSurface("codex")).resolves.toEqual({
+      engineId: "codex",
+      sharedCapabilities: ["chat", "terminal"],
+      extensions: []
+    });
   });
 
   it("maps session.list to dedicated session.list read path", async () => {

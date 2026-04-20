@@ -5,5 +5,7 @@ export * from "./common.js";
 export * from "./commands.js";
 export * from "./events.js";
 export * from "./domain.js";
+export * from "./engine-control.js";
 export * from "./ipc.js";
 export * from "./paths.js";
+export * from "./session-profile.js";

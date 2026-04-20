@@ -224,7 +224,10 @@ export const useSessionOpenController = (input: {
         input.onResetSessionSwitchState();
         const created = await input.transport.sessionBrowser.create({
           workspaceId,
-          agentId
+          agentId,
+          sessionProfile: {
+            engineId: agentId
+          }
         });
         requestId = ++openSessionRequestIdRef.current;
         input.setBrowserSelectedSessionId(created.sessionId);

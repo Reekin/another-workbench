@@ -14,6 +14,8 @@ import {
 import { createPortal } from "react-dom";
 import type {
   AgentDescriptor,
+  EngineDefinitionRpc,
+  EngineSurfaceRpc,
   SessionWindowRpc,
   WorkspaceBrowserNodeRpc
 } from "@another-workbench/shared";
@@ -59,10 +61,13 @@ import {
   type SessionMenuState
 } from "./use-session-actions-controller.js";
 import { useChatTreeController } from "./use-chat-tree-controller.js";
+import { buildEngineInspectorViewModel } from "./engine-summary.js";
 import "./chat-shell.css";
 
 type SettingsLauncherProps = {
   agents: AgentDescriptor[];
+  engines: EngineDefinitionRpc[];
+  surfacesByEngineId: Readonly<Record<string, EngineSurfaceRpc | undefined>>;
   currentAgentId: string;
   transport?: DesktopTransport;
   onAgentSaved: (agentId: string) => void;
@@ -345,6 +350,8 @@ const TranscriptPane = memo(
 
 const SettingsLauncher = ({
   agents,
+  engines,
+  surfacesByEngineId,
   currentAgentId,
   transport,
   onAgentSaved,
@@ -353,6 +360,22 @@ const SettingsLauncher = ({
   const [isOpen, setIsOpen] = useState(false);
   const [draftAgentId, setDraftAgentId] = useState(currentAgentId);
   const [isSaving, setIsSaving] = useState(false);
+  const engineInspector = useMemo(
+    () =>
+      buildEngineInspectorViewModel({
+        selectedEngineId: draftAgentId || currentAgentId,
+        engines,
+        surfacesByEngineId
+      }),
+    [currentAgentId, draftAgentId, engines, surfacesByEngineId]
+  );
+  const tierByEngineId = useMemo(
+    () =>
+      Object.fromEntries(
+        engines.map((engine) => [engine.engineId, engine.integrationTier] as const)
+      ),
+    [engines]
+  );
 
   useEffect(() => {
     if (!isOpen) {
@@ -426,11 +449,20 @@ const SettingsLauncher = ({
               <option value="">Follow first available agent</option>
               {agents.map((agent) => (
                 <option key={agent.agentId} value={agent.agentId}>
-                  {agent.displayName}
+                  {tierByEngineId[agent.agentId]
+                    ? `${agent.displayName} (${tierByEngineId[agent.agentId]})`
+                    : agent.displayName}
                 </option>
               ))}
             </select>
           </label>
+          <div className="awb-field" aria-live="polite">
+            <span>Selected engine</span>
+            <strong>{engineInspector.engineLabel}</strong>
+            <span>{engineInspector.integrationLabel}</span>
+            <span>{engineInspector.capabilitiesLabel}</span>
+            <span>{engineInspector.extensionsLabel}</span>
+          </div>
         </div>
         <footer className="awb-modal__footer">
           <button type="button" className="awb-ghost-button" onClick={close}>
@@ -475,6 +507,10 @@ export const ChatShellApp = ({
 }: ChatShellAppProps): ReactElement => {
   const state = useRendererStoreState(store);
   const [availableAgents, setAvailableAgents] = useState<AgentDescriptor[]>([]);
+  const [availableEngines, setAvailableEngines] = useState<EngineDefinitionRpc[]>([]);
+  const [engineSurfacesById, setEngineSurfacesById] = useState<
+    Record<string, EngineSurfaceRpc | undefined>
+  >({});
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
   const [draft, setDraft] = useState("");
   const [composerAttachments, setComposerAttachments] = useState<ComposerAttachment[]>(
@@ -726,6 +762,32 @@ export const ChatShellApp = ({
   }, [transport]);
 
   useEffect(() => {
+    if (!transport) {
+      return;
+    }
+    let disposed = false;
+    void transport.engine
+      .list()
+      .then((list) => {
+        if (!disposed) {
+          setAvailableEngines(list);
+        }
+      })
+      .catch((error) => {
+        if (!disposed) {
+          setStatusNotice({
+            message: `Engine list failed: ${(error as Error).message}`,
+            persistent: true,
+            source: "settings"
+          });
+        }
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [transport]);
+
+  useEffect(() => {
     if (settingsHydrated && !selectedAgentId && agents.length > 0) {
       setSelectedAgentId(agents[0]!.agentId);
     }
@@ -781,6 +843,35 @@ export const ChatShellApp = ({
             message: `Agent select failed: ${(error as Error).message}`,
             persistent: true,
             source: "agent-select"
+          });
+        }
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [transport, selectedAgentId]);
+
+  useEffect(() => {
+    if (!transport || !selectedAgentId) {
+      return;
+    }
+    let disposed = false;
+    void transport.engine
+      .getSurface(selectedAgentId)
+      .then((surface) => {
+        if (!disposed) {
+          setEngineSurfacesById((current) => ({
+            ...current,
+            [selectedAgentId]: surface
+          }));
+        }
+      })
+      .catch((error) => {
+        if (!disposed) {
+          setStatusNotice({
+            message: `Engine surface failed: ${(error as Error).message}`,
+            persistent: true,
+            source: "settings"
           });
         }
       });
@@ -1164,6 +1255,8 @@ export const ChatShellApp = ({
           <footer className="awb-sidebar__footer">
             <SettingsLauncher
               agents={agents}
+              engines={availableEngines}
+              surfacesByEngineId={engineSurfacesById}
               currentAgentId={selectedAgentId}
               transport={transport}
               onAgentSaved={setSelectedAgentId}

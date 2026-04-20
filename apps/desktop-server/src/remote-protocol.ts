@@ -57,6 +57,38 @@ export const createRemoteRpcHandler = (
       const request = parseWorkbenchRpcRequest(input);
       try {
         switch (request.method) {
+          case "engine.list":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "ENGINE_REGISTRY_UNAVAILABLE",
+                "Engine APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: {
+                engines: shellService.listEngines()
+              }
+            });
+          case "engine.getSurface":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "ENGINE_SURFACE_UNAVAILABLE",
+                "Engine surface APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: {
+                surface: shellService.getEngineSurface(request.params.engineId)
+              }
+            });
           case "agent.list":
             return parseWorkbenchRpcResponse({
               id: request.id,

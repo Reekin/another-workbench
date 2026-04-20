@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentAdapter } from "@another-workbench/adapters";
 import type { RuntimeEvent } from "@another-workbench/shared";
+import { readSessionExecutionProfile } from "@another-workbench/shared";
 import { DomainService } from "../src/domain-service.js";
 import { RuntimeOrchestrator } from "../src/runtime-orchestrator.js";
 
@@ -166,6 +167,72 @@ describe("RuntimeOrchestrator", () => {
         })
       ]
     });
+  });
+
+  it("persists a session execution profile snapshot for create and resume flows", async () => {
+    const syncSession = vi.fn().mockResolvedValue(undefined);
+
+    let orchestrator: RuntimeOrchestrator | undefined;
+    const domainService = new DomainService({
+      now: (() => {
+        let tick = 0;
+        return () => `2026-04-20T00:03:${String(++tick).padStart(2, "0")}Z`;
+      })(),
+      createSessionId: () => "session-profile",
+      resolveAgentDescriptor: (agentId) =>
+        orchestrator?.getAgentDescriptor(agentId),
+      publishRuntimeEvent: () => {}
+    });
+
+    orchestrator = new RuntimeOrchestrator({
+      domainService,
+      sessionIndexSyncService: {
+        syncSession,
+        syncRelation: vi.fn().mockResolvedValue(undefined),
+        markSessionUnreadCompleted: vi.fn().mockResolvedValue(undefined)
+      } as never,
+      workspaceSelectionService: {
+        activateSelection: vi.fn().mockResolvedValue(undefined),
+        selectWorkspace: vi.fn().mockResolvedValue({
+          workspaceId: "workspace-1"
+        })
+      } as never,
+      publishRuntimeEvent: () => {},
+      createConversationId: () => "conversation-profile",
+      agentBindings: [
+        {
+          descriptor: {
+            agentId: "codex",
+            displayName: "Codex",
+            capabilities: ["chat", "terminal"]
+          }
+        }
+      ]
+    });
+
+    const created = await orchestrator.createSession({
+      agentId: "codex",
+      workspaceId: "workspace-1",
+      sessionProfile: {
+        engineId: "codex",
+        modeId: "danger-full-access",
+        modelId: "gpt-5.1"
+      }
+    });
+
+    expect(readSessionExecutionProfile(created.metadata)).toEqual({
+      engineId: "codex",
+      modeId: "danger-full-access",
+      modelId: "gpt-5.1"
+    });
+
+    const resumed = await orchestrator.resumeSession(created.sessionId);
+    expect(readSessionExecutionProfile(resumed.metadata)).toEqual({
+      engineId: "codex",
+      modeId: "danger-full-access",
+      modelId: "gpt-5.1"
+    });
+    expect(syncSession).toHaveBeenCalledWith("session-profile");
   });
 
   it("persists adapter-emitted subagent relations into the session index", async () => {

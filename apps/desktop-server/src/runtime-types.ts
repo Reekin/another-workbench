@@ -2,7 +2,15 @@ import type {
   AgentAdapter,
   AgentAdapterRuntimeConfig
 } from "@another-workbench/adapters";
-import type { AgentDescriptor, ChatSession, Command, DomainSnapshot } from "@another-workbench/shared";
+import type {
+  AgentDescriptor,
+  ChatSession,
+  Command,
+  DomainSnapshot,
+  EngineIntegrationTierRpc,
+  EngineSharedCapabilityRpc,
+  EngineExtensionDescriptorRpc
+} from "@another-workbench/shared";
 
 export type WorkbenchSessionListOptions = {
   conversationId?: string;
@@ -27,10 +35,14 @@ export type SnapshotResult = {
 
 export type WorkbenchAgentBinding = {
   descriptor: AgentDescriptor;
+  integrationTier?: EngineIntegrationTierRpc;
+  transportKind?: string;
   adapter?: AgentAdapter;
   runtimeConfig?: AgentAdapterRuntimeConfig;
   providerKind?: string;
   resolveProviderSessionId?: (sessionId: string) => string | undefined;
+  sharedCapabilities?: EngineSharedCapabilityRpc[];
+  extensions?: EngineExtensionDescriptorRpc[];
 };
 
 export type SessionIndexSyncRecord = {

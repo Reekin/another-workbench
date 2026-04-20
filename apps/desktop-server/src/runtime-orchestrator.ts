@@ -1,6 +1,14 @@
-import type { AgentDescriptor, ProviderSessionHandle } from "@another-workbench/shared";
+import type {
+  AgentDescriptor,
+  ProviderSessionHandle,
+  SessionExecutionProfile
+} from "@another-workbench/shared";
 import { parseCommandEnvelope } from "@another-workbench/shared";
 import type { CommandEnvelope, EventEnvelope } from "@another-workbench/shared";
+import {
+  resolveSessionExecutionProfile,
+  writeSessionExecutionProfile
+} from "@another-workbench/shared";
 import type { HydratedSessionSnapshot } from "./session-discovery.js";
 import { DomainService } from "./domain-service.js";
 import { SessionIndexSyncService } from "./session-index-sync-service.js";
@@ -197,15 +205,24 @@ export class RuntimeOrchestrator {
   public async createSession(command: {
     conversationId?: string;
     agentId: string;
+    sessionProfile?: SessionExecutionProfile;
     metadata?: Record<string, unknown>;
     workspaceId?: string;
   }) {
     const conversationId = command.conversationId ?? this.createConversationId();
-    this.assertAgentExists(command.agentId);
+    const sessionProfile = command.sessionProfile ?? {
+      engineId: command.agentId
+    };
+    if (sessionProfile.engineId !== command.agentId) {
+      throw new Error(
+        `Session profile engineId (${sessionProfile.engineId}) must match agentId (${command.agentId}).`
+      );
+    }
+    this.assertAgentExists(sessionProfile.engineId);
     const session = this.domainService.createSession({
       conversationId,
-      agentId: command.agentId,
-      metadata: command.metadata,
+      agentId: sessionProfile.engineId,
+      metadata: writeSessionExecutionProfile(command.metadata, sessionProfile),
       workspaceId: command.workspaceId
     });
     this.bindRuntime(session.sessionId);
@@ -220,6 +237,7 @@ export class RuntimeOrchestrator {
 
   public async resumeSession(sessionId: string) {
     const session = this.domainService.resumeSession(sessionId);
+    this.assertAgentExists(this.resolveSessionEngineId(session));
     const conversation = this.domainService.requireConversation(session.conversationId);
     await this.sessionIndexSyncService.syncSession(session.sessionId);
     await this.workspaceSelectionService.activateSelection({
@@ -282,7 +300,8 @@ export class RuntimeOrchestrator {
       return undefined;
     }
     const conversation = this.domainService.getConversation(session.conversationId);
-    const binding = this.bindings.get(session.agentId);
+    const engineId = this.resolveSessionEngineId(session);
+    const binding = this.bindings.get(engineId);
     return {
       workspaceId: conversation?.workspaceId,
       session,
@@ -318,12 +337,13 @@ export class RuntimeOrchestrator {
     hooks: { before?: () => void } = {}
   ): Promise<CommandReceipt> {
     const session = this.domainService.requireSession(sessionId);
-    const binding = this.requireBinding(session.agentId);
+    const engineId = this.resolveSessionEngineId(session);
+    const binding = this.requireBinding(engineId);
     if (!binding.adapter) {
       return this.accept(envelope, false);
     }
 
-    await this.ensureAdapterReady(session.agentId);
+    await this.ensureAdapterReady(engineId);
     hooks.before?.();
     const result = await binding.adapter.executeCommand(envelope);
     return this.accept(envelope, result.accepted);
@@ -334,17 +354,18 @@ export class RuntimeOrchestrator {
     if (!session) {
       return;
     }
-    const binding = this.bindings.get(session.agentId);
+    const engineId = this.resolveSessionEngineId(session);
+    const binding = this.bindings.get(engineId);
     if (!binding?.adapter) {
       return;
     }
 
     this.domainService.bindRuntime(session.sessionId, {
-      runtimeId: `${session.agentId}:${session.sessionId}`,
+      runtimeId: `${engineId}:${session.sessionId}`,
       handle: binding.adapter,
       attachedAt: this.now(),
       metadata: {
-        agentId: session.agentId
+        agentId: engineId
       }
     });
   }
@@ -417,5 +438,12 @@ export class RuntimeOrchestrator {
 
   private assertAgentExists(agentId: string): void {
     this.requireBinding(agentId);
+  }
+
+  private resolveSessionEngineId(session: {
+    agentId: string;
+    metadata?: Record<string, unknown>;
+  }): string {
+    return resolveSessionExecutionProfile(session).engineId;
   }
 }

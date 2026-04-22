@@ -23,6 +23,7 @@ import { CodexCheckpointProvider } from "./codex-checkpoint-provider.js";
 import { CodexDiagnosticsProvider } from "./codex-diagnostics-provider.js";
 import { EngineRegistryService } from "./engine-control/engine-registry.js";
 import { EngineCapabilitySurfaceService } from "./engine-control/capability-surface.js";
+import type { SkillDescriptorRpc } from "@another-workbench/shared";
 
 export type CreateWorkbenchRuntimeServiceOptions = {
   codexCommandPath?: string;
@@ -230,6 +231,25 @@ export const createWorkbenchRuntimeService = (
     runtimeService,
     sessionCatalog,
     capabilities,
+    skillsProvider: {
+      listSkills: async (input): Promise<SkillDescriptorRpc[]> => {
+        const result = await codexRuntimePort.listSkills({
+          cwds: input?.cwds,
+          forceReload: input?.forceReload
+        });
+        return result.data.flatMap((entry) =>
+          entry.skills.map((skill) => ({
+            cwd: entry.cwd,
+            name: skill.name,
+            description: skill.description,
+            shortDescription: skill.shortDescription ?? undefined,
+            path: skill.path,
+            scope: String(skill.scope),
+            enabled: skill.enabled
+          }))
+        );
+      }
+    },
     sessionIdentity,
     sessionReconciliation,
     engineRegistry,

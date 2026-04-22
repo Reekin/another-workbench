@@ -40,6 +40,8 @@ export const workbenchRpcMethods = [
   "sessionBrowser.loadOlder",
   "sessionBrowser.getActions",
   "sessionBrowser.runAction",
+  "chat.getCapabilities",
+  "skills.list",
   "chatTree.get",
   "chatTree.jump",
   "delegation.get",
@@ -74,6 +76,21 @@ const zWorkspaceRecordSchema = z.object({
 
 const zWorkbenchSettingsSchema = z.object({
   defaultNewSessionAgentId: zAgentId.optional()
+});
+
+const zChatInteractionCapabilitiesRpcSchema = z.object({
+  supportsSteer: z.boolean(),
+  supportsAttachments: z.boolean()
+});
+
+const zSkillDescriptorRpcSchema = z.object({
+  cwd: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string().min(1),
+  shortDescription: z.string().min(1).optional(),
+  path: z.string().min(1),
+  scope: z.string().min(1),
+  enabled: z.boolean()
 });
 
 const zSessionStatusDotSchema = z.enum(["none", "running", "unread_completed"]);
@@ -460,6 +477,23 @@ const zSessionBrowserRunActionRequestSchema = z.object({
   })
 });
 
+const zChatGetCapabilitiesRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("chat.getCapabilities"),
+  params: z.object({
+    sessionId: zSessionId
+  })
+});
+
+const zSkillsListRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("skills.list"),
+  params: z.object({
+    cwds: z.array(z.string().min(1)).optional(),
+    forceReload: z.boolean().optional()
+  })
+});
+
 const zChatTreeGetRequestSchema = z.object({
   id: zRequestId,
   method: z.literal("chatTree.get"),
@@ -574,6 +608,8 @@ export const zWorkbenchRpcRequestSchema = z.discriminatedUnion("method", [
   zSessionBrowserLoadOlderRequestSchema,
   zSessionBrowserGetActionsRequestSchema,
   zSessionBrowserRunActionRequestSchema,
+  zChatGetCapabilitiesRequestSchema,
+  zSkillsListRequestSchema,
   zChatTreeGetRequestSchema,
   zChatTreeJumpRequestSchema,
   zDelegationGetRequestSchema,
@@ -790,6 +826,24 @@ const zSessionBrowserRunActionResponseSchema = z.object({
   result: zSessionActionResultSchema
 });
 
+const zChatGetCapabilitiesResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("chat.getCapabilities"),
+  ok: z.literal(true),
+  result: z.object({
+    capabilities: zChatInteractionCapabilitiesRpcSchema
+  })
+});
+
+const zSkillsListResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("skills.list"),
+  ok: z.literal(true),
+  result: z.object({
+    skills: z.array(zSkillDescriptorRpcSchema)
+  })
+});
+
 const zChatTreeGetResponseSchema = z.object({
   id: zRequestId,
   method: z.literal("chatTree.get"),
@@ -929,6 +983,8 @@ export const zWorkbenchRpcResponseSchema = z.union([
   zSessionBrowserLoadOlderResponseSchema,
   zSessionBrowserGetActionsResponseSchema,
   zSessionBrowserRunActionResponseSchema,
+  zChatGetCapabilitiesResponseSchema,
+  zSkillsListResponseSchema,
   zChatTreeGetResponseSchema,
   zChatTreeJumpResponseSchema,
   zDelegationGetResponseSchema,
@@ -964,6 +1020,10 @@ export type WorkspaceBrowserNodeRpc = z.infer<typeof zWorkspaceBrowserNodeSchema
 export type SessionActionKindRpc = z.infer<typeof zSessionActionKindSchema>;
 export type SessionActionDescriptorRpc = z.infer<typeof zSessionActionDescriptorSchema>;
 export type SessionActionResultRpc = z.infer<typeof zSessionActionResultSchema>;
+export type ChatInteractionCapabilitiesRpc = z.infer<
+  typeof zChatInteractionCapabilitiesRpcSchema
+>;
+export type SkillDescriptorRpc = z.infer<typeof zSkillDescriptorRpcSchema>;
 export type ConversationGraphSnapshotRpc = z.infer<
   typeof zConversationGraphSnapshotSchema
 >;

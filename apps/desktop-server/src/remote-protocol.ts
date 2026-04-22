@@ -353,6 +353,40 @@ export const createRemoteRpcHandler = (
               ok: true,
               result: await shellService.runSessionAction(request.params)
             });
+          case "chat.getCapabilities":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "CHAT_UNAVAILABLE",
+                "Chat capability APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: {
+                capabilities: await shellService.getChatCapabilities(
+                  request.params.sessionId
+                )
+              }
+            });
+          case "skills.list":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "SKILLS_UNAVAILABLE",
+                "Skills APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: {
+                skills: await shellService.listSkills(request.params)
+              }
+            });
           case "chatTree.get":
             if (!shellService) {
               return toErrorResponse(

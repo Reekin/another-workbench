@@ -6,6 +6,7 @@ export const codexRuntimeRequestMethods = [
   "thread/archive",
   "thread/fork",
   "turn/start",
+  "turn/steer",
   "turn/interrupt",
   "approval/respond",
   "session/dispose"

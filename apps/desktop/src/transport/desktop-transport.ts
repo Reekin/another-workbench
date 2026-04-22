@@ -5,12 +5,14 @@ import type {
   CheckpointSnapshotRpc,
   ChatTreeSnapshotRpc,
   ChatSession,
+  ChatInteractionCapabilitiesRpc,
   Command,
   DelegationSnapshotRpc,
   DiagnosticsSnapshotRpc,
   DomainSnapshot,
   EngineDefinitionRpc,
   EngineSurfaceRpc,
+  SkillDescriptorRpc,
   SessionActionDescriptorRpc,
   SessionActionKindRpc,
   SessionActionResultRpc,
@@ -86,6 +88,14 @@ export type ChatInterruptInput = {
   sessionId: string;
   turnId: string;
   reason?: string;
+};
+
+export type ChatSteerInput = {
+  sessionId: string;
+  turnId: string;
+  content: string;
+  messageId?: string;
+  attachments?: Attachment[];
 };
 
 export type ApprovalRespondInput = {
@@ -225,7 +235,15 @@ export type DesktopTransport = {
   };
   chat: {
     send: (input: ChatSendInput) => Promise<CommandReceipt>;
+    steer: (input: ChatSteerInput) => Promise<CommandReceipt>;
     interrupt: (input: ChatInterruptInput) => Promise<CommandReceipt>;
+    getCapabilities: (sessionId: string) => Promise<ChatInteractionCapabilitiesRpc>;
+  };
+  skills: {
+    list: (input?: {
+      cwds?: string[];
+      forceReload?: boolean;
+    }) => Promise<SkillDescriptorRpc[]>;
   };
   chatTree: {
     get: (sessionId: string) => Promise<ChatTreeSnapshotRpc>;
@@ -555,13 +573,37 @@ export const createDesktopTransport = (
           messageId: input.messageId ?? createId(),
           attachments: input.attachments ?? []
         }),
+      steer: (input: ChatSteerInput) =>
+        sendCommand({
+          type: "steerTurn",
+          sessionId: input.sessionId,
+          turnId: input.turnId,
+          content: input.content,
+          messageId: input.messageId ?? createId(),
+          attachments: input.attachments ?? []
+        }),
       interrupt: (input: ChatInterruptInput) =>
         sendCommand({
           type: "interruptTurn",
           sessionId: input.sessionId,
           turnId: input.turnId,
           reason: input.reason
-        })
+        }),
+      getCapabilities: async (sessionId: string) => {
+        const result = await rpc.request("chat.getCapabilities", {
+          sessionId
+        });
+        return result.capabilities;
+      }
+    },
+    skills: {
+      list: async (input) => {
+        const result = await rpc.request("skills.list", {
+          cwds: input?.cwds,
+          forceReload: input?.forceReload
+        });
+        return result.skills;
+      }
     },
     chatTree: {
       get: async (sessionId: string) => {

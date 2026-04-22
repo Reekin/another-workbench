@@ -28,8 +28,11 @@ import type { ThreadReadParams } from "./codex-app-server-generated/v2/ThreadRea
 import type { ThreadReadResponse } from "./codex-app-server-generated/v2/ThreadReadResponse.js";
 import type { ThreadResumeParams } from "./codex-app-server-generated/v2/ThreadResumeParams.js";
 import type { ThreadResumeResponse } from "./codex-app-server-generated/v2/ThreadResumeResponse.js";
+import type { TurnSteerParams } from "./codex-app-server-generated/v2/TurnSteerParams.js";
 import type { TurnStartResponse } from "./codex-app-server-generated/v2/TurnStartResponse.js";
 import type { ThreadItem } from "./codex-app-server-generated/v2/ThreadItem.js";
+import type { SkillsListParams } from "./codex-app-server-generated/v2/SkillsListParams.js";
+import type { SkillsListResponse } from "./codex-app-server-generated/v2/SkillsListResponse.js";
 import { buildCodexTurnInput } from "./attachment-inputs.js";
 
 type RuntimeListener = (event: CodexRuntimeEvent) => void;
@@ -400,6 +403,15 @@ export class CodexAppServerRuntimePort
             accepted: true
           }
         };
+      case "turn/steer":
+        await this.handleTurnSteer(payload);
+        return {
+          id: payload.id,
+          ok: true,
+          result: {
+            accepted: true
+          }
+        };
       case "turn/interrupt":
         await this.handleTurnInterrupt(payload);
         return {
@@ -564,6 +576,22 @@ export class CodexAppServerRuntimePort
     } satisfies GitDiffToRemoteParams)) as GitDiffToRemoteResponse;
   }
 
+  public async listSkills(
+    params: Partial<SkillsListParams> = {}
+  ): Promise<SkillsListResponse> {
+    await this.start(this.startConfig);
+    const payload: SkillsListParams = {
+      forceReload: params.forceReload ?? false
+    };
+    if (params.cwds) {
+      payload.cwds = params.cwds;
+    }
+    if (params.perCwdExtraUserRoots) {
+      payload.perCwdExtraUserRoots = params.perCwdExtraUserRoots;
+    }
+    return (await this.rpc("skills/list", payload)) as SkillsListResponse;
+  }
+
   private async handleTurnStart(payload: CodexRuntimeRequest): Promise<void> {
     const sessionId = String(payload.params.sessionId ?? "");
     const content = String(payload.params.content ?? "");
@@ -584,6 +612,25 @@ export class CodexAppServerRuntimePort
         turnId: result.turn.id
       });
     }
+  }
+
+  private async handleTurnSteer(payload: CodexRuntimeRequest): Promise<void> {
+    const sessionId = String(payload.params.sessionId ?? "");
+    const expectedTurnId = String(payload.params.turnId ?? "");
+    const content = String(payload.params.content ?? "");
+    const attachments = Array.isArray(payload.params.attachments)
+      ? (payload.params.attachments as Attachment[])
+      : [];
+    const threadId = this.threadIdBySessionId.get(sessionId);
+    if (!threadId || !expectedTurnId) {
+      return;
+    }
+    const input = buildCodexTurnInput(content, attachments);
+    await this.rpc("turn/steer", {
+      threadId,
+      input,
+      expectedTurnId
+    } satisfies TurnSteerParams);
   }
 
   private async handleTurnInterrupt(payload: CodexRuntimeRequest): Promise<void> {

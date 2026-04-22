@@ -191,6 +191,21 @@ export class RuntimeOrchestrator {
         }
         return receipt;
       }
+      case "steerTurn": {
+        const session = this.domainService.requireSession(envelope.command.sessionId);
+        this.domainService.commitSteerUserMessage(envelope.command);
+        const receipt = await this.forwardSessionCommand(envelope.command.sessionId, envelope, {
+          before: () => {
+            this.domainService.commitRuntimeEvent({
+              type: "session.updated",
+              conversationId: session.conversationId,
+              sessionId: session.sessionId,
+              status: "running"
+            });
+          }
+        });
+        return receipt;
+      }
       case "interruptTurn":
         return this.forwardSessionCommand(envelope.command.sessionId, envelope);
       case "respondApproval":

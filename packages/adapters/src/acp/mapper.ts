@@ -22,6 +22,7 @@ const acpMethodByCommandType: Record<
   archiveSession: "session.archive",
   forkSession: "session.fork",
   sendUserMessage: "turn.send",
+  steerTurn: "turn.steer",
   interruptTurn: "turn.interrupt",
   respondApproval: "approval.respond",
   disposeSession: "session.dispose"

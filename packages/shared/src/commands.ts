@@ -20,6 +20,7 @@ export const commandTypes = [
   "archiveSession",
   "forkSession",
   "sendUserMessage",
+  "steerTurn",
   "interruptTurn",
   "respondApproval",
   "disposeSession"
@@ -79,6 +80,15 @@ const zSendUserMessageCommand = z.object({
   attachments: z.array(zAttachmentSchema).default([])
 });
 
+const zSteerTurnCommand = z.object({
+  type: z.literal("steerTurn"),
+  sessionId: zSessionId,
+  turnId: zTurnId,
+  messageId: zMessageId,
+  content: z.string(),
+  attachments: z.array(zAttachmentSchema).default([])
+});
+
 const zInterruptTurnCommand = z.object({
   type: z.literal("interruptTurn"),
   sessionId: zSessionId,
@@ -107,6 +117,7 @@ export const zCommandSchema = z.discriminatedUnion("type", [
   zArchiveSessionCommand,
   zForkSessionCommand,
   zSendUserMessageCommand,
+  zSteerTurnCommand,
   zInterruptTurnCommand,
   zRespondApprovalCommand,
   zDisposeSessionCommand

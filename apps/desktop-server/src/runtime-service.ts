@@ -145,6 +145,10 @@ export class WorkbenchRuntimeService {
     return this.domainService.listSessions(options);
   }
 
+  public getSession(sessionId: string): ChatSession | undefined {
+    return this.domainService.getSession(sessionId);
+  }
+
   public async createSession(
     command: Extract<Command, { type: "createSession" }>
   ): Promise<ChatSession> {

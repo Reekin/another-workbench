@@ -359,6 +359,38 @@ export class DomainService {
     });
   }
 
+  public commitSteerUserMessage(
+    command: Extract<Command, { type: "steerTurn" }>
+  ): void {
+    const renderedContent = buildLocalEchoMessageText(
+      command.content,
+      command.attachments
+    );
+    this.commitRuntimeEvent({
+      type: "message.started",
+      sessionId: command.sessionId,
+      turnId: command.turnId,
+      messageId: command.messageId,
+      role: "user"
+    });
+    if (renderedContent.length > 0) {
+      this.commitRuntimeEvent({
+        type: "message.delta",
+        sessionId: command.sessionId,
+        turnId: command.turnId,
+        messageId: command.messageId,
+        delta: renderedContent
+      });
+    }
+    this.commitRuntimeEvent({
+      type: "message.completed",
+      sessionId: command.sessionId,
+      turnId: command.turnId,
+      messageId: command.messageId,
+      finalText: renderedContent
+    });
+  }
+
   public resolveConversationIdForSession(sessionId: string): string | undefined {
     return (
       this.domainStore.resolveConversationIdBySessionId(sessionId) ??

@@ -92,6 +92,7 @@ export const zTurnSchema = z.object({
   startedAt: zIsoDateTime,
   completedAt: zIsoDateTime.optional(),
   actor: zTurnActorRef,
+  finalMessageId: zMessageId.optional(),
   messageIds: z.array(zMessageId).default([]),
   toolCallIds: z.array(zToolCallId).default([]),
   terminalIds: z.array(zTerminalId).default([]),

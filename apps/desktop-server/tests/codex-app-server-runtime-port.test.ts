@@ -102,6 +102,41 @@ describe("Codex app-server runtime port", () => {
     );
   });
 
+  it("marks message.completed as final for the turn when upstream phase is final_answer", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const completedMessages: Array<Record<string, unknown>> = [];
+    port.subscribe((event) => {
+      if (event.method === "message.completed") {
+        completedMessages.push(event.params);
+      }
+    });
+
+    await port.start();
+    await port.request({
+      id: "turn-final-answer",
+      method: "turn/start",
+      params: {
+        sessionId: "session-1",
+        content: "please trigger final-answer"
+      }
+    });
+
+    await waitFor(() => completedMessages.length > 0);
+
+    expect(completedMessages).toEqual([
+      expect.objectContaining({
+        finalText: "Real Codex says: please trigger final-answer\n",
+        isFinalForTurn: true
+      })
+    ]);
+  });
+
   it("round-trips approval requests and resumes the turn after server confirmation", async () => {
     const port = createCodexAppServerRuntimePort({
       commandPath: process.execPath,

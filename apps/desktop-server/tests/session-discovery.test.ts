@@ -529,6 +529,83 @@ describe("Session discovery and reconciliation", () => {
     );
   });
 
+  it("recovers turn.finalMessageId only when a hydrated agent message is marked final_answer", async () => {
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        resumeThread: vi.fn().mockResolvedValue({
+          ...createThread({
+            id: "thread-final-answer",
+            name: "Thread final answer",
+            preview: "Preview final answer"
+          }),
+          turns: [
+            {
+              id: "turn-final",
+              status: "completed",
+              error: null,
+              items: [
+                {
+                  type: "agentMessage",
+                  id: "msg-commentary",
+                  text: "Thinking...",
+                  phase: "commentary",
+                  memoryCitation: null
+                },
+                {
+                  type: "agentMessage",
+                  id: "msg-final",
+                  text: "Ship it.",
+                  phase: "final_answer",
+                  memoryCitation: null
+                }
+              ]
+            },
+            {
+              id: "turn-legacy",
+              status: "completed",
+              error: null,
+              items: [
+                {
+                  type: "agentMessage",
+                  id: "msg-legacy",
+                  text: "Legacy answer",
+                  phase: null,
+                  memoryCitation: null
+                }
+              ]
+            }
+          ]
+        }),
+        attachThreadToSession: vi.fn()
+      } as never
+    });
+
+    const hydrated = await provider.hydrateSession({
+      workspaceId: "workspace-1",
+      sessionId: "codex-thread:thread-final-answer",
+      conversationId: "conversation-final-answer",
+      engineId: "codex",
+      providerKind: "codex-thread",
+      providerSessionId: "thread-final-answer",
+      createdAt: "2026-04-19T00:00:00.000Z",
+      updatedAt: "2026-04-19T00:00:01.000Z"
+    });
+
+    expect(hydrated?.turns[0]).toMatchObject({
+      turnId: "turn-final",
+      finalMessageId: "hydrated:codex-thread:thread-final-answer:msg-final",
+      messageIds: [
+        "hydrated:codex-thread:thread-final-answer:msg-commentary",
+        "hydrated:codex-thread:thread-final-answer:msg-final"
+      ]
+    });
+    expect(hydrated?.turns[1]).toMatchObject({
+      turnId: "turn-legacy",
+      messageIds: ["hydrated:codex-thread:thread-final-answer:msg-legacy"]
+    });
+    expect(hydrated?.turns[1]).not.toHaveProperty("finalMessageId");
+  });
+
   it("serializes local image inputs as markdown images with file URLs", async () => {
     const provider = new CodexSessionDiscoveryProvider({
       codexRuntimePort: {

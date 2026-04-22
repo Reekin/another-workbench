@@ -122,6 +122,10 @@ const isAgentMessageItem = (
 ): item is Extract<ThreadItem, { type: "agentMessage" }> =>
   item.type === "agentMessage";
 
+const isFinalAnswerMessageItem = (
+  item: Extract<ThreadItem, { type: "agentMessage" }>
+): boolean => item.phase === "final_answer";
+
 const isUserMessageItem = (
   item: ThreadItem
 ): item is Extract<ThreadItem, { type: "userMessage" }> =>
@@ -263,11 +267,15 @@ export type DiscoveredWorkspaceResult = {
   relations: DiscoveredSessionRelation[];
 };
 
+export type HydratedTurn = Turn & {
+  finalMessageId?: string;
+};
+
 export type HydratedSessionSnapshot = {
   workspaceId: string;
   conversation: Conversation;
   session: ChatSession;
-  turns: Turn[];
+  turns: HydratedTurn[];
   messageBlocks: MessageBlock[];
   toolCalls: ToolCall[];
   terminalStreams: TerminalStream[];
@@ -381,7 +389,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
       }
     });
 
-    const turns: Turn[] = [];
+    const turns: HydratedTurn[] = [];
     const messageBlocks: MessageBlock[] = [];
     const toolCalls: ToolCall[] = [];
     const terminalStreams: TerminalStream[] = [];
@@ -399,6 +407,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
       const toolCallIds: string[] = [];
       const terminalIds: string[] = [];
       const fileChanges: FileUpdateChange[] = [];
+      let finalMessageId: string | undefined;
 
       for (const [itemIndex, item] of turn.items.entries()) {
         if (input.isCancelled?.()) {
@@ -425,6 +434,9 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
         }
         if (isAgentMessageItem(item)) {
           messageIds.push(itemEntityId);
+          if (isFinalAnswerMessageItem(item)) {
+            finalMessageId = itemEntityId;
+          }
           messageBlocks.push(
             parseMessageBlock({
               blockId: `${itemEntityId}:md`,
@@ -541,27 +553,30 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
         this.turnChangesStore?.record(turnChanges);
       }
 
-      turns.push(
-        parseTurn({
-          turnId: turn.id,
-          sessionId: entry.sessionId,
-          status: turn.status === "inProgress" ? "streaming" : "completed",
-          finishReason:
-            turn.status === "failed"
-              ? "failed"
-              : turn.status === "interrupted"
-                ? "interrupted"
-                : turn.status === "completed"
-                  ? "completed"
-                  : undefined,
-          startedAt,
-          completedAt,
-          messageIds,
-          toolCallIds,
-          terminalIds,
-          approvalRequestIds: []
-        })
-      );
+      const hydratedTurn = parseTurn({
+        turnId: turn.id,
+        sessionId: entry.sessionId,
+        status: turn.status === "inProgress" ? "streaming" : "completed",
+        finishReason:
+          turn.status === "failed"
+            ? "failed"
+            : turn.status === "interrupted"
+              ? "interrupted"
+              : turn.status === "completed"
+                ? "completed"
+                : undefined,
+        startedAt,
+        completedAt,
+        messageIds,
+        toolCallIds,
+        terminalIds,
+        approvalRequestIds: []
+      });
+
+      turns.push({
+        ...hydratedTurn,
+        ...(finalMessageId ? { finalMessageId } : {})
+      });
     }
 
     const sessionRelations = this.buildHydratedRelations(thread);

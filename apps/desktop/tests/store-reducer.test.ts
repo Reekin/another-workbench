@@ -408,6 +408,133 @@ describe("desktop store reducer", () => {
     expect(state.entities.messageBlocks["message-a:md"]?.text).toBe("更精确的验证。");
   });
 
+  it("stores explicit final-message truth on the turn when message.completed marks it", () => {
+    let state = createInitialRendererStoreState();
+
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-session-created-final-marker", "1", {
+          type: "session.created",
+          conversationId: "conversation-a",
+          sessionId: "session-a",
+          engineId: "agent-a",
+          status: "running"
+        })
+      )
+    );
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-turn-started-final-marker", "2", {
+          type: "turn.started",
+          sessionId: "session-a",
+          turnId: "turn-a"
+        })
+      )
+    );
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-message-completed-final-marker", "3", {
+          type: "message.completed",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          messageId: "message-a",
+          finalText: "final answer",
+          isFinalForTurn: true,
+          engineId: "agent-a"
+        })
+      )
+    );
+
+    expect(state.entities.turns["turn-a"]).toMatchObject({
+      finalMessageId: "message-a",
+      messageIds: ["message-a"]
+    });
+  });
+
+  it("falls back to the last assistant message when turn.completed arrives without an explicit final marker", () => {
+    let state = createInitialRendererStoreState();
+
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-session-created-turn-fallback", "1", {
+          type: "session.created",
+          conversationId: "conversation-a",
+          sessionId: "session-a",
+          engineId: "agent-a",
+          status: "running"
+        })
+      )
+    );
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-turn-started-turn-fallback", "2", {
+          type: "turn.started",
+          sessionId: "session-a",
+          turnId: "turn-a"
+        })
+      )
+    );
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-user-message-turn-fallback", "3", {
+          type: "message.completed",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          messageId: "message-user",
+          finalText: "Question",
+          participantId: "user-1"
+        })
+      )
+    );
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-assistant-message-1-turn-fallback", "4", {
+          type: "message.completed",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          messageId: "message-assistant-1",
+          finalText: "Draft",
+          engineId: "agent-a"
+        })
+      )
+    );
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-assistant-message-2-turn-fallback", "5", {
+          type: "message.completed",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          messageId: "message-assistant-2",
+          finalText: "Final",
+          engineId: "agent-a"
+        })
+      )
+    );
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-turn-completed-turn-fallback", "6", {
+          type: "turn.completed",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          finishReason: "completed"
+        })
+      )
+    );
+
+    expect(state.entities.turns["turn-a"]).toMatchObject({
+      finalMessageId: "message-assistant-2"
+    });
+  });
+
   it("persists session relations from live session.created events", () => {
     let state = createInitialRendererStoreState();
 

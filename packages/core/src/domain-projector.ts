@@ -38,6 +38,7 @@ type TurnRecordInput = {
   startedAt?: string;
   completedAt?: string;
   actor?: ActorRef;
+  finalMessageId?: string;
   messageIds?: string[];
   toolCallIds?: string[];
   terminalIds?: string[];
@@ -73,6 +74,25 @@ const actorFromEvent = (event: ActorRef): ActorRef | undefined =>
 
 const participantIdFor = (conversationId: string, engineId: string): string =>
   `participant-${conversationId}-${engineId}`;
+
+const selectFinalAssistantMessageId = (
+  store: DomainStore,
+  messageIds: readonly string[]
+): string | undefined => {
+  for (let index = messageIds.length - 1; index >= 0; index -= 1) {
+    const candidateMessageId = messageIds[index];
+    if (!candidateMessageId) {
+      continue;
+    }
+    const assistantBlocks = store
+      .listMessageBlocks({ messageId: candidateMessageId })
+      .filter((block) => block.role === "assistant");
+    if (assistantBlocks.length > 0) {
+      return candidateMessageId;
+    }
+  }
+  return undefined;
+};
 
 const withConversationSession = (
   conversation: ReturnType<DomainStore["getConversation"]>,
@@ -305,6 +325,9 @@ export class DomainProjector {
       }
       case "turn.completed": {
         const existing = this.store.getTurn(event.turnId);
+        const finalMessageId =
+          existing?.finalMessageId ??
+          selectFinalAssistantMessageId(this.store, existing?.messageIds ?? []);
         this.upsertTurnRecord({
           turnId: event.turnId,
           sessionId: event.sessionId,
@@ -313,6 +336,7 @@ export class DomainProjector {
           startedAt: existing?.startedAt ?? timestamp,
           completedAt: timestamp,
           actor: existing?.actor,
+          finalMessageId,
           messageIds: existing?.messageIds,
           toolCallIds: existing?.toolCallIds,
           terminalIds: existing?.terminalIds,
@@ -390,6 +414,25 @@ export class DomainProjector {
           })
         );
         this.appendTurnCollection(event.turnId, "messageIds", event.messageId, timestamp);
+        if (event.isFinalForTurn === true) {
+          const turn = this.store.getTurn(event.turnId);
+          if (turn) {
+            this.upsertTurnRecord({
+              turnId: turn.turnId,
+              sessionId: turn.sessionId,
+              status: turn.status,
+              finishReason: turn.finishReason,
+              startedAt: turn.startedAt,
+              completedAt: turn.completedAt,
+              actor: turn.actor,
+              finalMessageId: event.messageId,
+              messageIds: turn.messageIds,
+              toolCallIds: turn.toolCallIds,
+              terminalIds: turn.terminalIds,
+              approvalRequestIds: turn.approvalRequestIds
+            });
+          }
+        }
         return;
       }
       case "tool.started": {
@@ -589,6 +632,7 @@ export class DomainProjector {
             startedAt: existingTurn?.startedAt ?? timestamp,
             completedAt: timestamp,
             actor: existingTurn?.actor,
+            finalMessageId: existingTurn?.finalMessageId,
             messageIds: existingTurn?.messageIds,
             toolCallIds: existingTurn?.toolCallIds,
             terminalIds: existingTurn?.terminalIds,
@@ -638,6 +682,7 @@ export class DomainProjector {
       startedAt: input.startedAt ?? existing?.startedAt ?? this.now(),
       completedAt: input.completedAt ?? existing?.completedAt,
       actor: input.actor ?? existing?.actor,
+      finalMessageId: input.finalMessageId ?? existing?.finalMessageId,
       messageIds: input.messageIds ?? existing?.messageIds ?? [],
       toolCallIds: input.toolCallIds ?? existing?.toolCallIds ?? [],
       terminalIds: input.terminalIds ?? existing?.terminalIds ?? [],
@@ -696,6 +741,7 @@ export class DomainProjector {
       startedAt: existing?.startedAt ?? timestamp,
       completedAt: existing?.completedAt,
       actor: existing?.actor ?? actor,
+      finalMessageId: existing?.finalMessageId,
       messageIds: existing?.messageIds,
       toolCallIds: existing?.toolCallIds,
       terminalIds: existing?.terminalIds,
@@ -728,6 +774,7 @@ export class DomainProjector {
       startedAt: turn.startedAt,
       completedAt: turn.completedAt,
       actor: turn.actor,
+      finalMessageId: turn.finalMessageId,
       messageIds: key === "messageIds" ? [...turn.messageIds, valueId] : turn.messageIds,
       toolCallIds: key === "toolCallIds" ? [...turn.toolCallIds, valueId] : turn.toolCallIds,
       terminalIds: key === "terminalIds" ? [...turn.terminalIds, valueId] : turn.terminalIds,

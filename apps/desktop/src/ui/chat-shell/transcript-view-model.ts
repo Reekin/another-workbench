@@ -175,6 +175,7 @@ export type TurnTranscriptRow = {
   turn: Turn;
   turnIdentity: ParticipantIdentity;
   messageRole: MessageRole;
+  isFinalResponseRow: boolean;
   blocks: MessageBlock[];
   toolCalls: ToolCall[];
   terminalStreams: TerminalStream[];
@@ -213,6 +214,7 @@ export const buildTurnTranscriptRows = (
             approvals
           ),
           messageRole: "assistant" as const,
+          isFinalResponseRow: false,
           blocks,
           toolCalls,
           terminalStreams,
@@ -225,6 +227,10 @@ export const buildTurnTranscriptRows = (
 
     return blockGroups.map((group, index) => {
       const isAssistantLike = group.role !== "user";
+      const isFinalResponseRow =
+        group.role === "assistant" &&
+        typeof turn.finalMessageId === "string" &&
+        group.blocks.some((block) => block.messageId === turn.finalMessageId);
       return {
         rowId: `${turn.turnId}:${group.role}:${index}`,
         turn,
@@ -238,6 +244,7 @@ export const buildTurnTranscriptRows = (
           isAssistantLike ? approvals : []
         ),
         messageRole: group.role,
+        isFinalResponseRow,
         blocks: group.blocks,
         toolCalls: isAssistantLike ? toolCalls : [],
         terminalStreams: isAssistantLike ? terminalStreams : [],

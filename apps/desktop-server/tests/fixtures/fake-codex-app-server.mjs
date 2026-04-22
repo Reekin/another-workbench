@@ -10,7 +10,7 @@ const send = (payload) => {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
 };
 
-const emitHappyPath = ({ threadId, turnId, prompt }) => {
+const emitHappyPath = ({ threadId, turnId, prompt, messagePhase = null }) => {
   const messageId = `msg-${turnId}`;
   const commandId = `cmd-${turnId}`;
   const renderedPrompt =
@@ -42,7 +42,7 @@ const emitHappyPath = ({ threadId, turnId, prompt }) => {
         type: "agentMessage",
         id: messageId,
         text: "",
-        phase: null,
+        phase: messagePhase,
         memoryCitation: null
       }
     }
@@ -65,7 +65,7 @@ const emitHappyPath = ({ threadId, turnId, prompt }) => {
         type: "agentMessage",
         id: messageId,
         text: `Real Codex says: ${renderedPrompt}\n`,
-        phase: null,
+        phase: messagePhase,
         memoryCitation: null
       }
     }
@@ -464,7 +464,12 @@ const handleRequest = (payload) => {
             return;
           }
 
-          emitHappyPath({ threadId, turnId, prompt });
+          emitHappyPath({
+            threadId,
+            turnId,
+            prompt,
+            messagePhase: prompt.includes("final-answer") ? "final_answer" : null
+          });
         });
         return;
       }

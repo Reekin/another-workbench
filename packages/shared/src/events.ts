@@ -125,6 +125,7 @@ const zMessageCompletedEvent = z
     turnId: zTurnId,
     messageId: zMessageId,
     finalText: z.string().optional(),
+    isFinalForTurn: z.boolean().optional(),
     ...zActorFields
   });
 

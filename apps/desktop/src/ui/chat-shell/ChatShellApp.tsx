@@ -291,6 +291,7 @@ const TranscriptPane = memo(
           <article
             key={row.rowId}
             data-turn-id={row.turn.turnId}
+            data-final-response-row={row.isFinalResponseRow ? "true" : "false"}
             className={`awb-chat-entry ${isUserTurn ? "is-user" : "is-assistant"}`}
           >
             <header className="awb-chat-entry__identity">

@@ -113,6 +113,7 @@ const ensureTurnExists = (
     sessionId,
     status: "streaming",
     startedAt: timestamp,
+    finalMessageId: undefined,
     messageIds: [],
     toolCallIds: [],
     terminalIds: [],
@@ -137,6 +138,25 @@ const appendTurnCollection = (
     ...turn,
     [key]: [...turn[key], valueId]
   });
+};
+
+const selectFinalAssistantMessageId = (
+  state: RendererStoreState,
+  messageIds: readonly string[]
+): string | undefined => {
+  for (let index = messageIds.length - 1; index >= 0; index -= 1) {
+    const candidateMessageId = messageIds[index];
+    if (!candidateMessageId) {
+      continue;
+    }
+    const assistantBlocks = Object.values(state.entities.messageBlocks).filter(
+      (block) => block.messageId === candidateMessageId && block.role === "assistant"
+    );
+    if (assistantBlocks.length > 0) {
+      return candidateMessageId;
+    }
+  }
+  return undefined;
 };
 
 const setSessionLastTurn = (
@@ -591,6 +611,7 @@ const applyRuntimeEvent = (
           sessionId: event.sessionId,
           status: "started",
           startedAt: timestamp,
+          finalMessageId: undefined,
           messageIds: [],
           toolCallIds: [],
           terminalIds: [],
@@ -601,6 +622,9 @@ const applyRuntimeEvent = (
     }
     case "turn.completed": {
       const existing = state.entities.turns[event.turnId];
+      const finalMessageId =
+        existing?.finalMessageId ??
+        selectFinalAssistantMessageId(state, existing?.messageIds ?? []);
       const withTurn = upsertTurn(
         withEventType(state, event.type),
         {
@@ -611,6 +635,7 @@ const applyRuntimeEvent = (
           startedAt: existing?.startedAt ?? timestamp,
           completedAt: timestamp,
           actor: existing?.actor,
+          finalMessageId,
           messageIds: existing?.messageIds ?? [],
           toolCallIds: existing?.toolCallIds ?? [],
           terminalIds: existing?.terminalIds ?? [],
@@ -688,7 +713,7 @@ const applyRuntimeEvent = (
           completedAt: timestamp
         }
       );
-      return appendTurnCollection(
+      const withTurnCollection = appendTurnCollection(
         withBlock,
         event.turnId,
         event.sessionId,
@@ -696,6 +721,17 @@ const applyRuntimeEvent = (
         event.messageId,
         timestamp
       );
+      if (event.isFinalForTurn === true) {
+        const turn = withTurnCollection.entities.turns[event.turnId];
+        if (!turn) {
+          return withTurnCollection;
+        }
+        return upsertTurn(withTurnCollection, {
+          ...turn,
+          finalMessageId: event.messageId
+        });
+      }
+      return withTurnCollection;
     }
     case "tool.started": {
       const current = state.entities.toolCalls[event.toolCallId];

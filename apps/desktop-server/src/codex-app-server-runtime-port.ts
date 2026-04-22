@@ -202,6 +202,10 @@ const isTextThreadItem = (
 ): item is Extract<ThreadItem, { type: "agentMessage" }> =>
   isRecord(item) && item.type === "agentMessage" && typeof item.id === "string";
 
+const isFinalAnswerMessageItem = (
+  item: Extract<ThreadItem, { type: "agentMessage" }>
+): boolean => item.phase === "final_answer";
+
 const isCommandExecutionThreadItem = (
   item: ThreadItem | Record<string, unknown>
 ): item is Extract<ThreadItem, { type: "commandExecution" }> =>
@@ -1058,6 +1062,9 @@ export class CodexAppServerRuntimePort
         messageId: item.id,
         role: "assistant",
         ...(method === "item/completed" ? { finalText: item.text } : {}),
+        ...(method === "item/completed" && isFinalAnswerMessageItem(item)
+          ? { isFinalForTurn: true }
+          : {}),
         engineId: this.engineId
       });
       return;

@@ -134,6 +134,7 @@ describe("DomainProjector", () => {
         turnId: "turn-1",
         messageId: "message-1",
         finalText: "final answer",
+        isFinalForTurn: true,
         engineId: "agent-a"
       },
       "2026-04-18T00:01:04.000Z"
@@ -221,6 +222,7 @@ describe("DomainProjector", () => {
       expect.objectContaining({
         turnId: "turn-1",
         status: "completed",
+        finalMessageId: "message-1",
         messageIds: ["message-1"],
         toolCallIds: ["tool-1"],
         terminalIds: ["terminal-1"]
@@ -253,6 +255,76 @@ describe("DomainProjector", () => {
     expect(projector.store.getSession("session-1")).toMatchObject({
       status: "idle",
       lastTurnId: "turn-1"
+    });
+  });
+
+  it("falls back to the last assistant message when a turn completes without an explicit final marker", () => {
+    const projector = new DomainProjector();
+
+    projector.apply(
+      {
+        type: "session.created",
+        conversationId: "conversation-a",
+        sessionId: "session-1",
+        engineId: "agent-a",
+        status: "running"
+      },
+      "2026-04-18T00:05:00.000Z"
+    );
+    projector.apply(
+      {
+        type: "turn.started",
+        sessionId: "session-1",
+        turnId: "turn-1"
+      },
+      "2026-04-18T00:05:01.000Z"
+    );
+    projector.apply(
+      {
+        type: "message.completed",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        messageId: "message-user",
+        finalText: "Question",
+        participantId: "user-1"
+      },
+      "2026-04-18T00:05:02.000Z"
+    );
+    projector.apply(
+      {
+        type: "message.completed",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        messageId: "message-assistant-1",
+        finalText: "Draft",
+        engineId: "agent-a"
+      },
+      "2026-04-18T00:05:03.000Z"
+    );
+    projector.apply(
+      {
+        type: "message.completed",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        messageId: "message-assistant-2",
+        finalText: "Final",
+        engineId: "agent-a"
+      },
+      "2026-04-18T00:05:04.000Z"
+    );
+    projector.apply(
+      {
+        type: "turn.completed",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        finishReason: "completed"
+      },
+      "2026-04-18T00:05:05.000Z"
+    );
+
+    expect(projector.store.getTurn("turn-1")).toMatchObject({
+      finalMessageId: "message-assistant-2",
+      messageIds: ["message-user", "message-assistant-1", "message-assistant-2"]
     });
   });
 

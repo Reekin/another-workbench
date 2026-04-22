@@ -505,6 +505,7 @@ describe("transcript view model", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       messageRole: "assistant",
+      isFinalResponseRow: false,
       hasProcessDetails: false,
       blocks: [
         expect.objectContaining({
@@ -512,6 +513,106 @@ describe("transcript view model", () => {
           text: "Applied change"
         })
       ]
+    });
+  });
+
+  it("marks only the row containing turn.finalMessageId as the final response row", () => {
+    const store = createRendererStore();
+    store.hydrateSnapshot(
+      parseDomainSnapshot({
+        conversations: [
+          {
+            conversationId: "conv-1",
+            participantEngineIds: ["agent-1"],
+            activeSessionId: "session-1",
+            sessionIds: ["session-1"],
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-1",
+            conversationId: "conv-1",
+            engineId: "agent-1",
+            status: "completed",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        turns: [
+          {
+            turnId: "turn-1",
+            sessionId: "session-1",
+            status: "completed",
+            finishReason: "completed",
+            startedAt: "2026-04-17T00:00:01.000Z",
+            completedAt: "2026-04-17T00:00:03.000Z",
+            finalMessageId: "message-assistant-2",
+            messageIds: [
+              "message-user",
+              "message-assistant-1",
+              "message-assistant-2"
+            ],
+            toolCallIds: [],
+            terminalIds: [],
+            approvalRequestIds: []
+          }
+        ],
+        messageBlocks: [
+          {
+            blockId: "message-user:md",
+            messageId: "message-user",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "user",
+            kind: "markdown",
+            text: "Give me the answer.",
+            startedAt: "2026-04-17T00:00:01.000Z"
+          },
+          {
+            blockId: "message-assistant-1:md",
+            messageId: "message-assistant-1",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "assistant",
+            kind: "markdown",
+            text: "Thinking aloud.",
+            startedAt: "2026-04-17T00:00:02.000Z"
+          },
+          {
+            blockId: "message-assistant-2:md",
+            messageId: "message-assistant-2",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "assistant",
+            kind: "markdown",
+            text: "Final answer.",
+            startedAt: "2026-04-17T00:00:02.500Z"
+          }
+        ],
+        toolCalls: [],
+        terminalStreams: [],
+        approvalRequests: [],
+        participants: [],
+        sessionRelations: []
+      })
+    );
+
+    const rows = buildTurnTranscriptRows(
+      store.getState(),
+      selectTurnsForSession(store.getState(), "session-1"),
+      buildParticipantDirectory([])
+    );
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      messageRole: "user",
+      isFinalResponseRow: false
+    });
+    expect(rows[1]).toMatchObject({
+      messageRole: "assistant",
+      isFinalResponseRow: true
     });
   });
 });

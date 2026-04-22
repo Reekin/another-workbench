@@ -1,5 +1,4 @@
 import type {
-  AgentDescriptor,
   ProviderSessionHandle,
   SessionExecutionProfile,
   SessionExecutionProfileInput
@@ -15,9 +14,10 @@ import { DomainService } from "./domain-service.js";
 import { SessionIndexSyncService } from "./session-index-sync-service.js";
 import type { SessionRelationIndex } from "./session-index.js";
 import {
-  type AgentSelectionInput,
+  type EngineSelectionInput,
   type CommandReceipt,
-  type WorkbenchAgentBinding
+  type WorkbenchAgentBinding,
+  type WorkbenchEngineDescriptor
 } from "./runtime-types.js";
 import { WorkspaceSelectionService } from "./workspace-selection-service.js";
 
@@ -29,7 +29,7 @@ export type RuntimeOrchestratorOptions = {
   sessionIndexSyncService: SessionIndexSyncService;
   workspaceSelectionService: WorkspaceSelectionService;
   publishRuntimeEvent: (event: EventEnvelope["event"]) => void;
-  agents?: AgentDescriptor[];
+  engines?: WorkbenchEngineDescriptor[];
   agentBindings?: WorkbenchAgentBinding[];
   now?: Clock;
   createConversationId?: IdFactory;
@@ -42,9 +42,9 @@ const createOpaqueId = (prefix: string): string =>
 
 export class RuntimeOrchestrator {
   private readonly bindings = new Map<string, WorkbenchAgentBinding>();
-  private readonly agentSelections = new Map<string, Record<string, unknown> | undefined>();
-  private readonly adapterUnsubscribeByAgentId = new Map<string, () => void>();
-  private readonly readyAgentIds = new Set<string>();
+  private readonly engineSelections = new Map<string, Record<string, unknown> | undefined>();
+  private readonly adapterUnsubscribeByEngineId = new Map<string, () => void>();
+  private readonly readyEngineIds = new Set<string>();
   private readonly domainService: DomainService;
   private readonly sessionIndexSyncService: SessionIndexSyncService;
   private readonly workspaceSelectionService: WorkspaceSelectionService;
@@ -62,23 +62,23 @@ export class RuntimeOrchestrator {
     this.createConversationId =
       options.createConversationId ?? (() => createOpaqueId("conversation"));
 
-    for (const agent of options.agents ?? []) {
-      this.registerAgent(agent);
+    for (const engine of options.engines ?? []) {
+      this.registerEngine(engine);
     }
     for (const binding of options.agentBindings ?? []) {
       this.registerAgentBinding(binding);
     }
     this.selectedEngineId =
-      options.agentBindings?.[0]?.descriptor.agentId ??
-      options.agents?.[0]?.agentId;
+      options.agentBindings?.[0]?.descriptor.engineId ??
+      options.engines?.[0]?.engineId;
   }
 
-  public registerAgent(agent: AgentDescriptor): void {
-    const existing = this.bindings.get(agent.agentId);
-    this.bindings.set(agent.agentId, {
+  public registerEngine(engine: WorkbenchEngineDescriptor): void {
+    const existing = this.bindings.get(engine.engineId);
+    this.bindings.set(engine.engineId, {
       descriptor: {
-        ...agent,
-        capabilities: [...agent.capabilities]
+        ...engine,
+        capabilities: [...engine.capabilities]
       },
       adapter: existing?.adapter,
       runtimeConfig: existing?.runtimeConfig,
@@ -86,12 +86,12 @@ export class RuntimeOrchestrator {
       resolveProviderSessionId: existing?.resolveProviderSessionId
     });
     if (!this.selectedEngineId) {
-      this.selectedEngineId = agent.agentId;
+      this.selectedEngineId = engine.engineId;
     }
   }
 
   public registerAgentBinding(binding: WorkbenchAgentBinding): void {
-    this.bindings.set(binding.descriptor.agentId, {
+    this.bindings.set(binding.descriptor.engineId, {
       descriptor: {
         ...binding.descriptor,
         capabilities: [...binding.descriptor.capabilities]
@@ -102,34 +102,28 @@ export class RuntimeOrchestrator {
       resolveProviderSessionId: binding.resolveProviderSessionId
     });
     if (!this.selectedEngineId) {
-      this.selectedEngineId = binding.descriptor.agentId;
+      this.selectedEngineId = binding.descriptor.engineId;
     }
   }
 
-  public getAgentDescriptor(agentId: string): AgentDescriptor | undefined {
-    return this.bindings.get(agentId)?.descriptor;
+  public getEngineCapabilities(engineId: string): string[] {
+    const binding = this.requireBinding(engineId);
+    return [...binding.sharedCapabilities ?? binding.descriptor.capabilities];
   }
 
-  public listAgents(): AgentDescriptor[] {
-    return [...this.bindings.values()].map((binding) => ({
-      ...binding.descriptor,
-      capabilities: [...binding.descriptor.capabilities]
-    }));
-  }
-
-  public selectAgent(input: AgentSelectionInput): { selectedAgentId: string } {
-    this.assertAgentExists(input.agentId);
-    this.selectedEngineId = input.agentId;
-    this.agentSelections.set(
-      input.agentId,
+  public selectEngine(input: EngineSelectionInput): { selectedEngineId: string } {
+    this.assertEngineRegistered(input.engineId);
+    this.selectedEngineId = input.engineId;
+    this.engineSelections.set(
+      input.engineId,
       input.config ? { ...input.config } : undefined
     );
     return {
-      selectedAgentId: input.agentId
+      selectedEngineId: input.engineId
     };
   }
 
-  public getSelectedAgentId(): string | undefined {
+  public getSelectedEngineId(): string | undefined {
     return this.selectedEngineId;
   }
 
@@ -230,10 +224,10 @@ export class RuntimeOrchestrator {
       engineId: command.engineId,
       ...command.sessionProfile
     };
-    this.assertAgentExists(sessionProfile.engineId);
+    this.assertEngineRegistered(sessionProfile.engineId);
     const session = this.domainService.createSession({
       conversationId,
-      agentId: sessionProfile.engineId,
+      engineId: sessionProfile.engineId,
       metadata: writeSessionExecutionProfile(command.metadata, sessionProfile),
       workspaceId: command.workspaceId
     });
@@ -249,7 +243,7 @@ export class RuntimeOrchestrator {
 
   public async resumeSession(sessionId: string) {
     const session = this.domainService.resumeSession(sessionId);
-    this.assertAgentExists(this.resolveSessionEngineId(session));
+    this.assertEngineRegistered(this.resolveSessionEngineId(session));
     const conversation = this.domainService.requireConversation(session.conversationId);
     await this.sessionIndexSyncService.syncSession(session.sessionId);
     await this.workspaceSelectionService.activateSelection({
@@ -295,15 +289,15 @@ export class RuntimeOrchestrator {
   }
 
   public async dispose(): Promise<void> {
-    for (const unsubscribe of this.adapterUnsubscribeByAgentId.values()) {
+    for (const unsubscribe of this.adapterUnsubscribeByEngineId.values()) {
       unsubscribe();
     }
-    this.adapterUnsubscribeByAgentId.clear();
+    this.adapterUnsubscribeByEngineId.clear();
 
     for (const binding of this.bindings.values()) {
       await binding.adapter?.dispose();
     }
-    this.readyAgentIds.clear();
+    this.readyEngineIds.clear();
   }
 
   public resolveSessionIndexRecord(sessionId: string) {
@@ -377,16 +371,16 @@ export class RuntimeOrchestrator {
       handle: binding.adapter,
       attachedAt: this.now(),
       metadata: {
-        agentId: engineId
+        engineId
       }
     });
   }
 
-  private async ensureAdapterReady(agentId: string): Promise<void> {
-    if (this.readyAgentIds.has(agentId)) {
+  private async ensureAdapterReady(engineId: string): Promise<void> {
+    if (this.readyEngineIds.has(engineId)) {
       return;
     }
-    const binding = this.requireBinding(agentId);
+    const binding = this.requireBinding(engineId);
     if (!binding.adapter) {
       return;
     }
@@ -395,15 +389,15 @@ export class RuntimeOrchestrator {
       ...(binding.runtimeConfig ?? {}),
       metadata: {
         ...(binding.runtimeConfig?.metadata ?? {}),
-        selectedConfig: this.agentSelections.get(agentId)
+        selectedConfig: this.engineSelections.get(engineId)
       }
     });
 
     const unsubscribe = binding.adapter.subscribe((envelope) => {
       void this.ingestAdapterEvent(envelope);
     });
-    this.adapterUnsubscribeByAgentId.set(agentId, unsubscribe);
-    this.readyAgentIds.add(agentId);
+    this.adapterUnsubscribeByEngineId.set(engineId, unsubscribe);
+    this.readyEngineIds.add(engineId);
   }
 
   private async ingestAdapterEvent(envelope: EventEnvelope): Promise<void> {
@@ -440,24 +434,24 @@ export class RuntimeOrchestrator {
     this.publishRuntimeEvent(envelope.event);
   }
 
-  private requireBinding(agentId: string): WorkbenchAgentBinding {
-    const binding = this.bindings.get(agentId);
+  private requireBinding(engineId: string): WorkbenchAgentBinding {
+    const binding = this.bindings.get(engineId);
     if (!binding) {
-      throw new Error(`Unknown agent: ${agentId}`);
+      throw new Error(`Unknown engine: ${engineId}`);
     }
     return binding;
   }
 
-  private assertAgentExists(agentId: string): void {
-    this.requireBinding(agentId);
+  public assertEngineRegistered(engineId: string): void {
+    this.requireBinding(engineId);
   }
 
   private resolveSessionEngineId(session: {
-    agentId: string;
+    engineId: string;
     metadata?: Record<string, unknown>;
   }): string {
     return resolveSessionExecutionProfile({
-      agentId: session.agentId,
+      sessionEngineId: session.engineId,
       metadata: session.metadata
     }).engineId;
   }

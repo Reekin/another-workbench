@@ -22,7 +22,7 @@ type SessionActionsProviderOptions =
     };
 
 export type SessionAgentActionsProvider = SessionActionsCapability & {
-  readonly agentId: string;
+  readonly engineId: string;
 };
 
 export type {
@@ -51,7 +51,7 @@ export class SessionActionsProvider {
       sessionIdentity,
       capabilities: (options.providers ?? []).map(
         (provider): AgentWorkbenchCapabilities => ({
-          agentId: provider.agentId,
+          engineId: provider.engineId,
           sessionActions: provider
         })
       )

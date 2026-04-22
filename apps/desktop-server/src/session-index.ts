@@ -10,7 +10,7 @@ const sessionIndexEntrySchema = z.object({
   workspaceId: z.string().min(1),
   sessionId: z.string().min(1),
   conversationId: z.string().min(1),
-  agentId: z.string().min(1),
+  engineId: z.string().min(1),
   providerKind: z.string().min(1).optional(),
   providerSessionId: z.string().min(1).optional(),
   title: z.string().min(1).optional(),
@@ -57,7 +57,7 @@ export type UpsertSessionIndexInput = {
     ChatSession,
     | "sessionId"
     | "conversationId"
-    | "agentId"
+    | "engineId"
     | "title"
     | "createdAt"
     | "updatedAt"
@@ -167,7 +167,7 @@ export class SessionIndexStore {
       workspaceId: input.workspaceId,
       sessionId: input.session.sessionId,
       conversationId: input.session.conversationId,
-      agentId: input.session.agentId,
+      engineId: input.session.engineId,
       providerKind: input.providerKind ?? existing?.providerKind,
       providerSessionId: input.providerSessionId ?? existing?.providerSessionId,
       title: input.session.title,

@@ -91,7 +91,7 @@ describe("session browser transport contracts", () => {
                       displaySessionId: "thread-root",
                       providerSessionId: "thread-root",
                       workspaceId: "workspace-1",
-                      agentId: "agent-codex",
+                      engineId: "agent-codex",
                       title: "Root Session",
                       statusDot: "running",
                       isExpanded: true,
@@ -104,7 +104,7 @@ describe("session browser transport contracts", () => {
                           displaySessionId: "thread-child",
                           providerSessionId: "thread-child",
                           workspaceId: "workspace-1",
-                          agentId: "agent-codex",
+                          engineId: "agent-codex",
                           title: "Child Session",
                           statusDot: "unread_completed",
                           isExpanded: false,
@@ -228,7 +228,7 @@ describe("session browser transport contracts", () => {
     const sessionToggle = await transport.sessionBrowser.toggleExpanded("session-root");
     const createResult = await transport.sessionBrowser.create({
       workspaceId: "workspace-1",
-      agentId: "agent-codex"
+      engineId: "agent-codex"
     });
 
     expect(pickedWorkspace).toEqual({
@@ -451,7 +451,7 @@ describe("session browser transport contracts", () => {
             result: {
               worktree: {
                 sessionId: request.params.sessionId,
-                agentId: "codex",
+                engineId: "codex",
                 supported: true,
                 workspaceRoot: "I:\\repo-a",
                 gitBranch: "main",
@@ -468,7 +468,7 @@ describe("session browser transport contracts", () => {
             result: {
               checkpoint: {
                 sessionId: request.params.sessionId,
-                agentId: "codex",
+                engineId: "codex",
                 supported: true,
                 supportsRestore: true,
                 currentCheckpointId: "node-1",
@@ -492,7 +492,7 @@ describe("session browser transport contracts", () => {
             result: {
               diagnostics: {
                 sessionId: request.params.sessionId,
-                agentId: "codex",
+                engineId: "codex",
                 supported: true,
                 authenticated: true,
                 authMethod: "chatgpt",
@@ -509,7 +509,7 @@ describe("session browser transport contracts", () => {
             result: {
               backgroundRun: {
                 sessionId: request.params.sessionId,
-                agentId: "codex",
+                engineId: "codex",
                 supported: false,
                 status: "unsupported",
                 fetchedAt: "2026-04-20T00:00:00.000Z"

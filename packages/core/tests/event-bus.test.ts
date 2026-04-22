@@ -82,14 +82,14 @@ describe("RuntimeEventBus", () => {
       type: "session.created",
       conversationId: "conversation-a",
       sessionId: "session-a",
-      agentId: "agent-a",
+      engineId: "agent-a",
       status: "idle"
     });
     bus.publish({
       type: "session.created",
       conversationId: "conversation-b",
       sessionId: "session-b",
-      agentId: "agent-b",
+      engineId: "agent-b",
       status: "idle"
     });
 

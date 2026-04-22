@@ -240,7 +240,7 @@ const formatTurnErrorText = (input: {
 
 export type DiscoveredSessionRecord = {
   sessionId: string;
-  agentId: string;
+  engineId: string;
   providerKind: string;
   providerSessionId: string;
   title: string;
@@ -279,7 +279,7 @@ export type HydratedSessionSnapshot = {
 };
 
 export type SessionDiscoveryProvider = {
-  readonly agentId: string;
+  readonly engineId: string;
   discoverWorkspace: (workspace: WorkspaceRecord) => Promise<DiscoveredWorkspaceResult>;
   hydrateSession: (
     entry: SessionIndexEntry,
@@ -290,7 +290,7 @@ export type SessionDiscoveryProvider = {
 };
 
 export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
-  public readonly agentId = codexAgentId;
+  public readonly engineId = codexAgentId;
 
   private readonly codexRuntimePort: CodexAppServerRuntimePort;
   private readonly turnChangesStore: CodexTurnChangesStore | undefined;
@@ -356,7 +356,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
     const conversation = parseConversation({
       conversationId: entry.conversationId,
       workspaceId,
-      participantAgentIds: [codexAgentId],
+      participantEngineIds: [codexAgentId],
       activeSessionId: entry.sessionId,
       sessionIds: [entry.sessionId],
       createdAt: isoFromUnixSeconds(thread.createdAt),
@@ -365,7 +365,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
     const session = parseChatSession({
       sessionId: entry.sessionId,
       conversationId: entry.conversationId,
-      agentId: codexAgentId,
+      engineId: codexAgentId,
       status: mapThreadStatus(thread),
       title: entry.title ?? titleForThread(thread),
       createdAt: isoFromUnixSeconds(thread.createdAt),
@@ -599,7 +599,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
   private toDiscoveredSessionRecord(thread: Thread): DiscoveredSessionRecord {
     return {
       sessionId: discoveredCodexSessionId(thread.id),
-      agentId: codexAgentId,
+      engineId: codexAgentId,
       providerKind: codexProviderKind,
       providerSessionId: thread.id,
       title: titleForThread(thread),
@@ -636,7 +636,7 @@ export class SessionReconciliationService {
   private readonly workspaceRegistry: WorkspaceRegistryService;
   private readonly sessionIndexStore: SessionIndexStore;
   private readonly runtimeService: WorkbenchRuntimeService;
-  private readonly providersByAgentId: Map<string, SessionDiscoveryProvider>;
+  private readonly providersByEngineId: Map<string, SessionDiscoveryProvider>;
   private readonly sessionIdentity: SessionIdentityRegistry;
 
   public constructor(options: {
@@ -656,9 +656,9 @@ export class SessionReconciliationService {
         runtimeService: options.runtimeService,
         sessionIndexStore: options.sessionIndexStore
       });
-    this.providersByAgentId = new Map(
+    this.providersByEngineId = new Map(
       (options.providers ?? options.capabilityRegistry?.listSessionDiscoveryProviders() ?? []).map(
-        (provider) => [provider.agentId, provider] as const
+        (provider) => [provider.engineId, provider] as const
       )
     );
   }
@@ -678,7 +678,7 @@ export class SessionReconciliationService {
     let relationCount = 0;
 
     for (const workspace of workspaces) {
-      for (const provider of this.providersByAgentId.values()) {
+      for (const provider of this.providersByEngineId.values()) {
         const discovered = await provider.discoverWorkspace(workspace);
         const sessionIdAliases = this.buildSessionIdAliases(
           workspace.workspaceId,
@@ -706,7 +706,7 @@ export class SessionReconciliationService {
             conversationId:
               conversationIdBySessionId.get(session.sessionId) ??
               discoveredConversationId(session.sessionId),
-            agentId: session.agentId,
+            engineId: session.engineId,
             title: session.title,
             createdAt: session.createdAt,
             updatedAt: session.updatedAt,
@@ -738,7 +738,7 @@ export class SessionReconciliationService {
           .listEntries(workspace.workspaceId)
           .filter(
             (entry) =>
-              entry.agentId === provider.agentId &&
+              entry.engineId === provider.engineId &&
               entry.source === "reconciled" &&
               !entry.archivedAt &&
               Boolean(entry.providerSessionId) &&
@@ -800,7 +800,7 @@ export class SessionReconciliationService {
     if (!entry) {
       return false;
     }
-    const provider = this.providersByAgentId.get(entry.agentId);
+    const provider = this.providersByEngineId.get(entry.engineId);
     if (!provider) {
       return false;
     }

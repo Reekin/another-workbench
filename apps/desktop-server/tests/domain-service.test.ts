@@ -11,11 +11,8 @@ describe("DomainService", () => {
         return () => `2026-04-20T00:00:${String(++tick).padStart(2, "0")}Z`;
       })(),
       createSessionId: () => "session-1",
-      resolveAgentDescriptor: () => ({
-        agentId: "codex",
-        displayName: "Codex",
-        capabilities: ["chat", "terminal"]
-      }),
+      assertEngineRegistered: vi.fn(),
+      resolveEngineCapabilities: () => ["chat", "terminal"],
       publishRuntimeEvent: (event) => {
         publishedEvents.push(event);
       }
@@ -23,7 +20,7 @@ describe("DomainService", () => {
 
     const session = service.createSession({
       conversationId: "conversation-1",
-      agentId: "codex",
+      engineId: "codex",
       workspaceId: "workspace-1",
       metadata: {
         source: "test"
@@ -33,7 +30,7 @@ describe("DomainService", () => {
     expect(session).toMatchObject({
       sessionId: "session-1",
       conversationId: "conversation-1",
-      agentId: "codex",
+      engineId: "codex",
       metadata: {
         source: "test"
       }
@@ -50,13 +47,13 @@ describe("DomainService", () => {
         expect.objectContaining({
           sessionId: "session-1",
           conversationId: "conversation-1",
-          agentId: "codex"
+          engineId: "codex"
         })
       ],
       participants: [
         expect.objectContaining({
           conversationId: "conversation-1",
-          agentId: "codex",
+          engineId: "codex",
           activeSessionIds: ["session-1"]
         })
       ]
@@ -76,18 +73,15 @@ describe("DomainService", () => {
         return () => `2026-04-20T00:01:${String(++tick).padStart(2, "0")}Z`;
       })(),
       createSessionId: () => "session-1",
-      resolveAgentDescriptor: () => ({
-        agentId: "codex",
-        displayName: "Codex",
-        capabilities: ["chat"]
-      }),
+      assertEngineRegistered: vi.fn(),
+      resolveEngineCapabilities: () => ["chat"],
       publishRuntimeEvent: () => {},
       markSessionUnreadCompleted
     });
 
     service.createSession({
       conversationId: "conversation-1",
-      agentId: "codex"
+      engineId: "codex"
     });
     service.ingestRuntimeEvent({
       type: "turn.started",
@@ -118,17 +112,14 @@ describe("DomainService", () => {
         return () => `2026-04-20T00:02:${String(++tick).padStart(2, "0")}Z`;
       })(),
       createSessionId: () => "session-1",
-      resolveAgentDescriptor: () => ({
-        agentId: "codex",
-        displayName: "Codex",
-        capabilities: ["chat"]
-      }),
+      assertEngineRegistered: vi.fn(),
+      resolveEngineCapabilities: () => ["chat"],
       publishRuntimeEvent: () => {}
     });
 
     service.createSession({
       conversationId: "conversation-1",
-      agentId: "codex"
+      engineId: "codex"
     });
     service.ingestRuntimeEvent({
       type: "turn.started",

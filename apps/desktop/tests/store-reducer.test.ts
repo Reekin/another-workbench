@@ -35,7 +35,7 @@ describe("desktop store reducer", () => {
       type: "session.created",
       conversationId: "conversation-a",
       sessionId: "session-a",
-      agentId: "agent-a",
+      engineId: "agent-a",
       status: "idle"
     });
 
@@ -64,7 +64,7 @@ describe("desktop store reducer", () => {
           type: "session.created",
           conversationId: "conversation-a",
           sessionId: "session-a",
-          agentId: "agent-a",
+          engineId: "agent-a",
           status: "idle"
         })
       )
@@ -88,7 +88,7 @@ describe("desktop store reducer", () => {
           turnId: "turn-a",
           messageId: "message-a",
           delta: "hello",
-          agentId: "agent-a"
+          engineId: "agent-a"
         })
       )
     );
@@ -101,7 +101,7 @@ describe("desktop store reducer", () => {
           turnId: "turn-a",
           toolCallId: "tool-a",
           toolName: "search",
-          agentId: "agent-a"
+          engineId: "agent-a"
         })
       )
     );
@@ -113,7 +113,7 @@ describe("desktop store reducer", () => {
           sessionId: "session-a",
           turnId: "turn-a",
           terminalId: "terminal-a",
-          agentId: "agent-a"
+          engineId: "agent-a"
         })
       )
     );
@@ -127,7 +127,7 @@ describe("desktop store reducer", () => {
           requestId: "approval-a",
           approvalKind: "tool",
           title: "Need permission",
-          agentId: "agent-a"
+          engineId: "agent-a"
         })
       )
     );
@@ -138,7 +138,7 @@ describe("desktop store reducer", () => {
           type: "participant.updated",
           conversationId: "conversation-a",
           participantId: "participant-a",
-          agentId: "agent-a",
+          engineId: "agent-a",
           role: "primary",
           capabilities: []
         })
@@ -154,7 +154,7 @@ describe("desktop store reducer", () => {
 
     const conversation = state.entities.conversations["conversation-a"];
     expect(conversation.sessionIds).toContain("session-a");
-    expect(conversation.participantAgentIds).toContain("agent-a");
+    expect(conversation.participantEngineIds).toContain("agent-a");
   });
 
   it("marks terminal streams as failed when exitCode is non-zero", () => {
@@ -167,7 +167,7 @@ describe("desktop store reducer", () => {
           type: "session.created",
           conversationId: "conversation-a",
           sessionId: "session-a",
-          agentId: "agent-a",
+          engineId: "agent-a",
           status: "running"
         })
       )
@@ -190,7 +190,7 @@ describe("desktop store reducer", () => {
           sessionId: "session-a",
           turnId: "turn-a",
           terminalId: "terminal-a",
-          agentId: "agent-a"
+          engineId: "agent-a"
         })
       )
     );
@@ -203,7 +203,7 @@ describe("desktop store reducer", () => {
           turnId: "turn-a",
           terminalId: "terminal-a",
           exitCode: 2,
-          agentId: "agent-a"
+          engineId: "agent-a"
         })
       )
     );
@@ -224,7 +224,7 @@ describe("desktop store reducer", () => {
           type: "session.created",
           conversationId: "conversation-a",
           sessionId: "session-a",
-          agentId: "agent-a",
+          engineId: "agent-a",
           status: "running"
         })
       )
@@ -247,7 +247,7 @@ describe("desktop store reducer", () => {
           sessionId: "session-a",
           turnId: "turn-a",
           terminalId: "terminal-a",
-          agentId: "agent-a"
+          engineId: "agent-a"
         })
       )
     );
@@ -260,7 +260,7 @@ describe("desktop store reducer", () => {
           turnId: "turn-a",
           terminalId: "terminal-a",
           exitCode: 0,
-          agentId: "agent-a"
+          engineId: "agent-a"
         })
       )
     );
@@ -280,13 +280,13 @@ describe("desktop store reducer", () => {
         conversations: [
           {
             conversationId: "conversation-a",
-            participantAgentIds: ["agent-a"],
+            participantEngineIds: ["agent-a"],
             activeSessionId: "session-a",
             sessionIds: ["session-a"]
           },
           {
             conversationId: "conversation-b",
-            participantAgentIds: ["agent-b"],
+            participantEngineIds: ["agent-b"],
             activeSessionId: "session-b",
             sessionIds: ["session-b"]
           }
@@ -295,7 +295,7 @@ describe("desktop store reducer", () => {
           {
             sessionId: "session-a",
             conversationId: "conversation-a",
-            agentId: "agent-a",
+            engineId: "agent-a",
             status: "idle",
             createdAt: "2026-04-19T00:00:00.000Z",
             updatedAt: "2026-04-19T00:00:00.000Z"
@@ -303,7 +303,7 @@ describe("desktop store reducer", () => {
           {
             sessionId: "session-b",
             conversationId: "conversation-b",
-            agentId: "agent-b",
+            engineId: "agent-b",
             status: "idle",
             createdAt: "2026-04-19T00:00:01.000Z",
             updatedAt: "2026-04-19T00:00:01.000Z"
@@ -363,7 +363,7 @@ describe("desktop store reducer", () => {
           type: "session.created",
           conversationId: "conversation-a",
           sessionId: "session-a",
-          agentId: "agent-a",
+          engineId: "agent-a",
           status: "running"
         })
       )
@@ -387,7 +387,7 @@ describe("desktop store reducer", () => {
           turnId: "turn-a",
           messageId: "message-a",
           delta: "更精确的。验证",
-          agentId: "agent-a"
+          engineId: "agent-a"
         })
       )
     );
@@ -400,7 +400,7 @@ describe("desktop store reducer", () => {
           turnId: "turn-a",
           messageId: "message-a",
           finalText: "更精确的验证。",
-          agentId: "agent-a"
+          engineId: "agent-a"
         })
       )
     );
@@ -418,7 +418,7 @@ describe("desktop store reducer", () => {
           type: "session.created",
           conversationId: "conversation-a",
           sessionId: "session-parent",
-          agentId: "agent-a",
+          engineId: "agent-a",
           status: "idle"
         })
       )
@@ -430,7 +430,7 @@ describe("desktop store reducer", () => {
           type: "session.created",
           conversationId: "conversation-a",
           sessionId: "session-child",
-          agentId: "agent-a",
+          engineId: "agent-a",
           status: "idle",
           relation: {
             relationId: "relation-a",
@@ -466,7 +466,7 @@ describe("desktop store reducer", () => {
           type: "session.created",
           conversationId: "conversation-a",
           sessionId: "session-parent",
-          agentId: "agent-a",
+          engineId: "agent-a",
           status: "idle"
         })
       )
@@ -478,7 +478,7 @@ describe("desktop store reducer", () => {
           type: "session.created",
           conversationId: "conversation-a",
           sessionId: "session-child",
-          agentId: "agent-a",
+          engineId: "agent-a",
           status: "idle",
           relation: {
             relationId: "relation-a",
@@ -517,7 +517,7 @@ describe("desktop store reducer", () => {
           turnId: "turn-a",
           messageId: "message-a",
           delta: "hello",
-          agentId: "agent-a"
+          engineId: "agent-a"
         })
       )
     );
@@ -557,7 +557,7 @@ describe("desktop store reducer", () => {
           type: "session.created",
           conversationId: "conversation-a",
           sessionId: "session-a",
-          agentId: "agent-a",
+          engineId: "agent-a",
           status: "running"
         })
       )
@@ -571,7 +571,7 @@ describe("desktop store reducer", () => {
           turnId: "turn-a",
           messageId: "message-a",
           delta: "hello",
-          agentId: "agent-a"
+          engineId: "agent-a"
         })
       )
     );
@@ -584,7 +584,7 @@ describe("desktop store reducer", () => {
           turnId: "turn-a",
           toolCallId: "tool-a",
           delta: "partial",
-          agentId: "agent-a"
+          engineId: "agent-a"
         })
       )
     );
@@ -597,7 +597,7 @@ describe("desktop store reducer", () => {
           turnId: "turn-a",
           terminalId: "terminal-a",
           chunk: "line-1\n",
-          agentId: "agent-a"
+          engineId: "agent-a"
         })
       )
     );
@@ -610,7 +610,7 @@ describe("desktop store reducer", () => {
           turnId: "turn-a",
           messageId: "message-a",
           role: "assistant",
-          agentId: "agent-a"
+          engineId: "agent-a"
         })
       )
     );
@@ -623,7 +623,7 @@ describe("desktop store reducer", () => {
           turnId: "turn-a",
           toolCallId: "tool-a",
           toolName: "search",
-          agentId: "agent-a"
+          engineId: "agent-a"
         })
       )
     );
@@ -636,7 +636,7 @@ describe("desktop store reducer", () => {
           turnId: "turn-a",
           terminalId: "terminal-a",
           toolCallId: "tool-a",
-          agentId: "agent-a"
+          engineId: "agent-a"
         })
       )
     );
@@ -696,7 +696,7 @@ describe("desktop store reducer", () => {
         conversations: [
           {
             conversationId: "conversation-a",
-            participantAgentIds: ["agent-a"],
+            participantEngineIds: ["agent-a"],
             sessionIds: ["session-a"],
             activeSessionId: "session-a",
             createdAt: "2026-04-17T00:00:00.000Z",
@@ -704,7 +704,7 @@ describe("desktop store reducer", () => {
           },
           {
             conversationId: "conversation-b",
-            participantAgentIds: ["agent-b"],
+            participantEngineIds: ["agent-b"],
             sessionIds: ["session-b"],
             activeSessionId: "session-b",
             createdAt: "2026-04-17T00:01:00.000Z",
@@ -715,7 +715,7 @@ describe("desktop store reducer", () => {
           {
             sessionId: "session-a",
             conversationId: "conversation-a",
-            agentId: "agent-a",
+            engineId: "agent-a",
             status: "completed",
             createdAt: "2026-04-17T00:00:00.000Z",
             updatedAt: "2026-04-17T00:00:02.000Z"
@@ -723,7 +723,7 @@ describe("desktop store reducer", () => {
           {
             sessionId: "session-b",
             conversationId: "conversation-b",
-            agentId: "agent-b",
+            engineId: "agent-b",
             status: "idle",
             createdAt: "2026-04-17T00:01:00.000Z",
             updatedAt: "2026-04-17T00:01:02.000Z"
@@ -802,14 +802,14 @@ describe("desktop store reducer", () => {
           {
             participantId: "participant-a",
             conversationId: "conversation-a",
-            agentId: "agent-a",
+            engineId: "agent-a",
             activeSessionIds: ["session-a"],
             joinedAt: "2026-04-17T00:00:00.000Z"
           },
           {
             participantId: "participant-b",
             conversationId: "conversation-b",
-            agentId: "agent-b",
+            engineId: "agent-b",
             activeSessionIds: ["session-b"],
             joinedAt: "2026-04-17T00:01:00.000Z"
           }

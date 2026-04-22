@@ -13,7 +13,7 @@ describe("transcript view model", () => {
         conversations: [
           {
             conversationId: "conv-1",
-            participantAgentIds: ["agent-1"],
+            participantEngineIds: ["agent-1"],
             activeSessionId: "session-1",
             sessionIds: ["session-1"],
             createdAt: "2026-04-17T00:00:00.000Z",
@@ -24,7 +24,7 @@ describe("transcript view model", () => {
           {
             sessionId: "session-1",
             conversationId: "conv-1",
-            agentId: "agent-1",
+            engineId: "agent-1",
             status: "running",
             createdAt: "2026-04-17T00:00:00.000Z",
             updatedAt: "2026-04-17T00:00:00.000Z"
@@ -48,7 +48,7 @@ describe("transcript view model", () => {
             startedAt: "2026-04-17T00:00:01.000Z",
             actor: {
               participantId: "participant-1",
-              agentId: "agent-1"
+              engineId: "agent-1"
             },
             messageIds: ["message-1"],
             toolCallIds: [],
@@ -67,7 +67,7 @@ describe("transcript view model", () => {
             text: "",
             actor: {
               participantId: "participant-1",
-              agentId: "agent-1"
+              engineId: "agent-1"
             },
             startedAt: "2026-04-17T00:00:01.000Z"
           },
@@ -81,7 +81,7 @@ describe("transcript view model", () => {
             text: "hello",
             actor: {
               participantId: "participant-1",
-              agentId: "agent-1"
+              engineId: "agent-1"
             },
             startedAt: "2026-04-17T00:00:01.100Z"
           },
@@ -95,7 +95,7 @@ describe("transcript view model", () => {
             text: "second turn",
             actor: {
               participantId: "participant-1",
-              agentId: "agent-1"
+              engineId: "agent-1"
             },
             startedAt: "2026-04-17T00:00:02.100Z"
           }
@@ -109,7 +109,7 @@ describe("transcript view model", () => {
             status: "running",
             actor: {
               participantId: "participant-1",
-              agentId: "agent-1"
+              engineId: "agent-1"
             },
             startedAt: "2026-04-17T00:00:02.200Z"
           },
@@ -121,7 +121,7 @@ describe("transcript view model", () => {
             status: "running",
             actor: {
               participantId: "participant-1",
-              agentId: "agent-1"
+              engineId: "agent-1"
             },
             startedAt: "2026-04-17T00:00:02.300Z"
           }
@@ -135,7 +135,7 @@ describe("transcript view model", () => {
             outputText: "line 1",
             actor: {
               participantId: "participant-1",
-              agentId: "agent-1"
+              engineId: "agent-1"
             },
             startedAt: "2026-04-17T00:00:02.200Z"
           },
@@ -147,7 +147,7 @@ describe("transcript view model", () => {
             outputText: "line 2",
             actor: {
               participantId: "participant-1",
-              agentId: "agent-1"
+              engineId: "agent-1"
             },
             startedAt: "2026-04-17T00:00:02.250Z"
           }
@@ -162,7 +162,7 @@ describe("transcript view model", () => {
             title: "ordered",
             actor: {
               participantId: "participant-1",
-              agentId: "agent-1"
+              engineId: "agent-1"
             },
             requestedAt: "2026-04-17T00:00:02.200Z"
           },
@@ -175,7 +175,7 @@ describe("transcript view model", () => {
             title: "fallback",
             actor: {
               participantId: "participant-1",
-              agentId: "agent-1"
+              engineId: "agent-1"
             },
             requestedAt: "2026-04-17T00:00:02.250Z"
           }
@@ -184,7 +184,7 @@ describe("transcript view model", () => {
           {
             participantId: "participant-1",
             conversationId: "conv-1",
-            agentId: "agent-1",
+            engineId: "agent-1",
             role: "primary",
             capabilities: ["chat", "tool"],
             activeSessionIds: ["session-1"]
@@ -243,7 +243,7 @@ describe("transcript view model", () => {
         conversations: [
           {
             conversationId: "conv-1",
-            participantAgentIds: ["agent-1"],
+            participantEngineIds: ["agent-1"],
             activeSessionId: "session-1",
             sessionIds: ["session-1"],
             createdAt: "2026-04-17T00:00:00.000Z",
@@ -254,7 +254,7 @@ describe("transcript view model", () => {
           {
             sessionId: "session-1",
             conversationId: "conv-1",
-            agentId: "agent-1",
+            engineId: "agent-1",
             status: "completed",
             createdAt: "2026-04-17T00:00:00.000Z",
             updatedAt: "2026-04-17T00:00:00.000Z"
@@ -350,7 +350,7 @@ describe("transcript view model", () => {
         conversations: [
           {
             conversationId: "conv-1",
-            participantAgentIds: ["agent-1"],
+            participantEngineIds: ["agent-1"],
             activeSessionId: "session-1",
             sessionIds: ["session-1"],
             createdAt: "2026-04-17T00:00:00.000Z",
@@ -361,7 +361,7 @@ describe("transcript view model", () => {
           {
             sessionId: "session-1",
             conversationId: "conv-1",
-            agentId: "agent-1",
+            engineId: "agent-1",
             status: "completed",
             createdAt: "2026-04-17T00:00:00.000Z",
             updatedAt: "2026-04-17T00:00:00.000Z"
@@ -445,7 +445,7 @@ describe("transcript view model", () => {
         conversations: [
           {
             conversationId: "conv-1",
-            participantAgentIds: ["agent-1"],
+            participantEngineIds: ["agent-1"],
             activeSessionId: "session-1",
             sessionIds: ["session-1"],
             createdAt: "2026-04-17T00:00:00.000Z",
@@ -456,7 +456,7 @@ describe("transcript view model", () => {
           {
             sessionId: "session-1",
             conversationId: "conv-1",
-            agentId: "agent-1",
+            engineId: "agent-1",
             status: "completed",
             createdAt: "2026-04-17T00:00:00.000Z",
             updatedAt: "2026-04-17T00:00:00.000Z"

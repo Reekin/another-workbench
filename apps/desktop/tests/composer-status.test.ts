@@ -12,7 +12,7 @@ describe("resolveComposerStatus", () => {
       activeSession: {
         sessionId: "session-1",
         conversationId: "conversation-1",
-        agentId: "codex",
+        engineId: "codex",
         status: "awaiting_approval",
         createdAt: "2026-04-18T00:00:00.000Z",
         updatedAt: "2026-04-18T00:00:00.000Z"
@@ -41,7 +41,7 @@ describe("resolveComposerStatus", () => {
       activeSession: {
         sessionId: "session-1",
         conversationId: "conversation-1",
-        agentId: "codex",
+        engineId: "codex",
         status: "awaiting_approval",
         createdAt: "2026-04-18T00:00:00.000Z",
         updatedAt: "2026-04-18T00:00:00.000Z"
@@ -68,7 +68,7 @@ describe("resolveComposerStatus", () => {
         activeSession: {
           sessionId: "session-1",
           conversationId: "conversation-1",
-          agentId: "codex",
+          engineId: "codex",
           status: "idle",
           createdAt: "2026-04-18T00:00:00.000Z",
           updatedAt: "2026-04-18T00:00:00.000Z"
@@ -110,7 +110,7 @@ describe("resolveComposerStatus", () => {
         activeSession: {
           sessionId: "session-1",
           conversationId: "conversation-1",
-          agentId: "codex",
+          engineId: "codex",
           status: "idle",
           createdAt: "2026-04-18T00:00:00.000Z",
           updatedAt: "2026-04-18T00:00:00.000Z"
@@ -132,7 +132,7 @@ describe("resolveComposerStatus", () => {
         activeSession: {
           sessionId: "session-1",
           conversationId: "conversation-1",
-          agentId: "codex",
+          engineId: "codex",
           status: "running",
           createdAt: "2026-04-18T00:00:00.000Z",
           updatedAt: "2026-04-18T00:00:00.000Z"

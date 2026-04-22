@@ -123,7 +123,7 @@ describe("prod runtime service", () => {
     });
     disposers.push(() => service.dispose());
 
-    expect(service.listAgents().some((agent) => agent.agentId === "pi-acp")).toBe(true);
+    expect(service.listEngines().some((engine) => engine.engineId === "pi-acp")).toBe(true);
 
     await service.executeCommand({
       commandId: "create-pi-session",

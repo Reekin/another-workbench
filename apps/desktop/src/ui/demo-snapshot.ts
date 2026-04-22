@@ -6,7 +6,7 @@ export const createDemoSnapshot = (): DomainSnapshot =>
       {
         conversationId: "conv-demo",
         workspaceId: "workspace-demo",
-        participantAgentIds: ["agent-codex"],
+        participantEngineIds: ["agent-codex"],
         activeSessionId: "session-demo",
         sessionIds: ["session-demo"],
         createdAt: "2026-04-17T00:00:00.000Z",
@@ -17,7 +17,7 @@ export const createDemoSnapshot = (): DomainSnapshot =>
       {
         sessionId: "session-demo",
         conversationId: "conv-demo",
-        agentId: "agent-codex",
+        engineId: "agent-codex",
         status: "running",
         title: "Demo Session",
         createdAt: "2026-04-17T00:00:00.000Z",
@@ -49,7 +49,7 @@ export const createDemoSnapshot = (): DomainSnapshot =>
           "# Another Workbench\n\nThis transcript now renders **streaming markdown**.\n\n```ts\nconsole.log('hello from demo');\n```\n\n| Item | Status |\n| --- | --- |\n| Markdown | ready |\n| Tool timeline | ready |\n| Terminal stream | ready |",
         actor: {
           participantId: "participant-demo-1",
-          agentId: "agent-codex"
+          engineId: "agent-codex"
         },
         startedAt: "2026-04-17T00:00:00.000Z"
       }
@@ -65,7 +65,7 @@ export const createDemoSnapshot = (): DomainSnapshot =>
         outputSummary: "Typecheck started...",
         actor: {
           participantId: "participant-demo-1",
-          agentId: "agent-codex"
+          engineId: "agent-codex"
         },
         startedAt: "2026-04-17T00:00:00.000Z"
       }
@@ -80,7 +80,7 @@ export const createDemoSnapshot = (): DomainSnapshot =>
         outputText: "> checking workspace...\r> checking workspace... done\n> running tests...",
         actor: {
           participantId: "participant-demo-1",
-          agentId: "agent-codex"
+          engineId: "agent-codex"
         },
         startedAt: "2026-04-17T00:00:00.000Z"
       }
@@ -96,7 +96,7 @@ export const createDemoSnapshot = (): DomainSnapshot =>
         details: "Command requests filesystem access.",
         actor: {
           participantId: "participant-demo-1",
-          agentId: "agent-codex"
+          engineId: "agent-codex"
         },
         requestedAt: "2026-04-17T00:00:00.000Z"
       }
@@ -105,7 +105,7 @@ export const createDemoSnapshot = (): DomainSnapshot =>
       {
         participantId: "participant-demo-1",
         conversationId: "conv-demo",
-        agentId: "agent-codex",
+        engineId: "agent-codex",
         role: "primary",
         capabilities: ["chat", "tool", "terminal"],
         activeSessionIds: ["session-demo"]

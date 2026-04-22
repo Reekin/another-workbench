@@ -10,7 +10,7 @@ import {
 import { getRecordedCodexTurnChanges } from "./turn-changes-store.js";
 
 export type CodexTurnChangesServiceOptions = {
-  resolveSessionAgentId: (sessionId: string) => string | undefined;
+  resolveSessionEngineId: (sessionId: string) => string | undefined;
   resolveWorkingDirectory: (sessionId: string) => Promise<string>;
   undoTurnChanges: (input: {
     cwd: string;
@@ -31,12 +31,12 @@ const resolveFilePath = (cwd: string, path: string): string => {
 };
 
 export class CodexTurnChangesService {
-  private readonly resolveSessionAgentId: CodexTurnChangesServiceOptions["resolveSessionAgentId"];
+  private readonly resolveSessionEngineId: CodexTurnChangesServiceOptions["resolveSessionEngineId"];
   private readonly resolveWorkingDirectory: CodexTurnChangesServiceOptions["resolveWorkingDirectory"];
   private readonly undoTurnChangesImpl: CodexTurnChangesServiceOptions["undoTurnChanges"];
 
   public constructor(options: CodexTurnChangesServiceOptions) {
-    this.resolveSessionAgentId = options.resolveSessionAgentId;
+    this.resolveSessionEngineId = options.resolveSessionEngineId;
     this.resolveWorkingDirectory = options.resolveWorkingDirectory;
     this.undoTurnChangesImpl = options.undoTurnChanges;
   }
@@ -92,9 +92,9 @@ export class CodexTurnChangesService {
   }
 
   private assertCodexSession(sessionId: string): void {
-    const agentId = this.resolveSessionAgentId(sessionId);
-    if (agentId && agentId !== codexAgentId) {
-      throw new Error(`Codex turn changes are unavailable for agent: ${agentId}`);
+    const engineId = this.resolveSessionEngineId(sessionId);
+    if (engineId && engineId !== codexAgentId) {
+      throw new Error(`Codex turn changes are unavailable for engine: ${engineId}`);
     }
   }
 }

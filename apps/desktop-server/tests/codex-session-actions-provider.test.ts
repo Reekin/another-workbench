@@ -13,7 +13,7 @@ describe("CodexSessionActionsProvider", () => {
     expect(
       provider.resolveDisplayedSessionId({
         sessionId: "session-1",
-        agentId: "codex",
+        engineId: "codex",
         runtimeService: {} as never,
         sessionIndexStore: {} as never,
         indexEntry: {
@@ -34,7 +34,7 @@ describe("CodexSessionActionsProvider", () => {
     await expect(
       provider.listAdditionalActions({
         sessionId: "session-1",
-        agentId: "codex",
+        engineId: "codex",
         runtimeService: {} as never,
         sessionIndexStore: {} as never
       })
@@ -59,7 +59,7 @@ describe("CodexSessionActionsProvider", () => {
 
     await provider.prepareArchive({
       sessionId: "session-1",
-      agentId: "codex",
+      engineId: "codex",
       runtimeService: {} as never,
       sessionIndexStore: {} as never
     });
@@ -84,7 +84,7 @@ describe("CodexSessionActionsProvider", () => {
     await expect(
       provider.runAction({
         sessionId: "session-1",
-        agentId: "codex",
+        engineId: "codex",
         action: "open_rollout",
         runtimeService: {} as never,
         sessionIndexStore: {} as never
@@ -94,7 +94,7 @@ describe("CodexSessionActionsProvider", () => {
     await expect(
       provider.runAction({
         sessionId: "session-1",
-        agentId: "codex",
+        engineId: "codex",
         action: "open_rollout",
         runtimeService: {} as never,
         sessionIndexStore: {} as never

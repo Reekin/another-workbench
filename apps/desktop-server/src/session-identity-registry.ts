@@ -44,7 +44,7 @@ export type ResolvedSessionContext = {
   sessionId: string;
   session?: ChatSession;
   indexEntry?: SessionIndexEntry;
-  agentId?: string;
+  engineId?: string;
   providerHandle?: ProviderSessionHandle;
 };
 
@@ -93,7 +93,7 @@ export class SessionIdentityRegistry {
       sessionId,
       session,
       indexEntry,
-      agentId: session?.agentId ?? indexEntry?.agentId,
+      engineId: session?.engineId ?? indexEntry?.engineId,
       providerHandle:
         this.runtimeService.resolveProviderSessionHandle?.(sessionId) ??
         (indexEntry?.providerKind && indexEntry.providerSessionId

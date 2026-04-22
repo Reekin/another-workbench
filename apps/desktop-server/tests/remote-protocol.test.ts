@@ -24,9 +24,9 @@ const createService = () =>
       let index = 0;
       return () => `event-${++index}`;
     })(),
-    agents: [
+    engines: [
       {
-        agentId: "codex",
+        engineId: "codex",
         displayName: "Codex",
         capabilities: ["chat"]
       }
@@ -34,9 +34,33 @@ const createService = () =>
   });
 
 describe("createRemoteRpcHandler", () => {
-  it("serves desktop-ipc-compatible agent and session requests", async () => {
-    const service = createService();
-    const handler = createRemoteRpcHandler(service, {
+  it("serves desktop-ipc-compatible engine and session requests", async () => {
+    const runtimeService = createService();
+    const shellService = {
+      executeCommand: runtimeService.executeCommand.bind(runtimeService),
+      listSessions: runtimeService.listSessions.bind(runtimeService),
+      getSnapshotResult: runtimeService.getSnapshotResult.bind(runtimeService),
+      replay: runtimeService.replay.bind(runtimeService),
+      selectEngine: runtimeService.selectEngine.bind(runtimeService),
+      listEngines: () => [
+        {
+          engineId: "codex",
+          displayName: "Codex",
+          integrationTier: "native"
+        }
+      ],
+      getEngineSurface: (engineId: string) => ({
+        engineId,
+        sharedCapabilities: ["chat"],
+        extensions: []
+      }),
+      getSettings: vi.fn().mockResolvedValue({}),
+      updateSettings: vi.fn().mockResolvedValue({}),
+      listWorkspaces: vi.fn().mockResolvedValue({
+        workspaces: []
+      })
+    };
+    const handler = createRemoteRpcHandler(shellService as never, {
       createSubscriptionId: () => "subscription-1"
     });
 
@@ -65,20 +89,20 @@ describe("createRemoteRpcHandler", () => {
       }
     });
 
-    const listAgentsResponse = await handler.handleRequest({
-      id: "req-agents",
-      method: "agent.list",
+    const listEnginesResponse = await handler.handleRequest({
+      id: "req-engines",
+      method: "engine.list",
       params: {}
     });
 
-    expect(listAgentsResponse).toMatchObject({
-      id: "req-agents",
-      method: "agent.list",
+    expect(listEnginesResponse).toMatchObject({
+      id: "req-engines",
+      method: "engine.list",
       ok: true,
       result: {
-        agents: [
+        engines: [
           {
-            agentId: "codex",
+            engineId: "codex",
             displayName: "Codex"
           }
         ]
@@ -102,7 +126,7 @@ describe("createRemoteRpcHandler", () => {
           {
             sessionId: "session-1",
             conversationId: "conversation-1",
-            agentId: "codex"
+            engineId: "codex"
           }
         ]
       }
@@ -199,21 +223,21 @@ describe("createRemoteRpcHandler", () => {
     }
   });
 
-  it("returns shared error envelopes for invalid agent operations", async () => {
+  it("returns shared error envelopes for invalid engine operations", async () => {
     const service = createService();
     const handler = createRemoteRpcHandler(service);
 
     const response = await handler.handleRequest({
       id: "req-select",
-      method: "agent.select",
+      method: "engine.select",
       params: {
-        agentId: "missing"
+        engineId: "missing"
       }
     });
 
     expect(response).toMatchObject({
       id: "req-select",
-      method: "agent.select",
+      method: "engine.select",
       ok: false,
       error: {
         code: "REMOTE_REQUEST_FAILED"
@@ -235,8 +259,7 @@ describe("createRemoteRpcHandler", () => {
         sharedCapabilities: ["chat", "terminal", "worktree"],
         extensions: []
       }),
-      listAgents: () => [],
-      selectAgent: () => ({ selectedAgentId: "codex" }),
+      selectEngine: () => ({ selectedEngineId: "codex" }),
       listWorkspaces: vi.fn().mockResolvedValue({
         workspaces: []
       }),
@@ -315,8 +338,7 @@ describe("createRemoteRpcHandler", () => {
         sharedCapabilities: ["chat", "approval", "diagnostics"],
         extensions: []
       }),
-      listAgents: () => [],
-      selectAgent: () => ({ selectedAgentId: "codex" }),
+      selectEngine: () => ({ selectedEngineId: "codex" }),
       listWorkspaces: vi.fn().mockResolvedValue({
         workspaces: []
       }),
@@ -389,8 +411,7 @@ describe("createRemoteRpcHandler", () => {
 
   it("routes composer capability and skills RPCs through shell-only APIs", async () => {
     const shellService = {
-      listAgents: vi.fn().mockReturnValue([]),
-      selectAgent: vi.fn(),
+      selectEngine: vi.fn(),
       listWorkspaces: vi.fn().mockResolvedValue({
         workspaces: []
       }),
@@ -629,7 +650,7 @@ describe("createRemoteRpcHandler", () => {
       }),
       getChatTree: vi.fn().mockResolvedValue({
         sessionId: "session-1",
-        agentId: "codex",
+        engineId: "codex",
         supportsJump: true,
         currentNodeId: "node-1",
         nodes: [],
@@ -640,14 +661,14 @@ describe("createRemoteRpcHandler", () => {
       }),
       getWorktree: vi.fn().mockResolvedValue({
         sessionId: "session-1",
-        agentId: "codex",
+        engineId: "codex",
         supported: true,
         workspaceRoot: "I:/repo",
         fetchedAt: "2026-04-18T00:00:00Z"
       }),
       getCheckpoint: vi.fn().mockResolvedValue({
         sessionId: "session-1",
-        agentId: "codex",
+        engineId: "codex",
         supported: true,
         supportsRestore: true,
         currentCheckpointId: "node-1",
@@ -656,14 +677,14 @@ describe("createRemoteRpcHandler", () => {
       }),
       getDiagnostics: vi.fn().mockResolvedValue({
         sessionId: "session-1",
-        agentId: "codex",
+        engineId: "codex",
         supported: true,
         authenticated: true,
         fetchedAt: "2026-04-18T00:00:00Z"
       }),
       getBackgroundRun: vi.fn().mockResolvedValue({
         sessionId: "session-1",
-        agentId: "codex",
+        engineId: "codex",
         supported: false,
         status: "unsupported",
         fetchedAt: "2026-04-18T00:00:00Z"

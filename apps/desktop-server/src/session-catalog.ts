@@ -24,7 +24,7 @@ export type SessionBrowserNode = {
   providerHandle?: ProviderSessionHandle;
   workspaceId: string;
   conversationId?: string;
-  agentId: string;
+  engineId: string;
   title: string;
   summaryText?: string;
   statusDot: SessionStatusDot;
@@ -57,7 +57,7 @@ type SessionCatalogSeed = {
   providerSessionId?: string;
   workspaceId: string;
   conversationId?: string;
-  agentId: string;
+  engineId: string;
   title?: string;
   summaryText?: string;
   updatedAt: string;
@@ -89,7 +89,7 @@ const toSeedFromRuntime = (
     sessionId: session.sessionId,
     workspaceId: conversation.workspaceId,
     conversationId: session.conversationId,
-    agentId: session.agentId,
+    engineId: session.engineId,
     title: session.title,
     updatedAt: session.updatedAt,
     archivedAt: session.archivedAt,
@@ -134,7 +134,7 @@ export class SessionCatalogService {
         providerSessionId: entry.providerSessionId,
         workspaceId: entry.workspaceId,
         conversationId: entry.conversationId,
-        agentId: entry.agentId,
+        engineId: entry.engineId,
         title: entry.title,
         summaryText: entry.summaryText,
         updatedAt: entry.updatedAt,
@@ -283,7 +283,7 @@ export class SessionCatalogService {
           : undefined,
       workspaceId: input.seed.workspaceId,
       conversationId: input.seed.conversationId,
-      agentId: input.seed.agentId,
+      engineId: input.seed.engineId,
       title: input.seed.title ?? input.seed.sessionId,
       summaryText: input.seed.summaryText,
       statusDot:

@@ -13,7 +13,7 @@ export const createDemoWorkbenchRuntimeService = () => {
     agentBindings: [
       {
         descriptor: {
-          agentId: codexAgentId,
+          engineId: codexAgentId,
           displayName: "Codex",
           capabilities: ["chat", "tool", "terminal", "approval"]
         },
@@ -24,7 +24,7 @@ export const createDemoWorkbenchRuntimeService = () => {
       },
       {
         descriptor: {
-          agentId: acpAgentId,
+          engineId: acpAgentId,
           displayName: "ACP",
           capabilities: ["chat", "tool", "terminal", "approval"]
         },

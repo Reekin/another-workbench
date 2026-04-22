@@ -11,7 +11,7 @@ describe("participant directory", () => {
       {
         participantId: "participant-1",
         conversationId: "conv-1",
-        agentId: "agent-codex",
+        engineId: "agent-codex",
         role: "primary",
         capabilities: ["chat", "terminal"],
         activeSessionIds: ["session-1"]
@@ -21,7 +21,7 @@ describe("participant directory", () => {
     expect(
       resolveParticipantIdentity(directory, {
         participantId: "participant-1",
-        agentId: "agent-codex"
+        engineId: "agent-codex"
       })
     ).toMatchObject({
       label: "agent-codex",
@@ -32,7 +32,7 @@ describe("participant directory", () => {
 
     expect(
       resolveParticipantIdentity(directory, {
-        agentId: "agent-codex"
+        engineId: "agent-codex"
       })
     ).toMatchObject({
       label: "agent-codex",
@@ -50,7 +50,7 @@ describe("participant directory", () => {
       summarizeParticipant({
         participantId: "participant-1",
         conversationId: "conv-1",
-        agentId: "agent-codex",
+        engineId: "agent-codex",
         role: "primary",
         capabilities: ["chat", "terminal"],
         activeSessionIds: ["session-1"]

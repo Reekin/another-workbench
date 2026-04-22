@@ -5,7 +5,6 @@ import {
   type RuntimeBinding
 } from "@another-workbench/core";
 import type {
-  AgentDescriptor,
   AgentParticipant,
   ChatSession,
   Command,
@@ -32,7 +31,8 @@ type Clock = () => string;
 type IdFactory = () => string;
 
 export type DomainServiceOptions = {
-  resolveAgentDescriptor: (agentId: string) => AgentDescriptor | undefined;
+  assertEngineRegistered: (engineId: string) => void;
+  resolveEngineCapabilities: (engineId: string) => readonly string[];
   publishRuntimeEvent: (event: RuntimeEvent) => void;
   markSessionUnreadCompleted?: (sessionId: string) => void;
   now?: Clock;
@@ -53,7 +53,7 @@ const withConversationSession = (
   input: {
     conversationId: string;
     sessionId: string;
-    agentId: string;
+    engineId: string;
     workspaceId?: string;
     timestamp: string;
   }
@@ -61,7 +61,10 @@ const withConversationSession = (
   parseConversation({
     conversationId: input.conversationId,
     workspaceId: input.workspaceId ?? conversation?.workspaceId,
-    participantAgentIds: addUnique(conversation?.participantAgentIds ?? [], input.agentId),
+    participantEngineIds: addUnique(
+      conversation?.participantEngineIds ?? [],
+      input.engineId
+    ),
     activeSessionId: input.sessionId,
     sessionIds: addUnique(conversation?.sessionIds ?? [], input.sessionId),
     createdAt: conversation?.createdAt ?? input.timestamp,
@@ -70,11 +73,12 @@ const withConversationSession = (
     metadata: conversation?.metadata
   });
 
-const participantIdFor = (conversationId: string, agentId: string): string =>
-  `participant-${conversationId}-${agentId}`;
+const participantIdFor = (conversationId: string, engineId: string): string =>
+  `participant-${conversationId}-${engineId}`;
 
 export class DomainService {
-  private readonly resolveAgentDescriptor: (agentId: string) => AgentDescriptor | undefined;
+  private readonly assertEngineRegistered: (engineId: string) => void;
+  private readonly resolveEngineCapabilities: (engineId: string) => readonly string[];
   private readonly publishRuntimeEvent: (event: RuntimeEvent) => void;
   private readonly markSessionUnreadCompleted?: (sessionId: string) => void;
   private readonly now: Clock;
@@ -84,7 +88,8 @@ export class DomainService {
   private readonly domainProjector: DomainProjector;
 
   public constructor(options: DomainServiceOptions) {
-    this.resolveAgentDescriptor = options.resolveAgentDescriptor;
+    this.assertEngineRegistered = options.assertEngineRegistered;
+    this.resolveEngineCapabilities = options.resolveEngineCapabilities;
     this.publishRuntimeEvent = options.publishRuntimeEvent;
     this.markSessionUnreadCompleted = options.markSessionUnreadCompleted;
     this.now = options.now ?? (() => new Date().toISOString());
@@ -118,7 +123,7 @@ export class DomainService {
         {
           conversationId: snapshot.conversation.conversationId,
           sessionId: snapshot.session.sessionId,
-          agentId: snapshot.session.agentId,
+          engineId: snapshot.session.engineId,
           workspaceId: snapshot.conversation.workspaceId,
           timestamp: snapshot.session.updatedAt
         }
@@ -195,14 +200,14 @@ export class DomainService {
 
   public createSession(input: {
     conversationId: string;
-    agentId: string;
+    engineId: string;
     metadata?: Record<string, unknown>;
     workspaceId?: string;
   }): ChatSession {
-    this.requireAgentDescriptor(input.agentId);
+    this.assertEngineRegistered(input.engineId);
     const session = this.sessionManager.createSession({
       conversationId: input.conversationId,
-      agentId: input.agentId,
+      engineId: input.engineId,
       metadata: input.metadata
     });
 
@@ -212,7 +217,7 @@ export class DomainService {
       type: "session.created",
       conversationId: input.conversationId,
       sessionId: session.sessionId,
-      agentId: session.agentId,
+      engineId: session.engineId,
       status: session.status
     });
     this.publishConversationUpdated({
@@ -267,7 +272,7 @@ export class DomainService {
     const timestamp = this.now();
     const childSession = this.sessionManager.createSession({
       conversationId: parentSession.conversationId,
-      agentId: parentSession.agentId,
+      engineId: parentSession.engineId,
       metadata: parentSession.metadata
     });
     const relation = parseSessionRelation({
@@ -285,7 +290,7 @@ export class DomainService {
       type: "session.created",
       conversationId: childSession.conversationId,
       sessionId: childSession.sessionId,
-      agentId: childSession.agentId,
+      engineId: childSession.engineId,
       status: childSession.status,
       relation
     });
@@ -442,7 +447,7 @@ export class DomainService {
       {
         conversationId: session.conversationId,
         sessionId: session.sessionId,
-        agentId: session.agentId,
+        engineId: session.engineId,
         workspaceId,
         timestamp: session.updatedAt
       }
@@ -454,21 +459,21 @@ export class DomainService {
 
   private ensureParticipantForSession(session: ChatSession): AgentParticipant {
     const conversation = this.requireConversation(session.conversationId);
-    const descriptor = this.requireAgentDescriptor(session.agentId);
-    const participantId = participantIdFor(session.conversationId, session.agentId);
+    this.assertEngineRegistered(session.engineId);
+    const participantId = participantIdFor(session.conversationId, session.engineId);
     const existing = this.domainStore.getParticipant(participantId);
     const role =
       existing?.role ??
-      (conversation.participantAgentIds[0] === session.agentId ? "primary" : "secondary");
+      (conversation.participantEngineIds[0] === session.engineId ? "primary" : "secondary");
     const participant = parseAgentParticipant({
       participantId,
       conversationId: session.conversationId,
-      agentId: session.agentId,
+      engineId: session.engineId,
       role,
-      capabilities: descriptor.capabilities,
+      capabilities: [...this.resolveEngineCapabilities(session.engineId)],
       activeSessionIds: this.getActiveSessionIdsForParticipant(
         session.conversationId,
-        session.agentId
+        session.engineId
       ),
       metadata: existing?.metadata
     });
@@ -477,7 +482,7 @@ export class DomainService {
       type: "participant.updated",
       conversationId: session.conversationId,
       participantId: participant.participantId,
-      agentId: participant.agentId,
+      engineId: participant.engineId,
       role: participant.role,
       capabilities: participant.capabilities
     });
@@ -508,23 +513,15 @@ export class DomainService {
 
   private getActiveSessionIdsForParticipant(
     conversationId: string,
-    agentId: string
+    engineId: string
   ): string[] {
     return this.domainStore
       .listSessions({
         conversationId,
-        agentId,
+        engineId,
         includeArchived: true
       })
       .filter((session) => !session.archivedAt)
       .map((session) => session.sessionId);
-  }
-
-  private requireAgentDescriptor(agentId: string): AgentDescriptor {
-    const descriptor = this.resolveAgentDescriptor(agentId);
-    if (!descriptor) {
-      throw new Error(`Unknown agent: ${agentId}`);
-    }
-    return descriptor;
   }
 }

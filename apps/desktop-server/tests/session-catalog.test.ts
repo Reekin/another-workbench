@@ -69,7 +69,7 @@ describe("SessionCatalogService", () => {
       session: {
         sessionId: "session-root",
         conversationId: "conversation-1",
-        agentId: "codex",
+        engineId: "codex",
         title: "Index Root",
         createdAt: "2026-04-18T00:00:01Z",
         updatedAt: "2026-04-18T00:00:02Z"
@@ -83,7 +83,7 @@ describe("SessionCatalogService", () => {
       session: {
         sessionId: "session-archived",
         conversationId: "conversation-1",
-        agentId: "codex",
+        engineId: "codex",
         title: "Archived Session",
         createdAt: "2026-04-18T00:00:03Z",
         updatedAt: "2026-04-18T00:00:04Z",
@@ -96,7 +96,7 @@ describe("SessionCatalogService", () => {
       session: {
         sessionId: "session-beta",
         conversationId: "conversation-2",
-        agentId: "acp",
+        engineId: "acp",
         title: "Beta Session",
         createdAt: "2026-04-18T00:00:05Z",
         updatedAt: "2026-04-18T00:00:06Z"
@@ -117,7 +117,7 @@ describe("SessionCatalogService", () => {
         {
           conversationId: "conversation-1",
           workspaceId: "workspace-1",
-          participantAgentIds: ["codex"],
+          participantEngineIds: ["codex"],
           activeSessionId: "session-root",
           sessionIds: ["session-root", "session-child"],
           createdAt: "2026-04-18T00:00:00Z",
@@ -126,7 +126,7 @@ describe("SessionCatalogService", () => {
         {
           conversationId: "conversation-2",
           workspaceId: "workspace-2",
-          participantAgentIds: ["acp"],
+          participantEngineIds: ["acp"],
           activeSessionId: "session-beta",
           sessionIds: ["session-beta"],
           createdAt: "2026-04-18T00:00:00Z",
@@ -137,7 +137,7 @@ describe("SessionCatalogService", () => {
         {
           sessionId: "session-root",
           conversationId: "conversation-1",
-          agentId: "codex",
+          engineId: "codex",
           status: "idle",
           title: "Runtime Root",
           createdAt: "2026-04-18T00:00:01Z",
@@ -146,7 +146,7 @@ describe("SessionCatalogService", () => {
         {
           sessionId: "session-child",
           conversationId: "conversation-1",
-          agentId: "codex",
+          engineId: "codex",
           status: "running",
           title: "Runtime Child",
           createdAt: "2026-04-18T00:00:08Z",
@@ -155,7 +155,7 @@ describe("SessionCatalogService", () => {
         {
           sessionId: "session-beta",
           conversationId: "conversation-2",
-          agentId: "acp",
+          engineId: "acp",
           status: "completed",
           title: "Runtime Beta",
           createdAt: "2026-04-18T00:00:05Z",
@@ -246,7 +246,7 @@ describe("SessionCatalogService", () => {
       session: {
         sessionId: "session-1",
         conversationId: "conversation-1",
-        agentId: "codex",
+        engineId: "codex",
         createdAt: "2026-04-18T00:00:01Z",
         updatedAt: "2026-04-18T00:00:01Z"
       },

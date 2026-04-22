@@ -26,7 +26,7 @@ type ApprovalContinuation<TEvent> = {
 };
 
 type DemoRuntimePortOptions<TRequest, TResponse, TEvent> = {
-  agentId: string;
+  engineId: string;
   kind: "codex" | "acp";
   responseFlavor: string;
   okResponse: (id: string) => TResponse;
@@ -49,7 +49,7 @@ const chunkText = (value: string): string[] => {
 class DemoRuntimePort<TRequest, TResponse, TEvent>
   implements AdapterRuntimePort<TRequest, TResponse, TEvent>
 {
-  private readonly agentId: string;
+  private readonly engineId: string;
   private readonly kind: "codex" | "acp";
   private readonly responseFlavor: string;
   private readonly okResponseFactory: (id: string) => TResponse;
@@ -71,7 +71,7 @@ class DemoRuntimePort<TRequest, TResponse, TEvent>
   private turnCounter = 0;
 
   public constructor(options: DemoRuntimePortOptions<TRequest, TResponse, TEvent>) {
-    this.agentId = options.agentId;
+    this.engineId = options.engineId;
     this.kind = options.kind;
     this.responseFlavor = options.responseFlavor;
     this.okResponseFactory = options.okResponse;
@@ -186,7 +186,7 @@ class DemoRuntimePort<TRequest, TResponse, TEvent>
         turnId,
         messageId,
         role: "assistant",
-        agentId: this.agentId
+        engineId: this.engineId
       }, this.nextSequence())
     ];
 
@@ -197,7 +197,7 @@ class DemoRuntimePort<TRequest, TResponse, TEvent>
           turnId,
           messageId,
           delta: chunk,
-          agentId: this.agentId
+          engineId: this.engineId
         }, this.nextSequence())
       );
     }
@@ -209,28 +209,28 @@ class DemoRuntimePort<TRequest, TResponse, TEvent>
         toolCallId,
         toolName: this.kind === "codex" ? "exec_command" : "acp.tool.invoke",
         inputSummary: content,
-        agentId: this.agentId
+        engineId: this.engineId
       }, this.nextSequence()),
       this.createEventFactory("terminal.started", {
         sessionId,
         turnId,
         terminalId,
         toolCallId,
-        agentId: this.agentId
+        engineId: this.engineId
       }, this.nextSequence()),
       this.createEventFactory("terminal.output", {
         sessionId,
         turnId,
         terminalId,
         chunk: `> ${this.responseFlavor.toLowerCase()} preparing workspace...\n`,
-        agentId: this.agentId
+        engineId: this.engineId
       }, this.nextSequence()),
       this.createEventFactory("terminal.output", {
         sessionId,
         turnId,
         terminalId,
         chunk: `> ${this.responseFlavor.toLowerCase()} running tool step\n`,
-        agentId: this.agentId
+        engineId: this.engineId
       }, this.nextSequence())
     );
 
@@ -243,7 +243,7 @@ class DemoRuntimePort<TRequest, TResponse, TEvent>
           approvalKind: "command",
           title: `${this.responseFlavor} requests approval`,
           details: "Demo runtime paused for explicit approval flow.",
-          agentId: this.agentId
+          engineId: this.engineId
         }, this.nextSequence())
       );
       this.pendingApprovals.set(requestId, {
@@ -267,7 +267,7 @@ class DemoRuntimePort<TRequest, TResponse, TEvent>
         turnId: context.turnId,
         requestId: context.requestId,
         action,
-        agentId: this.agentId
+        engineId: this.engineId
       }, this.nextSequence())
     ];
 
@@ -280,20 +280,20 @@ class DemoRuntimePort<TRequest, TResponse, TEvent>
           toolCallId: context.toolCallId,
           status: "failed",
           outputSummary: "Approval denied by the user.",
-          agentId: this.agentId
+          engineId: this.engineId
         }, this.nextSequence()),
         this.createEventFactory("message.delta", {
           sessionId: context.sessionId,
           turnId: context.turnId,
           messageId: context.messageId,
           delta: "\nApproval was denied, so the action was cancelled.",
-          agentId: this.agentId
+          engineId: this.engineId
         }, this.nextSequence()),
         this.createEventFactory("message.completed", {
           sessionId: context.sessionId,
           turnId: context.turnId,
           messageId: context.messageId,
-          agentId: this.agentId
+          engineId: this.engineId
         }, this.nextSequence()),
         this.createEventFactory("turn.completed", {
           sessionId: context.sessionId,
@@ -326,14 +326,14 @@ class DemoRuntimePort<TRequest, TResponse, TEvent>
         turnId: context.turnId,
         terminalId: context.terminalId,
         chunk: "> command finished\n",
-        agentId: this.agentId
+        engineId: this.engineId
       }, this.nextSequence()),
       this.createEventFactory("terminal.completed", {
         sessionId: context.sessionId,
         turnId: context.turnId,
         terminalId: context.terminalId,
         exitCode: toolStatus === "completed" ? 0 : 130,
-        agentId: this.agentId
+        engineId: this.engineId
       }, this.nextSequence()),
       this.createEventFactory("tool.completed", {
         sessionId: context.sessionId,
@@ -344,20 +344,20 @@ class DemoRuntimePort<TRequest, TResponse, TEvent>
           toolStatus === "completed"
             ? "Completed with streamed terminal output."
             : "Cancelled after deferred approval.",
-        agentId: this.agentId
+        engineId: this.engineId
       }, this.nextSequence()),
       this.createEventFactory("message.delta", {
         sessionId: context.sessionId,
         turnId: context.turnId,
         messageId: context.messageId,
         delta: trailingMessage,
-        agentId: this.agentId
+        engineId: this.engineId
       }, this.nextSequence()),
       this.createEventFactory("message.completed", {
         sessionId: context.sessionId,
         turnId: context.turnId,
         messageId: context.messageId,
-        agentId: this.agentId
+        engineId: this.engineId
       }, this.nextSequence()),
       this.createEventFactory("turn.completed", {
         sessionId: context.sessionId,
@@ -374,14 +374,14 @@ class DemoRuntimePort<TRequest, TResponse, TEvent>
 }
 
 export const createCodexDemoRuntimePort = (
-  agentId = "codex"
+  engineId = "codex"
 ): AdapterRuntimePort<
   CodexRuntimeRequest,
   CodexRuntimeResponse,
   CodexRuntimeEvent
 > =>
   new DemoRuntimePort({
-    agentId,
+    engineId,
     kind: "codex",
     responseFlavor: "Codex",
     parseRequest: (request) => request,
@@ -401,14 +401,14 @@ export const createCodexDemoRuntimePort = (
   });
 
 export const createAcpDemoRuntimePort = (
-  agentId = "acp"
+  engineId = "acp"
 ): AdapterRuntimePort<
   AcpRuntimeRequest,
   AcpRuntimeResponse,
   AcpRuntimeEvent
 > =>
   new DemoRuntimePort({
-    agentId,
+    engineId,
     kind: "acp",
     responseFlavor: "ACP",
     parseRequest: (request) => ({

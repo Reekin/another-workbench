@@ -46,7 +46,7 @@ export class CodexDiagnosticsProvider implements DiagnosticsCapability {
 
     return {
       sessionId: input.sessionId,
-      agentId: input.agentId ?? "codex",
+      engineId: input.engineId ?? "codex",
       supported: Boolean(auth || thread),
       authenticated: Boolean(auth?.authMethod),
       authMethod: auth?.authMethod ?? undefined,

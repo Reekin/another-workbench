@@ -6,7 +6,7 @@ const buildSessionSnapshot = (sessionId = "session-1") => ({
     {
       conversationId: "conversation-1",
       workspaceId: "workspace-1",
-      participantAgentIds: ["codex"],
+      participantEngineIds: ["codex"],
       activeSessionId: sessionId,
       sessionIds: [sessionId],
       createdAt: "2026-04-19T00:00:00.000Z",
@@ -17,7 +17,7 @@ const buildSessionSnapshot = (sessionId = "session-1") => ({
     {
       sessionId,
       conversationId: "conversation-1",
-      agentId: "codex",
+      engineId: "codex",
       status: "idle",
       createdAt: "2026-04-19T00:00:00.000Z",
       updatedAt: "2026-04-19T00:00:00.000Z"
@@ -57,7 +57,7 @@ const buildSessionSnapshot = (sessionId = "session-1") => ({
     {
       participantId: "participant-codex",
       conversationId: "conversation-1",
-      agentId: "codex",
+      engineId: "codex",
       displayName: "Codex",
       activeSessionIds: [sessionId],
       joinedAt: "2026-04-19T00:00:00.000Z"
@@ -111,8 +111,8 @@ describe("WorkbenchShellService", () => {
       defaultNewSessionEngineId: "pi"
     });
     const updateSettings = vi.fn().mockResolvedValue(undefined);
-    const selectAgent = vi.fn().mockReturnValue({
-      selectedAgentId: "codex"
+    const selectEngine = vi.fn().mockReturnValue({
+      selectedEngineId: "codex"
     });
     const service = new WorkbenchShellService({
       runtimeService: {
@@ -121,7 +121,7 @@ describe("WorkbenchShellService", () => {
           getState,
           updateSettings
         }),
-        selectAgent
+        selectEngine
       } as never,
       sessionCatalog: {} as never,
       sessionActions: {} as never,
@@ -145,12 +145,12 @@ describe("WorkbenchShellService", () => {
     expect(updateSettings).toHaveBeenCalledWith({
       defaultNewSessionEngineId: "codex"
     });
-    expect(selectAgent).toHaveBeenCalledWith({
-      agentId: "codex"
+    expect(selectEngine).toHaveBeenCalledWith({
+      engineId: "codex"
     });
   });
 
-  it("reports steer capability from the active session agent and delegates skills listing", async () => {
+  it("reports composer capabilities from the injected engine surface and delegates skills listing", async () => {
     const listSkills = vi.fn().mockResolvedValue([
       {
         cwd: "I:/repo",
@@ -169,7 +169,7 @@ describe("WorkbenchShellService", () => {
             ? ({
                 sessionId,
                 conversationId: "conversation-1",
-                agentId: "codex",
+                engineId: "codex",
                 status: "running",
                 createdAt: "2026-04-19T00:00:00.000Z",
                 updatedAt: "2026-04-19T00:00:00.000Z"
@@ -179,6 +179,19 @@ describe("WorkbenchShellService", () => {
       sessionCatalog: {} as never,
       sessionActions: {} as never,
       chatTreeProvider: {} as never,
+      engineCapabilitySurface: {
+        get: (engineId: string) => ({
+          engineId,
+          sharedCapabilities: [
+            "chat",
+            "steer",
+            "attachments",
+            "checkpoint",
+            "diagnostics"
+          ],
+          extensions: []
+        })
+      } as never,
       skillsProvider: {
         listSkills
       }
@@ -186,7 +199,31 @@ describe("WorkbenchShellService", () => {
 
     await expect(service.getChatCapabilities("session-1")).resolves.toEqual({
       supportsSteer: true,
-      supportsAttachments: true
+      supportsAttachments: true,
+      slashSuggestions: [
+        {
+          id: "status",
+          label: "/status",
+          detail: "Summarize the current session state",
+          replacement:
+            "Summarize the current session status and the next best action."
+        },
+        {
+          id: "checkpoint",
+          label: "/checkpoint",
+          detail: "Ask for a checkpoint summary",
+          replacement:
+            "Summarize the available checkpoints and explain what changed since the latest one.",
+          sourceCapability: "checkpoint"
+        },
+        {
+          id: "diagnostics",
+          label: "/diagnostics",
+          detail: "Review diagnostics and suggest the next fix",
+          replacement: "Review the current diagnostics and propose the next fix.",
+          sourceCapability: "diagnostics"
+        }
+      ]
     });
     await expect(
       service.listSkills({
@@ -287,7 +324,7 @@ describe("WorkbenchShellService", () => {
     const ensureSessionLoaded = vi.fn().mockResolvedValue(true);
     const getChatTree = vi.fn().mockResolvedValue({
       sessionId: "session-1",
-      agentId: "codex",
+      engineId: "codex",
       supportsJump: true,
       currentNodeId: "node-2",
       nodes: [
@@ -410,7 +447,7 @@ describe("WorkbenchShellService", () => {
     const ensureSessionLoaded = vi.fn().mockResolvedValue(true);
     const getChatTree = vi.fn().mockResolvedValue({
       sessionId: "session-1",
-      agentId: "codex",
+      engineId: "codex",
       supportsJump: true,
       currentNodeId: "node-4",
       nodes: Array.from({ length: 10 }, (_value, index) => ({

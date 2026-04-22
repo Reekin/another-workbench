@@ -8,12 +8,12 @@ describe("CodexDelegationProvider", () => {
     await expect(
       provider.get({
         sessionId: "root-session",
-        agentId: "codex",
+        engineId: "codex",
         indexEntry: {
           sessionId: "root-session",
           workspaceId: "workspace-1",
           conversationId: "conversation-1",
-          agentId: "codex",
+          engineId: "codex",
           title: "Root session",
           createdAt: "2026-04-20T00:00:00.000Z",
           updatedAt: "2026-04-20T00:00:00.000Z",
@@ -24,7 +24,7 @@ describe("CodexDelegationProvider", () => {
             {
               sessionId: "root-session",
               conversationId: "conversation-1",
-              agentId: "codex",
+              engineId: "codex",
               status: "idle",
               title: "Root session",
               createdAt: "2026-04-20T00:00:00.000Z",
@@ -33,7 +33,7 @@ describe("CodexDelegationProvider", () => {
             {
               sessionId: "child-session",
               conversationId: "conversation-1",
-              agentId: "codex",
+              engineId: "codex",
               status: "running",
               title: "Child session",
               createdAt: "2026-04-20T00:01:00.000Z",
@@ -48,7 +48,7 @@ describe("CodexDelegationProvider", () => {
                   sessionId,
                   workspaceId: "workspace-1",
                   conversationId: "conversation-1",
-                  agentId: "codex",
+                  engineId: "codex",
                   title: "Child session",
                   summaryText: "Investigating tools",
                   createdAt: "2026-04-20T00:01:00.000Z",
@@ -59,7 +59,7 @@ describe("CodexDelegationProvider", () => {
                   sessionId,
                   workspaceId: "workspace-1",
                   conversationId: "conversation-1",
-                  agentId: "codex",
+                  engineId: "codex",
                   title: "Root session",
                   createdAt: "2026-04-20T00:00:00.000Z",
                   updatedAt: "2026-04-20T00:00:00.000Z",
@@ -81,7 +81,7 @@ describe("CodexDelegationProvider", () => {
       })
     ).resolves.toEqual({
       sessionId: "root-session",
-      agentId: "codex",
+      engineId: "codex",
       supported: true,
       supportsControl: false,
       currentActiveNodeId: "child-session",

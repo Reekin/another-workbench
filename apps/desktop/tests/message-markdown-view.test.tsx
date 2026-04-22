@@ -7,7 +7,7 @@ const participantDirectory = buildParticipantDirectory([
   {
     participantId: "participant-1",
     conversationId: "conv-1",
-    agentId: "agent-codex",
+    engineId: "agent-codex",
     role: "primary",
     capabilities: ["chat"],
     activeSessionIds: ["session-1"]
@@ -29,7 +29,7 @@ describe("MessageMarkdownView", () => {
           text: "# Heading\n\n- item",
           actor: {
             participantId: "participant-1",
-            agentId: "agent-codex"
+            engineId: "agent-codex"
           },
           startedAt: "2026-04-17T00:00:00.000Z"
         }}
@@ -55,7 +55,7 @@ describe("MessageMarkdownView", () => {
           text: "safe<script>alert('xss')</script>",
           actor: {
             participantId: "participant-1",
-            agentId: "agent-codex"
+            engineId: "agent-codex"
           },
           startedAt: "2026-04-17T00:00:00.000Z"
         }}
@@ -80,7 +80,7 @@ describe("MessageMarkdownView", () => {
           text: "![image](file:///C:/Users/TestUser/Pictures/cat.png)",
           actor: {
             participantId: "participant-1",
-            agentId: "agent-codex"
+            engineId: "agent-codex"
           },
           startedAt: "2026-04-17T00:00:00.000Z"
         }}
@@ -106,7 +106,7 @@ describe("MessageMarkdownView", () => {
           text: "[Spec](file:///C:/repo/docs/spec.md)",
           actor: {
             participantId: "participant-1",
-            agentId: "agent-codex"
+            engineId: "agent-codex"
           },
           startedAt: "2026-04-17T00:00:00.000Z"
         }}
@@ -132,7 +132,7 @@ describe("MessageMarkdownView", () => {
           text: "![Diagram](file:///C:/repo/assets/diagram.png)",
           actor: {
             participantId: "participant-1",
-            agentId: "agent-codex"
+            engineId: "agent-codex"
           },
           startedAt: "2026-04-17T00:00:00.000Z"
         }}
@@ -158,7 +158,7 @@ describe("MessageMarkdownView", () => {
           text: "![image](data:image/png;base64,AAAA)",
           actor: {
             participantId: "participant-1",
-            agentId: "agent-codex"
+            engineId: "agent-codex"
           },
           startedAt: "2026-04-17T00:00:00.000Z"
         }}

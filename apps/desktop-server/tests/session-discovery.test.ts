@@ -223,9 +223,9 @@ describe("Session discovery and reconciliation", () => {
     });
 
     const runtimeService = new WorkbenchRuntimeService({
-      agents: [
+      engines: [
         {
-          agentId: "codex",
+          engineId: "codex",
           displayName: "Codex",
           capabilities: ["chat"]
         }
@@ -353,9 +353,9 @@ describe("Session discovery and reconciliation", () => {
       baseDir
     });
     const runtimeService = new WorkbenchRuntimeService({
-      agents: [
+      engines: [
         {
-          agentId: "codex",
+          engineId: "codex",
           displayName: "Codex",
           capabilities: ["chat"]
         }
@@ -372,7 +372,7 @@ describe("Session discovery and reconciliation", () => {
       session: {
         sessionId: "session-root-local",
         conversationId: "conversation-1",
-        agentId: "codex",
+        engineId: "codex",
         title: "Local Root",
         createdAt: "2026-04-18T00:00:01Z",
         updatedAt: "2026-04-18T00:00:02Z"
@@ -478,7 +478,7 @@ describe("Session discovery and reconciliation", () => {
       workspaceId: "workspace-1",
       sessionId: "codex-thread:thread-a",
       conversationId: "conversation-a",
-      agentId: "codex",
+      engineId: "codex",
       providerKind: "codex-thread",
       providerSessionId: "thread-a",
       createdAt: "2026-04-19T00:00:00.000Z",
@@ -488,7 +488,7 @@ describe("Session discovery and reconciliation", () => {
       workspaceId: "workspace-1",
       sessionId: "codex-thread:thread-b",
       conversationId: "conversation-b",
-      agentId: "codex",
+      engineId: "codex",
       providerKind: "codex-thread",
       providerSessionId: "thread-b",
       createdAt: "2026-04-19T00:00:00.000Z",
@@ -571,7 +571,7 @@ describe("Session discovery and reconciliation", () => {
       workspaceId: "workspace-1",
       sessionId: "codex-thread:thread-images",
       conversationId: "conversation-images",
-      agentId: "codex",
+      engineId: "codex",
       providerKind: "codex-thread",
       providerSessionId: "thread-images",
       createdAt: "2026-04-19T00:00:00.000Z",
@@ -607,7 +607,7 @@ describe("Session discovery and reconciliation", () => {
       session: {
         sessionId: "codex-thread:thread-stale",
         conversationId: "conversation-stale",
-        agentId: "codex",
+        engineId: "codex",
         createdAt: "2026-04-18T00:00:01Z",
         updatedAt: "2026-04-18T00:00:01Z"
       },
@@ -625,9 +625,9 @@ describe("Session discovery and reconciliation", () => {
       } as never
     });
     const runtimeService = new WorkbenchRuntimeService({
-      agents: [
+      engines: [
         {
-          agentId: "codex",
+          engineId: "codex",
           displayName: "Codex",
           capabilities: ["chat"]
         }

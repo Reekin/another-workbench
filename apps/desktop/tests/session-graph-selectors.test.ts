@@ -14,7 +14,7 @@ describe("session graph selectors", () => {
         conversations: [
           {
             conversationId: "conv-1",
-            participantAgentIds: ["agent-1"],
+            participantEngineIds: ["agent-1"],
             activeSessionId: "session-child",
             sessionIds: ["session-root", "session-child"],
             createdAt: "2026-04-18T00:00:00.000Z",
@@ -25,7 +25,7 @@ describe("session graph selectors", () => {
           {
             sessionId: "session-root",
             conversationId: "conv-1",
-            agentId: "agent-1",
+            engineId: "agent-1",
             status: "completed",
             createdAt: "2026-04-18T00:00:00.000Z",
             updatedAt: "2026-04-18T00:00:00.000Z"
@@ -33,7 +33,7 @@ describe("session graph selectors", () => {
           {
             sessionId: "session-child",
             conversationId: "conv-1",
-            agentId: "agent-1",
+            engineId: "agent-1",
             status: "running",
             createdAt: "2026-04-18T00:05:00.000Z",
             updatedAt: "2026-04-18T00:05:00.000Z"

@@ -42,7 +42,7 @@ describe("ChatShellApp inline process output", () => {
         conversations: [
           {
             conversationId: "conversation-1",
-            participantAgentIds: ["agent-codex"],
+            participantEngineIds: ["agent-codex"],
             activeSessionId: "session-1",
             sessionIds: ["session-1"],
             createdAt: "2026-04-18T00:00:00.000Z",
@@ -53,7 +53,7 @@ describe("ChatShellApp inline process output", () => {
           {
             sessionId: "session-1",
             conversationId: "conversation-1",
-            agentId: "agent-codex",
+            engineId: "agent-codex",
             status: "running",
             createdAt: "2026-04-18T00:00:00.000Z",
             updatedAt: "2026-04-18T00:00:00.000Z"

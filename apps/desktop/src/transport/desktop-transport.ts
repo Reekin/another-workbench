@@ -1,5 +1,4 @@
 import type {
-  AgentDescriptor,
   Attachment,
   BackgroundRunSnapshotRpc,
   CheckpointSnapshotRpc,
@@ -47,8 +46,8 @@ export type CommandReceipt = {
   accepted: boolean;
 };
 
-export type AgentSelectInput = {
-  agentId: string;
+export type EngineSelectInput = {
+  engineId: string;
   config?: Record<string, unknown>;
 };
 
@@ -163,10 +162,7 @@ export type DesktopTransport = {
   engine: {
     list: () => Promise<EngineDefinitionRpc[]>;
     getSurface: (engineId: string) => Promise<EngineSurfaceRpc>;
-  };
-  agent: {
-    list: () => Promise<AgentDescriptor[]>;
-    select: (input: AgentSelectInput) => Promise<{ selectedAgentId: string }>;
+    select: (input: EngineSelectInput) => Promise<{ selectedEngineId: string }>;
   };
   settings: {
     get: () => Promise<WorkbenchSettingsRpc>;
@@ -336,11 +332,6 @@ export const createDesktopTransport = (
     (input) => new DesktopTransportError(input)
   );
 
-  const requestAgentList = async (): Promise<AgentDescriptor[]> => {
-    const result = await rpc.request("agent.list", {});
-    return result.agents;
-  };
-
   const requestEngineList = async (): Promise<EngineDefinitionRpc[]> => {
     const result = await rpc.request("engine.list", {});
     return result.engines;
@@ -355,11 +346,11 @@ export const createDesktopTransport = (
     return result.surface;
   };
 
-  const requestAgentSelect = async (
-    input: AgentSelectInput
-  ): Promise<{ selectedAgentId: string }> => {
-    return rpc.request("agent.select", {
-      agentId: input.agentId,
+  const requestEngineSelect = async (
+    input: EngineSelectInput
+  ): Promise<{ selectedEngineId: string }> => {
+    return rpc.request("engine.select", {
+      engineId: input.engineId,
       config: input.config
     });
   };
@@ -512,11 +503,8 @@ export const createDesktopTransport = (
   return {
     engine: {
       list: requestEngineList,
-      getSurface: requestEngineSurface
-    },
-    agent: {
-      list: requestAgentList,
-      select: requestAgentSelect
+      getSurface: requestEngineSurface,
+      select: requestEngineSelect
     },
     settings: {
       get: requestSettingsGet,

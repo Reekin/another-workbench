@@ -36,13 +36,13 @@ describe("CodexChatTreeAgentProvider", () => {
     await expect(
       provider.get({
         sessionId: "session-codex",
-        agentId: "codex",
+        engineId: "codex",
         runtimeService: {} as never,
         sessionIndexStore: {} as never
       })
     ).resolves.toEqual({
       sessionId: "session-codex",
-      agentId: "codex",
+      engineId: "codex",
       supportsJump: true,
       currentNodeId: "node-2",
       nodes: [
@@ -79,13 +79,13 @@ describe("CodexChatTreeAgentProvider", () => {
     await expect(
       provider.get({
         sessionId: "session-codex",
-        agentId: "codex",
+        engineId: "codex",
         runtimeService: {} as never,
         sessionIndexStore: {} as never
       })
     ).resolves.toEqual({
       sessionId: "session-codex",
-      agentId: "codex",
+      engineId: "codex",
       supportsJump: false,
       nodes: [],
       fetchedAt: "2026-04-18T00:10:02Z"
@@ -109,7 +109,7 @@ describe("CodexChatTreeAgentProvider", () => {
       provider.jump(
         {
           sessionId: "session-codex",
-          agentId: "codex",
+          engineId: "codex",
           runtimeService: {} as never,
           sessionIndexStore: {} as never
         },
@@ -121,7 +121,7 @@ describe("CodexChatTreeAgentProvider", () => {
       provider.jump(
         {
           sessionId: "session-codex",
-          agentId: "codex",
+          engineId: "codex",
           runtimeService: {} as never,
           sessionIndexStore: {} as never,
           indexEntry: {

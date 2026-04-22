@@ -30,9 +30,9 @@ const createService = () =>
       let index = 0;
       return () => `event-${++index}`;
     })(),
-    agents: [
+    engines: [
       {
-        agentId: "codex",
+        engineId: "codex",
         displayName: "Codex",
         capabilities: ["chat"]
       }

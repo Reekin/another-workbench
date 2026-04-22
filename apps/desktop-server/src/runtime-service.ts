@@ -1,6 +1,5 @@
 import { RuntimeEventBus, type RuntimeEventEnvelope, type RuntimeEventFilter, type RuntimeEventReplayInput } from "@another-workbench/core";
 import type {
-  AgentDescriptor,
   ChatSession,
   Command,
   CommandEnvelope,
@@ -17,10 +16,11 @@ import { DomainService } from "./domain-service.js";
 import { RuntimeOrchestrator } from "./runtime-orchestrator.js";
 import { SessionIndexSyncService } from "./session-index-sync-service.js";
 import type {
-  AgentSelectionInput,
+  EngineSelectionInput,
   CommandReceipt,
   SnapshotResult,
   WorkbenchAgentBinding,
+  WorkbenchEngineDescriptor,
   WorkbenchSessionListOptions
 } from "./runtime-types.js";
 import { WorkspaceSelectionService } from "./workspace-selection-service.js";
@@ -30,15 +30,16 @@ type Clock = () => string;
 type IdFactory = () => string;
 
 export type {
-  AgentSelectionInput,
+  EngineSelectionInput,
   CommandReceipt,
   SnapshotResult,
   WorkbenchAgentBinding,
+  WorkbenchEngineDescriptor,
   WorkbenchSessionListOptions
 } from "./runtime-types.js";
 
 export type WorkbenchRuntimeServiceOptions = {
-  agents?: AgentDescriptor[];
+  engines?: WorkbenchEngineDescriptor[];
   agentBindings?: WorkbenchAgentBinding[];
   workspaceRegistry?: WorkspaceRegistryService;
   sessionIndexStore?: SessionIndexStore;
@@ -63,8 +64,10 @@ export class WorkbenchRuntimeService {
       now: options.now,
       createRelationId: options.createRelationId,
       createSessionId: options.createSessionId,
-      resolveAgentDescriptor: (agentId) =>
-        this.runtimeOrchestrator?.getAgentDescriptor(agentId),
+      assertEngineRegistered: (engineId) =>
+        this.runtimeOrchestrator?.assertEngineRegistered(engineId),
+      resolveEngineCapabilities: (engineId) =>
+        this.runtimeOrchestrator?.getEngineCapabilities(engineId) ?? [],
       publishRuntimeEvent: (event) => {
         this.eventBus.publish(event);
       },
@@ -93,31 +96,27 @@ export class WorkbenchRuntimeService {
       publishRuntimeEvent: (event) => {
         this.eventBus.publish(event);
       },
-      agents: options.agents,
+      engines: options.engines,
       agentBindings: options.agentBindings,
       now: options.now,
       createConversationId: options.createConversationId
     });
   }
 
-  public registerAgent(agent: AgentDescriptor): void {
-    this.runtimeOrchestrator.registerAgent(agent);
+  public registerEngine(engine: WorkbenchEngineDescriptor): void {
+    this.runtimeOrchestrator.registerEngine(engine);
   }
 
   public registerAgentBinding(binding: WorkbenchAgentBinding): void {
     this.runtimeOrchestrator.registerAgentBinding(binding);
   }
 
-  public listAgents(): AgentDescriptor[] {
-    return this.runtimeOrchestrator.listAgents();
+  public selectEngine(input: EngineSelectionInput): { selectedEngineId: string } {
+    return this.runtimeOrchestrator.selectEngine(input);
   }
 
-  public selectAgent(input: AgentSelectionInput): { selectedAgentId: string } {
-    return this.runtimeOrchestrator.selectAgent(input);
-  }
-
-  public getSelectedAgentId(): string | undefined {
-    return this.runtimeOrchestrator.getSelectedAgentId();
+  public getSelectedEngineId(): string | undefined {
+    return this.runtimeOrchestrator.getSelectedEngineId();
   }
 
   public getWorkspaceRegistry(): WorkspaceRegistryService | undefined {

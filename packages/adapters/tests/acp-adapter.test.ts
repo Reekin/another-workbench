@@ -97,7 +97,7 @@ describe("AcpAdapter", () => {
     await adapter.initialize();
     adapter.subscribe((envelope) => {
       if (envelope.event.type === "tool.started") {
-        received.push(envelope.event.agentId ?? "none");
+        received.push(envelope.event.engineId ?? "none");
       }
     });
 

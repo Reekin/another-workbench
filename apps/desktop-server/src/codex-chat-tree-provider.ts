@@ -14,7 +14,7 @@ const resolveThreadId = (
   input.indexEntry?.providerSessionId;
 
 export class CodexChatTreeAgentProvider implements ChatTreeAgentProvider {
-  public readonly agentId = "codex";
+  public readonly engineId = "codex";
 
   private readonly codexRuntimePort: CodexAppServerRuntimePort;
   private readonly now: () => string;
@@ -35,7 +35,7 @@ export class CodexChatTreeAgentProvider implements ChatTreeAgentProvider {
     if (!chatTree) {
       return {
         sessionId: input.sessionId,
-        agentId: this.agentId,
+        engineId: this.engineId,
         supportsJump: false,
         nodes: [],
         fetchedAt: this.now()
@@ -44,7 +44,7 @@ export class CodexChatTreeAgentProvider implements ChatTreeAgentProvider {
 
     return {
       sessionId: input.sessionId,
-      agentId: this.agentId,
+      engineId: this.engineId,
       supportsJump: true,
       currentNodeId: chatTree.chatTree.currentNodeId ?? undefined,
       nodes: chatTree.chatTree.nodes.map((node) => ({

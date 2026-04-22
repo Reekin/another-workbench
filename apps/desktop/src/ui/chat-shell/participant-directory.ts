@@ -6,23 +6,23 @@ import type {
 export type ActorRefLike =
   | {
       participantId?: string;
-      agentId?: string;
+      engineId?: string;
     }
   | undefined;
 
 export type ParticipantIdentity = {
   label: string;
   detail: string;
-  kind: "participant" | "agent" | "role" | "unknown";
+  kind: "participant" | "engine" | "role" | "unknown";
   participantId?: string;
-  agentId?: string;
+  engineId?: string;
   role?: ParticipantRole;
   capabilities: string[];
 };
 
 export type ParticipantDirectory = {
   byParticipantId: Record<string, AgentParticipant>;
-  byAgentId: Record<string, AgentParticipant[]>;
+  byEngineId: Record<string, AgentParticipant[]>;
 };
 
 const unique = (items: readonly string[]): string[] => [...new Set(items)];
@@ -37,17 +37,17 @@ export const buildParticipantDirectory = (
   participants: AgentParticipant[]
 ): ParticipantDirectory => {
   const byParticipantId: Record<string, AgentParticipant> = {};
-  const byAgentId: Record<string, AgentParticipant[]> = {};
+  const byEngineId: Record<string, AgentParticipant[]> = {};
 
   for (const participant of participants) {
     byParticipantId[participant.participantId] = participant;
-    const existing = byAgentId[participant.agentId] ?? [];
-    byAgentId[participant.agentId] = [...existing, participant];
+    const existing = byEngineId[participant.engineId] ?? [];
+    byEngineId[participant.engineId] = [...existing, participant];
   }
 
   return {
     byParticipantId,
-    byAgentId
+    byEngineId
   };
 };
 
@@ -60,43 +60,43 @@ export const resolveParticipantIdentity = (
     const participant = directory.byParticipantId[actor.participantId];
     if (participant) {
       return {
-        label: participant.agentId,
+        label: participant.engineId,
         detail: formatRoleDetail(
           participant.role,
           formatCapabilities(unique(participant.capabilities))
         ),
         kind: "participant",
         participantId: participant.participantId,
-        agentId: participant.agentId,
+        engineId: participant.engineId,
         role: participant.role,
         capabilities: unique(participant.capabilities)
       };
     }
   }
 
-  if (actor?.agentId) {
-    const candidates = directory.byAgentId[actor.agentId] ?? [];
+  if (actor?.engineId) {
+    const candidates = directory.byEngineId[actor.engineId] ?? [];
     const participant = candidates[0];
     if (participant) {
       return {
-        label: participant.agentId,
+        label: participant.engineId,
         detail: formatRoleDetail(
           participant.role,
           formatCapabilities(unique(participant.capabilities))
         ),
         kind: "participant",
         participantId: participant.participantId,
-        agentId: participant.agentId,
+        engineId: participant.engineId,
         role: participant.role,
         capabilities: unique(participant.capabilities)
       };
     }
 
     return {
-      label: actor.agentId,
-      detail: "agent identity only",
-      kind: "agent",
-      agentId: actor.agentId,
+      label: actor.engineId,
+      detail: "engine identity only",
+      kind: "engine",
+      engineId: actor.engineId,
       capabilities: []
     };
   }
@@ -121,14 +121,14 @@ export const resolveParticipantIdentity = (
 export const summarizeParticipant = (
   participant: AgentParticipant
 ): ParticipantIdentity => ({
-  label: participant.agentId,
+  label: participant.engineId,
   detail: formatRoleDetail(
     participant.role,
     formatCapabilities(unique(participant.capabilities))
   ),
   kind: "participant",
   participantId: participant.participantId,
-  agentId: participant.agentId,
+  engineId: participant.engineId,
   role: participant.role,
   capabilities: unique(participant.capabilities)
 });

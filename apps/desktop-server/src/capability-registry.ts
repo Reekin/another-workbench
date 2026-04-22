@@ -44,7 +44,7 @@ export type ConversationGraphNodeSnapshot = {
 
 export type ConversationGraphSnapshot = {
   sessionId: string;
-  agentId: string;
+  engineId: string;
   supportsJump: boolean;
   currentNodeId?: string;
   nodes: ConversationGraphNodeSnapshot[];
@@ -73,7 +73,7 @@ export type DelegationEdgeSnapshot = {
 
 export type DelegationSnapshot = {
   sessionId: string;
-  agentId: string;
+  engineId: string;
   supported: boolean;
   supportsControl: boolean;
   currentActiveNodeId?: string;
@@ -84,7 +84,7 @@ export type DelegationSnapshot = {
 
 export type WorktreeSnapshot = {
   sessionId: string;
-  agentId: string;
+  engineId: string;
   supported: boolean;
   workspaceRoot?: string;
   rolloutPath?: string;
@@ -108,7 +108,7 @@ export type CheckpointEntrySnapshot = {
 
 export type CheckpointSnapshot = {
   sessionId: string;
-  agentId: string;
+  engineId: string;
   supported: boolean;
   supportsRestore: boolean;
   currentCheckpointId?: string;
@@ -118,7 +118,7 @@ export type CheckpointSnapshot = {
 
 export type DiagnosticsSnapshot = {
   sessionId: string;
-  agentId: string;
+  engineId: string;
   supported: boolean;
   authenticated: boolean;
   authMethod?: string | null;
@@ -133,7 +133,7 @@ export type DiagnosticsSnapshot = {
 
 export type BackgroundRunSnapshot = {
   sessionId: string;
-  agentId: string;
+  engineId: string;
   supported: boolean;
   status: "unsupported" | "attached" | "detached";
   resumeToken?: string;
@@ -186,7 +186,7 @@ export type BackgroundRunCapability = {
 };
 
 export type AgentWorkbenchCapabilities = {
-  readonly agentId: string;
+  readonly engineId: string;
   readonly sessionActions?: SessionActionsCapability;
   readonly conversationGraph?: ConversationGraphCapability;
   readonly delegation?: DelegationCapability;
@@ -207,11 +207,11 @@ type CapabilityRegistryOptions = {
 
 const unsupportedConversationGraph = (
   sessionId: string,
-  agentId: string,
+  engineId: string,
   fetchedAt: string
 ): ConversationGraphSnapshot => ({
   sessionId,
-  agentId,
+  engineId,
   supportsJump: false,
   nodes: [],
   fetchedAt
@@ -219,11 +219,11 @@ const unsupportedConversationGraph = (
 
 const unsupportedDelegation = (
   sessionId: string,
-  agentId: string,
+  engineId: string,
   fetchedAt: string
 ): DelegationSnapshot => ({
   sessionId,
-  agentId,
+  engineId,
   supported: false,
   supportsControl: false,
   nodes: [],
@@ -233,22 +233,22 @@ const unsupportedDelegation = (
 
 const unsupportedWorktree = (
   sessionId: string,
-  agentId: string,
+  engineId: string,
   fetchedAt: string
 ): WorktreeSnapshot => ({
   sessionId,
-  agentId,
+  engineId,
   supported: false,
   fetchedAt
 });
 
 const unsupportedCheckpoint = (
   sessionId: string,
-  agentId: string,
+  engineId: string,
   fetchedAt: string
 ): CheckpointSnapshot => ({
   sessionId,
-  agentId,
+  engineId,
   supported: false,
   supportsRestore: false,
   checkpoints: [],
@@ -257,11 +257,11 @@ const unsupportedCheckpoint = (
 
 const unsupportedDiagnostics = (
   sessionId: string,
-  agentId: string,
+  engineId: string,
   fetchedAt: string
 ): DiagnosticsSnapshot => ({
   sessionId,
-  agentId,
+  engineId,
   supported: false,
   authenticated: false,
   fetchedAt
@@ -269,11 +269,11 @@ const unsupportedDiagnostics = (
 
 const unsupportedBackgroundRun = (
   sessionId: string,
-  agentId: string,
+  engineId: string,
   fetchedAt: string
 ): BackgroundRunSnapshot => ({
   sessionId,
-  agentId,
+  engineId,
   supported: false,
   status: "unsupported",
   fetchedAt
@@ -283,15 +283,15 @@ export class CapabilityRegistry {
   private readonly runtimeService: WorkbenchRuntimeService;
   private readonly sessionIndexStore: SessionIndexStore;
   private readonly sessionIdentity: SessionIdentityRegistry;
-  private readonly capabilitiesByAgentId: Map<string, AgentWorkbenchCapabilities>;
+  private readonly capabilitiesByEngineId: Map<string, AgentWorkbenchCapabilities>;
   private readonly now: () => string;
 
   public constructor(options: CapabilityRegistryOptions) {
     this.runtimeService = options.runtimeService;
     this.sessionIndexStore = options.sessionIndexStore;
     this.sessionIdentity = options.sessionIdentity;
-    this.capabilitiesByAgentId = new Map(
-      (options.capabilities ?? []).map((entry) => [entry.agentId, entry] as const)
+    this.capabilitiesByEngineId = new Map(
+      (options.capabilities ?? []).map((entry) => [entry.engineId, entry] as const)
     );
     this.now = options.now ?? (() => new Date().toISOString());
   }
@@ -305,20 +305,20 @@ export class CapabilityRegistry {
     };
   }
 
-  public getAgentCapabilities(
-    agentId: string | undefined
+  public getEngineCapabilities(
+    engineId: string | undefined
   ): AgentWorkbenchCapabilities | undefined {
-    return agentId ? this.capabilitiesByAgentId.get(agentId) : undefined;
+    return engineId ? this.capabilitiesByEngineId.get(engineId) : undefined;
   }
 
   public getSessionDiscoveryProvider(
-    agentId: string | undefined
+    engineId: string | undefined
   ): SessionDiscoveryProvider | undefined {
-    return this.getAgentCapabilities(agentId)?.sessionDiscovery;
+    return this.getEngineCapabilities(engineId)?.sessionDiscovery;
   }
 
   public listSessionDiscoveryProviders(): SessionDiscoveryProvider[] {
-    return [...this.capabilitiesByAgentId.values()]
+    return [...this.capabilitiesByEngineId.values()]
       .map((entry) => entry.sessionDiscovery)
       .filter((entry): entry is SessionDiscoveryProvider => Boolean(entry));
   }
@@ -352,7 +352,7 @@ export class CapabilityRegistry {
       label: "Reload"
     });
 
-    const provider = this.getAgentCapabilities(context.agentId)?.sessionActions;
+    const provider = this.getEngineCapabilities(context.engineId)?.sessionActions;
     if (provider?.listAdditionalActions) {
       actions.push(...(await provider.listAdditionalActions(context)));
     }
@@ -370,7 +370,7 @@ export class CapabilityRegistry {
       throw new Error(`Unknown session: ${sessionId}`);
     }
 
-    const provider = this.getAgentCapabilities(context.agentId)?.sessionActions;
+    const provider = this.getEngineCapabilities(context.engineId)?.sessionActions;
     switch (action) {
       case "copy_session_id":
         return {
@@ -436,7 +436,7 @@ export class CapabilityRegistry {
           return result;
         }
         throw new Error(
-          `Open rollout is not supported for ${context.agentId ?? "unknown"} sessions.`
+          `Open rollout is not supported for ${context.engineId ?? "unknown"} sessions.`
         );
       }
       default: {
@@ -450,12 +450,12 @@ export class CapabilityRegistry {
     sessionId: string
   ): Promise<ConversationGraphSnapshot> {
     const context = this.resolveContext(sessionId);
-    if (!context.agentId) {
+    if (!context.engineId) {
       throw new Error(`Unknown session: ${sessionId}`);
     }
-    const capability = this.getAgentCapabilities(context.agentId)?.conversationGraph;
+    const capability = this.getEngineCapabilities(context.engineId)?.conversationGraph;
     if (!capability) {
-      return unsupportedConversationGraph(sessionId, context.agentId, this.now());
+      return unsupportedConversationGraph(sessionId, context.engineId, this.now());
     }
     return capability.get(context);
   }
@@ -465,10 +465,10 @@ export class CapabilityRegistry {
     nodeId: string
   ): Promise<{ jumped: boolean }> {
     const context = this.resolveContext(sessionId);
-    if (!context.agentId) {
+    if (!context.engineId) {
       throw new Error(`Unknown session: ${sessionId}`);
     }
-    const capability = this.getAgentCapabilities(context.agentId)?.conversationGraph;
+    const capability = this.getEngineCapabilities(context.engineId)?.conversationGraph;
     if (!capability?.jump) {
       return {
         jumped: false
@@ -481,60 +481,60 @@ export class CapabilityRegistry {
 
   public async getDelegation(sessionId: string): Promise<DelegationSnapshot> {
     const context = this.resolveContext(sessionId);
-    if (!context.agentId) {
+    if (!context.engineId) {
       throw new Error(`Unknown session: ${sessionId}`);
     }
-    const capability = this.getAgentCapabilities(context.agentId)?.delegation;
+    const capability = this.getEngineCapabilities(context.engineId)?.delegation;
     if (!capability) {
-      return unsupportedDelegation(sessionId, context.agentId, this.now());
+      return unsupportedDelegation(sessionId, context.engineId, this.now());
     }
     return capability.get(context);
   }
 
   public async getWorktree(sessionId: string): Promise<WorktreeSnapshot> {
     const context = this.resolveContext(sessionId);
-    if (!context.agentId) {
+    if (!context.engineId) {
       throw new Error(`Unknown session: ${sessionId}`);
     }
-    const capability = this.getAgentCapabilities(context.agentId)?.worktree;
+    const capability = this.getEngineCapabilities(context.engineId)?.worktree;
     if (!capability) {
-      return unsupportedWorktree(sessionId, context.agentId, this.now());
+      return unsupportedWorktree(sessionId, context.engineId, this.now());
     }
     return capability.get(context);
   }
 
   public async getCheckpoint(sessionId: string): Promise<CheckpointSnapshot> {
     const context = this.resolveContext(sessionId);
-    if (!context.agentId) {
+    if (!context.engineId) {
       throw new Error(`Unknown session: ${sessionId}`);
     }
-    const capability = this.getAgentCapabilities(context.agentId)?.checkpoint;
+    const capability = this.getEngineCapabilities(context.engineId)?.checkpoint;
     if (!capability) {
-      return unsupportedCheckpoint(sessionId, context.agentId, this.now());
+      return unsupportedCheckpoint(sessionId, context.engineId, this.now());
     }
     return capability.get(context);
   }
 
   public async getDiagnostics(sessionId: string): Promise<DiagnosticsSnapshot> {
     const context = this.resolveContext(sessionId);
-    if (!context.agentId) {
+    if (!context.engineId) {
       throw new Error(`Unknown session: ${sessionId}`);
     }
-    const capability = this.getAgentCapabilities(context.agentId)?.diagnostics;
+    const capability = this.getEngineCapabilities(context.engineId)?.diagnostics;
     if (!capability) {
-      return unsupportedDiagnostics(sessionId, context.agentId, this.now());
+      return unsupportedDiagnostics(sessionId, context.engineId, this.now());
     }
     return capability.get(context);
   }
 
   public async getBackgroundRun(sessionId: string): Promise<BackgroundRunSnapshot> {
     const context = this.resolveContext(sessionId);
-    if (!context.agentId) {
+    if (!context.engineId) {
       throw new Error(`Unknown session: ${sessionId}`);
     }
-    const capability = this.getAgentCapabilities(context.agentId)?.backgroundRun;
+    const capability = this.getEngineCapabilities(context.engineId)?.backgroundRun;
     if (!capability) {
-      return unsupportedBackgroundRun(sessionId, context.agentId, this.now());
+      return unsupportedBackgroundRun(sessionId, context.engineId, this.now());
     }
     return capability.get(context);
   }

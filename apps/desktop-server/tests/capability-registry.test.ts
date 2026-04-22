@@ -9,7 +9,7 @@ const createRuntimeService = () =>
       {
         sessionId: "session-codex",
         conversationId: "conversation-1",
-        agentId: "codex",
+        engineId: "codex",
         status: "idle",
         title: "Codex session",
         createdAt: "2026-04-20T00:00:00.000Z",
@@ -18,7 +18,7 @@ const createRuntimeService = () =>
       {
         sessionId: "session-pi",
         conversationId: "conversation-2",
-        agentId: "pi-acp",
+        engineId: "pi-acp",
         status: "idle",
         title: "Pi session",
         createdAt: "2026-04-20T00:00:00.000Z",
@@ -48,7 +48,7 @@ describe("CapabilityRegistry", () => {
         sessionId,
         workspaceId: "workspace-1",
         conversationId: `conversation-for-${sessionId}`,
-        agentId: sessionId === "session-pi" ? "pi-acp" : "codex",
+        engineId: sessionId === "session-pi" ? "pi-acp" : "codex",
         createdAt: "2026-04-20T00:00:00.000Z",
         updatedAt: "2026-04-20T00:00:00.000Z",
         source: "registry"
@@ -65,10 +65,10 @@ describe("CapabilityRegistry", () => {
       sessionIdentity,
       capabilities: [
         {
-          agentId: "codex"
+          engineId: "codex"
         },
         {
-          agentId: "pi-acp"
+          engineId: "pi-acp"
         }
       ],
       now: () => "2026-04-20T00:10:00.000Z"
@@ -76,14 +76,14 @@ describe("CapabilityRegistry", () => {
 
     await expect(registry.getConversationGraph("session-pi")).resolves.toEqual({
       sessionId: "session-pi",
-      agentId: "pi-acp",
+      engineId: "pi-acp",
       supportsJump: false,
       nodes: [],
       fetchedAt: "2026-04-20T00:10:00.000Z"
     });
     await expect(registry.getDelegation("session-pi")).resolves.toEqual({
       sessionId: "session-pi",
-      agentId: "pi-acp",
+      engineId: "pi-acp",
       supported: false,
       supportsControl: false,
       nodes: [],
@@ -92,13 +92,13 @@ describe("CapabilityRegistry", () => {
     });
     await expect(registry.getWorktree("session-pi")).resolves.toEqual({
       sessionId: "session-pi",
-      agentId: "pi-acp",
+      engineId: "pi-acp",
       supported: false,
       fetchedAt: "2026-04-20T00:10:00.000Z"
     });
     await expect(registry.getCheckpoint("session-pi")).resolves.toEqual({
       sessionId: "session-pi",
-      agentId: "pi-acp",
+      engineId: "pi-acp",
       supported: false,
       supportsRestore: false,
       checkpoints: [],
@@ -106,14 +106,14 @@ describe("CapabilityRegistry", () => {
     });
     await expect(registry.getDiagnostics("session-pi")).resolves.toEqual({
       sessionId: "session-pi",
-      agentId: "pi-acp",
+      engineId: "pi-acp",
       supported: false,
       authenticated: false,
       fetchedAt: "2026-04-20T00:10:00.000Z"
     });
     await expect(registry.getBackgroundRun("session-pi")).resolves.toEqual({
       sessionId: "session-pi",
-      agentId: "pi-acp",
+      engineId: "pi-acp",
       supported: false,
       status: "unsupported",
       fetchedAt: "2026-04-20T00:10:00.000Z"
@@ -127,7 +127,7 @@ describe("CapabilityRegistry", () => {
         sessionId,
         workspaceId: "workspace-1",
         conversationId: `conversation-for-${sessionId}`,
-        agentId: "codex",
+        engineId: "codex",
         providerKind: "codex-thread",
         providerSessionId: "thread-1",
         createdAt: "2026-04-20T00:00:00.000Z",
@@ -153,7 +153,7 @@ describe("CapabilityRegistry", () => {
       sessionIdentity,
       capabilities: [
         {
-          agentId: "codex",
+          engineId: "codex",
           sessionActions: {
             resolveDisplayedSessionId: () => "thread-1",
             listAdditionalActions: async () => [
@@ -166,7 +166,7 @@ describe("CapabilityRegistry", () => {
           conversationGraph: {
             get: async () => ({
               sessionId: "session-codex",
-              agentId: "codex",
+              engineId: "codex",
               supportsJump: true,
               currentNodeId: "node-1",
               nodes: [
@@ -184,7 +184,7 @@ describe("CapabilityRegistry", () => {
           worktree: {
             get: async () => ({
               sessionId: "session-codex",
-              agentId: "codex",
+              engineId: "codex",
               supported: true,
               workspaceRoot: "I:\\repo-a",
               gitBranch: "main",
@@ -194,7 +194,7 @@ describe("CapabilityRegistry", () => {
           checkpoint: {
             get: async () => ({
               sessionId: "session-codex",
-              agentId: "codex",
+              engineId: "codex",
               supported: true,
               supportsRestore: true,
               currentCheckpointId: "node-1",
@@ -212,7 +212,7 @@ describe("CapabilityRegistry", () => {
           diagnostics: {
             get: async () => ({
               sessionId: "session-codex",
-              agentId: "codex",
+              engineId: "codex",
               supported: true,
               authenticated: true,
               authMethod: "chatgpt",
@@ -222,7 +222,7 @@ describe("CapabilityRegistry", () => {
           backgroundRun: {
             get: async () => ({
               sessionId: "session-codex",
-              agentId: "codex",
+              engineId: "codex",
               supported: false,
               status: "unsupported",
               fetchedAt: "2026-04-20T00:10:00.000Z"
@@ -244,7 +244,7 @@ describe("CapabilityRegistry", () => {
     });
     await expect(registry.getConversationGraph("session-codex")).resolves.toEqual({
       sessionId: "session-codex",
-      agentId: "codex",
+      engineId: "codex",
       supportsJump: true,
       currentNodeId: "node-1",
       nodes: [

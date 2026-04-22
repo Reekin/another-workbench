@@ -32,16 +32,6 @@ const createPreloadMock = (config?: {
     if (config?.onRequest) {
       return config.onRequest(payload);
     }
-    if (payload.method === "agent.list") {
-      return {
-        id: payload.id,
-        method: "agent.list",
-        ok: true,
-        result: {
-          agents: []
-        }
-      } as const;
-    }
     if (payload.method === "engine.list") {
       return {
         id: payload.id,
@@ -66,13 +56,13 @@ const createPreloadMock = (config?: {
         }
       } as const;
     }
-    if (payload.method === "agent.select") {
+    if (payload.method === "engine.select") {
       return {
         id: payload.id,
-        method: "agent.select",
+        method: "engine.select",
         ok: true,
         result: {
-          selectedAgentId: payload.params.agentId
+          selectedEngineId: payload.params.engineId
         }
       } as const;
     }
@@ -308,6 +298,33 @@ describe("Desktop transport facade", () => {
     });
   });
 
+  it("maps engine.select to the engine-scoped RPC contract", async () => {
+    const preload = createPreloadMock();
+    const transport = createDesktopTransport(preload.api);
+
+    await expect(
+      transport.engine.select({
+        engineId: "codex",
+        config: {
+          approvalPolicy: "auto"
+        }
+      })
+    ).resolves.toEqual({
+      selectedEngineId: "codex"
+    });
+
+    const request = preload.request.mock.calls[0][0] as WorkbenchRpcRequest;
+    expect(request).toMatchObject({
+      method: "engine.select",
+      params: {
+        engineId: "codex",
+        config: {
+          approvalPolicy: "auto"
+        }
+      }
+    });
+  });
+
   it("maps Codex turn-change RPCs to explicit codex transport methods", async () => {
     const preload = createPreloadMock({
       onRequest: async (request) => {
@@ -401,7 +418,7 @@ describe("Desktop transport facade", () => {
                 {
                   sessionId: "session-1",
                   conversationId: "conversation-1",
-                  agentId: "agent-1",
+                  engineId: "agent-1",
                   status: "idle",
                   createdAt: "2026-04-17T00:00:00.000Z",
                   updatedAt: "2026-04-17T00:00:00.000Z"
@@ -473,7 +490,16 @@ describe("Desktop transport facade", () => {
             result: {
               capabilities: {
                 supportsSteer: true,
-                supportsAttachments: true
+                supportsAttachments: true,
+                slashSuggestions: [
+                  {
+                    id: "status",
+                    label: "/status",
+                    detail: "Summarize the current session state",
+                    replacement:
+                      "Summarize the current session status and the next best action."
+                  }
+                ]
               }
             }
           } as const;
@@ -518,7 +544,16 @@ describe("Desktop transport facade", () => {
     });
     await expect(transport.chat.getCapabilities("session-1")).resolves.toEqual({
       supportsSteer: true,
-      supportsAttachments: true
+      supportsAttachments: true,
+      slashSuggestions: [
+        {
+          id: "status",
+          label: "/status",
+          detail: "Summarize the current session state",
+          replacement:
+            "Summarize the current session status and the next best action."
+        }
+      ]
     });
     await expect(
       transport.skills.list({
@@ -578,10 +613,10 @@ describe("Desktop transport facade", () => {
         }
         return {
           id: request.id,
-          method: "agent.list",
+          method: "engine.list",
           ok: true,
           result: {
-            agents: []
+            engines: []
           }
         } as const;
       }
@@ -825,7 +860,7 @@ describe("Desktop transport facade", () => {
         type: "session.created",
         conversationId: "conversation-1",
         sessionId: "session-1",
-        agentId: "agent-1",
+        engineId: "agent-1",
         status: "idle"
       }
     });

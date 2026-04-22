@@ -17,7 +17,7 @@ const resolveThreadId = (
   input.indexEntry?.providerSessionId;
 
 export class CodexSessionActionsProvider implements SessionAgentActionsProvider {
-  public readonly agentId = "codex";
+  public readonly engineId = "codex";
 
   private readonly codexRuntimePort: CodexAppServerRuntimePort;
 

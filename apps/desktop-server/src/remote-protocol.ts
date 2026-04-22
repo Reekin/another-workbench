@@ -89,21 +89,12 @@ export const createRemoteRpcHandler = (
                 surface: shellService.getEngineSurface(request.params.engineId)
               }
             });
-          case "agent.list":
+          case "engine.select":
             return parseWorkbenchRpcResponse({
               id: request.id,
               method: request.method,
               ok: true,
-              result: {
-                agents: service.listAgents()
-              }
-            });
-          case "agent.select":
-            return parseWorkbenchRpcResponse({
-              id: request.id,
-              method: request.method,
-              ok: true,
-              result: service.selectAgent(request.params)
+              result: service.selectEngine(request.params)
             });
           case "settings.get":
             if (!shellService) {

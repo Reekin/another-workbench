@@ -55,14 +55,14 @@ const createService = (options: {
         })
       : undefined,
     agentBindings: options.agentBindings,
-    agents: [
+    engines: [
       {
-        agentId: "codex",
+        engineId: "codex",
         displayName: "Codex",
         capabilities: ["chat", "terminal"]
       },
       {
-        agentId: "acp",
+        engineId: "acp",
         displayName: "ACP",
         capabilities: ["chat"]
       }
@@ -191,7 +191,7 @@ describe("WorkbenchRuntimeService", () => {
       agentBindings: [
         {
           descriptor: {
-            agentId: "codex",
+            engineId: "codex",
             displayName: "Codex",
             capabilities: ["chat", "terminal"]
           },
@@ -292,7 +292,7 @@ describe("WorkbenchRuntimeService", () => {
     expect(sessionsAfterCreate[0]).toMatchObject({
       sessionId: "session-1",
       conversationId: "conversation-1",
-      agentId: "codex",
+      engineId: "codex",
       status: "idle"
     });
 
@@ -321,7 +321,7 @@ describe("WorkbenchRuntimeService", () => {
       workspaceId: "workspace-1",
       activeSessionId: "session-1",
       sessionIds: ["session-1"],
-      participantAgentIds: ["codex"]
+      participantEngineIds: ["codex"]
     });
     expect(snapshot.participants[0]).toMatchObject({
       participantId: "participant-conversation-1-codex",
@@ -349,7 +349,7 @@ describe("WorkbenchRuntimeService", () => {
       agentBindings: [
         {
           descriptor: {
-            agentId: "codex",
+            engineId: "codex",
             displayName: "Codex",
             capabilities: ["chat", "terminal"]
           },
@@ -424,7 +424,7 @@ describe("WorkbenchRuntimeService", () => {
       agentBindings: [
         {
           descriptor: {
-            agentId: "codex",
+            engineId: "codex",
             displayName: "Codex",
             capabilities: ["chat", "terminal"]
           },
@@ -587,19 +587,15 @@ describe("WorkbenchRuntimeService", () => {
     ]);
   });
 
-  it("lists and selects registered agents", () => {
+  it("tracks the selected engine across runtime configuration changes", () => {
     const service = createService();
 
-    expect(service.listAgents().map((agent) => agent.agentId)).toEqual([
-      "codex",
-      "acp"
-    ]);
-    expect(service.getSelectedAgentId()).toBe("codex");
+    expect(service.getSelectedEngineId()).toBe("codex");
 
-    expect(service.selectAgent({ agentId: "acp" })).toEqual({
-      selectedAgentId: "acp"
+    expect(service.selectEngine({ engineId: "acp" })).toEqual({
+      selectedEngineId: "acp"
     });
-    expect(service.getSelectedAgentId()).toBe("acp");
+    expect(service.getSelectedEngineId()).toBe("acp");
   });
 
   it("disposes sessions through live events and removes relations from the snapshot", async () => {
@@ -672,7 +668,7 @@ describe("WorkbenchRuntimeService", () => {
         requestId: "approval-deny",
         approvalKind: "tool",
         title: "Need permission",
-        agentId: "codex"
+        engineId: "codex"
       },
       "2026-04-18T00:00:10Z"
     );
@@ -688,7 +684,7 @@ describe("WorkbenchRuntimeService", () => {
         turnId: "turn-1",
         requestId: "approval-deny",
         action: "deny",
-        agentId: "codex"
+        engineId: "codex"
       },
       "2026-04-18T00:00:11Z"
     );
@@ -705,7 +701,7 @@ describe("WorkbenchRuntimeService", () => {
         requestId: "approval-approve",
         approvalKind: "tool",
         title: "Need permission again",
-        agentId: "codex"
+        engineId: "codex"
       },
       "2026-04-18T00:00:12Z"
     );
@@ -716,7 +712,7 @@ describe("WorkbenchRuntimeService", () => {
         turnId: "turn-2",
         requestId: "approval-approve",
         action: "approve",
-        agentId: "codex"
+        engineId: "codex"
       },
       "2026-04-18T00:00:13Z"
     );
@@ -765,7 +761,7 @@ describe("WorkbenchRuntimeService", () => {
         turnId: "turn-1",
         messageId: "message-1",
         role: "assistant",
-        agentId: "codex"
+        engineId: "codex"
       },
       "2026-04-18T00:00:20Z"
     );
@@ -776,7 +772,7 @@ describe("WorkbenchRuntimeService", () => {
         turnId: "turn-1",
         messageId: "message-1",
         delta: "hello",
-        agentId: "codex"
+        engineId: "codex"
       },
       "2026-04-18T00:00:21Z"
     );
@@ -786,7 +782,7 @@ describe("WorkbenchRuntimeService", () => {
         sessionId: "session-1",
         turnId: "turn-1",
         messageId: "message-1",
-        agentId: "codex"
+        engineId: "codex"
       },
       "2026-04-18T00:00:22Z"
     );
@@ -823,7 +819,7 @@ describe("WorkbenchRuntimeService", () => {
         turnId: "turn-1",
         messageId: "message-1",
         role: "assistant",
-        agentId: "codex"
+        engineId: "codex"
       },
       "2026-04-18T00:00:20Z"
     );
@@ -834,7 +830,7 @@ describe("WorkbenchRuntimeService", () => {
         turnId: "turn-1",
         messageId: "message-1",
         delta: "更精确的。验证",
-        agentId: "codex"
+        engineId: "codex"
       },
       "2026-04-18T00:00:21Z"
     );
@@ -845,7 +841,7 @@ describe("WorkbenchRuntimeService", () => {
         turnId: "turn-1",
         messageId: "message-1",
         finalText: "更精确的验证。",
-        agentId: "codex"
+        engineId: "codex"
       },
       "2026-04-18T00:00:22Z"
     );
@@ -890,7 +886,7 @@ describe("WorkbenchRuntimeService", () => {
         turnId: "turn-err",
         messageId: "message-err",
         role: "assistant",
-        agentId: "codex"
+        engineId: "codex"
       },
       "2026-04-18T00:00:21Z"
     );

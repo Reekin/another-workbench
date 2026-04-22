@@ -39,7 +39,7 @@ describe("filterTranscriptRowsForChatTree", () => {
     expect(
       filterTranscriptRowsForChatTree(rows, {
         sessionId: "session-1",
-        agentId: "pi-acp",
+        engineId: "pi-acp",
         supportsJump: false,
         nodes: [],
         fetchedAt: "2026-04-18T00:00:00Z"
@@ -52,7 +52,7 @@ describe("filterTranscriptRowsForChatTree", () => {
 
     const filtered = filterTranscriptRowsForChatTree(rows, {
       sessionId: "session-1",
-      agentId: "codex",
+      engineId: "codex",
       supportsJump: true,
       currentNodeId: "node-2",
       nodes: [
@@ -96,7 +96,7 @@ describe("filterTranscriptRowsForChatTree", () => {
 
     const filtered = filterTranscriptRowsForChatTree(rows, {
       sessionId: "session-1",
-      agentId: "codex",
+      engineId: "codex",
       supportsJump: true,
       currentNodeId: "node-assistant",
       nodes: [

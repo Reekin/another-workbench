@@ -26,13 +26,13 @@ const markdownBlockSuffix = ":md";
 const legacyStartBlockSuffix = ":start";
 const maxSeenEventIds = 2_048;
 
-type ActorFields = { participantId?: string; agentId?: string };
+type ActorFields = { participantId?: string; engineId?: string };
 
 const buildActorRef = (event: ActorFields) =>
-  event.participantId || event.agentId
+  event.participantId || event.engineId
     ? {
         participantId: event.participantId,
-        agentId: event.agentId
+        engineId: event.engineId
       }
     : undefined;
 
@@ -58,18 +58,18 @@ const ensureConversationSessionLink = (
   conversationId: string,
   sessionId: string,
   timestamp: string,
-  agentId?: string
+  engineId?: string
 ): RendererStoreState => {
   const existing = state.entities.conversations[conversationId];
-  const existingAgentIds = existing?.participantAgentIds ?? [];
-  const participantAgentIds =
-    agentId && agentId !== unknownAgentId
-      ? addUnique(existingAgentIds, agentId)
-      : existingAgentIds;
+  const existingEngineIds = existing?.participantEngineIds ?? [];
+  const participantEngineIds =
+    engineId && engineId !== unknownAgentId
+      ? addUnique(existingEngineIds, engineId)
+      : existingEngineIds;
   return upsertConversation(state, {
     conversationId,
     workspaceId: existing?.workspaceId,
-    participantAgentIds,
+    participantEngineIds,
     activeSessionId: existing?.activeSessionId ?? sessionId,
     sessionIds: addUnique(existing?.sessionIds ?? [], sessionId),
     createdAt: existing?.createdAt ?? timestamp,
@@ -82,14 +82,14 @@ const ensureConversationSessionLink = (
 const ensureConversationParticipant = (
   state: RendererStoreState,
   conversationId: string,
-  agentId: string,
+  engineId: string,
   timestamp: string
 ): RendererStoreState => {
   const existing = state.entities.conversations[conversationId];
   return upsertConversation(state, {
     conversationId,
     workspaceId: existing?.workspaceId,
-    participantAgentIds: addUnique(existing?.participantAgentIds ?? [], agentId),
+    participantEngineIds: addUnique(existing?.participantEngineIds ?? [], engineId),
     activeSessionId: existing?.activeSessionId,
     sessionIds: existing?.sessionIds ?? [],
     createdAt: existing?.createdAt ?? timestamp,
@@ -500,11 +500,11 @@ const applyRuntimeEvent = (
   switch (event.type) {
     case "conversation.updated": {
       const existing = state.entities.conversations[event.conversationId];
-      const participantAgentIds = [
-        ...(existing?.participantAgentIds ?? []),
+      const participantEngineIds = [
+        ...(existing?.participantEngineIds ?? []),
         ...event.participantIds
-          .map((participantId) => state.entities.participants[participantId]?.agentId)
-          .filter((agentId): agentId is string => Boolean(agentId))
+          .map((participantId) => state.entities.participants[participantId]?.engineId)
+          .filter((engineId): engineId is string => Boolean(engineId))
       ].reduce<string[]>((acc, value) => addUnique(acc, value), []);
       const sessionIds = event.activeSessionId
         ? addUnique(existing?.sessionIds ?? [], event.activeSessionId)
@@ -512,7 +512,7 @@ const applyRuntimeEvent = (
       return upsertConversation(withEventType(state, event.type), {
         conversationId: event.conversationId,
         workspaceId: event.workspaceId ?? existing?.workspaceId,
-        participantAgentIds,
+        participantEngineIds,
         activeSessionId: event.activeSessionId ?? existing?.activeSessionId,
         sessionIds,
         createdAt: existing?.createdAt ?? timestamp,
@@ -525,7 +525,7 @@ const applyRuntimeEvent = (
       const withSession = upsertSession(withEventType(state, event.type), {
         sessionId: event.sessionId,
         conversationId: event.conversationId,
-        agentId: event.agentId,
+        engineId: event.engineId,
         status: event.status,
         createdAt: timestamp,
         updatedAt: timestamp
@@ -535,7 +535,7 @@ const applyRuntimeEvent = (
         event.conversationId,
         event.sessionId,
         timestamp,
-        event.agentId
+        event.engineId
       );
       return event.relation
         ? upsertSessionRelation(withConversation, event.relation)
@@ -546,7 +546,7 @@ const applyRuntimeEvent = (
       const withSession = upsertSession(withEventType(state, event.type), {
         sessionId: event.sessionId,
         conversationId: event.conversationId,
-        agentId: existing?.agentId ?? unknownAgentId,
+        engineId: existing?.engineId ?? unknownAgentId,
         status: event.status,
         createdAt: existing?.createdAt ?? timestamp,
         updatedAt: timestamp,
@@ -560,7 +560,7 @@ const applyRuntimeEvent = (
         event.conversationId,
         event.sessionId,
         timestamp,
-        existing?.agentId
+        existing?.engineId
       );
     }
     case "session.archived": {
@@ -712,7 +712,7 @@ const applyRuntimeEvent = (
           actor:
             current?.actor ?? {
               participantId: event.participantId,
-              agentId: event.agentId
+              engineId: event.engineId
             },
           startedAt: current?.startedAt ?? timestamp,
           completedAt: current?.completedAt
@@ -742,7 +742,7 @@ const applyRuntimeEvent = (
           actor:
             current?.actor ?? {
               participantId: event.participantId,
-              agentId: event.agentId
+              engineId: event.engineId
             },
           startedAt: current?.startedAt ?? timestamp,
           completedAt: current?.completedAt
@@ -772,7 +772,7 @@ const applyRuntimeEvent = (
           actor:
             current?.actor ?? {
               participantId: event.participantId,
-              agentId: event.agentId
+              engineId: event.engineId
             },
           startedAt: current?.startedAt ?? timestamp,
           completedAt: timestamp
@@ -802,7 +802,7 @@ const applyRuntimeEvent = (
           actor:
             current?.actor ?? {
               participantId: event.participantId,
-              agentId: event.agentId
+              engineId: event.engineId
             },
           startedAt: current?.startedAt ?? timestamp,
           completedAt: current?.completedAt
@@ -832,7 +832,7 @@ const applyRuntimeEvent = (
           actor:
             current?.actor ?? {
               participantId: event.participantId,
-              agentId: event.agentId
+              engineId: event.engineId
             },
           startedAt: current?.startedAt ?? timestamp,
           completedAt: current?.completedAt
@@ -864,7 +864,7 @@ const applyRuntimeEvent = (
           actor:
             current?.actor ?? {
               participantId: event.participantId,
-              agentId: event.agentId
+              engineId: event.engineId
             },
           startedAt: current?.startedAt ?? timestamp,
           completedAt: timestamp
@@ -892,7 +892,7 @@ const applyRuntimeEvent = (
           details: event.details,
           actor: {
             participantId: event.participantId,
-            agentId: event.agentId
+            engineId: event.engineId
           },
           requestedAt: timestamp
         }
@@ -946,7 +946,7 @@ const applyRuntimeEvent = (
         {
           participantId: event.participantId,
           conversationId: event.conversationId,
-          agentId: event.agentId,
+          engineId: event.engineId,
           role: event.role,
           capabilities: event.capabilities,
           activeSessionIds: []
@@ -955,7 +955,7 @@ const applyRuntimeEvent = (
       return ensureConversationParticipant(
         withParticipant,
         event.conversationId,
-        event.agentId,
+        event.engineId,
         timestamp
       );
     }

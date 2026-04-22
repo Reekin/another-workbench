@@ -3,7 +3,6 @@ import type {
   AgentAdapterRuntimeConfig
 } from "@another-workbench/adapters";
 import type {
-  AgentDescriptor,
   ChatSession,
   Command,
   DomainSnapshot,
@@ -12,13 +11,19 @@ import type {
   EngineExtensionDescriptorRpc
 } from "@another-workbench/shared";
 
+export type WorkbenchEngineDescriptor = {
+  engineId: string;
+  displayName: string;
+  capabilities: string[];
+};
+
 export type WorkbenchSessionListOptions = {
   conversationId?: string;
   includeArchived?: boolean;
 };
 
-export type AgentSelectionInput = {
-  agentId: string;
+export type EngineSelectionInput = {
+  engineId: string;
   config?: Record<string, unknown>;
 };
 
@@ -34,7 +39,7 @@ export type SnapshotResult = {
 };
 
 export type WorkbenchAgentBinding = {
-  descriptor: AgentDescriptor;
+  descriptor: WorkbenchEngineDescriptor;
   integrationTier?: EngineIntegrationTierRpc;
   transportKind?: string;
   adapter?: AgentAdapter;
@@ -51,7 +56,7 @@ export type SessionIndexSyncRecord = {
     ChatSession,
     | "sessionId"
     | "conversationId"
-    | "agentId"
+    | "engineId"
     | "title"
     | "createdAt"
     | "updatedAt"

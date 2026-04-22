@@ -27,8 +27,10 @@ describe("RuntimeOrchestrator", () => {
     const publishedEvents: RuntimeEvent[] = [];
     const domainService = new DomainService({
       now: () => "2026-04-20T00:02:00Z",
-      resolveAgentDescriptor: (agentId) =>
-        orchestrator?.getAgentDescriptor(agentId),
+      assertEngineRegistered: (engineId) =>
+        orchestrator?.assertEngineRegistered(engineId),
+      resolveEngineCapabilities: (engineId) =>
+        orchestrator?.getEngineCapabilities(engineId) ?? [],
       publishRuntimeEvent: (event) => {
         publishedEvents.push(event);
       }
@@ -53,7 +55,7 @@ describe("RuntimeOrchestrator", () => {
       agentBindings: [
         {
           descriptor: {
-            agentId: "codex",
+            engineId: "codex",
             displayName: "Codex",
             capabilities: ["chat", "terminal"]
           },
@@ -62,8 +64,8 @@ describe("RuntimeOrchestrator", () => {
       ]
     });
 
-    orchestrator.selectAgent({
-      agentId: "codex",
+    orchestrator.selectEngine({
+      engineId: "codex",
       config: {
         approvalPolicy: "auto"
       }
@@ -107,8 +109,10 @@ describe("RuntimeOrchestrator", () => {
         return () => `2026-04-20T00:03:${String(++tick).padStart(2, "0")}Z`;
       })(),
       createSessionId: () => "session-1",
-      resolveAgentDescriptor: (agentId) =>
-        orchestrator?.getAgentDescriptor(agentId),
+      assertEngineRegistered: (engineId) =>
+        orchestrator?.assertEngineRegistered(engineId),
+      resolveEngineCapabilities: (engineId) =>
+        orchestrator?.getEngineCapabilities(engineId) ?? [],
       publishRuntimeEvent: () => {}
     });
 
@@ -130,7 +134,7 @@ describe("RuntimeOrchestrator", () => {
       agentBindings: [
         {
           descriptor: {
-            agentId: "codex",
+            engineId: "codex",
             displayName: "Codex",
             capabilities: ["chat", "terminal"]
           }
@@ -146,7 +150,7 @@ describe("RuntimeOrchestrator", () => {
     expect(session).toMatchObject({
       sessionId: "session-1",
       conversationId: "conversation-1",
-      agentId: "codex"
+      engineId: "codex"
     });
     expect(syncSession).toHaveBeenCalledWith("session-1");
     expect(activateSelection).toHaveBeenCalledWith({
@@ -179,8 +183,10 @@ describe("RuntimeOrchestrator", () => {
         return () => `2026-04-20T00:03:${String(++tick).padStart(2, "0")}Z`;
       })(),
       createSessionId: () => "session-profile",
-      resolveAgentDescriptor: (agentId) =>
-        orchestrator?.getAgentDescriptor(agentId),
+      assertEngineRegistered: (engineId) =>
+        orchestrator?.assertEngineRegistered(engineId),
+      resolveEngineCapabilities: (engineId) =>
+        orchestrator?.getEngineCapabilities(engineId) ?? [],
       publishRuntimeEvent: () => {}
     });
 
@@ -202,7 +208,7 @@ describe("RuntimeOrchestrator", () => {
       agentBindings: [
         {
           descriptor: {
-            agentId: "codex",
+            engineId: "codex",
             displayName: "Codex",
             capabilities: ["chat", "terminal"]
           }
@@ -270,8 +276,10 @@ describe("RuntimeOrchestrator", () => {
         return () => `2026-04-20T00:04:${String(++tick).padStart(2, "0")}Z`;
       })(),
       createSessionId: () => "session-root",
-      resolveAgentDescriptor: (agentId) =>
-        orchestrator?.getAgentDescriptor(agentId),
+      assertEngineRegistered: (engineId) =>
+        orchestrator?.assertEngineRegistered(engineId),
+      resolveEngineCapabilities: (engineId) =>
+        orchestrator?.getEngineCapabilities(engineId) ?? [],
       publishRuntimeEvent: () => {}
     });
 
@@ -293,7 +301,7 @@ describe("RuntimeOrchestrator", () => {
       agentBindings: [
         {
           descriptor: {
-            agentId: "codex",
+            engineId: "codex",
             displayName: "Codex",
             capabilities: ["chat", "terminal"]
           },
@@ -320,7 +328,7 @@ describe("RuntimeOrchestrator", () => {
         type: "session.created",
         conversationId: "conversation-1",
         sessionId: "session-child",
-        agentId: "codex",
+        engineId: "codex",
         status: "running",
         relation: {
           relationId: "relation-subagent",

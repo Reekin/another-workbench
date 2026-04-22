@@ -5,12 +5,12 @@ import { SessionActionsProvider } from "../src/session-actions.js";
 
 const createSession = (input: {
   sessionId: string;
-  agentId: string;
+  engineId: string;
   archivedAt?: string;
 }): ChatSession => ({
   sessionId: input.sessionId,
   conversationId: "conversation-1",
-  agentId: input.agentId,
+  engineId: input.engineId,
   status: "idle",
   title: input.sessionId,
   createdAt: "2026-04-18T00:00:01Z",
@@ -24,7 +24,7 @@ describe("SessionActionsProvider", () => {
       listSessions: vi.fn().mockReturnValue([
         createSession({
           sessionId: "session-1",
-          agentId: "pi-acp",
+          engineId: "pi-acp",
           archivedAt: "2026-04-18T00:01:00Z"
         })
       ])
@@ -66,7 +66,7 @@ describe("SessionActionsProvider", () => {
       listSessions: vi.fn().mockReturnValue([
         createSession({
           sessionId: "session-1",
-          agentId: "custom"
+          engineId: "custom"
         })
       ])
     } as unknown as WorkbenchRuntimeService;
@@ -77,7 +77,7 @@ describe("SessionActionsProvider", () => {
       } as never,
       providers: [
         {
-          agentId: "custom",
+          engineId: "custom",
           resolveDisplayedSessionId: () => "provider-session-1",
           listAdditionalActions: async () => [
             {
@@ -128,7 +128,7 @@ describe("SessionActionsProvider", () => {
       listSessions: vi.fn().mockReturnValue([
         createSession({
           sessionId: "session-1",
-          agentId: "custom"
+          engineId: "custom"
         })
       ]),
       executeCommand
@@ -140,7 +140,7 @@ describe("SessionActionsProvider", () => {
           sessionId === "session-indexed"
             ? {
                 sessionId,
-                agentId: "custom",
+                engineId: "custom",
                 providerSessionId: "provider-session-1",
                 workspaceId: "workspace-1"
               }
@@ -161,7 +161,7 @@ describe("SessionActionsProvider", () => {
       } as never,
       providers: [
         {
-          agentId: "custom",
+          engineId: "custom",
           prepareArchive
         }
       ]
@@ -207,7 +207,7 @@ describe("SessionActionsProvider", () => {
       listSessions: vi.fn().mockReturnValue([
         createSession({
           sessionId: "session-1",
-          agentId: "custom"
+          engineId: "custom"
         })
       ])
     } as unknown as WorkbenchRuntimeService;
@@ -218,7 +218,7 @@ describe("SessionActionsProvider", () => {
       } as never,
       providers: [
         {
-          agentId: "custom",
+          engineId: "custom",
           runAction: async ({ action }) =>
             action === "open_rollout"
               ? {

@@ -22,7 +22,7 @@ type ChatTreeProviderOptions =
     };
 
 export type ChatTreeAgentProvider = ConversationGraphCapability & {
-  readonly agentId: string;
+  readonly engineId: string;
 };
 
 export type {
@@ -50,7 +50,7 @@ export class ChatTreeProvider {
       sessionIdentity,
       capabilities: (options.providers ?? []).map(
         (provider): AgentWorkbenchCapabilities => ({
-          agentId: provider.agentId,
+          engineId: provider.engineId,
           conversationGraph: provider
         })
       ),

@@ -111,7 +111,7 @@ describe("CodexAdapter", () => {
     adapter.subscribe((envelope) => {
       if (envelope.event.type === "message.delta") {
         received.push(
-          (envelope.event.agentId ?? "none") + ":" + envelope.event.delta
+          (envelope.event.engineId ?? "none") + ":" + envelope.event.delta
         );
       }
     });

@@ -5,11 +5,11 @@ import type { WorkbenchRuntimeService } from "../src/runtime-service.js";
 
 const createSession = (input: {
   sessionId: string;
-  agentId: string;
+  engineId: string;
 }): ChatSession => ({
   sessionId: input.sessionId,
   conversationId: "conversation-1",
-  agentId: input.agentId,
+  engineId: input.engineId,
   status: "idle",
   title: input.sessionId,
   createdAt: "2026-04-18T00:00:01Z",
@@ -41,7 +41,7 @@ describe("ChatTreeProvider", () => {
         listSessions: vi.fn().mockReturnValue([
           createSession({
             sessionId: "session-acp",
-            agentId: "acp"
+            engineId: "acp"
           })
         ])
       } as unknown as WorkbenchRuntimeService,
@@ -53,7 +53,7 @@ describe("ChatTreeProvider", () => {
 
     await expect(provider.get("session-acp")).resolves.toEqual({
       sessionId: "session-acp",
-      agentId: "acp",
+      engineId: "acp",
       supportsJump: false,
       nodes: [],
       fetchedAt: "2026-04-18T00:10:00Z"
@@ -66,7 +66,7 @@ describe("ChatTreeProvider", () => {
   it("delegates chat tree reads and jumps to the matching agent provider", async () => {
     const get = vi.fn().mockResolvedValue({
       sessionId: "session-custom",
-      agentId: "custom",
+      engineId: "custom",
       supportsJump: true,
       currentNodeId: "node-1",
       nodes: [
@@ -85,7 +85,7 @@ describe("ChatTreeProvider", () => {
         listSessions: vi.fn().mockReturnValue([
           createSession({
             sessionId: "session-custom",
-            agentId: "custom"
+            engineId: "custom"
           })
         ])
       } as unknown as WorkbenchRuntimeService,
@@ -94,7 +94,7 @@ describe("ChatTreeProvider", () => {
       } as never,
       providers: [
         {
-          agentId: "custom",
+          engineId: "custom",
           get,
           jump
         }
@@ -103,7 +103,7 @@ describe("ChatTreeProvider", () => {
 
     await expect(provider.get("session-custom")).resolves.toEqual({
       sessionId: "session-custom",
-      agentId: "custom",
+      engineId: "custom",
       supportsJump: true,
       currentNodeId: "node-1",
       nodes: [
@@ -123,7 +123,7 @@ describe("ChatTreeProvider", () => {
     expect(jump).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: "session-custom",
-        agentId: "custom"
+        engineId: "custom"
       }),
       "node-2"
     );

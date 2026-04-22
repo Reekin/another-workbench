@@ -40,7 +40,7 @@ describe("SessionIndexSyncService", () => {
       session: {
         sessionId: "session-1",
         conversationId: "conversation-1",
-        agentId: "codex",
+        engineId: "codex",
         createdAt: "2026-04-18T00:00:01.000Z",
         updatedAt: "2026-04-18T00:00:01.000Z"
       }
@@ -51,7 +51,7 @@ describe("SessionIndexSyncService", () => {
       workspaceId: "workspace-1",
       sessionId: "session-1",
       conversationId: "conversation-1",
-      agentId: "codex",
+      engineId: "codex",
       providerSessionId: undefined,
       archivedAt: undefined
     });
@@ -61,7 +61,7 @@ describe("SessionIndexSyncService", () => {
       session: {
         sessionId: "session-1",
         conversationId: "conversation-1",
-        agentId: "codex",
+        engineId: "codex",
         createdAt: "2026-04-18T00:00:01.000Z",
         updatedAt: "2026-04-18T00:00:02.000Z"
       },
@@ -81,7 +81,7 @@ describe("SessionIndexSyncService", () => {
       session: {
         sessionId: "session-1",
         conversationId: "conversation-1",
-        agentId: "codex",
+        engineId: "codex",
         createdAt: "2026-04-18T00:00:01.000Z",
         updatedAt: "2026-04-18T00:00:03.000Z",
         archivedAt: "2026-04-18T00:00:03.000Z"
@@ -138,7 +138,7 @@ describe("SessionIndexSyncService", () => {
       session: {
         sessionId: "session-1",
         conversationId: "conversation-1",
-        agentId: "codex",
+        engineId: "codex",
         createdAt: "2026-04-18T00:00:01.000Z",
         updatedAt: "2026-04-18T00:00:01.000Z"
       }

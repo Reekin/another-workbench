@@ -12,7 +12,7 @@ describe("DomainProjector", () => {
         type: "session.created",
         conversationId: "conversation-a",
         sessionId: "session-1",
-        agentId: "agent-a",
+        engineId: "agent-a",
         status: "idle"
       },
       "2026-04-18T00:00:00.000Z"
@@ -22,7 +22,7 @@ describe("DomainProjector", () => {
         type: "participant.updated",
         conversationId: "conversation-a",
         participantId: "participant-conversation-a-agent-a",
-        agentId: "agent-a",
+        engineId: "agent-a",
         role: "primary",
         capabilities: ["chat"]
       },
@@ -33,7 +33,7 @@ describe("DomainProjector", () => {
         type: "session.created",
         conversationId: "conversation-a",
         sessionId: "session-2",
-        agentId: "agent-a",
+        engineId: "agent-a",
         status: "running",
         relation: {
           relationId: "relation-1",
@@ -57,7 +57,7 @@ describe("DomainProjector", () => {
 
     expect(store.getConversation("conversation-a")).toMatchObject({
       activeSessionId: "session-1",
-      participantAgentIds: ["agent-a"],
+      participantEngineIds: ["agent-a"],
       sessionIds: ["session-1", "session-2"]
     });
     expect(store.getSessionParent("session-2")).toBe("session-1");
@@ -92,7 +92,7 @@ describe("DomainProjector", () => {
         type: "session.created",
         conversationId: "conversation-a",
         sessionId: "session-1",
-        agentId: "agent-a",
+        engineId: "agent-a",
         status: "idle"
       },
       "2026-04-18T00:01:00.000Z"
@@ -112,7 +112,7 @@ describe("DomainProjector", () => {
         turnId: "turn-1",
         messageId: "message-1",
         role: "assistant",
-        agentId: "agent-a"
+        engineId: "agent-a"
       },
       "2026-04-18T00:01:02.000Z"
     );
@@ -123,7 +123,7 @@ describe("DomainProjector", () => {
         turnId: "turn-1",
         messageId: "message-1",
         delta: "draft",
-        agentId: "agent-a"
+        engineId: "agent-a"
       },
       "2026-04-18T00:01:03.000Z"
     );
@@ -134,7 +134,7 @@ describe("DomainProjector", () => {
         turnId: "turn-1",
         messageId: "message-1",
         finalText: "final answer",
-        agentId: "agent-a"
+        engineId: "agent-a"
       },
       "2026-04-18T00:01:04.000Z"
     );
@@ -146,7 +146,7 @@ describe("DomainProjector", () => {
         toolCallId: "tool-1",
         toolName: "exec_command",
         inputSummary: "ls",
-        agentId: "agent-a"
+        engineId: "agent-a"
       },
       "2026-04-18T00:01:05.000Z"
     );
@@ -157,7 +157,7 @@ describe("DomainProjector", () => {
         turnId: "turn-1",
         toolCallId: "tool-1",
         delta: "stdout",
-        agentId: "agent-a"
+        engineId: "agent-a"
       },
       "2026-04-18T00:01:06.000Z"
     );
@@ -169,7 +169,7 @@ describe("DomainProjector", () => {
         toolCallId: "tool-1",
         status: "completed",
         outputSummary: "listed files",
-        agentId: "agent-a"
+        engineId: "agent-a"
       },
       "2026-04-18T00:01:07.000Z"
     );
@@ -180,7 +180,7 @@ describe("DomainProjector", () => {
         turnId: "turn-1",
         terminalId: "terminal-1",
         toolCallId: "tool-1",
-        agentId: "agent-a"
+        engineId: "agent-a"
       },
       "2026-04-18T00:01:08.000Z"
     );
@@ -191,7 +191,7 @@ describe("DomainProjector", () => {
         turnId: "turn-1",
         terminalId: "terminal-1",
         chunk: "line 1\n",
-        agentId: "agent-a"
+        engineId: "agent-a"
       },
       "2026-04-18T00:01:09.000Z"
     );
@@ -202,7 +202,7 @@ describe("DomainProjector", () => {
         turnId: "turn-1",
         terminalId: "terminal-1",
         exitCode: 1,
-        agentId: "agent-a"
+        engineId: "agent-a"
       },
       "2026-04-18T00:01:10.000Z"
     );
@@ -264,7 +264,7 @@ describe("DomainProjector", () => {
         type: "session.created",
         conversationId: "conversation-a",
         sessionId: "session-1",
-        agentId: "agent-a",
+        engineId: "agent-a",
         status: "idle"
       },
       "2026-04-18T00:02:00.000Z"
@@ -277,7 +277,7 @@ describe("DomainProjector", () => {
         requestId: "approval-1",
         approvalKind: "tool",
         title: "Need approval",
-        agentId: "agent-a"
+        engineId: "agent-a"
       },
       "2026-04-18T00:02:01.000Z"
     );
@@ -288,7 +288,7 @@ describe("DomainProjector", () => {
         turnId: "turn-1",
         requestId: "approval-1",
         action: "approve",
-        agentId: "agent-a"
+        engineId: "agent-a"
       },
       "2026-04-18T00:02:02.000Z"
     );
@@ -324,7 +324,7 @@ describe("DomainProjector", () => {
         type: "session.created",
         conversationId: "conversation-a",
         sessionId: "session-1",
-        agentId: "agent-a",
+        engineId: "agent-a",
         status: "idle"
       },
       "2026-04-18T00:02:30.000Z"
@@ -340,14 +340,14 @@ describe("DomainProjector", () => {
     );
 
     expect(projector.store.getParticipant("participant-conversation-a-agent-a")).toMatchObject({
-      agentId: "agent-a",
+      engineId: "agent-a",
       conversationId: "conversation-a",
       role: "primary",
       capabilities: [],
       activeSessionIds: ["session-1"]
     });
     expect(projector.store.getConversation("conversation-a")).toMatchObject({
-      participantAgentIds: ["agent-a"]
+      participantEngineIds: ["agent-a"]
     });
   });
 
@@ -359,7 +359,7 @@ describe("DomainProjector", () => {
         type: "session.created",
         conversationId: "conversation-a",
         sessionId: "session-1",
-        agentId: "agent-a",
+        engineId: "agent-a",
         status: "idle"
       },
       "2026-04-18T00:03:00.000Z"
@@ -369,7 +369,7 @@ describe("DomainProjector", () => {
         type: "session.created",
         conversationId: "conversation-a",
         sessionId: "session-2",
-        agentId: "agent-a",
+        engineId: "agent-a",
         status: "idle",
         relation: {
           relationId: "relation-2",
@@ -396,7 +396,7 @@ describe("DomainProjector", () => {
         turnId: "turn-error",
         messageId: "message-error",
         role: "assistant",
-        agentId: "agent-a"
+        engineId: "agent-a"
       },
       "2026-04-18T00:03:03.000Z"
     );
@@ -407,7 +407,7 @@ describe("DomainProjector", () => {
         turnId: "turn-error",
         toolCallId: "tool-error",
         toolName: "exec_command",
-        agentId: "agent-a"
+        engineId: "agent-a"
       },
       "2026-04-18T00:03:04.000Z"
     );
@@ -418,7 +418,7 @@ describe("DomainProjector", () => {
         turnId: "turn-error",
         terminalId: "terminal-error",
         toolCallId: "tool-error",
-        agentId: "agent-a"
+        engineId: "agent-a"
       },
       "2026-04-18T00:03:05.000Z"
     );
@@ -430,7 +430,7 @@ describe("DomainProjector", () => {
         requestId: "approval-error",
         approvalKind: "tool",
         title: "Need approval",
-        agentId: "agent-a"
+        engineId: "agent-a"
       },
       "2026-04-18T00:03:06.000Z"
     );

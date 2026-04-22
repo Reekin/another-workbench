@@ -90,13 +90,13 @@ describe("remote workbench client api", () => {
   it("posts RPC requests to the configured HTTP endpoint", async () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const request = parseRequestBody(init);
-      expect(request.method).toBe("agent.list");
+      expect(request.method).toBe("engine.list");
       return createJsonResponse({
         id: request.id,
-        method: "agent.list",
+        method: "engine.list",
         ok: true,
         result: {
-          agents: []
+          engines: []
         }
       } as const);
     });
@@ -110,16 +110,16 @@ describe("remote workbench client api", () => {
 
     const response = await client.request({
       id: "req-agent-list",
-      method: "agent.list",
+      method: "engine.list",
       params: {}
     });
 
     expect(response).toEqual({
       id: "req-agent-list",
-      method: "agent.list",
+      method: "engine.list",
       ok: true,
       result: {
-        agents: []
+        engines: []
       }
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);

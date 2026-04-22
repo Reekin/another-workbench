@@ -1,8 +1,8 @@
 import { z } from "zod";
 import {
   zActorRef,
-  zAgentId,
   zConversationId,
+  zEngineId,
   zIsoDateTime,
   zJsonRecord,
   zMessageId,
@@ -60,7 +60,7 @@ export const zSessionRelationType = z.enum([
 export const zConversationSchema = z.object({
   conversationId: zConversationId,
   workspaceId: z.string().min(1).optional(),
-  participantAgentIds: z.array(zAgentId).default([]),
+  participantEngineIds: z.array(zEngineId).default([]),
   activeSessionId: zSessionId.optional(),
   sessionIds: z.array(zSessionId).default([]),
   createdAt: zIsoDateTime,
@@ -72,7 +72,7 @@ export const zConversationSchema = z.object({
 export const zChatSessionSchema = z.object({
   sessionId: zSessionId,
   conversationId: zConversationId,
-  agentId: zAgentId,
+  engineId: zEngineId,
   status: zSessionStatus,
   title: z.string().min(1).optional(),
   createdAt: zIsoDateTime,
@@ -165,7 +165,7 @@ export const zApprovalRequestSchema = z.object({
 export const zAgentParticipantSchema = z.object({
   participantId: zParticipantId,
   conversationId: zConversationId,
-  agentId: zAgentId,
+  engineId: zEngineId,
   role: zParticipantRole,
   capabilities: z.array(z.string().min(1)).default([]),
   activeSessionIds: z.array(zSessionId).default([]),

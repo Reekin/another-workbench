@@ -43,7 +43,7 @@ const createRuntimeService = () =>
     })(),
     agents: [
       {
-        agentId: "codex",
+        engineId: "codex",
         displayName: "Codex",
         capabilities: ["chat"]
       }

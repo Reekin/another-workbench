@@ -46,7 +46,7 @@ export class CodexDelegationProvider implements DelegationCapability {
     if (!workspaceId) {
       return {
         sessionId: input.sessionId,
-        agentId: input.agentId ?? "codex",
+        engineId: input.engineId ?? "codex",
         supported: true,
         supportsControl: false,
         currentActiveNodeId: input.sessionId,
@@ -112,7 +112,7 @@ export class CodexDelegationProvider implements DelegationCapability {
 
     return {
       sessionId: input.sessionId,
-      agentId: input.agentId ?? "codex",
+      engineId: input.engineId ?? "codex",
       supported: true,
       supportsControl: false,
       currentActiveNodeId,

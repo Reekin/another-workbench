@@ -31,7 +31,7 @@ export type RuntimeRouteResult =
 export type CreateSessionInput = {
   sessionId?: string;
   conversationId: string;
-  agentId: string;
+  engineId: string;
   status?: SessionStatus;
   title?: string;
   metadata?: Record<string, unknown>;
@@ -70,7 +70,7 @@ export class SessionManager {
     const session = parseChatSession({
       sessionId: input.sessionId ?? this.createSessionId(),
       conversationId: input.conversationId,
-      agentId: input.agentId,
+      engineId: input.engineId,
       status: input.status ?? "idle",
       title: input.title,
       metadata: input.metadata,

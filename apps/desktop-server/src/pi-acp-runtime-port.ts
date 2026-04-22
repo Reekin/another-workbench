@@ -61,7 +61,7 @@ type PiAcpSelectedConfig = {
 };
 
 export type PiAcpRuntimePortOptions = {
-  agentId?: string;
+  engineId?: string;
   commandPath?: string;
   commandArgs?: string[];
   piCommandPath?: string;
@@ -305,7 +305,7 @@ class PiAcpRuntimePort
   implements
     AdapterRuntimePort<AcpRuntimeRequest, AcpRuntimeResponse, AcpRuntimeEvent>
 {
-  private readonly agentId: string;
+  private readonly engineId: string;
   private readonly commandPath: string;
   private readonly commandArgs: string[];
   private readonly piCommandPath: string | undefined;
@@ -325,7 +325,7 @@ class PiAcpRuntimePort
 
   public constructor(options: PiAcpRuntimePortOptions = {}) {
     const resolvedCommand = resolveDefaultPiAcpCommand();
-    this.agentId = options.agentId ?? "pi-acp";
+    this.engineId = options.engineId ?? "pi-acp";
     this.commandPath = options.commandPath ?? resolvedCommand.commandPath;
     this.commandArgs = options.commandArgs ?? resolvedCommand.commandArgs;
     this.piCommandPath =
@@ -600,7 +600,7 @@ class PiAcpRuntimePort
       turnId: pending.turnId,
       requestId,
       action,
-      agentId: this.agentId
+      engineId: this.engineId
     });
     this.emitSessionUpdated(
       pending.sessionId,
@@ -685,7 +685,7 @@ class PiAcpRuntimePort
       approvalKind: "tool",
       title: request.toolCall.title ?? "Approve ACP tool call",
       details: details || undefined,
-      agentId: this.agentId
+      engineId: this.engineId
     });
     this.emitSessionUpdated(workbenchSessionId, "awaiting_approval");
 
@@ -758,7 +758,7 @@ class PiAcpRuntimePort
       sessionId,
       turnId: turnState.turnId,
       messageId: turnState.assistantMessageId,
-      agentId: this.agentId
+      engineId: this.engineId
     });
     turnState.assistantMessageId = undefined;
     turnState.acpMessageId = undefined;
@@ -779,7 +779,7 @@ class PiAcpRuntimePort
           sessionId,
           turnId: turnState.turnId,
           messageId: turnState.assistantMessageId,
-          agentId: this.agentId
+          engineId: this.engineId
         });
       }
 
@@ -790,7 +790,7 @@ class PiAcpRuntimePort
         turnId: turnState.turnId,
         messageId: turnState.assistantMessageId,
         role: "assistant",
-        agentId: this.agentId
+        engineId: this.engineId
       });
     }
 
@@ -804,7 +804,7 @@ class PiAcpRuntimePort
       turnId: turnState.turnId,
       messageId: turnState.assistantMessageId,
       delta,
-      agentId: this.agentId
+      engineId: this.engineId
     });
   }
 
@@ -830,7 +830,7 @@ class PiAcpRuntimePort
         toolCallId: update.toolCallId,
         toolName,
         inputSummary,
-        agentId: this.agentId
+        engineId: this.engineId
       });
     }
 
@@ -841,7 +841,7 @@ class PiAcpRuntimePort
         turnId: turnState.turnId,
         toolCallId: update.toolCallId,
         delta: contentText,
-        agentId: this.agentId
+        engineId: this.engineId
       });
     }
 
@@ -854,7 +854,7 @@ class PiAcpRuntimePort
         status: completedStatus,
         outputSummary:
           contentText || summarizeUnknown(update.rawOutput),
-        agentId: this.agentId
+        engineId: this.engineId
       });
       turnState.toolsById.delete(update.toolCallId);
     }
@@ -879,7 +879,7 @@ class PiAcpRuntimePort
         toolCallId: update.toolCallId,
         toolName: update.title || update.kind || "tool",
         inputSummary: summarizeUnknown(update.rawInput),
-        agentId: this.agentId
+        engineId: this.engineId
       });
     }
 
@@ -892,7 +892,7 @@ class PiAcpRuntimePort
         turnId: turnState.turnId,
         toolCallId: update.toolCallId,
         delta,
-        agentId: this.agentId
+        engineId: this.engineId
       });
       current.contentText = nextText;
     } else if (nextText) {
@@ -915,7 +915,7 @@ class PiAcpRuntimePort
         status: completedStatus,
         outputSummary:
           current.contentText || summarizeUnknown(update.rawOutput),
-        agentId: this.agentId
+        engineId: this.engineId
       });
       turnState.toolsById.delete(update.toolCallId);
     }
@@ -933,7 +933,7 @@ class PiAcpRuntimePort
           toolCallId: toolState.toolCallId,
           status: finishReason === "interrupted" ? "cancelled" : "failed",
           outputSummary: toolState.contentText || undefined,
-          agentId: this.agentId
+          engineId: this.engineId
         });
       }
     }
@@ -985,7 +985,7 @@ class PiAcpRuntimePort
         turnId: pending.turnId,
         requestId,
         action: "defer",
-        agentId: this.agentId
+        engineId: this.engineId
       });
     }
   }

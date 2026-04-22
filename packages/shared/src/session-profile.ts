@@ -46,7 +46,7 @@ export const writeSessionExecutionProfile = (
 
 export const resolveSessionExecutionProfile = (input: {
   engineId?: string;
-  agentId: ChatSession["agentId"];
+  sessionEngineId: ChatSession["engineId"];
   metadata?: Record<string, unknown>;
 }): SessionExecutionProfile => {
   const existing = readSessionExecutionProfile(input.metadata);
@@ -54,6 +54,6 @@ export const resolveSessionExecutionProfile = (input: {
     return existing;
   }
   return {
-    engineId: input.engineId ?? input.agentId
+    engineId: input.engineId ?? input.sessionEngineId
   };
 };

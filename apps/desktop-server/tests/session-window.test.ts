@@ -22,7 +22,7 @@ describe("buildSessionWindowSnapshot", () => {
       conversation: {
         conversationId: "conversation-1",
         workspaceId: "workspace-1",
-        participantAgentIds: ["codex"],
+        participantEngineIds: ["codex"],
         activeSessionId: "session-1",
         sessionIds: ["session-1"],
         createdAt: "2026-04-19T00:00:00.000Z",
@@ -31,7 +31,7 @@ describe("buildSessionWindowSnapshot", () => {
       session: {
         sessionId: "session-1",
         conversationId: "conversation-1",
-        agentId: "codex",
+        engineId: "codex",
         status: "idle",
         createdAt: "2026-04-19T00:00:00.000Z",
         updatedAt: "2026-04-19T00:05:10.000Z"
@@ -45,7 +45,7 @@ describe("buildSessionWindowSnapshot", () => {
         {
           participantId: "participant-codex",
           conversationId: "conversation-1",
-          agentId: "codex",
+          engineId: "codex",
           displayName: "Codex",
           activeSessionIds: ["session-1"],
           joinedAt: "2026-04-19T00:00:00.000Z"

@@ -90,7 +90,7 @@ type CodexSelectedConfig = {
 };
 
 export type CodexAppServerRuntimePortOptions = {
-  agentId?: string;
+  engineId?: string;
   commandPath?: string;
   commandArgs?: string[];
   resolveConversationIdBySessionId?: (sessionId: string) => string | undefined;
@@ -290,7 +290,7 @@ export class CodexAppServerRuntimePort
   implements
     AdapterRuntimePort<CodexRuntimeRequest, CodexRuntimeResponse, CodexRuntimeEvent>
 {
-  private readonly agentId: string;
+  private readonly engineId: string;
   private readonly commandPath: string;
   private readonly commandArgs: string[];
   private readonly resolveConversationIdBySessionId:
@@ -314,7 +314,7 @@ export class CodexAppServerRuntimePort
   private readonly recordTurnChanges: ((input: RecordedCodexTurnChanges) => void) | undefined;
 
   public constructor(options: CodexAppServerRuntimePortOptions = {}) {
-    this.agentId = options.agentId ?? "codex";
+    this.engineId = options.engineId ?? "codex";
     this.commandPath = options.commandPath ?? resolveDefaultCodexCommandPath();
     this.commandArgs = options.commandArgs ?? ["app-server"];
     this.resolveConversationIdBySessionId =
@@ -858,7 +858,7 @@ export class CodexAppServerRuntimePort
                 : "command",
           title,
           details: details || undefined,
-          agentId: this.agentId
+          engineId: this.engineId
         });
         return;
       }
@@ -966,7 +966,7 @@ export class CodexAppServerRuntimePort
           turnId,
           messageId,
           delta,
-          agentId: this.agentId
+          engineId: this.engineId
         });
         return;
       }
@@ -983,14 +983,14 @@ export class CodexAppServerRuntimePort
           turnId,
           toolCallId,
           delta,
-          agentId: this.agentId
+          engineId: this.engineId
         });
         this.emitEvent("terminal.output", {
           sessionId,
           turnId,
           terminalId: toolCallId,
           chunk: delta,
-          agentId: this.agentId
+          engineId: this.engineId
         });
         return;
       }
@@ -1041,7 +1041,7 @@ export class CodexAppServerRuntimePort
       turnId: approval.turnId,
       requestId,
       action: resolution.action,
-      agentId: this.agentId
+      engineId: this.engineId
     });
   }
 
@@ -1058,7 +1058,7 @@ export class CodexAppServerRuntimePort
         messageId: item.id,
         role: "assistant",
         ...(method === "item/completed" ? { finalText: item.text } : {}),
-        agentId: this.agentId
+        engineId: this.engineId
       });
       return;
     }
@@ -1071,14 +1071,14 @@ export class CodexAppServerRuntimePort
           toolCallId: item.id,
           toolName: "commandExecution",
           inputSummary: item.command,
-          agentId: this.agentId
+          engineId: this.engineId
         });
         this.emitEvent("terminal.started", {
           sessionId,
           turnId,
           terminalId: item.id,
           toolCallId: item.id,
-          agentId: this.agentId
+          engineId: this.engineId
         });
         return;
       }
@@ -1094,7 +1094,7 @@ export class CodexAppServerRuntimePort
         turnId,
         terminalId: item.id,
         exitCode: typeof item.exitCode === "number" ? item.exitCode : undefined,
-        agentId: this.agentId
+        engineId: this.engineId
       });
       this.emitEvent("tool.completed", {
         sessionId,
@@ -1105,7 +1105,7 @@ export class CodexAppServerRuntimePort
           typeof item.aggregatedOutput === "string"
             ? item.aggregatedOutput
             : undefined,
-          agentId: this.agentId
+          engineId: this.engineId
       });
       return;
     }
@@ -1133,7 +1133,7 @@ export class CodexAppServerRuntimePort
           toolCallId: item.id,
           toolName: mapCollabToolLabel(item.tool),
           inputSummary: summarizeCollabInput(item),
-          agentId: this.agentId
+          engineId: this.engineId
         });
         return;
       }
@@ -1144,7 +1144,7 @@ export class CodexAppServerRuntimePort
         toolCallId: item.id,
         status: item.status === "failed" ? "failed" : "completed",
         outputSummary: summarizeCollabOutput(item),
-        agentId: this.agentId
+        engineId: this.engineId
       });
     }
   }
@@ -1169,7 +1169,7 @@ export class CodexAppServerRuntimePort
         this.emitEvent("session.created", {
           conversationId,
           sessionId: childSessionId,
-          agentId: this.agentId,
+          engineId: this.engineId,
           status: mapCollabAgentStatus(childState?.status),
           relation: {
             relationId: `subagent:${parentSessionId}:${childSessionId}`,

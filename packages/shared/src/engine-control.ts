@@ -11,6 +11,7 @@ export const zEngineDefinitionRpcSchema = z.object({
 
 export const zEngineSharedCapabilitySchema = z.enum([
   "chat",
+  "steer",
   "tool",
   "terminal",
   "approval",

@@ -30,7 +30,7 @@ export class CodexWorktreeProvider implements WorktreeCapability {
     if (!threadId) {
       return {
         sessionId: input.sessionId,
-        agentId: input.agentId ?? "codex",
+        engineId: input.engineId ?? "codex",
         supported: false,
         fetchedAt: this.now()
       };
@@ -46,7 +46,7 @@ export class CodexWorktreeProvider implements WorktreeCapability {
 
     return {
       sessionId: input.sessionId,
-      agentId: input.agentId ?? "codex",
+      engineId: input.engineId ?? "codex",
       supported: true,
       workspaceRoot: thread.cwd || undefined,
       rolloutPath: thread.path ?? undefined,

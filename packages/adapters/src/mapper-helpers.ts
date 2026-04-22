@@ -43,7 +43,7 @@ export const createEventEnvelope = (
 export const normalizeRuntimeEvent = (
   eventType: RuntimeEvent["type"],
   payload: Record<string, unknown>,
-  fallbackAgentId: string
+  fallbackEngineId: string
 ): RuntimeEvent => {
   const normalized: Record<string, unknown> = {
     ...payload,
@@ -53,9 +53,9 @@ export const normalizeRuntimeEvent = (
   if (
     actorScopedEventTypes.has(eventType) &&
     typeof normalized.participantId !== "string" &&
-    typeof normalized.agentId !== "string"
+    typeof normalized.engineId !== "string"
   ) {
-    normalized.agentId = fallbackAgentId;
+    normalized.engineId = fallbackEngineId;
   }
 
   return parseRuntimeEvent(normalized);
@@ -75,4 +75,3 @@ export const defaultCommandResultFromResponse = (
   raw: response,
   error: resolved.error
 });
-

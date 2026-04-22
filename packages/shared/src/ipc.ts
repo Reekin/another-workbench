@@ -1,8 +1,8 @@
 import { z } from "zod";
 import {
-  zAgentId,
   zConversationId,
   zCursor,
+  zEngineId,
   zJsonRecord,
   zRequestId,
   zSessionId,
@@ -12,6 +12,7 @@ import { commandTypes, zCommandEnvelopeSchema } from "./commands.js";
 import { zChatSessionSchema, zDomainSnapshotSchema } from "./domain.js";
 import {
   zEngineDefinitionRpcSchema,
+  zEngineSharedCapabilitySchema,
   zEngineSurfaceRpcSchema
 } from "./engine-control.js";
 import { eventTypes, zEventEnvelopeSchema } from "./events.js";
@@ -23,8 +24,7 @@ import {
 export const workbenchRpcMethods = [
   "engine.list",
   "engine.getSurface",
-  "agent.list",
-  "agent.select",
+  "engine.select",
   "settings.get",
   "settings.update",
   "domain.snapshot",
@@ -68,12 +68,6 @@ export type WorkbenchRpcMethod = (typeof workbenchRpcMethods)[number];
 const zWorkbenchEventType = z.enum(eventTypes);
 const zWorkbenchCommandType = z.enum(commandTypes);
 
-const zAgentDescriptorSchema = z.object({
-  agentId: zAgentId,
-  displayName: z.string().min(1),
-  capabilities: z.array(z.string().min(1)).default([])
-});
-
 const zWorkspaceRecordSchema = z.object({
   workspaceId: z.string().min(1),
   absolutePath: z.string().min(1),
@@ -86,9 +80,18 @@ const zWorkbenchSettingsSchema = z.object({
   defaultNewSessionEngineId: z.string().min(1).optional()
 });
 
+const zComposerSlashSuggestionRpcSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  detail: z.string().min(1),
+  replacement: z.string().min(1).optional(),
+  sourceCapability: zEngineSharedCapabilitySchema.optional()
+});
+
 const zChatInteractionCapabilitiesRpcSchema = z.object({
   supportsSteer: z.boolean(),
-  supportsAttachments: z.boolean()
+  supportsAttachments: z.boolean(),
+  slashSuggestions: z.array(zComposerSlashSuggestionRpcSchema).default([])
 });
 
 const zSkillDescriptorRpcSchema = z.object({
@@ -116,7 +119,7 @@ const zSessionBrowserNodeSchema: z.ZodType = z.lazy(() =>
     providerHandle: zProviderSessionHandleSchema.optional(),
     workspaceId: z.string().min(1),
     conversationId: zConversationId.optional(),
-    agentId: zAgentId,
+    engineId: zEngineId,
     title: z.string().min(1),
     summaryText: z.string().min(1).optional(),
     statusDot: zSessionStatusDotSchema,
@@ -189,7 +192,7 @@ const zConversationGraphNodeSchema = zChatTreeNodeSchema.extend({
 
 const zConversationGraphSnapshotSchema = z.object({
   sessionId: zSessionId,
-  agentId: zAgentId,
+  engineId: zEngineId,
   supportsJump: z.boolean(),
   currentNodeId: z.string().min(1).optional(),
   nodes: z.array(zConversationGraphNodeSchema).default([]),
@@ -198,7 +201,7 @@ const zConversationGraphSnapshotSchema = z.object({
 
 const zChatTreeSnapshotSchema = z.object({
   sessionId: zSessionId,
-  agentId: zAgentId,
+  engineId: zEngineId,
   supportsJump: z.boolean(),
   currentNodeId: z.string().min(1).optional(),
   nodes: z.array(zChatTreeNodeSchema).default([]),
@@ -227,7 +230,7 @@ const zDelegationEdgeSchema = z.object({
 
 const zDelegationSnapshotSchema = z.object({
   sessionId: zSessionId,
-  agentId: zAgentId,
+  engineId: zEngineId,
   supported: z.boolean(),
   supportsControl: z.boolean(),
   currentActiveNodeId: z.string().min(1).optional(),
@@ -238,7 +241,7 @@ const zDelegationSnapshotSchema = z.object({
 
 const zWorktreeSnapshotSchema = z.object({
   sessionId: zSessionId,
-  agentId: zAgentId,
+  engineId: zEngineId,
   supported: z.boolean(),
   workspaceRoot: z.string().min(1).optional(),
   rolloutPath: z.string().min(1).optional(),
@@ -262,7 +265,7 @@ const zCheckpointEntrySchema = z.object({
 
 const zCheckpointSnapshotSchema = z.object({
   sessionId: zSessionId,
-  agentId: zAgentId,
+  engineId: zEngineId,
   supported: z.boolean(),
   supportsRestore: z.boolean(),
   currentCheckpointId: z.string().min(1).optional(),
@@ -272,7 +275,7 @@ const zCheckpointSnapshotSchema = z.object({
 
 const zDiagnosticsSnapshotSchema = z.object({
   sessionId: zSessionId,
-  agentId: zAgentId,
+  engineId: zEngineId,
   supported: z.boolean(),
   authenticated: z.boolean(),
   authMethod: z.string().min(1).nullable().optional(),
@@ -287,7 +290,7 @@ const zDiagnosticsSnapshotSchema = z.object({
 
 const zBackgroundRunSnapshotSchema = z.object({
   sessionId: zSessionId,
-  agentId: zAgentId,
+  engineId: zEngineId,
   supported: z.boolean(),
   status: z.enum(["unsupported", "attached", "detached"]),
   resumeToken: z.string().min(1).optional(),
@@ -404,17 +407,11 @@ const zEngineGetSurfaceRequestSchema = z.object({
   })
 });
 
-const zAgentListRequestSchema = z.object({
+const zEngineSelectRequestSchema = z.object({
   id: zRequestId,
-  method: z.literal("agent.list"),
-  params: z.object({})
-});
-
-const zAgentSelectRequestSchema = z.object({
-  id: zRequestId,
-  method: z.literal("agent.select"),
+  method: z.literal("engine.select"),
   params: z.object({
-    agentId: zAgentId,
+    engineId: z.string().min(1),
     config: zJsonRecord.optional()
   })
 });
@@ -726,10 +723,9 @@ const zEventsReplayRequestSchema = z.object({
 });
 
 export const zWorkbenchRpcRequestSchema = z.discriminatedUnion("method", [
-  zAgentListRequestSchema,
   zEngineListRequestSchema,
   zEngineGetSurfaceRequestSchema,
-  zAgentSelectRequestSchema,
+  zEngineSelectRequestSchema,
   zSettingsGetRequestSchema,
   zSettingsUpdateRequestSchema,
   zDomainSnapshotRequestSchema,
@@ -786,21 +782,12 @@ const zEngineGetSurfaceResponseSchema = z.object({
   })
 });
 
-const zAgentListResponseSchema = z.object({
+const zEngineSelectResponseSchema = z.object({
   id: zRequestId,
-  method: z.literal("agent.list"),
+  method: z.literal("engine.select"),
   ok: z.literal(true),
   result: z.object({
-    agents: z.array(zAgentDescriptorSchema)
-  })
-});
-
-const zAgentSelectResponseSchema = z.object({
-  id: zRequestId,
-  method: z.literal("agent.select"),
-  ok: z.literal(true),
-  result: z.object({
-    selectedAgentId: zAgentId
+    selectedEngineId: z.string().min(1)
   })
 });
 
@@ -1160,10 +1147,9 @@ const zWorkbenchRpcErrorResponseSchema = z.object({
 });
 
 export const zWorkbenchRpcResponseSchema = z.union([
-  zAgentListResponseSchema,
   zEngineListResponseSchema,
   zEngineGetSurfaceResponseSchema,
-  zAgentSelectResponseSchema,
+  zEngineSelectResponseSchema,
   zSettingsGetResponseSchema,
   zSettingsUpdateResponseSchema,
   zDomainSnapshotResponseSchema,
@@ -1209,7 +1195,6 @@ export const zWorkbenchEventPushSchema = z.object({
   envelope: zEventEnvelopeSchema
 });
 
-export type AgentDescriptor = z.infer<typeof zAgentDescriptorSchema>;
 export type WorkbenchSettingsRpc = z.infer<typeof zWorkbenchSettingsSchema>;
 export type WorkbenchEventSubscriptionFilter = z.infer<
   typeof zWorkbenchEventSubscriptionFilterSchema
@@ -1226,6 +1211,9 @@ export type SessionActionDescriptorRpc = z.infer<typeof zSessionActionDescriptor
 export type SessionActionResultRpc = z.infer<typeof zSessionActionResultSchema>;
 export type ChatInteractionCapabilitiesRpc = z.infer<
   typeof zChatInteractionCapabilitiesRpcSchema
+>;
+export type ComposerSlashSuggestionRpc = z.infer<
+  typeof zComposerSlashSuggestionRpcSchema
 >;
 export type SkillDescriptorRpc = z.infer<typeof zSkillDescriptorRpcSchema>;
 export type ConversationGraphSnapshotRpc = z.infer<

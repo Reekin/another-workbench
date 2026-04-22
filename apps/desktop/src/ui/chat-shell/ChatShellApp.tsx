@@ -9,7 +9,6 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type {
-  AgentDescriptor,
   EngineDefinitionRpc,
   EngineSurfaceRpc,
   ExtractedFileReference,
@@ -59,7 +58,6 @@ import { ComposerPanel } from "./composer/ComposerPanel.js";
 import "./chat-shell.css";
 
 type SettingsLauncherProps = {
-  agents: AgentDescriptor[];
   engines: EngineDefinitionRpc[];
   surfacesByEngineId: Readonly<Record<string, EngineSurfaceRpc | undefined>>;
   currentEngineId: string;
@@ -119,17 +117,17 @@ export type ChatShellAppProps = {
   title?: string;
 };
 
-const uniqueByAgentId = (
-  descriptors: Array<AgentDescriptor | undefined>
-): AgentDescriptor[] => {
+const uniqueByEngineId = (
+  engines: Array<EngineDefinitionRpc | undefined>
+): EngineDefinitionRpc[] => {
   const seen = new Set<string>();
-  const result: AgentDescriptor[] = [];
-  for (const descriptor of descriptors) {
-    if (!descriptor || seen.has(descriptor.agentId)) {
+  const result: EngineDefinitionRpc[] = [];
+  for (const engine of engines) {
+    if (!engine || seen.has(engine.engineId)) {
       continue;
     }
-    seen.add(descriptor.agentId);
-    result.push(descriptor);
+    seen.add(engine.engineId);
+    result.push(engine);
   }
   return result;
 };
@@ -145,26 +143,27 @@ const formatTimestamp = (iso: string | undefined): string => {
   return date.toLocaleString();
 };
 
-const buildWorkspaceAgentFallbacks = (
+const buildWorkspaceEngineFallbacks = (
   workspaces: WorkspaceBrowserNodeRpc[]
-): AgentDescriptor[] => {
-  const agentIds = new Set<string>();
+): EngineDefinitionRpc[] => {
+  const engineIds = new Set<string>();
   for (const workspace of workspaces) {
     const stack = [...workspace.sessions];
     while (stack.length > 0) {
       const session = stack.pop();
-      if (!session || agentIds.has(session.agentId)) {
+      if (!session || engineIds.has(session.engineId)) {
         continue;
       }
-      agentIds.add(session.agentId);
+      engineIds.add(session.engineId);
       stack.push(...session.children);
     }
   }
 
-  return [...agentIds].map((agentId) => ({
-    agentId,
-    displayName: agentId,
-    capabilities: []
+  return [...engineIds].map((engineId) => ({
+    engineId,
+    displayName: engineId,
+    integrationTier: "fallback",
+    transportKind: undefined
   }));
 };
 
@@ -352,7 +351,6 @@ const TranscriptPane = memo(
 );
 
 const SettingsLauncher = ({
-  agents,
   engines,
   surfacesByEngineId,
   currentEngineId,
@@ -450,11 +448,11 @@ const SettingsLauncher = ({
               onChange={(event) => setDraftEngineId(event.target.value)}
             >
               <option value="">Follow first available engine</option>
-              {agents.map((agent) => (
-                <option key={agent.agentId} value={agent.agentId}>
-                  {tierByEngineId[agent.agentId]
-                    ? `${agent.displayName} (${tierByEngineId[agent.agentId]})`
-                    : agent.displayName}
+              {engines.map((engine) => (
+                <option key={engine.engineId} value={engine.engineId}>
+                  {tierByEngineId[engine.engineId]
+                    ? `${engine.displayName} (${tierByEngineId[engine.engineId]})`
+                    : engine.displayName}
                 </option>
               ))}
             </select>
@@ -509,7 +507,6 @@ export const ChatShellApp = ({
   title = "Another Workbench"
 }: ChatShellAppProps): ReactElement => {
   const state = useRendererStoreState(store);
-  const [availableAgents, setAvailableAgents] = useState<AgentDescriptor[]>([]);
   const [availableEngines, setAvailableEngines] = useState<EngineDefinitionRpc[]>([]);
   const [engineSurfacesById, setEngineSurfacesById] = useState<
     Record<string, EngineSurfaceRpc | undefined>
@@ -564,7 +561,7 @@ export const ChatShellApp = ({
     ? state.entities.sessions[displayedSessionId]
     : undefined;
   const displayedEngineId =
-    displayedSession?.agentId ?? displayedSessionNode?.agentId ?? selectedEngineId;
+    displayedSession?.engineId ?? displayedSessionNode?.engineId ?? selectedEngineId;
   const activeSession = activeSessionId
     ? state.entities.sessions[activeSessionId]
     : undefined;
@@ -672,15 +669,6 @@ export const ChatShellApp = ({
       onStatusNotice: setStatusNotice
     });
 
-  const fallbackAgents = useMemo(
-    () => buildWorkspaceAgentFallbacks(workspaceTree),
-    [workspaceTree]
-  );
-  const agents = useMemo(
-    () => uniqueByAgentId([...availableAgents, ...fallbackAgents]),
-    [availableAgents, fallbackAgents]
-  );
-
   const composer = useComposerController({
     transport,
     activeSession,
@@ -698,6 +686,15 @@ export const ChatShellApp = ({
     onOpenSession
   });
 
+  const fallbackEngines = useMemo(
+    () => buildWorkspaceEngineFallbacks(workspaceTree),
+    [workspaceTree]
+  );
+  const engines = useMemo(
+    () => uniqueByEngineId([...availableEngines, ...fallbackEngines]),
+    [availableEngines, fallbackEngines]
+  );
+
   useEffect(() => {
     if (!statusNotice || statusNotice.persistent) {
       return;
@@ -707,32 +704,6 @@ export const ChatShellApp = ({
     }, 2_000);
     return () => clearTimeout(timeoutId);
   }, [statusNotice]);
-
-  useEffect(() => {
-    if (!transport) {
-      return;
-    }
-    let disposed = false;
-    void transport.agent
-      .list()
-      .then((list) => {
-        if (!disposed) {
-          setAvailableAgents(list);
-        }
-      })
-      .catch((error) => {
-        if (!disposed) {
-          setStatusNotice({
-            message: `Agent list failed: ${(error as Error).message}`,
-            persistent: true,
-            source: "engine-list"
-          });
-        }
-      });
-    return () => {
-      disposed = true;
-    };
-  }, [transport]);
 
   useEffect(() => {
     if (!transport) {
@@ -761,10 +732,10 @@ export const ChatShellApp = ({
   }, [transport]);
 
   useEffect(() => {
-    if (settingsHydrated && !selectedEngineId && agents.length > 0) {
-      setSelectedEngineId(agents[0]!.agentId);
+    if (settingsHydrated && !selectedEngineId && engines.length > 0) {
+      setSelectedEngineId(engines[0]!.engineId);
     }
-  }, [agents, selectedEngineId, settingsHydrated]);
+  }, [engines, selectedEngineId, settingsHydrated]);
 
   useEffect(() => {
     if (!transport) {
@@ -803,8 +774,8 @@ export const ChatShellApp = ({
       return;
     }
     let disposed = false;
-    void transport.agent
-      .select({ agentId: selectedEngineId })
+    void transport.engine
+      .select({ engineId: selectedEngineId })
       .then(() => {
         if (!disposed) {
           setStatusNotice(undefined);
@@ -957,7 +928,7 @@ export const ChatShellApp = ({
             <div className="awb-tree__labels">
               <strong>{session.title}</strong>
               <span>
-                {session.agentId} · {session.displaySessionId}
+                {session.engineId} · {session.displaySessionId}
               </span>
             </div>
           </div>
@@ -1057,8 +1028,7 @@ export const ChatShellApp = ({
 
           <footer className="awb-sidebar__footer">
             <SettingsLauncher
-              agents={agents}
-              engines={availableEngines}
+              engines={engines}
               surfacesByEngineId={engineSurfacesById}
               currentEngineId={selectedEngineId}
               transport={transport}
@@ -1114,6 +1084,7 @@ export const ChatShellApp = ({
             status={composer.status}
             intent={composer.intent}
             supportsSteer={composer.capabilities.supportsSteer}
+            supportsAttachments={composer.capabilities.supportsAttachments}
             canSubmit={composer.canSubmit}
             canQueue={composer.canQueue}
             canStop={composer.canStop}

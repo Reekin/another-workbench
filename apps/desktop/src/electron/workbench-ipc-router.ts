@@ -38,7 +38,7 @@ const toErrorResponse = (
 ): WorkbenchRpcResponse =>
   parseWorkbenchRpcResponse({
     id: request?.id ?? "unknown-request",
-    method: request?.method ?? "agent.list",
+    method: request?.method ?? "engine.list",
     ok: false,
     error: {
       code,

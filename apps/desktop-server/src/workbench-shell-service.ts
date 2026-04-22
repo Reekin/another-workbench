@@ -1,12 +1,13 @@
 import type {
-  AgentDescriptor,
   ChatInteractionCapabilitiesRpc,
   ChatSession,
+  ComposerSlashSuggestionRpc,
   CodexTurnChangesResultRpc,
   CodexTurnChangesUndoResultRpc,
   CommandEnvelope,
   DomainSnapshot,
   EngineDefinitionRpc,
+  EngineSharedCapabilityRpc,
   EngineSurfaceRpc,
   EventEnvelope,
   SkillDescriptorRpc
@@ -48,6 +49,73 @@ import { TurnChangeService } from "./turn-change-service.js";
 import { CodexTurnChangesService } from "./engine-extensions/codex/turn-changes-service.js";
 
 const defaultSessionWindowLimit = 8;
+
+const baseComposerSlashSuggestions: readonly ComposerSlashSuggestionRpc[] = [
+  {
+    id: "status",
+    label: "/status",
+    detail: "Summarize the current session state",
+    replacement: "Summarize the current session status and the next best action."
+  }
+];
+
+const composerSlashSuggestionsByCapability: Partial<
+  Record<EngineSharedCapabilityRpc, ComposerSlashSuggestionRpc>
+> = {
+  checkpoint: {
+    id: "checkpoint",
+    label: "/checkpoint",
+    detail: "Ask for a checkpoint summary",
+    replacement:
+      "Summarize the available checkpoints and explain what changed since the latest one.",
+    sourceCapability: "checkpoint"
+  },
+  delegation: {
+    id: "delegation",
+    label: "/delegation",
+    detail: "Explain the current delegation tree",
+    replacement:
+      "Summarize the current delegation tree and identify blocked or waiting nodes.",
+    sourceCapability: "delegation"
+  },
+  diagnostics: {
+    id: "diagnostics",
+    label: "/diagnostics",
+    detail: "Review diagnostics and suggest the next fix",
+    replacement: "Review the current diagnostics and propose the next fix.",
+    sourceCapability: "diagnostics"
+  },
+  worktree: {
+    id: "worktree",
+    label: "/worktree",
+    detail: "Summarize branch and rollout context",
+    replacement: "Summarize the current worktree, branch, and rollout context.",
+    sourceCapability: "worktree"
+  }
+};
+
+const resolveComposerSlashSuggestions = (
+  sharedCapabilities: readonly EngineSharedCapabilityRpc[]
+): ComposerSlashSuggestionRpc[] => {
+  const seen = new Set<string>();
+  const items: ComposerSlashSuggestionRpc[] = [];
+
+  for (const suggestion of baseComposerSlashSuggestions) {
+    seen.add(suggestion.id);
+    items.push(suggestion);
+  }
+
+  for (const capability of sharedCapabilities) {
+    const suggestion = composerSlashSuggestionsByCapability[capability];
+    if (!suggestion || seen.has(suggestion.id)) {
+      continue;
+    }
+    seen.add(suggestion.id);
+    items.push(suggestion);
+  }
+
+  return items;
+};
 
 export type WorkbenchShellServiceOptions = {
   runtimeService: WorkbenchRuntimeService;
@@ -133,8 +201,8 @@ export class WorkbenchShellService {
     this.codexTurnChangesService =
       options.codexTurnChangesService ??
       new CodexTurnChangesService({
-        resolveSessionAgentId: (sessionId) =>
-          this.sessionIdentity.resolveContext(sessionId).agentId,
+        resolveSessionEngineId: (sessionId) =>
+          this.sessionIdentity.resolveContext(sessionId).engineId,
         resolveWorkingDirectory: (sessionId) =>
           this.resolveTurnChangeWorkingDirectoryBySessionId(sessionId),
         undoTurnChanges: (input) => this.turnChangeService.undoTurnChanges(input)
@@ -153,19 +221,15 @@ export class WorkbenchShellService {
     };
   }
 
-  public listAgents(): AgentDescriptor[] {
-    return this.runtimeService.listAgents();
-  }
-
-  public selectAgent(input: {
-    agentId: string;
+  public selectEngine(input: {
+    engineId: string;
     config?: Record<string, unknown>;
-  }): { selectedAgentId: string } {
-    return this.runtimeService.selectAgent(input);
+  }): { selectedEngineId: string } {
+    return this.runtimeService.selectEngine(input);
   }
 
-  public getSelectedAgentId(): string | undefined {
-    return this.runtimeService.getSelectedAgentId();
+  public getSelectedEngineId(): string | undefined {
+    return this.runtimeService.getSelectedEngineId();
   }
 
   public async getSettings(): Promise<{
@@ -186,8 +250,8 @@ export class WorkbenchShellService {
     const registry = this.requireWorkspaceRegistry();
     await registry.updateSettings(input);
     if (input.defaultNewSessionEngineId) {
-      this.runtimeService.selectAgent({
-        agentId: input.defaultNewSessionEngineId
+      this.runtimeService.selectEngine({
+        engineId: input.defaultNewSessionEngineId
       });
     }
     return this.getSettings();
@@ -376,9 +440,12 @@ export class WorkbenchShellService {
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`);
     }
+    const sharedCapabilities = this.getEngineSurface(session.engineId).sharedCapabilities;
+
     return {
-      supportsSteer: session.agentId === "codex",
-      supportsAttachments: true
+      supportsSteer: sharedCapabilities.includes("steer"),
+      supportsAttachments: sharedCapabilities.includes("attachments"),
+      slashSuggestions: resolveComposerSlashSuggestions(sharedCapabilities)
     };
   }
 
@@ -474,12 +541,12 @@ export class WorkbenchShellService {
   public async getDelegation(sessionId: string): Promise<DelegationSnapshot> {
     if (!this.capabilities) {
       const context = this.sessionIdentity.resolveContext(sessionId);
-      if (!context.agentId) {
+      if (!context.engineId) {
         throw new Error(`Unknown session: ${sessionId}`);
       }
       return {
         sessionId,
-        agentId: context.agentId,
+        engineId: context.engineId,
         supported: false,
         supportsControl: false,
         nodes: [],
@@ -493,12 +560,12 @@ export class WorkbenchShellService {
   public async getWorktree(sessionId: string): Promise<WorktreeSnapshot> {
     if (!this.capabilities) {
       const context = this.sessionIdentity.resolveContext(sessionId);
-      if (!context.agentId) {
+      if (!context.engineId) {
         throw new Error(`Unknown session: ${sessionId}`);
       }
       return {
         sessionId,
-        agentId: context.agentId,
+        engineId: context.engineId,
         supported: false,
         fetchedAt: new Date().toISOString()
       };
@@ -509,12 +576,12 @@ export class WorkbenchShellService {
   public async getCheckpoint(sessionId: string): Promise<CheckpointSnapshot> {
     if (!this.capabilities) {
       const context = this.sessionIdentity.resolveContext(sessionId);
-      if (!context.agentId) {
+      if (!context.engineId) {
         throw new Error(`Unknown session: ${sessionId}`);
       }
       return {
         sessionId,
-        agentId: context.agentId,
+        engineId: context.engineId,
         supported: false,
         supportsRestore: false,
         checkpoints: [],
@@ -527,12 +594,12 @@ export class WorkbenchShellService {
   public async getDiagnostics(sessionId: string): Promise<DiagnosticsSnapshot> {
     if (!this.capabilities) {
       const context = this.sessionIdentity.resolveContext(sessionId);
-      if (!context.agentId) {
+      if (!context.engineId) {
         throw new Error(`Unknown session: ${sessionId}`);
       }
       return {
         sessionId,
-        agentId: context.agentId,
+        engineId: context.engineId,
         supported: false,
         authenticated: false,
         fetchedAt: new Date().toISOString()
@@ -544,12 +611,12 @@ export class WorkbenchShellService {
   public async getBackgroundRun(sessionId: string): Promise<BackgroundRunSnapshot> {
     if (!this.capabilities) {
       const context = this.sessionIdentity.resolveContext(sessionId);
-      if (!context.agentId) {
+      if (!context.engineId) {
         throw new Error(`Unknown session: ${sessionId}`);
       }
       return {
         sessionId,
-        agentId: context.agentId,
+        engineId: context.engineId,
         supported: false,
         status: "unsupported",
         fetchedAt: new Date().toISOString()

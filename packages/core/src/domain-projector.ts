@@ -14,13 +14,13 @@ import { DomainStore } from "./domain-store.js";
 
 type ActorRef = {
   participantId?: string;
-  agentId?: string;
+  engineId?: string;
 };
 
 type SessionRecordInput = {
   sessionId: string;
   conversationId?: string;
-  agentId?: string;
+  engineId?: string;
   status?: "idle" | "running" | "awaiting_approval" | "error" | "completed";
   title?: string;
   createdAt?: string;
@@ -64,22 +64,22 @@ const addUnique = (items: readonly string[], value: string): string[] =>
   items.includes(value) ? [...items] : [...items, value];
 
 const actorFromEvent = (event: ActorRef): ActorRef | undefined =>
-  event.participantId || event.agentId
+  event.participantId || event.engineId
     ? {
         participantId: event.participantId,
-        agentId: event.agentId
+        engineId: event.engineId
       }
     : undefined;
 
-const participantIdFor = (conversationId: string, agentId: string): string =>
-  `participant-${conversationId}-${agentId}`;
+const participantIdFor = (conversationId: string, engineId: string): string =>
+  `participant-${conversationId}-${engineId}`;
 
 const withConversationSession = (
   conversation: ReturnType<DomainStore["getConversation"]>,
   input: {
     conversationId: string;
     sessionId: string;
-    agentId: string;
+    engineId: string;
     workspaceId?: string;
     timestamp: string;
   }
@@ -87,9 +87,9 @@ const withConversationSession = (
   parseConversation({
     conversationId: input.conversationId,
     workspaceId: input.workspaceId ?? conversation?.workspaceId,
-    participantAgentIds: addUnique(
-      conversation?.participantAgentIds ?? [],
-      input.agentId
+    participantEngineIds: addUnique(
+      conversation?.participantEngineIds ?? [],
+      input.engineId
     ),
     activeSessionId: input.sessionId,
     sessionIds: addUnique(conversation?.sessionIds ?? [], input.sessionId),
@@ -125,11 +125,11 @@ export class DomainProjector {
     switch (event.type) {
       case "conversation.updated": {
         const existing = this.store.getConversation(event.conversationId);
-        const participantAgentIds = [
-          ...(existing?.participantAgentIds ?? []),
+        const participantEngineIds = [
+          ...(existing?.participantEngineIds ?? []),
           ...event.participantIds
-            .map((participantId) => this.store.getParticipant(participantId)?.agentId)
-            .filter((agentId): agentId is string => agentId !== undefined)
+            .map((participantId) => this.store.getParticipant(participantId)?.engineId)
+            .filter((engineId): engineId is string => engineId !== undefined)
         ].reduce<string[]>((acc, value) => addUnique(acc, value), []);
         const sessionIds = this.store
           .listSessions({
@@ -141,7 +141,7 @@ export class DomainProjector {
         this.store.upsertConversation({
           conversationId: event.conversationId,
           workspaceId: event.workspaceId ?? existing?.workspaceId,
-          participantAgentIds,
+          participantEngineIds,
           activeSessionId: event.activeSessionId ?? existing?.activeSessionId,
           sessionIds: sessionIds.length > 0 ? sessionIds : existing?.sessionIds ?? [],
           createdAt: existing?.createdAt ?? timestamp,
@@ -155,7 +155,7 @@ export class DomainProjector {
         const session = this.upsertSessionRecord({
           sessionId: event.sessionId,
           conversationId: event.conversationId,
-          agentId: event.agentId,
+          engineId: event.engineId,
           status: event.status,
           createdAt: this.store.getSession(event.sessionId)?.createdAt ?? timestamp,
           updatedAt: timestamp
@@ -164,14 +164,14 @@ export class DomainProjector {
           withConversationSession(this.store.getConversation(event.conversationId), {
             conversationId: event.conversationId,
             sessionId: event.sessionId,
-            agentId: session.agentId,
+            engineId: session.engineId,
             timestamp
           })
         );
         if (event.relation) {
           this.store.upsertSessionRelation(event.relation);
         }
-        this.syncParticipantState(event.conversationId, session.agentId);
+        this.syncParticipantState(event.conversationId, session.engineId);
         return;
       }
       case "session.updated": {
@@ -179,7 +179,7 @@ export class DomainProjector {
         const session = this.upsertSessionRecord({
           sessionId: event.sessionId,
           conversationId: event.conversationId,
-          agentId: existing?.agentId ?? unknownAgentId,
+          engineId: existing?.engineId ?? unknownAgentId,
           status: event.status,
           title: existing?.title,
           metadata: event.metadata ?? existing?.metadata,
@@ -193,7 +193,7 @@ export class DomainProjector {
           ...withConversationSession(existingConversation, {
             conversationId: event.conversationId,
             sessionId: event.sessionId,
-            agentId: session.agentId,
+            engineId: session.engineId,
             timestamp
           }),
           activeSessionId:
@@ -201,7 +201,7 @@ export class DomainProjector {
               ? event.sessionId
               : existingConversation?.activeSessionId
         });
-        this.syncParticipantState(event.conversationId, session.agentId);
+        this.syncParticipantState(event.conversationId, session.engineId);
         return;
       }
       case "session.archived": {
@@ -226,13 +226,13 @@ export class DomainProjector {
             updatedAt: event.archivedAt
           });
         }
-        this.syncParticipantState(event.conversationId, session.agentId);
+        this.syncParticipantState(event.conversationId, session.engineId);
         return;
       }
       case "session.disposed": {
         const existing = this.store.getSession(event.sessionId);
         const conversation = this.store.getConversation(event.conversationId);
-        const agentId = existing?.agentId;
+        const engineId = existing?.engineId;
 
         this.store.deleteSessionCascade(event.sessionId);
 
@@ -250,8 +250,8 @@ export class DomainProjector {
           });
         }
 
-        if (agentId) {
-          this.syncParticipantState(event.conversationId, agentId);
+        if (engineId) {
+          this.syncParticipantState(event.conversationId, engineId);
         }
         return;
       }
@@ -260,12 +260,12 @@ export class DomainProjector {
           parseAgentParticipant({
             participantId: event.participantId,
             conversationId: event.conversationId,
-            agentId: event.agentId,
+            engineId: event.engineId,
             role: event.role,
             capabilities: event.capabilities,
             activeSessionIds: this.getActiveSessionIdsForParticipant(
               event.conversationId,
-              event.agentId
+              event.engineId
             )
           })
         );
@@ -273,9 +273,9 @@ export class DomainProjector {
         this.store.upsertConversation({
           conversationId: event.conversationId,
           workspaceId: conversation?.workspaceId,
-          participantAgentIds: addUnique(
-            conversation?.participantAgentIds ?? [],
-            event.agentId
+          participantEngineIds: addUnique(
+            conversation?.participantEngineIds ?? [],
+            event.engineId
           ),
           activeSessionId: conversation?.activeSessionId,
           sessionIds:
@@ -615,7 +615,7 @@ export class DomainProjector {
     const session = parseChatSession({
       sessionId: input.sessionId,
       conversationId,
-      agentId: input.agentId ?? existing?.agentId ?? unknownAgentId,
+      engineId: input.engineId ?? existing?.engineId ?? unknownAgentId,
       status: input.status ?? existing?.status ?? "idle",
       title: input.title ?? existing?.title,
       createdAt: input.createdAt ?? existing?.createdAt ?? this.now(),
@@ -745,25 +745,25 @@ export class DomainProjector {
 
   private syncParticipantState(
     conversationId: string,
-    agentId: string
+    engineId: string
   ): void {
     const conversation = this.store.getConversation(conversationId);
     if (!conversation) {
       return;
     }
 
-    const participantId = participantIdFor(conversationId, agentId);
+    const participantId = participantIdFor(conversationId, engineId);
     const existing = this.store.getParticipant(participantId);
     this.store.upsertParticipant(
       parseAgentParticipant({
         participantId,
         conversationId,
-        agentId,
+        engineId,
         role:
           existing?.role ??
-          (conversation.participantAgentIds[0] === agentId ? "primary" : "secondary"),
+          (conversation.participantEngineIds[0] === engineId ? "primary" : "secondary"),
         capabilities: existing?.capabilities ?? [],
-        activeSessionIds: this.getActiveSessionIdsForParticipant(conversationId, agentId),
+        activeSessionIds: this.getActiveSessionIdsForParticipant(conversationId, engineId),
         metadata: existing?.metadata
       })
     );
@@ -771,12 +771,12 @@ export class DomainProjector {
 
   private getActiveSessionIdsForParticipant(
     conversationId: string,
-    agentId: string
+    engineId: string
   ): string[] {
     return this.store
       .listSessions({
         conversationId,
-        agentId,
+        engineId,
         includeArchived: true
       })
       .filter((session) => !session.archivedAt)

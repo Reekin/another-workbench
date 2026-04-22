@@ -30,7 +30,7 @@ export class CodexCheckpointProvider implements CheckpointCapability {
     if (!threadId) {
       return {
         sessionId: input.sessionId,
-        agentId: input.agentId ?? "codex",
+        engineId: input.engineId ?? "codex",
         supported: false,
         supportsRestore: false,
         checkpoints: [],
@@ -41,7 +41,7 @@ export class CodexCheckpointProvider implements CheckpointCapability {
     const chatTree = await this.codexRuntimePort.readChatTree(threadId);
     return {
       sessionId: input.sessionId,
-      agentId: input.agentId ?? "codex",
+      engineId: input.engineId ?? "codex",
       supported: true,
       supportsRestore: true,
       currentCheckpointId: chatTree.chatTree.currentNodeId ?? undefined,

@@ -33,7 +33,7 @@ describe("SessionIndexStore", () => {
       session: {
         sessionId: "session-1",
         conversationId: "conversation-1",
-        agentId: "codex",
+        engineId: "codex",
         title: "Main thread",
         createdAt: "2026-04-18T00:00:01Z",
         updatedAt: "2026-04-18T00:00:01Z",
@@ -49,7 +49,7 @@ describe("SessionIndexStore", () => {
       session: {
         sessionId: "session-2",
         conversationId: "conversation-1",
-        agentId: "codex",
+        engineId: "codex",
         createdAt: "2026-04-18T00:00:02Z",
         updatedAt: "2026-04-18T00:00:02Z"
       },
@@ -101,7 +101,7 @@ describe("SessionIndexStore", () => {
       session: {
         sessionId: "session-1",
         conversationId: "conversation-1",
-        agentId: "pi-acp",
+        engineId: "pi-acp",
         createdAt: "2026-04-18T00:00:01Z",
         updatedAt: "2026-04-18T00:00:01Z"
       },
@@ -129,7 +129,7 @@ describe("SessionIndexStore", () => {
       session: {
         sessionId: "session-local",
         conversationId: "conversation-1",
-        agentId: "codex",
+        engineId: "codex",
         createdAt: "2026-04-18T00:00:01Z",
         updatedAt: "2026-04-18T00:00:01Z"
       },
@@ -140,7 +140,7 @@ describe("SessionIndexStore", () => {
       session: {
         sessionId: "codex-thread:thread-1",
         conversationId: "conversation-legacy",
-        agentId: "codex",
+        engineId: "codex",
         createdAt: "2026-04-18T00:00:02Z",
         updatedAt: "2026-04-18T00:00:02Z"
       },

@@ -11,6 +11,7 @@ import {
 } from "react";
 import type {
   ApprovalRequest,
+  ChatInteractionCapabilitiesRpc,
   ChatSession,
   SkillDescriptorRpc,
   Turn
@@ -25,6 +26,7 @@ import {
   resolveComposerStatusModel,
   type ComposerStatusNotice
 } from "./composer-status.js";
+import { resolveSlashSuggestionItems } from "./composer/composer-suggestions.js";
 import type {
   ComposerSkillReference,
   ComposerIntent,
@@ -214,9 +216,10 @@ export const useComposerController = (
   const [isDispatching, setIsDispatching] = useState(false);
   const [isDropTarget, setIsDropTarget] = useState(false);
   const [cursorPosition, setCursorPosition] = useState(0);
-  const [capabilities, setCapabilities] = useState({
+  const [capabilities, setCapabilities] = useState<ChatInteractionCapabilitiesRpc>({
     supportsSteer: false,
-    supportsAttachments: true
+    supportsAttachments: false,
+    slashSuggestions: []
   });
   const [availableSkills, setAvailableSkills] = useState<SkillDescriptorRpc[]>([]);
   const [isSkillsLoading, setIsSkillsLoading] = useState(false);
@@ -324,7 +327,8 @@ export const useComposerController = (
     if (!input.transport || !input.activeSessionId) {
       setCapabilities({
         supportsSteer: false,
-        supportsAttachments: true
+        supportsAttachments: false,
+        slashSuggestions: []
       });
       return;
     }
@@ -430,76 +434,15 @@ export const useComposerController = (
     }
 
     if (suggestionQuery.trigger === "/") {
-      const slashItems: ComposerSuggestionItem[] = [
-        {
-          id: "slash-status",
-          kind: "slash",
-          label: "/status",
-          detail: "Summarize the current session state",
-          replacement: "Summarize the current session status and the next best action."
-        },
-        {
-          id: "slash-checkpoint",
-          kind: "slash",
-          label: "/checkpoint",
-          detail: "Ask for a checkpoint summary",
-          replacement:
-            "Summarize the available checkpoints and explain what changed since the latest one."
-        },
-        {
-          id: "slash-delegation",
-          kind: "slash",
-          label: "/delegation",
-          detail: "Explain the current delegation tree",
-          replacement:
-            "Summarize the current delegation tree and identify blocked or waiting nodes."
-        },
-        {
-          id: "slash-diagnostics",
-          kind: "slash",
-          label: "/diagnostics",
-          detail: "Review diagnostics and suggest the next fix",
-          replacement: "Review the current diagnostics and propose the next fix."
-        },
-        {
-          id: "slash-worktree",
-          kind: "slash",
-          label: "/worktree",
-          detail: "Summarize branch and rollout context",
-          replacement: "Summarize the current worktree, branch, and rollout context."
-        }
-      ];
-      if (input.activeWorkspaceId && input.selectedEngineId && input.onCreateSession) {
-        slashItems.unshift({
-          id: "slash-new",
-          kind: "slash",
-          label: "/new",
-          detail: "Create a new session in the active workspace",
-          action: "create-session"
-        });
-      }
-      if (input.displayedSessionId && input.onOpenSession) {
-        slashItems.unshift({
-          id: "slash-resume",
-          kind: "slash",
-          label: "/resume",
-          detail: "Reload the current thread window",
-          action: "resume-session"
-        });
-      }
-      if (canStop) {
-        slashItems.push({
-          id: "slash-interrupt",
-          kind: "slash",
-          label: "/interrupt",
-          detail: "Interrupt the active turn",
-          action: "interrupt"
-        });
-      }
-
-      const items = slashItems.filter((item) =>
-        item.label.toLowerCase().includes(`/${suggestionQuery.query.toLowerCase()}`)
-      );
+      const items: ComposerSuggestionItem[] = resolveSlashSuggestionItems({
+        capabilities,
+        query: suggestionQuery.query,
+        canCreateSession: Boolean(
+          input.activeWorkspaceId && input.selectedEngineId && input.onCreateSession
+        ),
+        canResumeSession: Boolean(input.displayedSessionId && input.onOpenSession),
+        canInterrupt: canStop
+      });
       return {
         query: suggestionQuery,
         items,
@@ -534,6 +477,7 @@ export const useComposerController = (
     };
   }, [
     availableSkills,
+    capabilities,
     canStop,
     highlightedSuggestionIndex,
     input.activeWorkspaceId,
@@ -851,6 +795,13 @@ export const useComposerController = (
     origin: "picker" | "drop" | "paste"
   ): Promise<void> => {
     if (input.isOpeningSelectedSession || isDispatching) {
+      return;
+    }
+    if (!capabilities.supportsAttachments) {
+      input.onStatusNotice({
+        message: "Attachments are unavailable for this session.",
+        source: "send"
+      });
       return;
     }
     const nextAttachments = await createComposerAttachments(files, origin);

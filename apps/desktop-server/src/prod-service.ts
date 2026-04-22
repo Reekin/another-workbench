@@ -61,7 +61,7 @@ export const createWorkbenchRuntimeService = (
     now: options.now
   });
   const codexRuntimePort = createCodexAppServerRuntimePort({
-    agentId: codexAgentId,
+    engineId: codexAgentId,
     commandPath: options.codexCommandPath,
     commandArgs: options.codexCommandArgs,
     resolveConversationIdBySessionId: (sessionId: string) =>
@@ -70,7 +70,7 @@ export const createWorkbenchRuntimeService = (
     now: options.now
   });
   const piRuntimePort = createPiAcpRuntimePort({
-    agentId: piAgentId,
+    engineId: piAgentId,
     commandPath: options.piAcpCommandPath,
     commandArgs: options.piAcpCommandArgs,
     piCommandPath: options.piCommandPath,
@@ -113,9 +113,11 @@ export const createWorkbenchRuntimeService = (
         engineId: codexAgentId,
         sharedCapabilities: [
           "chat",
+          "steer",
           "tool",
           "terminal",
           "approval",
+          "attachments",
           "conversationGraph",
           "delegation",
           "checkpoint",
@@ -134,7 +136,7 @@ export const createWorkbenchRuntimeService = (
       },
       {
         engineId: piAgentId,
-        sharedCapabilities: ["chat", "tool", "approval"],
+        sharedCapabilities: ["chat", "tool", "approval", "attachments"],
         extensions: []
       }
     ]
@@ -147,7 +149,7 @@ export const createWorkbenchRuntimeService = (
     agentBindings: [
       {
         descriptor: {
-          agentId: codexAgentId,
+          engineId: codexAgentId,
           displayName: "Codex",
           capabilities: ["chat", "tool", "terminal", "approval"]
         },
@@ -162,7 +164,7 @@ export const createWorkbenchRuntimeService = (
       },
       {
         descriptor: {
-          agentId: piAgentId,
+          engineId: piAgentId,
           displayName: "Pi",
           capabilities: ["chat", "tool", "approval"]
         },
@@ -191,7 +193,7 @@ export const createWorkbenchRuntimeService = (
     sessionIdentity,
     capabilities: [
       {
-        agentId: codexAgentId,
+        engineId: codexAgentId,
         sessionDiscovery: new CodexSessionDiscoveryProvider({
           codexRuntimePort,
           turnChangesStore: codexTurnChangesStore
@@ -218,7 +220,7 @@ export const createWorkbenchRuntimeService = (
         })
       },
       {
-        agentId: piAgentId
+        engineId: piAgentId
       }
     ],
     now: options.now

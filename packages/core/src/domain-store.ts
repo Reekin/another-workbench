@@ -30,7 +30,7 @@ export type DomainStoreOptions = {
 
 export type ListSessionsOptions = {
   conversationId?: string;
-  agentId?: string;
+  engineId?: string;
   includeArchived?: boolean;
 };
 
@@ -61,7 +61,7 @@ export type ListApprovalRequestsOptions = {
 
 export type ListParticipantsOptions = {
   conversationId?: string;
-  agentId?: string;
+  engineId?: string;
 };
 
 export type ListSessionRelationsOptions = {
@@ -341,7 +341,7 @@ export class DomainStore {
       ),
       participants: this.listParticipants({
         conversationId: session.conversationId,
-        agentId: session.agentId
+        engineId: session.engineId
       }),
       sessionRelations: this.listSessionRelations({ sessionId })
     };
@@ -379,8 +379,8 @@ export class DomainStore {
       );
     }
 
-    if (options.agentId) {
-      sessions = sessions.filter((session) => session.agentId === options.agentId);
+    if (options.engineId) {
+      sessions = sessions.filter((session) => session.engineId === options.engineId);
     }
 
     if (!options.includeArchived) {
@@ -694,9 +694,9 @@ export class DomainStore {
         )
       : [...this.participants.values()];
 
-    if (options.agentId) {
+    if (options.engineId) {
       participants = participants.filter(
-        (participant) => participant.agentId === options.agentId
+        (participant) => participant.engineId === options.engineId
       );
     }
 

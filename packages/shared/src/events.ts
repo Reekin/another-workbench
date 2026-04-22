@@ -1,8 +1,8 @@
 import { z } from "zod";
 import {
-  zAgentId,
   zConversationId,
   zCursor,
+  zEngineId,
   zEventId,
   zIsoDateTime,
   zJsonRecord,
@@ -43,7 +43,7 @@ export type EventType = (typeof eventTypes)[number];
 
 const zActorFields = {
   participantId: zParticipantId.optional(),
-  agentId: zAgentId.optional()
+  engineId: zEngineId.optional()
 } as const;
 
 const zConversationUpdatedEvent = z.object({
@@ -58,7 +58,7 @@ const zSessionCreatedEvent = z.object({
   type: z.literal("session.created"),
   conversationId: zConversationId,
   sessionId: zSessionId,
-  agentId: zAgentId,
+  engineId: zEngineId,
   status: z.enum(["idle", "running", "awaiting_approval", "error", "completed"]),
   relation: zSessionRelationSchema.optional()
 });
@@ -216,7 +216,7 @@ const zParticipantUpdatedEvent = z.object({
   type: z.literal("participant.updated"),
   conversationId: zConversationId,
   participantId: zParticipantId,
-  agentId: zAgentId,
+  engineId: zEngineId,
   role: z.enum(["primary", "secondary", "observer"]),
   capabilities: z.array(z.string().min(1)).default([])
 });
@@ -269,11 +269,11 @@ export const zEventSchema = z
     if (
       actorScopedEventTypes.has(event.type) &&
       !("participantId" in event && event.participantId) &&
-      !("agentId" in event && event.agentId)
+      !("engineId" in event && event.engineId)
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Actor-scoped events require participantId or agentId."
+        message: "Actor-scoped events require participantId or engineId."
       });
     }
   });

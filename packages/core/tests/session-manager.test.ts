@@ -16,11 +16,11 @@ describe("SessionManager", () => {
 
     const sessionA = manager.createSession({
       conversationId: "conversation-a",
-      agentId: "agent-a"
+      engineId: "agent-a"
     });
     const sessionB = manager.createSession({
       conversationId: "conversation-a",
-      agentId: "agent-b"
+      engineId: "agent-b"
     });
 
     expect(sessionA.sessionId).not.toBe(sessionB.sessionId);
@@ -37,7 +37,7 @@ describe("SessionManager", () => {
 
     const created = manager.createSession({
       conversationId: "conversation-a",
-      agentId: "agent-a",
+      engineId: "agent-a",
       status: "completed"
     });
 
@@ -59,7 +59,7 @@ describe("SessionManager", () => {
     });
     const session = manager.createSession({
       conversationId: "conversation-a",
-      agentId: "agent-a"
+      engineId: "agent-a"
     });
 
     manager.bindRuntime(session.sessionId, {
@@ -97,11 +97,11 @@ describe("SessionManager", () => {
 
     const sessionA = manager.createSession({
       conversationId: "conversation-a",
-      agentId: "agent-a"
+      engineId: "agent-a"
     });
     const sessionB = manager.createSession({
       conversationId: "conversation-a",
-      agentId: "agent-b"
+      engineId: "agent-b"
     });
 
     manager.bindRuntime(sessionA.sessionId, {
@@ -127,7 +127,7 @@ describe("SessionManager", () => {
     });
     const session = manager.createSession({
       conversationId: "conversation-a",
-      agentId: "agent-a"
+      engineId: "agent-a"
     });
 
     manager.bindRuntime(session.sessionId, {

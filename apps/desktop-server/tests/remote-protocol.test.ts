@@ -387,6 +387,97 @@ describe("createRemoteRpcHandler", () => {
     });
   });
 
+  it("routes composer capability and skills RPCs through shell-only APIs", async () => {
+    const shellService = {
+      listAgents: vi.fn().mockReturnValue([]),
+      selectAgent: vi.fn(),
+      listWorkspaces: vi.fn().mockResolvedValue({
+        workspaces: []
+      }),
+      listSessions: vi.fn().mockReturnValue([]),
+      getSnapshotResult: vi.fn().mockReturnValue({
+        snapshot: {
+          conversations: [],
+          sessions: [],
+          turns: [],
+          messageBlocks: [],
+          toolCalls: [],
+          terminalStreams: [],
+          approvalRequests: [],
+          participants: [],
+          sessionRelations: []
+        }
+      }),
+      executeCommand: vi.fn(),
+      replay: vi.fn().mockReturnValue([]),
+      getChatCapabilities: vi.fn().mockResolvedValue({
+        supportsSteer: true,
+        supportsAttachments: true
+      }),
+      listSkills: vi.fn().mockResolvedValue([
+        {
+          cwd: "I:/repo",
+          name: "task-breakdown",
+          description: "Split work into tasks.",
+          shortDescription: "Roadmap helper",
+          path: "C:/Users/TestUser/.codex/skills/task-breakdown/SKILL.md",
+          scope: "user",
+          enabled: true
+        }
+      ])
+    };
+    const handler = createRemoteRpcHandler(shellService as never);
+
+    await expect(
+      handler.handleRequest({
+        id: "req-chat-capabilities",
+        method: "chat.getCapabilities",
+        params: {
+          sessionId: "session-1"
+        }
+      })
+    ).resolves.toMatchObject({
+      id: "req-chat-capabilities",
+      method: "chat.getCapabilities",
+      ok: true,
+      result: {
+        capabilities: {
+          supportsSteer: true,
+          supportsAttachments: true
+        }
+      }
+    });
+
+    await expect(
+      handler.handleRequest({
+        id: "req-skills-list",
+        method: "skills.list",
+        params: {
+          cwds: ["I:/repo"],
+          forceReload: true
+        }
+      })
+    ).resolves.toMatchObject({
+      id: "req-skills-list",
+      method: "skills.list",
+      ok: true,
+      result: {
+        skills: [
+          expect.objectContaining({
+            name: "task-breakdown",
+            enabled: true
+          })
+        ]
+      }
+    });
+
+    expect(shellService.getChatCapabilities).toHaveBeenCalledWith("session-1");
+    expect(shellService.listSkills).toHaveBeenCalledWith({
+      cwds: ["I:/repo"],
+      forceReload: true
+    });
+  });
+
   it("returns websocket endpoint metadata for remote event subscribe and unsubscribe", async () => {
     const service = createService();
     const handler = createRemoteRpcHandler(service, {

@@ -110,4 +110,53 @@ describe("DomainService", () => {
       })
     ]);
   });
+
+  it("appends steer messages to the active turn without creating a new turn", () => {
+    const service = new DomainService({
+      now: (() => {
+        let tick = 0;
+        return () => `2026-04-20T00:02:${String(++tick).padStart(2, "0")}Z`;
+      })(),
+      createSessionId: () => "session-1",
+      resolveAgentDescriptor: () => ({
+        agentId: "codex",
+        displayName: "Codex",
+        capabilities: ["chat"]
+      }),
+      publishRuntimeEvent: () => {}
+    });
+
+    service.createSession({
+      conversationId: "conversation-1",
+      agentId: "codex"
+    });
+    service.ingestRuntimeEvent({
+      type: "turn.started",
+      sessionId: "session-1",
+      turnId: "turn-1"
+    });
+
+    service.commitSteerUserMessage({
+      type: "steerTurn",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      messageId: "message-steer-1",
+      content: "Please focus on the diagnostics failure.",
+      attachments: []
+    });
+
+    const snapshot = service.getSnapshot();
+    expect(snapshot.turns).toEqual([
+      expect.objectContaining({
+        turnId: "turn-1",
+        messageIds: ["message-steer-1"]
+      })
+    ]);
+    expect(snapshot.messageBlocks).toEqual([
+      expect.objectContaining({
+        messageId: "message-steer-1",
+        text: "Please focus on the diagnostics failure."
+      })
+    ]);
+  });
 });

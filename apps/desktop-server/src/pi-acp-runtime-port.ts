@@ -430,6 +430,15 @@ class PiAcpRuntimePort
         };
       case "turn.send":
         return this.handlePrompt(payload);
+      case "turn.steer":
+        return {
+          id: payload.id,
+          ok: false,
+          error: {
+            code: "ACP_STEER_UNSUPPORTED",
+            message: "ACP runtime does not support turn steering."
+          }
+        };
       case "turn.interrupt":
         return this.handleCancel(payload);
       case "approval.respond":

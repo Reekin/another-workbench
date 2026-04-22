@@ -150,6 +150,62 @@ describe("WorkbenchShellService", () => {
     });
   });
 
+  it("reports steer capability from the active session agent and delegates skills listing", async () => {
+    const listSkills = vi.fn().mockResolvedValue([
+      {
+        cwd: "I:/repo",
+        name: "task-breakdown",
+        description: "Split work into tasks.",
+        shortDescription: "Roadmap helper",
+        path: "C:/Users/TestUser/.codex/skills/task-breakdown/SKILL.md",
+        scope: "user",
+        enabled: true
+      }
+    ]);
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        getSession: (sessionId: string) =>
+          sessionId === "session-1"
+            ? ({
+                sessionId,
+                conversationId: "conversation-1",
+                agentId: "codex",
+                status: "running",
+                createdAt: "2026-04-19T00:00:00.000Z",
+                updatedAt: "2026-04-19T00:00:00.000Z"
+              } as const)
+            : undefined
+      } as never,
+      sessionCatalog: {} as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never,
+      skillsProvider: {
+        listSkills
+      }
+    });
+
+    await expect(service.getChatCapabilities("session-1")).resolves.toEqual({
+      supportsSteer: true,
+      supportsAttachments: true
+    });
+    await expect(
+      service.listSkills({
+        cwds: ["I:/repo"],
+        forceReload: true
+      })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        name: "task-breakdown",
+        enabled: true
+      })
+    ]);
+
+    expect(listSkills).toHaveBeenCalledWith({
+      cwds: ["I:/repo"],
+      forceReload: true
+    });
+  });
+
   it("delegates workspace directory picking to the host callback when available", async () => {
     const pickWorkspaceDirectory = vi.fn().mockResolvedValue({
       canceled: false,

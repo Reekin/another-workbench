@@ -2,12 +2,8 @@ import {
   memo,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type CSSProperties,
-  type ChangeEvent as ReactChangeEvent,
-  type ClipboardEvent as ReactClipboardEvent,
-  type DragEvent as ReactDragEvent,
   type ReactElement,
   type RefObject
 } from "react";
@@ -39,17 +35,8 @@ import {
   type ProcessVisibilityOverride
 } from "./process-visibility.js";
 import { TurnProcessPanel } from "./TurnProcessPanel.js";
-import {
-  createComposerAttachments,
-  mergeComposerAttachments,
-  releaseComposerAttachments,
-  type ComposerAttachment
-} from "./composer-attachments.js";
 import { buildParticipantDirectory } from "./participant-directory.js";
-import {
-  resolveComposerStatus,
-  type ComposerStatusNotice
-} from "./composer-status.js";
+import { type ComposerStatusNotice } from "./composer-status.js";
 import { filterTranscriptRowsForChatTree } from "./chat-tree-transcript.js";
 import { buildTurnTranscriptRows } from "./transcript-view-model.js";
 import { useFileBrowserController } from "./use-file-browser-controller.js";
@@ -65,8 +52,10 @@ import {
   useSessionActionsController,
   type SessionMenuState
 } from "./use-session-actions-controller.js";
+import { useComposerController } from "./use-composer-controller.js";
 import { useChatTreeController } from "./use-chat-tree-controller.js";
 import { buildEngineInspectorViewModel } from "./engine-summary.js";
+import { ComposerPanel } from "./composer/ComposerPanel.js";
 import "./chat-shell.css";
 
 type SettingsLauncherProps = {
@@ -154,25 +143,6 @@ const formatTimestamp = (iso: string | undefined): string => {
     return iso;
   }
   return date.toLocaleString();
-};
-
-const hasFileTransfer = (dataTransfer: DataTransfer | null): boolean =>
-  Array.from(dataTransfer?.types ?? []).includes("Files");
-
-const hasStringTransfer = (dataTransfer: DataTransfer | null): boolean =>
-  Array.from(dataTransfer?.items ?? []).some((item) => item.kind === "string");
-
-const collectPastedImageFiles = (dataTransfer: DataTransfer | null): File[] => {
-  if (!dataTransfer) {
-    return [];
-  }
-  return Array.from(dataTransfer.items)
-    .filter(
-      (item) =>
-        item.kind === "file" && item.type.toLowerCase().startsWith("image/")
-    )
-    .map((item) => item.getAsFile())
-    .filter((file): file is File => Boolean(file));
 };
 
 const buildWorkspaceAgentFallbacks = (
@@ -545,12 +515,6 @@ export const ChatShellApp = ({
     Record<string, EngineSurfaceRpc | undefined>
   >({});
   const [selectedEngineId, setSelectedEngineId] = useState<string>("");
-  const [draft, setDraft] = useState("");
-  const [composerAttachments, setComposerAttachments] = useState<ComposerAttachment[]>(
-    []
-  );
-  const [isSendingComposer, setIsSendingComposer] = useState(false);
-  const [isComposerDropTarget, setIsComposerDropTarget] = useState(false);
   const [statusNotice, setStatusNotice] = useState<ComposerStatusNotice | undefined>();
   const [sessionWindows, setSessionWindows] = useState<
     Record<string, SessionWindowRpc | undefined>
@@ -568,10 +532,6 @@ export const ChatShellApp = ({
   >({});
   const [lightboxImage, setLightboxImage] = useState<ImageLightboxState | undefined>();
   const [settingsHydrated, setSettingsHydrated] = useState(false);
-  const mountedRef = useRef(true);
-  const composerAttachmentsRef = useRef<ComposerAttachment[]>([]);
-  const composerFileInputRef = useRef<HTMLInputElement | null>(null);
-  const composerDropDepthRef = useRef(0);
 
   const {
     workspaceTree,
@@ -721,52 +681,22 @@ export const ChatShellApp = ({
     [availableAgents, fallbackAgents]
   );
 
-  const status = resolveComposerStatus({
-    transportAvailable: Boolean(transport),
+  const composer = useComposerController({
+    transport,
+    activeSession,
+    activeSessionId,
+    displayedSessionId,
     selectedEngineId,
-    activeSession:
-      activeSession ??
-      (activeSessionId
-        ? ({
-            sessionId: activeSessionId,
-            conversationId: displayedConversationId ?? "",
-            agentId: displayedSessionNode?.agentId ?? selectedEngineId,
-            status: "idle",
-            createdAt: "",
-            updatedAt: ""
-          } as NonNullable<typeof activeSession>)
-        : undefined),
+    activeWorkspaceId: activeWorkspace?.workspaceId,
+    activeWorkspaceRootPath: activeWorkspace?.rootPath,
+    turns,
     approvals: renderedTranscriptRows.at(-1)?.approvals ?? [],
-    notice: statusNotice
+    isOpeningSelectedSession,
+    statusNotice,
+    onStatusNotice: setStatusNotice,
+    onCreateSession,
+    onOpenSession
   });
-  const hasDraftText = draft.trim().length > 0;
-  const isComposerBusy = isOpeningSelectedSession || isSendingComposer;
-  const canSendComposerPayload =
-    (hasDraftText || composerAttachments.length > 0) &&
-    Boolean(activeSessionId) &&
-    Boolean(transport) &&
-    !isComposerBusy;
-
-  useEffect(() => {
-    composerAttachmentsRef.current = composerAttachments;
-  }, [composerAttachments]);
-
-  useEffect(() => {
-    return () => {
-      releaseComposerAttachments(composerAttachmentsRef.current);
-    };
-  }, []);
-
-  useEffect(() => {
-    clearComposerAttachments();
-  }, [activeSessionId]);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
 
   useEffect(() => {
     if (!statusNotice || statusNotice.persistent) {
@@ -960,189 +890,6 @@ export const ChatShellApp = ({
       }
     };
   }, [transport, store]);
-
-  const overwriteComposerAttachments = (attachments: ComposerAttachment[]): void => {
-    composerAttachmentsRef.current = attachments;
-    setComposerAttachments(attachments);
-  };
-
-  const clearComposerAttachments = (): void => {
-    releaseComposerAttachments(composerAttachmentsRef.current);
-    overwriteComposerAttachments([]);
-  };
-
-  const removeComposerAttachment = (attachmentId: string): void => {
-    const current = composerAttachmentsRef.current;
-    const removed = current.find(
-      (attachment) => attachment.attachment.attachmentId === attachmentId
-    );
-    if (!removed) {
-      return;
-    }
-    releaseComposerAttachments([removed]);
-    overwriteComposerAttachments(
-      current.filter(
-        (attachment) => attachment.attachment.attachmentId !== attachmentId
-      )
-    );
-  };
-
-  const appendComposerAttachments = async (
-    files: Iterable<File>,
-    origin: "picker" | "drop" | "paste"
-  ): Promise<void> => {
-    if (isComposerBusy) {
-      return;
-    }
-    const nextAttachments = await createComposerAttachments(files, origin);
-    if (!mountedRef.current) {
-      releaseComposerAttachments(nextAttachments);
-      return;
-    }
-    if (nextAttachments.length === 0) {
-      return;
-    }
-    const merged = mergeComposerAttachments(
-      composerAttachmentsRef.current,
-      nextAttachments
-    );
-    releaseComposerAttachments(merged.skipped);
-    overwriteComposerAttachments(merged.attachments);
-  };
-
-  const onComposerInputChange = (
-    event: ReactChangeEvent<HTMLInputElement>
-  ): void => {
-    const files = Array.from(event.target.files ?? []);
-    event.target.value = "";
-    if (files.length === 0 || isComposerBusy) {
-      return;
-    }
-    void appendComposerAttachments(files, "picker").catch((error) => {
-      setStatusNotice({
-        message: `Attachment failed: ${(error as Error).message}`,
-        persistent: true,
-        source: "send"
-      });
-    });
-  };
-
-  const onComposerPaste = (event: ReactClipboardEvent<HTMLTextAreaElement>): void => {
-    if (isComposerBusy) {
-      return;
-    }
-    const files = collectPastedImageFiles(event.clipboardData);
-    if (files.length === 0) {
-      return;
-    }
-    if (!hasStringTransfer(event.clipboardData)) {
-      event.preventDefault();
-    }
-    void appendComposerAttachments(files, "paste").catch((error) => {
-      setStatusNotice({
-        message: `Paste attachment failed: ${(error as Error).message}`,
-        persistent: true,
-        source: "send"
-      });
-    });
-  };
-
-  const onComposerDragEnter = (
-    event: ReactDragEvent<HTMLElement>
-  ): void => {
-    if (!hasFileTransfer(event.dataTransfer) || isComposerBusy) {
-      return;
-    }
-    event.preventDefault();
-    composerDropDepthRef.current += 1;
-    setIsComposerDropTarget(true);
-  };
-
-  const onComposerDragOver = (event: ReactDragEvent<HTMLElement>): void => {
-    if (!hasFileTransfer(event.dataTransfer) || isComposerBusy) {
-      return;
-    }
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
-    if (!isComposerDropTarget) {
-      setIsComposerDropTarget(true);
-    }
-  };
-
-  const onComposerDragLeave = (
-    event: ReactDragEvent<HTMLElement>
-  ): void => {
-    if (!hasFileTransfer(event.dataTransfer) || isComposerBusy) {
-      return;
-    }
-    event.preventDefault();
-    composerDropDepthRef.current = Math.max(0, composerDropDepthRef.current - 1);
-    if (composerDropDepthRef.current === 0) {
-      setIsComposerDropTarget(false);
-    }
-  };
-
-  const onComposerDrop = (event: ReactDragEvent<HTMLElement>): void => {
-    if (!hasFileTransfer(event.dataTransfer) || isComposerBusy) {
-      return;
-    }
-    event.preventDefault();
-    composerDropDepthRef.current = 0;
-    setIsComposerDropTarget(false);
-    const files = Array.from(event.dataTransfer.files ?? []);
-    if (files.length === 0) {
-      return;
-    }
-    void appendComposerAttachments(files, "drop").catch((error) => {
-      setStatusNotice({
-        message: `Drop attachment failed: ${(error as Error).message}`,
-        persistent: true,
-        source: "send"
-      });
-    });
-  };
-
-  const onSend = async (): Promise<void> => {
-    const text = draft.trim();
-    const attachments = composerAttachmentsRef.current.map(
-      (attachment) => attachment.attachment
-    );
-    if (
-      isSendingComposer ||
-      (!text && attachments.length === 0) ||
-      !activeSessionId ||
-      !transport
-    ) {
-      return;
-    }
-    setIsSendingComposer(true);
-    setStatusNotice({
-      message: "Sending…",
-      persistent: true,
-      source: "send"
-    });
-    try {
-      await transport.chat.send({
-        sessionId: activeSessionId,
-        content: text,
-        attachments
-      });
-      setDraft("");
-      clearComposerAttachments();
-      setStatusNotice({
-        message: "Message sent.",
-        source: "send"
-      });
-    } catch (error) {
-      setStatusNotice({
-        message: `Send failed: ${(error as Error).message}`,
-        persistent: true,
-        source: "send"
-      });
-    } finally {
-      setIsSendingComposer(false);
-    }
-  };
 
   const onRespondApproval = async (input: {
     sessionId: string;
@@ -1355,86 +1102,49 @@ export const ChatShellApp = ({
             />
           </div>
 
-          <footer
-            className={`awb-composer${isComposerDropTarget ? " is-drop-target" : ""}`}
-            onDragEnter={onComposerDragEnter}
-            onDragOver={onComposerDragOver}
-            onDragLeave={onComposerDragLeave}
-            onDrop={onComposerDrop}
-          >
-            <input
-              ref={composerFileInputRef}
-              className="awb-composer__file-input"
-              type="file"
-              multiple
-              onChange={onComposerInputChange}
-            />
-            {composerAttachments.length > 0 ? (
-              <div className="awb-composer__attachments" aria-label="Composer attachments">
-                {composerAttachments.map((attachment) => (
-                  <article
-                    key={attachment.attachment.attachmentId}
-                    className="awb-composer__attachment"
-                  >
-                    {attachment.previewUrl ? (
-                      <img
-                        className="awb-composer__attachment-preview"
-                        src={attachment.previewUrl}
-                        alt={attachment.displayName}
-                      />
-                    ) : (
-                      <div className="awb-composer__attachment-icon" aria-hidden="true">
-                        FILE
-                      </div>
-                    )}
-                    <div className="awb-composer__attachment-copy">
-                      <strong>{attachment.displayName}</strong>
-                      <span>
-                        {attachment.mimeType} · {attachment.sizeLabel}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      className="awb-ghost-button awb-composer__attachment-remove"
-                      onClick={() =>
-                        removeComposerAttachment(attachment.attachment.attachmentId)
-                      }
-                      aria-label={`Remove ${attachment.displayName}`}
-                    >
-                      Remove
-                    </button>
-                  </article>
-                ))}
-              </div>
-            ) : null}
-            <textarea
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onPaste={onComposerPaste}
-              placeholder="Message the active session, paste images, or drop files here..."
-              disabled={isComposerBusy}
-            />
-            <div className="awb-composer__actions">
-              <span className="awb-status">{status}</span>
-              <div className="awb-composer__buttons">
-                <button
-                  type="button"
-                  className="awb-ghost-button"
-                  onClick={() => composerFileInputRef.current?.click()}
-                  disabled={isComposerBusy}
-                >
-                  Attach files
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void onSend()}
-                  disabled={!canSendComposerPayload}
-                >
-                  Send
-                </button>
-              </div>
-            </div>
-          </footer>
+          <ComposerPanel
+            isDropTarget={composer.isDropTarget}
+            fileInputRef={composer.composerFileInputRef}
+            textareaRef={composer.composerTextareaRef}
+            draft={composer.draft}
+            selectedSkills={composer.selectedSkills}
+            attachments={composer.attachments}
+            queue={composer.queue}
+            suggestions={composer.suggestions}
+            status={composer.status}
+            intent={composer.intent}
+            supportsSteer={composer.capabilities.supportsSteer}
+            canSubmit={composer.canSubmit}
+            canQueue={composer.canQueue}
+            canStop={composer.canStop}
+            isDispatching={composer.isDispatching}
+            onTextareaChange={composer.onDraftChange}
+            onTextareaSelect={composer.onTextareaSelect}
+            onInputKeyDown={composer.onInputKeyDown}
+            onPaste={composer.onComposerPaste}
+            onFileInputChange={composer.onComposerInputChange}
+            onDragEnter={composer.onComposerDragEnter}
+            onDragOver={composer.onComposerDragOver}
+            onDragLeave={composer.onComposerDragLeave}
+            onDrop={composer.onComposerDrop}
+            onRemoveSkill={composer.onRemoveSkill}
+            onRemoveAttachment={composer.onRemoveAttachment}
+            onPickAttachments={composer.onPickAttachments}
+            onPrimaryAction={composer.onPrimaryAction}
+            onQueueCurrent={composer.onQueueCurrent}
+            onStop={composer.onStop}
+            onSuggestionHover={composer.onSuggestionHover}
+            onSuggestionSelect={async (index) => {
+              const item = composer.suggestions?.items[index];
+              if (item) {
+                await composer.onSuggestionSelect(item);
+              }
+            }}
+            onEditQueuedMessage={composer.onEditQueuedMessage}
+            onDeleteQueuedMessage={composer.onDeleteQueuedMessage}
+            onSendQueuedMessageNow={composer.onSendQueuedMessageNow}
+            onSteerQueuedMessageNow={composer.onSteerQueuedMessageNow}
+          />
         </main>
 
         <aside className="awb-shell__detail" aria-label="Session details">

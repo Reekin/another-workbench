@@ -74,6 +74,31 @@ describe("CodexAdapter", () => {
     expect(runtimePort.requests[0].params.type).toBe("sendUserMessage");
   });
 
+  it("maps steerTurn commands to the dedicated codex steer method", async () => {
+    const runtimePort = new FakeCodexRuntimePort();
+    const adapter = new CodexAdapter({
+      runtimePort,
+      fallbackAgentId: "codex-agent"
+    });
+
+    await adapter.initialize();
+    await adapter.executeCommand({
+      commandId: "cmd-steer-1",
+      command: {
+        type: "steerTurn",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        messageId: "message-1",
+        content: "Stay on the current failing test.",
+        attachments: []
+      }
+    });
+
+    expect(runtimePort.requests).toHaveLength(1);
+    expect(runtimePort.requests[0].method).toBe("turn/steer");
+    expect(runtimePort.requests[0].params.type).toBe("steerTurn");
+  });
+
   it("maps runtime events to shared envelopes with actor fallback", async () => {
     const runtimePort = new FakeCodexRuntimePort();
     const adapter = new CodexAdapter({

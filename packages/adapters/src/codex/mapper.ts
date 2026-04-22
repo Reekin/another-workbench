@@ -23,6 +23,7 @@ const codexMethodByCommandType: Record<
   archiveSession: "thread/archive",
   forkSession: "thread/fork",
   sendUserMessage: "turn/start",
+  steerTurn: "turn/steer",
   interruptTurn: "turn/interrupt",
   respondApproval: "approval/respond",
   disposeSession: "session/dispose"

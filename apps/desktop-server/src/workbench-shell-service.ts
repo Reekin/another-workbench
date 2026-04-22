@@ -1,5 +1,6 @@
 import type {
   AgentDescriptor,
+  ChatInteractionCapabilitiesRpc,
   ChatSession,
   CodexTurnChangesResultRpc,
   CodexTurnChangesUndoResultRpc,
@@ -7,7 +8,8 @@ import type {
   DomainSnapshot,
   EngineDefinitionRpc,
   EngineSurfaceRpc,
-  EventEnvelope
+  EventEnvelope,
+  SkillDescriptorRpc
 } from "@another-workbench/shared";
 import type { RuntimeEventFilter, RuntimeEventReplayInput } from "@another-workbench/core";
 import {
@@ -51,6 +53,12 @@ export type WorkbenchShellServiceOptions = {
   runtimeService: WorkbenchRuntimeService;
   sessionCatalog: SessionCatalogService;
   capabilities?: CapabilityRegistry;
+  skillsProvider?: {
+    listSkills: (input?: {
+      cwds?: string[];
+      forceReload?: boolean;
+    }) => Promise<SkillDescriptorRpc[]>;
+  };
   sessionIdentity?: SessionIdentityRegistry;
   sessionActions?: SessionActionsProvider;
   chatTreeProvider?: ChatTreeProvider;
@@ -72,6 +80,9 @@ export class WorkbenchShellService {
   private readonly runtimeService: WorkbenchRuntimeService;
   private readonly sessionCatalog: SessionCatalogService;
   private readonly capabilities: CapabilityRegistry | undefined;
+  private readonly skillsProvider:
+    | WorkbenchShellServiceOptions["skillsProvider"]
+    | undefined;
   private readonly sessionActions: SessionActionsProvider | undefined;
   private readonly chatTreeProvider: ChatTreeProvider | undefined;
   private readonly sessionIdentity: SessionIdentityRegistry;
@@ -92,6 +103,7 @@ export class WorkbenchShellService {
     this.runtimeService = options.runtimeService;
     this.sessionCatalog = options.sessionCatalog;
     this.capabilities = options.capabilities;
+    this.skillsProvider = options.skillsProvider;
     this.sessionActions = options.sessionActions;
     this.chatTreeProvider = options.chatTreeProvider;
     const sessionIndexStore = options.runtimeService.getSessionIndexStore?.();
@@ -355,6 +367,29 @@ export class WorkbenchShellService {
       sessionId: session.sessionId,
       conversationId: session.conversationId
     };
+  }
+
+  public async getChatCapabilities(
+    sessionId: string
+  ): Promise<ChatInteractionCapabilitiesRpc> {
+    const session = this.runtimeService.getSession(sessionId);
+    if (!session) {
+      throw new Error(`Session not found: ${sessionId}`);
+    }
+    return {
+      supportsSteer: session.agentId === "codex",
+      supportsAttachments: true
+    };
+  }
+
+  public async listSkills(input?: {
+    cwds?: string[];
+    forceReload?: boolean;
+  }): Promise<SkillDescriptorRpc[]> {
+    if (!this.skillsProvider) {
+      return [];
+    }
+    return this.skillsProvider.listSkills(input);
   }
 
   public async openSession(sessionId: string): Promise<{ page: SessionWindowSnapshot }> {

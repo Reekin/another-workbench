@@ -6,6 +6,7 @@ export const acpRuntimeRequestMethods = [
   "session.archive",
   "session.fork",
   "turn.send",
+  "turn.steer",
   "turn.interrupt",
   "approval.respond",
   "session.dispose"

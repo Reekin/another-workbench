@@ -62,6 +62,30 @@ describe("AcpAdapter", () => {
     expect(runtimePort.requests[0].params.type).toBe("createSession");
   });
 
+  it("maps steerTurn commands to the ACP steer method", async () => {
+    const runtimePort = new FakeAcpRuntimePort();
+    const adapter = new AcpAdapter({
+      runtimePort
+    });
+
+    await adapter.initialize();
+    await adapter.executeCommand({
+      commandId: "cmd-acp-steer-1",
+      command: {
+        type: "steerTurn",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        messageId: "message-1",
+        content: "Keep the current plan but tighten the summary.",
+        attachments: []
+      }
+    });
+
+    expect(runtimePort.requests).toHaveLength(1);
+    expect(runtimePort.requests[0].method).toBe("turn.steer");
+    expect(runtimePort.requests[0].params.type).toBe("steerTurn");
+  });
+
   it("maps acp runtime events into shared event envelopes", async () => {
     const runtimePort = new FakeAcpRuntimePort();
     const adapter = new AcpAdapter({

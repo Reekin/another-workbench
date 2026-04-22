@@ -450,6 +450,118 @@ describe("Desktop transport facade", () => {
     expect(updateRequest.method).toBe("settings.update");
   });
 
+  it("maps steer, chat capabilities, and skills list through the new composer contracts", async () => {
+    const preload = createPreloadMock({
+      onRequest: async (request) => {
+        if (request.method === "runtime.command") {
+          return {
+            id: request.id,
+            method: request.method,
+            ok: true,
+            result: {
+              commandId: request.params.envelope.commandId,
+              commandType: request.params.envelope.command.type,
+              accepted: true
+            }
+          } as const;
+        }
+        if (request.method === "chat.getCapabilities") {
+          return {
+            id: request.id,
+            method: request.method,
+            ok: true,
+            result: {
+              capabilities: {
+                supportsSteer: true,
+                supportsAttachments: true
+              }
+            }
+          } as const;
+        }
+        if (request.method === "skills.list") {
+          return {
+            id: request.id,
+            method: request.method,
+            ok: true,
+            result: {
+              skills: [
+                {
+                  cwd: "I:/repo",
+                  name: "task-breakdown",
+                  description: "Split work into tasks.",
+                  shortDescription: "Roadmap helper",
+                  path: "C:/Users/TestUser/.codex/skills/task-breakdown/SKILL.md",
+                  scope: "user",
+                  enabled: true
+                }
+              ]
+            }
+          } as const;
+        }
+        throw new Error(`Unexpected method: ${request.method}`);
+      }
+    });
+    const transport = createDesktopTransport(preload.api, {
+      createId: () => "fixed-id"
+    });
+
+    await expect(
+      transport.chat.steer({
+        sessionId: "session-1",
+        turnId: "turn-1",
+        content: "Focus on the failing test",
+        attachments: []
+      })
+    ).resolves.toMatchObject({
+      commandType: "steerTurn",
+      accepted: true
+    });
+    await expect(transport.chat.getCapabilities("session-1")).resolves.toEqual({
+      supportsSteer: true,
+      supportsAttachments: true
+    });
+    await expect(
+      transport.skills.list({
+        cwds: ["I:/repo"],
+        forceReload: true
+      })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        name: "task-breakdown",
+        enabled: true
+      })
+    ]);
+
+    const steerRequest = preload.request.mock.calls[0][0] as WorkbenchRpcRequest;
+    expect(steerRequest.method).toBe("runtime.command");
+    if (steerRequest.method !== "runtime.command") {
+      throw new Error("Expected runtime.command request.");
+    }
+    expect(steerRequest.params.envelope.command).toMatchObject({
+      type: "steerTurn",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      content: "Focus on the failing test"
+    });
+
+    const capabilitiesRequest = preload.request.mock.calls[1][0] as WorkbenchRpcRequest;
+    expect(capabilitiesRequest).toMatchObject({
+      method: "chat.getCapabilities",
+      params: {
+        sessionId: "session-1"
+      }
+    });
+
+    const skillsRequest = preload.request.mock.calls[2][0] as WorkbenchRpcRequest;
+    expect(skillsRequest).toMatchObject({
+      method: "skills.list",
+      params: {
+        cwds: ["I:/repo"],
+        forceReload: true
+      }
+    });
+  });
+
   it("throws DesktopTransportError when low-level request fails", async () => {
     const preload = createPreloadMock({
       onRequest: async (request) => {

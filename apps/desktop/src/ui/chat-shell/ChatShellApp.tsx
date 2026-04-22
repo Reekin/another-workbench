@@ -16,6 +16,7 @@ import type {
   AgentDescriptor,
   EngineDefinitionRpc,
   EngineSurfaceRpc,
+  ExtractedFileReference,
   SessionWindowRpc,
   WorkspaceBrowserNodeRpc
 } from "@another-workbench/shared";
@@ -27,7 +28,10 @@ import {
 import type { RendererStore } from "../../store/store.js";
 import type { DesktopTransport } from "../../transport/desktop-transport.js";
 import { connectDesktopTransportToStore } from "../../transport/store-bridge.js";
+import { renderTurnExtensions } from "../../features/engine-extensions/turn-extension-registry.js";
 import { ChatTreePanel } from "./ChatTreePanel.js";
+import { FilesDetailPanel } from "./FilesDetailPanel.js";
+import { ImageLightbox, type ImageLightboxState } from "./ImageLightbox.js";
 import { MessageMarkdownView } from "./MessageMarkdownView.js";
 import {
   resolveProcessExpanded,
@@ -48,6 +52,7 @@ import {
 } from "./composer-status.js";
 import { filterTranscriptRowsForChatTree } from "./chat-tree-transcript.js";
 import { buildTurnTranscriptRows } from "./transcript-view-model.js";
+import { useFileBrowserController } from "./use-file-browser-controller.js";
 import { useRendererStoreState } from "./use-renderer-store-state.js";
 import {
   findActiveSessionNode,
@@ -68,9 +73,9 @@ type SettingsLauncherProps = {
   agents: AgentDescriptor[];
   engines: EngineDefinitionRpc[];
   surfacesByEngineId: Readonly<Record<string, EngineSurfaceRpc | undefined>>;
-  currentAgentId: string;
+  currentEngineId: string;
   transport?: DesktopTransport;
-  onAgentSaved: (agentId: string) => void;
+  onEngineSaved: (engineId: string) => void;
   onStatusNotice: (notice: ComposerStatusNotice) => void;
 };
 
@@ -78,6 +83,9 @@ type TranscriptPaneProps = {
   transcriptRef: RefObject<HTMLElement | null>;
   renderedTranscriptRows: ReturnType<typeof buildTurnTranscriptRows>;
   participantDirectory: ReturnType<typeof buildParticipantDirectory>;
+  transport?: DesktopTransport;
+  engineId?: string;
+  engineSurface?: EngineSurfaceRpc;
   activeSessionWindow?: SessionWindowRpc;
   activeSessionId?: string;
   isOpeningSelectedSession: boolean;
@@ -85,12 +93,16 @@ type TranscriptPaneProps = {
   onLoadOlder: () => void;
   processVisibilityByTurnId: Readonly<Record<string, ProcessVisibilityOverride>>;
   onToggleProcess: (turnId: string) => void;
+  onActivateResourceLink: (reference: ExtractedFileReference) => void;
+  onPreviewImage?: (input: ImageLightboxState) => void;
   onRespondApproval?: (input: {
     sessionId: string;
     requestId: string;
     action: "approve" | "deny" | "defer";
   }) => Promise<void>;
 };
+
+type DetailTab = "graph" | "files";
 
 const resolveSessionMenuViewportStyle = (
   sessionMenu: SessionMenuState
@@ -230,6 +242,9 @@ const TranscriptPane = memo(
     transcriptRef,
     renderedTranscriptRows,
     participantDirectory,
+    transport,
+    engineId,
+    engineSurface,
     activeSessionWindow,
     activeSessionId,
     isOpeningSelectedSession,
@@ -237,6 +252,8 @@ const TranscriptPane = memo(
     onLoadOlder,
     processVisibilityByTurnId,
     onToggleProcess,
+    onActivateResourceLink,
+    onPreviewImage,
     onRespondApproval
   }: TranscriptPaneProps): ReactElement => (
     <section className="awb-transcript" ref={transcriptRef}>
@@ -304,6 +321,8 @@ const TranscriptPane = memo(
                   key={block.blockId}
                   block={block}
                   participantDirectory={participantDirectory}
+                  onActivateResourceLink={onActivateResourceLink}
+                  onPreviewImage={onPreviewImage}
                 />
               ))}
             </div>
@@ -329,6 +348,15 @@ const TranscriptPane = memo(
                 )}
               </div>
             )}
+            {!isUserTurn
+              ? renderTurnExtensions({
+                  transport,
+                  engineId,
+                  engineSurface,
+                  sessionId: row.turn.sessionId,
+                  turnId: row.turn.turnId
+                })
+              : null}
             <footer className="awb-chat-entry__meta">
               <span>{formatTimestamp(row.turn.completedAt ?? row.turn.startedAt)}</span>
             </footer>
@@ -340,34 +368,39 @@ const TranscriptPane = memo(
   (previous, next) =>
     previous.renderedTranscriptRows === next.renderedTranscriptRows &&
     previous.participantDirectory === next.participantDirectory &&
+    previous.transport === next.transport &&
+    previous.engineId === next.engineId &&
+    previous.engineSurface === next.engineSurface &&
     previous.activeSessionWindow === next.activeSessionWindow &&
     previous.activeSessionId === next.activeSessionId &&
     previous.isOpeningSelectedSession === next.isOpeningSelectedSession &&
     previous.loadingOlderTurns === next.loadingOlderTurns &&
     previous.processVisibilityByTurnId === next.processVisibilityByTurnId &&
-    previous.transcriptRef === next.transcriptRef
+    previous.transcriptRef === next.transcriptRef &&
+    previous.onActivateResourceLink === next.onActivateResourceLink &&
+    previous.onPreviewImage === next.onPreviewImage
 );
 
 const SettingsLauncher = ({
   agents,
   engines,
   surfacesByEngineId,
-  currentAgentId,
+  currentEngineId,
   transport,
-  onAgentSaved,
+  onEngineSaved,
   onStatusNotice
 }: SettingsLauncherProps): ReactElement => {
   const [isOpen, setIsOpen] = useState(false);
-  const [draftAgentId, setDraftAgentId] = useState(currentAgentId);
+  const [draftEngineId, setDraftEngineId] = useState(currentEngineId);
   const [isSaving, setIsSaving] = useState(false);
   const engineInspector = useMemo(
     () =>
       buildEngineInspectorViewModel({
-        selectedEngineId: draftAgentId || currentAgentId,
+        selectedEngineId: draftEngineId || currentEngineId,
         engines,
         surfacesByEngineId
       }),
-    [currentAgentId, draftAgentId, engines, surfacesByEngineId]
+    [currentEngineId, draftEngineId, engines, surfacesByEngineId]
   );
   const tierByEngineId = useMemo(
     () =>
@@ -379,16 +412,16 @@ const SettingsLauncher = ({
 
   useEffect(() => {
     if (!isOpen) {
-      setDraftAgentId(currentAgentId);
+      setDraftEngineId(currentEngineId);
     }
-  }, [currentAgentId, isOpen]);
+  }, [currentEngineId, isOpen]);
 
   const close = (): void => {
     setIsOpen(false);
   };
 
   const open = (): void => {
-    setDraftAgentId(currentAgentId);
+    setDraftEngineId(currentEngineId);
     setIsOpen(true);
   };
 
@@ -399,15 +432,15 @@ const SettingsLauncher = ({
     setIsSaving(true);
     try {
       const result = await transport.settings.update({
-        defaultNewSessionAgentId: draftAgentId || undefined
+        defaultNewSessionEngineId: draftEngineId || undefined
       });
-      const nextAgentId = result.defaultNewSessionAgentId ?? "";
-      onAgentSaved(nextAgentId);
+      const nextEngineId = result.defaultNewSessionEngineId ?? "";
+      onEngineSaved(nextEngineId);
       close();
       onStatusNotice({
-        message: result.defaultNewSessionAgentId
-          ? `Default agent set to ${result.defaultNewSessionAgentId}`
-          : "Default agent cleared.",
+        message: result.defaultNewSessionEngineId
+          ? `Default engine set to ${result.defaultNewSessionEngineId}`
+          : "Default engine cleared.",
         source: "settings"
       });
     } catch (error) {
@@ -441,12 +474,12 @@ const SettingsLauncher = ({
         </header>
         <div className="awb-modal__body">
           <label className="awb-field">
-            <span>New session agent</span>
+            <span>New session engine</span>
             <select
-              value={draftAgentId}
-              onChange={(event) => setDraftAgentId(event.target.value)}
+              value={draftEngineId}
+              onChange={(event) => setDraftEngineId(event.target.value)}
             >
-              <option value="">Follow first available agent</option>
+              <option value="">Follow first available engine</option>
               {agents.map((agent) => (
                 <option key={agent.agentId} value={agent.agentId}>
                   {tierByEngineId[agent.agentId]
@@ -511,7 +544,7 @@ export const ChatShellApp = ({
   const [engineSurfacesById, setEngineSurfacesById] = useState<
     Record<string, EngineSurfaceRpc | undefined>
   >({});
-  const [selectedAgentId, setSelectedAgentId] = useState<string>("");
+  const [selectedEngineId, setSelectedEngineId] = useState<string>("");
   const [draft, setDraft] = useState("");
   const [composerAttachments, setComposerAttachments] = useState<ComposerAttachment[]>(
     []
@@ -525,6 +558,7 @@ export const ChatShellApp = ({
   const [loadingOlderSessionId, setLoadingOlderSessionId] = useState<
     string | undefined
   >();
+  const [detailTab, setDetailTab] = useState<DetailTab>("graph");
   const [browserSelectedSessionId, setBrowserSelectedSessionId] = useState<
     string | undefined
   >();
@@ -532,6 +566,7 @@ export const ChatShellApp = ({
   const [processVisibilityByTurnId, setProcessVisibilityByTurnId] = useState<
     Record<string, ProcessVisibilityOverride>
   >({});
+  const [lightboxImage, setLightboxImage] = useState<ImageLightboxState | undefined>();
   const [settingsHydrated, setSettingsHydrated] = useState(false);
   const mountedRef = useRef(true);
   const composerAttachmentsRef = useRef<ComposerAttachment[]>([]);
@@ -568,6 +603,8 @@ export const ChatShellApp = ({
   const displayedSession = displayedSessionId
     ? state.entities.sessions[displayedSessionId]
     : undefined;
+  const displayedEngineId =
+    displayedSession?.agentId ?? displayedSessionNode?.agentId ?? selectedEngineId;
   const activeSession = activeSessionId
     ? state.entities.sessions[activeSessionId]
     : undefined;
@@ -661,6 +698,12 @@ export const ChatShellApp = ({
   );
   const renderedTranscriptRows = isOpeningSelectedSession ? [] : visibleTranscriptRows;
 
+  const fileBrowser = useFileBrowserController({
+    transport,
+    activeWorkspaceId: activeWorkspace?.workspaceId,
+    onStatusNotice: setStatusNotice
+  });
+
   const { sessionMenu, onOpenSessionMenu, onRunSessionAction } =
     useSessionActionsController({
       transport,
@@ -680,14 +723,14 @@ export const ChatShellApp = ({
 
   const status = resolveComposerStatus({
     transportAvailable: Boolean(transport),
-    selectedAgentId,
+    selectedEngineId,
     activeSession:
       activeSession ??
       (activeSessionId
         ? ({
             sessionId: activeSessionId,
             conversationId: displayedConversationId ?? "",
-            agentId: displayedSessionNode?.agentId ?? selectedAgentId,
+            agentId: displayedSessionNode?.agentId ?? selectedEngineId,
             status: "idle",
             createdAt: "",
             updatedAt: ""
@@ -752,7 +795,7 @@ export const ChatShellApp = ({
           setStatusNotice({
             message: `Agent list failed: ${(error as Error).message}`,
             persistent: true,
-            source: "agent-list"
+            source: "engine-list"
           });
         }
       });
@@ -788,10 +831,10 @@ export const ChatShellApp = ({
   }, [transport]);
 
   useEffect(() => {
-    if (settingsHydrated && !selectedAgentId && agents.length > 0) {
-      setSelectedAgentId(agents[0]!.agentId);
+    if (settingsHydrated && !selectedEngineId && agents.length > 0) {
+      setSelectedEngineId(agents[0]!.agentId);
     }
-  }, [agents, selectedAgentId, settingsHydrated]);
+  }, [agents, selectedEngineId, settingsHydrated]);
 
   useEffect(() => {
     if (!transport) {
@@ -805,8 +848,8 @@ export const ChatShellApp = ({
         if (disposed) {
           return;
         }
-        if (settings.defaultNewSessionAgentId) {
-          setSelectedAgentId(settings.defaultNewSessionAgentId);
+        if (settings.defaultNewSessionEngineId) {
+          setSelectedEngineId(settings.defaultNewSessionEngineId);
         }
         setSettingsHydrated(true);
       })
@@ -826,12 +869,12 @@ export const ChatShellApp = ({
   }, [transport]);
 
   useEffect(() => {
-    if (!transport || !selectedAgentId) {
+    if (!transport || !selectedEngineId) {
       return;
     }
     let disposed = false;
     void transport.agent
-      .select({ agentId: selectedAgentId })
+      .select({ agentId: selectedEngineId })
       .then(() => {
         if (!disposed) {
           setStatusNotice(undefined);
@@ -840,29 +883,33 @@ export const ChatShellApp = ({
       .catch((error) => {
         if (!disposed) {
           setStatusNotice({
-            message: `Agent select failed: ${(error as Error).message}`,
+            message: `Engine select failed: ${(error as Error).message}`,
             persistent: true,
-            source: "agent-select"
+            source: "engine-select"
           });
         }
       });
     return () => {
       disposed = true;
     };
-  }, [transport, selectedAgentId]);
+  }, [transport, selectedEngineId]);
 
   useEffect(() => {
-    if (!transport || !selectedAgentId) {
+    const engineIds = [selectedEngineId, displayedEngineId].filter(
+      (engineId): engineId is string => Boolean(engineId)
+    );
+    const nextEngineId = engineIds.find((engineId) => !engineSurfacesById[engineId]);
+    if (!transport || !nextEngineId) {
       return;
     }
     let disposed = false;
     void transport.engine
-      .getSurface(selectedAgentId)
+      .getSurface(nextEngineId)
       .then((surface) => {
         if (!disposed) {
           setEngineSurfacesById((current) => ({
             ...current,
-            [selectedAgentId]: surface
+            [nextEngineId]: surface
           }));
         }
       })
@@ -878,7 +925,7 @@ export const ChatShellApp = ({
     return () => {
       disposed = true;
     };
-  }, [transport, selectedAgentId]);
+  }, [displayedEngineId, engineSurfacesById, selectedEngineId, transport]);
 
   useEffect(() => {
     if (!transport) {
@@ -1118,6 +1165,15 @@ export const ChatShellApp = ({
     );
   };
 
+  const onActivateResourceLink = (reference: ExtractedFileReference): void => {
+    setDetailTab("files");
+    fileBrowser.selectFile(reference);
+  };
+
+  const onPreviewImage = (image: ImageLightboxState): void => {
+    setLightboxImage(image);
+  };
+
   const renderSessionNode = (
     session: WorkspaceBrowserNodeRpc["sessions"][number],
     depth = 0
@@ -1235,7 +1291,7 @@ export const ChatShellApp = ({
                       className="awb-workspace__add"
                       onClick={(event) => {
                         event.stopPropagation();
-                        void onCreateSession(workspace.workspaceId, selectedAgentId);
+                        void onCreateSession(workspace.workspaceId, selectedEngineId);
                       }}
                       title="Create session in workspace"
                     >
@@ -1257,9 +1313,9 @@ export const ChatShellApp = ({
               agents={agents}
               engines={availableEngines}
               surfacesByEngineId={engineSurfacesById}
-              currentAgentId={selectedAgentId}
+              currentEngineId={selectedEngineId}
               transport={transport}
-              onAgentSaved={setSelectedAgentId}
+              onEngineSaved={setSelectedEngineId}
               onStatusNotice={setStatusNotice}
             />
           </footer>
@@ -1283,6 +1339,9 @@ export const ChatShellApp = ({
               transcriptRef={viewport.transcriptRef}
               renderedTranscriptRows={renderedTranscriptRows}
               participantDirectory={participantDirectory}
+              transport={transport}
+              engineId={displayedEngineId}
+              engineSurface={displayedEngineId ? engineSurfacesById[displayedEngineId] : undefined}
               activeSessionWindow={activeSessionWindow}
               activeSessionId={activeSessionId}
               isOpeningSelectedSession={isOpeningSelectedSession}
@@ -1290,6 +1349,8 @@ export const ChatShellApp = ({
               onLoadOlder={() => void onLoadOlder()}
               processVisibilityByTurnId={processVisibilityByTurnId}
               onToggleProcess={onToggleProcess}
+              onActivateResourceLink={onActivateResourceLink}
+              onPreviewImage={onPreviewImage}
               onRespondApproval={transport ? onRespondApproval : undefined}
             />
           </div>
@@ -1377,19 +1438,62 @@ export const ChatShellApp = ({
         </main>
 
         <aside className="awb-shell__detail" aria-label="Session details">
-          <div className="awb-detail__spacer" aria-hidden="true" />
-          <section className="awb-detail__graph">
-            <ChatTreePanel
-              chatTree={activeChatTree}
-              onJump={transport ? (nodeId) => void onJumpChatTree(nodeId) : undefined}
+          <div className="awb-detail__tabs" role="tablist" aria-label="Detail tabs">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={detailTab === "graph"}
+              className={detailTab === "graph" ? "is-active" : ""}
+              onClick={() => setDetailTab("graph")}
+            >
+              Graph
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={detailTab === "files"}
+              className={detailTab === "files" ? "is-active" : ""}
+              onClick={() => setDetailTab("files")}
+            >
+              Files
+            </button>
+          </div>
+          {detailTab === "graph" ? (
+            <section className="awb-detail__graph">
+              <ChatTreePanel
+                chatTree={activeChatTree}
+                onJump={transport ? (nodeId) => void onJumpChatTree(nodeId) : undefined}
+              />
+            </section>
+          ) : (
+            <FilesDetailPanel
+              workspaceLabel={activeWorkspace?.label}
+              hasWorkspace={Boolean(activeWorkspace?.workspaceId)}
+              query={fileBrowser.query}
+              onQueryChange={(value) => {
+                setDetailTab("files");
+                fileBrowser.setQuery(value);
+              }}
+              isSearching={fileBrowser.isSearching}
+              searchResults={fileBrowser.searchResults}
+              selectedFile={fileBrowser.selectedFile}
+              preview={fileBrowser.preview}
+              isLoadingPreview={fileBrowser.isLoadingPreview}
+              onSelectFile={(reference) => {
+                setDetailTab("files");
+                fileBrowser.selectFile(reference);
+              }}
+              onRunFileAction={(input) => void fileBrowser.runFileAction(input)}
+              onOpenImage={onPreviewImage}
             />
-          </section>
+          )}
         </aside>
       </div>
       {sessionMenuMarkup &&
         (typeof document === "undefined"
           ? sessionMenuMarkup
           : createPortal(sessionMenuMarkup, document.body))}
+      <ImageLightbox image={lightboxImage} onClose={() => setLightboxImage(undefined)} />
     </>
   );
 };

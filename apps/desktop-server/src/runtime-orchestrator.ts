@@ -1,7 +1,8 @@
 import type {
   AgentDescriptor,
   ProviderSessionHandle,
-  SessionExecutionProfile
+  SessionExecutionProfile,
+  SessionExecutionProfileInput
 } from "@another-workbench/shared";
 import { parseCommandEnvelope } from "@another-workbench/shared";
 import type { CommandEnvelope, EventEnvelope } from "@another-workbench/shared";
@@ -50,7 +51,7 @@ export class RuntimeOrchestrator {
   private readonly publishRuntimeEvent: (event: EventEnvelope["event"]) => void;
   private readonly now: Clock;
   private readonly createConversationId: IdFactory;
-  private selectedAgentId: string | undefined;
+  private selectedEngineId: string | undefined;
 
   public constructor(options: RuntimeOrchestratorOptions) {
     this.domainService = options.domainService;
@@ -67,7 +68,7 @@ export class RuntimeOrchestrator {
     for (const binding of options.agentBindings ?? []) {
       this.registerAgentBinding(binding);
     }
-    this.selectedAgentId =
+    this.selectedEngineId =
       options.agentBindings?.[0]?.descriptor.agentId ??
       options.agents?.[0]?.agentId;
   }
@@ -84,8 +85,8 @@ export class RuntimeOrchestrator {
       providerKind: existing?.providerKind,
       resolveProviderSessionId: existing?.resolveProviderSessionId
     });
-    if (!this.selectedAgentId) {
-      this.selectedAgentId = agent.agentId;
+    if (!this.selectedEngineId) {
+      this.selectedEngineId = agent.agentId;
     }
   }
 
@@ -100,8 +101,8 @@ export class RuntimeOrchestrator {
       providerKind: binding.providerKind,
       resolveProviderSessionId: binding.resolveProviderSessionId
     });
-    if (!this.selectedAgentId) {
-      this.selectedAgentId = binding.descriptor.agentId;
+    if (!this.selectedEngineId) {
+      this.selectedEngineId = binding.descriptor.agentId;
     }
   }
 
@@ -118,7 +119,7 @@ export class RuntimeOrchestrator {
 
   public selectAgent(input: AgentSelectionInput): { selectedAgentId: string } {
     this.assertAgentExists(input.agentId);
-    this.selectedAgentId = input.agentId;
+    this.selectedEngineId = input.agentId;
     this.agentSelections.set(
       input.agentId,
       input.config ? { ...input.config } : undefined
@@ -129,7 +130,7 @@ export class RuntimeOrchestrator {
   }
 
   public getSelectedAgentId(): string | undefined {
-    return this.selectedAgentId;
+    return this.selectedEngineId;
   }
 
   public hydrateDiscoveredSession(
@@ -147,8 +148,8 @@ export class RuntimeOrchestrator {
     const envelope = parseCommandEnvelope(input);
     switch (envelope.command.type) {
       case "initialize":
-        if (this.selectedAgentId) {
-          await this.ensureAdapterReady(this.selectedAgentId);
+        if (this.selectedEngineId) {
+          await this.ensureAdapterReady(this.selectedEngineId);
         }
         return this.accept(envelope, true);
       case "listSessions":
@@ -204,20 +205,16 @@ export class RuntimeOrchestrator {
 
   public async createSession(command: {
     conversationId?: string;
-    agentId: string;
-    sessionProfile?: SessionExecutionProfile;
+    engineId: string;
+    sessionProfile?: SessionExecutionProfileInput;
     metadata?: Record<string, unknown>;
     workspaceId?: string;
   }) {
     const conversationId = command.conversationId ?? this.createConversationId();
-    const sessionProfile = command.sessionProfile ?? {
-      engineId: command.agentId
+    const sessionProfile: SessionExecutionProfile = {
+      engineId: command.engineId,
+      ...command.sessionProfile
     };
-    if (sessionProfile.engineId !== command.agentId) {
-      throw new Error(
-        `Session profile engineId (${sessionProfile.engineId}) must match agentId (${command.agentId}).`
-      );
-    }
     this.assertAgentExists(sessionProfile.engineId);
     const session = this.domainService.createSession({
       conversationId,
@@ -444,6 +441,9 @@ export class RuntimeOrchestrator {
     agentId: string;
     metadata?: Record<string, unknown>;
   }): string {
-    return resolveSessionExecutionProfile(session).engineId;
+    return resolveSessionExecutionProfile({
+      agentId: session.agentId,
+      metadata: session.metadata
+    }).engineId;
   }
 }

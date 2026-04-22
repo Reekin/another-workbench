@@ -53,7 +53,7 @@ describe("AcpAdapter", () => {
       commandId: "cmd-acp-1",
       command: {
         type: "createSession",
-        agentId: "agent-1"
+        engineId: "agent-1"
       }
     });
 

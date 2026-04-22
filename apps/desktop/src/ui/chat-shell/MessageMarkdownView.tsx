@@ -2,7 +2,14 @@ import { useDeferredValue, type ReactElement } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
-import type { MessageBlock } from "@another-workbench/shared";
+import type {
+  ExtractedFileReference,
+  MessageBlock
+} from "@another-workbench/shared";
+import {
+  createFileReferenceFromPath,
+  fileTargetToPath
+} from "@another-workbench/shared";
 import { ParticipantIdentityBadge } from "./ParticipantIdentityBadge.js";
 import {
   buildParticipantDirectory,
@@ -13,6 +20,8 @@ import {
 export type MessageMarkdownViewProps = {
   block: MessageBlock;
   participantDirectory?: ParticipantDirectory;
+  onActivateResourceLink?: (reference: ExtractedFileReference) => void;
+  onPreviewImage?: (input: { src: string; alt: string }) => void;
 };
 
 const defaultDirectory = buildParticipantDirectory([]);
@@ -41,7 +50,9 @@ const blockMetaLabel = (block: MessageBlock): string => {
 
 export const MessageMarkdownView = ({
   block,
-  participantDirectory = defaultDirectory
+  participantDirectory = defaultDirectory,
+  onActivateResourceLink,
+  onPreviewImage
 }: MessageMarkdownViewProps): ReactElement => {
   const sourceText = block.text ?? "";
   const deferredText = useDeferredValue(sourceText);
@@ -80,6 +91,58 @@ export const MessageMarkdownView = ({
             remarkPlugins={[remarkGfm]}
             rehypePlugins={[[rehypeSanitize, sanitizeSchema]]}
             urlTransform={allowLocalFileUrls}
+            components={{
+              a: ({ href, children, ...props }) => {
+                const filePath = href ? fileTargetToPath(href) : undefined;
+                if (!href || !filePath || !onActivateResourceLink) {
+                  return (
+                    <a href={href} {...props}>
+                      {children}
+                    </a>
+                  );
+                }
+                const label =
+                  typeof children === "string"
+                    ? children
+                    : Array.isArray(children)
+                      ? children.filter((item) => typeof item === "string").join("")
+                      : "";
+                return (
+                  <a
+                    href={href}
+                    {...props}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      onActivateResourceLink(
+                        createFileReferenceFromPath(
+                          filePath,
+                          "markdown_link",
+                          label || undefined
+                        )
+                      );
+                    }}
+                  >
+                    {children}
+                  </a>
+                );
+              },
+              img: ({ src, alt, ...props }) => {
+                if (!src || !onPreviewImage) {
+                  return <img src={src} alt={alt ?? ""} {...props} />;
+                }
+                return (
+                  <button
+                    type="button"
+                    className="awb-inline-image-button"
+                    onClick={() =>
+                      onPreviewImage({ src, alt: alt ?? "Image preview" })
+                    }
+                  >
+                    <img src={src} alt={alt ?? ""} {...props} />
+                  </button>
+                );
+              }
+            }}
           >
             {deferredText}
           </ReactMarkdown>

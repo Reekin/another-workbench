@@ -4,8 +4,8 @@ export type ComposerStatusNotice = {
   message: string;
   persistent?: boolean;
   source?:
-    | "agent-list"
-    | "agent-select"
+    | "engine-list"
+    | "engine-select"
     | "subscription"
     | "send"
     | "create-session"
@@ -15,12 +15,13 @@ export type ComposerStatusNotice = {
     | "session-action"
     | "chat-tree"
     | "delegation"
+    | "files"
     | "settings";
 };
 
 export type ResolveComposerStatusInput = {
   transportAvailable: boolean;
-  selectedAgentId?: string;
+  selectedEngineId?: string;
   activeSession?: ChatSession;
   approvals?: ApprovalRequest[];
   notice?: ComposerStatusNotice;
@@ -58,8 +59,8 @@ export const resolveComposerStatus = (
     return `Ready in ${input.activeSession.sessionId}`;
   }
 
-  if (input.selectedAgentId) {
-    return `Selected agent: ${input.selectedAgentId}`;
+  if (input.selectedEngineId) {
+    return `Selected engine: ${input.selectedEngineId}`;
   }
 
   return "Ready";

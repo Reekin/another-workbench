@@ -1,6 +1,5 @@
 import { z } from "zod";
 import {
-  zAgentId,
   zConversationId,
   zIsoDateTime,
   zJsonRecord,
@@ -10,7 +9,7 @@ import {
   zSessionId,
   zTurnId
 } from "./common.js";
-import { zSessionExecutionProfileSchema } from "./session-profile.js";
+import { zSessionExecutionProfileInputSchema } from "./session-profile.js";
 
 export const commandTypes = [
   "initialize",
@@ -42,10 +41,10 @@ const zInitializeCommand = z.object({
 
 const zCreateSessionCommand = z.object({
   type: z.literal("createSession"),
-  agentId: zAgentId,
+  engineId: z.string().min(1),
   conversationId: zConversationId.optional(),
   workspaceId: z.string().min(1).optional(),
-  sessionProfile: zSessionExecutionProfileSchema.optional(),
+  sessionProfile: zSessionExecutionProfileInputSchema.optional(),
   metadata: zJsonRecord.optional()
 });
 

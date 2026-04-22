@@ -17,7 +17,7 @@ const workspaceRegistryDocumentSchema = z.object({
   workspaces: z.array(workspaceRecordSchema).default([]),
   expandedWorkspaceIds: z.array(z.string().min(1)).default([]),
   expandedSessionIds: z.array(z.string().min(1)).default([]),
-  defaultNewSessionAgentId: z.string().min(1).optional(),
+  defaultNewSessionEngineId: z.string().min(1).optional(),
   lastActiveWorkspaceId: z.string().min(1).optional(),
   lastActiveSessionId: z.string().min(1).optional()
 });
@@ -228,12 +228,12 @@ export class WorkspaceRegistryService {
   }
 
   public async updateSettings(input: {
-    defaultNewSessionAgentId?: string;
+    defaultNewSessionEngineId?: string;
   }): Promise<void> {
     await this.ready();
     this.document = {
       ...this.document,
-      defaultNewSessionAgentId: input.defaultNewSessionAgentId
+      defaultNewSessionEngineId: input.defaultNewSessionEngineId
     };
     await this.persist();
   }
@@ -249,7 +249,19 @@ export class WorkspaceRegistryService {
       typeof loaded.value === "object" &&
       loaded.value !== null &&
       "sessionViewStateBySessionId" in loaded.value;
-    const parsed = workspaceRegistryDocumentSchema.safeParse(loaded.value);
+    const migratedValue =
+      typeof loaded.value === "object" &&
+      loaded.value !== null &&
+      !("defaultNewSessionEngineId" in loaded.value) &&
+      "defaultNewSessionAgentId" in loaded.value
+        ? {
+            ...loaded.value,
+            defaultNewSessionEngineId: (loaded.value as {
+              defaultNewSessionAgentId?: unknown;
+            }).defaultNewSessionAgentId
+          }
+        : loaded.value;
+    const parsed = workspaceRegistryDocumentSchema.safeParse(migratedValue);
     this.document = parsed.success
       ? parsed.data
       : {

@@ -1,6 +1,8 @@
 import type {
   AgentDescriptor,
   ChatSession,
+  CodexTurnChangesResultRpc,
+  CodexTurnChangesUndoResultRpc,
   CommandEnvelope,
   DomainSnapshot,
   EngineDefinitionRpc,
@@ -37,6 +39,11 @@ import {
   buildSessionWindowSnapshot,
   type SessionWindowSnapshot
 } from "./session-window.js";
+import { FileActionService } from "./file-action-service.js";
+import { FilePreviewService } from "./file-preview-service.js";
+import { WorkspaceFileSearchService } from "./workspace-file-search-service.js";
+import { TurnChangeService } from "./turn-change-service.js";
+import { CodexTurnChangesService } from "./engine-extensions/codex/turn-changes-service.js";
 
 const defaultSessionWindowLimit = 8;
 
@@ -54,6 +61,11 @@ export type WorkbenchShellServiceOptions = {
     canceled: boolean;
     rootPath?: string;
   }>;
+  fileSearchService?: WorkspaceFileSearchService;
+  filePreviewService?: FilePreviewService;
+  fileActionService?: FileActionService;
+  turnChangeService?: TurnChangeService;
+  codexTurnChangesService?: CodexTurnChangesService;
 };
 
 export class WorkbenchShellService {
@@ -69,6 +81,11 @@ export class WorkbenchShellService {
   private readonly pickWorkspaceDirectoryImpl:
     | (() => Promise<{ canceled: boolean; rootPath?: string }>)
     | undefined;
+  private readonly fileSearchService: WorkspaceFileSearchService;
+  private readonly filePreviewService: FilePreviewService;
+  private readonly fileActionService: FileActionService;
+  private readonly turnChangeService: TurnChangeService;
+  private readonly codexTurnChangesService: CodexTurnChangesService;
   private openSessionGeneration = 0;
 
   public constructor(options: WorkbenchShellServiceOptions) {
@@ -93,6 +110,23 @@ export class WorkbenchShellService {
     this.engineRegistry = options.engineRegistry;
     this.engineCapabilitySurface = options.engineCapabilitySurface;
     this.pickWorkspaceDirectoryImpl = options.pickWorkspaceDirectory;
+    this.fileSearchService =
+      options.fileSearchService ?? new WorkspaceFileSearchService();
+    this.filePreviewService =
+      options.filePreviewService ?? new FilePreviewService();
+    this.fileActionService =
+      options.fileActionService ?? new FileActionService();
+    this.turnChangeService =
+      options.turnChangeService ?? new TurnChangeService();
+    this.codexTurnChangesService =
+      options.codexTurnChangesService ??
+      new CodexTurnChangesService({
+        resolveSessionAgentId: (sessionId) =>
+          this.sessionIdentity.resolveContext(sessionId).agentId,
+        resolveWorkingDirectory: (sessionId) =>
+          this.resolveTurnChangeWorkingDirectoryBySessionId(sessionId),
+        undoTurnChanges: (input) => this.turnChangeService.undoTurnChanges(input)
+      });
   }
 
   public listEngines(): EngineDefinitionRpc[] {
@@ -123,25 +157,25 @@ export class WorkbenchShellService {
   }
 
   public async getSettings(): Promise<{
-    defaultNewSessionAgentId?: string;
+    defaultNewSessionEngineId?: string;
   }> {
     const registry = this.requireWorkspaceRegistry();
     await registry.ready();
     return {
-      defaultNewSessionAgentId: registry.getState().defaultNewSessionAgentId
+      defaultNewSessionEngineId: registry.getState().defaultNewSessionEngineId
     };
   }
 
   public async updateSettings(input: {
-    defaultNewSessionAgentId?: string;
+    defaultNewSessionEngineId?: string;
   }): Promise<{
-    defaultNewSessionAgentId?: string;
+    defaultNewSessionEngineId?: string;
   }> {
     const registry = this.requireWorkspaceRegistry();
     await registry.updateSettings(input);
-    if (input.defaultNewSessionAgentId) {
+    if (input.defaultNewSessionEngineId) {
       this.runtimeService.selectAgent({
-        agentId: input.defaultNewSessionAgentId
+        agentId: input.defaultNewSessionEngineId
       });
     }
     return this.getSettings();
@@ -297,10 +331,9 @@ export class WorkbenchShellService {
 
   public async createBrowserSession(input: {
     workspaceId: string;
-    agentId: string;
+    engineId: string;
     conversationId?: string;
     sessionProfile?: {
-      engineId: string;
       modeId?: string;
       modelId?: string;
     };
@@ -311,7 +344,7 @@ export class WorkbenchShellService {
   }> {
     const session = await this.runtimeService.createSession({
       type: "createSession",
-      agentId: input.agentId,
+      engineId: input.engineId,
       workspaceId: input.workspaceId,
       conversationId: input.conversationId,
       sessionProfile: input.sessionProfile,
@@ -490,6 +523,55 @@ export class WorkbenchShellService {
     return this.capabilities.getBackgroundRun(sessionId);
   }
 
+  public async searchWorkspaceFiles(input: {
+    workspaceId: string;
+    query: string;
+    limit?: number;
+  }) {
+    const registry = this.requireWorkspaceRegistry();
+    await registry.ready();
+    const workspace = registry.getWorkspace(input.workspaceId);
+    if (!workspace) {
+      throw new Error(`Workspace not found: ${input.workspaceId}`);
+    }
+    return {
+      results: await this.fileSearchService.searchWorkspace({
+        workspace,
+        query: input.query,
+        limit: input.limit
+      })
+    };
+  }
+
+  public async getFilePreview(path: string) {
+    return {
+      preview: await this.filePreviewService.getPreview(path)
+    };
+  }
+
+  public async runFileAction(input: {
+    path: string;
+    action: "open" | "reveal";
+  }) {
+    return {
+      result: await this.fileActionService.runAction(input)
+    };
+  }
+
+  public async getCodexTurnChanges(input: {
+    sessionId: string;
+    turnId: string;
+  }): Promise<CodexTurnChangesResultRpc> {
+    return this.codexTurnChangesService.getTurnChanges(input);
+  }
+
+  public async undoCodexTurnChanges(input: {
+    sessionId: string;
+    turnId: string;
+  }): Promise<CodexTurnChangesUndoResultRpc> {
+    return this.codexTurnChangesService.undoTurnChanges(input);
+  }
+
   private requireWorkspaceRegistry() {
     const registry = this.runtimeService.getWorkspaceRegistry();
     if (!registry) {
@@ -516,6 +598,45 @@ export class WorkbenchShellService {
       throw new Error("Conversation graph is unavailable.");
     }
     return this.chatTreeProvider;
+  }
+
+  private async resolveTurnChangeWorkingDirectoryBySessionId(
+    sessionId: string
+  ): Promise<string> {
+    const context = this.sessionIdentity.resolveContext(sessionId);
+    const session = context.session;
+    const metadataCwd =
+      (session?.metadata && typeof session.metadata.cwd === "string"
+        ? session.metadata.cwd
+        : undefined) ??
+      (context.indexEntry?.metadata && typeof context.indexEntry.metadata.cwd === "string"
+        ? context.indexEntry.metadata.cwd
+        : undefined);
+    if (metadataCwd) {
+      return metadataCwd;
+    }
+
+    const workspaceId =
+      context.indexEntry?.workspaceId ??
+      (session
+        ? this.runtimeService
+            .getSnapshot()
+            .conversations.find(
+              (item) => item.conversationId === session.conversationId
+            )?.workspaceId
+        : undefined);
+    if (workspaceId) {
+      const registry = this.requireWorkspaceRegistry();
+      await registry.ready();
+      const workspace = registry
+        .getState()
+        .workspaces.find((item) => item.workspaceId === workspaceId);
+      if (workspace) {
+        return workspace.absolutePath;
+      }
+    }
+
+    throw new Error("Unable to resolve a working directory for this turn.");
   }
 
   private async resolveProviderAnchorTurnId(

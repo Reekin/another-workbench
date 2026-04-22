@@ -342,4 +342,176 @@ describe("transcript view model", () => {
       "terminal-1"
     ]);
   });
+
+  it("keeps transcript rows focused on message and process content even when messages reference files", () => {
+    const store = createRendererStore();
+    store.hydrateSnapshot(
+      parseDomainSnapshot({
+        conversations: [
+          {
+            conversationId: "conv-1",
+            participantAgentIds: ["agent-1"],
+            activeSessionId: "session-1",
+            sessionIds: ["session-1"],
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-1",
+            conversationId: "conv-1",
+            agentId: "agent-1",
+            status: "completed",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        turns: [
+          {
+            turnId: "turn-1",
+            sessionId: "session-1",
+            status: "completed",
+            startedAt: "2026-04-17T00:00:01.000Z",
+            messageIds: ["message-user-1", "message-user-2", "message-assistant-1"],
+            toolCallIds: [],
+            terminalIds: [],
+            approvalRequestIds: []
+          }
+        ],
+        messageBlocks: [
+          {
+            blockId: "message-user-1:md",
+            messageId: "message-user-1",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "user",
+            kind: "markdown",
+            text: [
+              "[Readme](file:///C:/repo/docs/README.md)",
+              "![Diagram](file:///C:/repo/assets/diagram.png)"
+            ].join("\n"),
+            startedAt: "2026-04-17T00:00:01.000Z"
+          },
+          {
+            blockId: "message-user-2:md",
+            messageId: "message-user-2",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "user",
+            kind: "markdown",
+            text: "Same file again: `C:\\repo\\docs\\README.md`",
+            startedAt: "2026-04-17T00:00:01.500Z"
+          },
+          {
+            blockId: "message-assistant-1:md",
+            messageId: "message-assistant-1",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "assistant",
+            kind: "markdown",
+            text: "Follow up in `C:\\repo\\notes\\todo.txt`.",
+            startedAt: "2026-04-17T00:00:02.000Z"
+          }
+        ],
+        toolCalls: [],
+        terminalStreams: [],
+        approvalRequests: [],
+        participants: [],
+        sessionRelations: []
+      })
+    );
+
+    const state = store.getState();
+    const turns = selectTurnsForSession(state, "session-1");
+    const rows = buildTurnTranscriptRows(state, turns);
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.messageRole).toBe("user");
+    expect(rows[0]?.blocks.map((block) => block.blockId)).toEqual([
+      "message-user-1:md",
+      "message-user-2:md"
+    ]);
+    expect(rows[1]?.messageRole).toBe("assistant");
+    expect(rows[1]?.blocks.map((block) => block.blockId)).toEqual([
+      "message-assistant-1:md"
+    ]);
+  });
+
+  it("does not require transcript rows to carry turn artifact metadata", () => {
+    const store = createRendererStore();
+    store.hydrateSnapshot(
+      parseDomainSnapshot({
+        conversations: [
+          {
+            conversationId: "conv-1",
+            participantAgentIds: ["agent-1"],
+            activeSessionId: "session-1",
+            sessionIds: ["session-1"],
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-1",
+            conversationId: "conv-1",
+            agentId: "agent-1",
+            status: "completed",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        turns: [
+          {
+            turnId: "turn-1",
+            sessionId: "session-1",
+            status: "completed",
+            finishReason: "completed",
+            startedAt: "2026-04-17T00:00:01.000Z",
+            completedAt: "2026-04-17T00:00:02.000Z",
+            messageIds: ["message-1"],
+            toolCallIds: [],
+            terminalIds: [],
+            approvalRequestIds: []
+          }
+        ],
+        messageBlocks: [
+          {
+            blockId: "message-1:md",
+            messageId: "message-1",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "assistant",
+            kind: "markdown",
+            text: "Applied change",
+            startedAt: "2026-04-17T00:00:01.100Z"
+          }
+        ],
+        toolCalls: [],
+        terminalStreams: [],
+        approvalRequests: [],
+        participants: [],
+        sessionRelations: []
+      })
+    );
+
+    const rows = buildTurnTranscriptRows(
+      store.getState(),
+      selectTurnsForSession(store.getState(), "session-1"),
+      buildParticipantDirectory([])
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      messageRole: "assistant",
+      hasProcessDetails: false,
+      blocks: [
+        expect.objectContaining({
+          blockId: "message-1:md",
+          text: "Applied change"
+        })
+      ]
+    });
+  });
 });

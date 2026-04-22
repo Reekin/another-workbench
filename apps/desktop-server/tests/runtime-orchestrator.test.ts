@@ -139,7 +139,7 @@ describe("RuntimeOrchestrator", () => {
     });
 
     const session = await orchestrator.createSession({
-      agentId: "codex",
+      engineId: "codex",
       workspaceId: "workspace-1"
     });
 
@@ -211,10 +211,9 @@ describe("RuntimeOrchestrator", () => {
     });
 
     const created = await orchestrator.createSession({
-      agentId: "codex",
+      engineId: "codex",
       workspaceId: "workspace-1",
       sessionProfile: {
-        engineId: "codex",
         modeId: "danger-full-access",
         modelId: "gpt-5.1"
       }
@@ -304,7 +303,7 @@ describe("RuntimeOrchestrator", () => {
     });
 
     await orchestrator.createSession({
-      agentId: "codex",
+      engineId: "codex",
       workspaceId: "workspace-1"
     });
     await orchestrator.executeCommand({

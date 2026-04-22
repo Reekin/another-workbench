@@ -17,7 +17,10 @@ export const zEngineSharedCapabilitySchema = z.enum([
   "attachments",
   "conversationGraph",
   "delegation",
-  "checkpoint"
+  "checkpoint",
+  "worktree",
+  "diagnostics",
+  "backgroundRun"
 ]);
 
 export const zEngineExtensionDescriptorRpcSchema = z.object({

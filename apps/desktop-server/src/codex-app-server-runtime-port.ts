@@ -31,6 +31,12 @@ import type { ThreadResumeResponse } from "./codex-app-server-generated/v2/Threa
 import type { TurnStartResponse } from "./codex-app-server-generated/v2/TurnStartResponse.js";
 import type { ThreadItem } from "./codex-app-server-generated/v2/ThreadItem.js";
 import { buildCodexTurnInput } from "./attachment-inputs.js";
+import {
+  type RecordedCodexTurnChanges,
+  getRecordedCodexTurnChanges,
+  recordCodexTurnChangesFromFileUpdate,
+  recordCodexTurnChangesFromUnifiedDiff
+} from "./engine-extensions/codex/turn-changes-store.js";
 
 type RuntimeListener = (event: CodexRuntimeEvent) => void;
 
@@ -85,6 +91,7 @@ export type CodexAppServerRuntimePortOptions = {
   commandPath?: string;
   commandArgs?: string[];
   resolveConversationIdBySessionId?: (sessionId: string) => string | undefined;
+  recordTurnChanges?: (input: RecordedCodexTurnChanges) => void;
   now?: () => string;
 };
 
@@ -197,6 +204,11 @@ const isCommandExecutionThreadItem = (
 ): item is Extract<ThreadItem, { type: "commandExecution" }> =>
   isRecord(item) && item.type === "commandExecution" && typeof item.id === "string";
 
+const isFileChangeThreadItem = (
+  item: ThreadItem | Record<string, unknown>
+): item is Extract<ThreadItem, { type: "fileChange" }> =>
+  isRecord(item) && item.type === "fileChange" && typeof item.id === "string";
+
 const isCollabAgentToolCallThreadItem = (
   item: ThreadItem | Record<string, unknown>
 ): item is Extract<ThreadItem, { type: "collabAgentToolCall" }> =>
@@ -296,6 +308,7 @@ export class CodexAppServerRuntimePort
   private sequence = 0;
   private requestCounter = 0;
   private startConfig: AgentAdapterRuntimeConfig = {};
+  private readonly recordTurnChanges: ((input: RecordedCodexTurnChanges) => void) | undefined;
 
   public constructor(options: CodexAppServerRuntimePortOptions = {}) {
     this.agentId = options.agentId ?? "codex";
@@ -303,6 +316,7 @@ export class CodexAppServerRuntimePort
     this.commandArgs = options.commandArgs ?? ["app-server"];
     this.resolveConversationIdBySessionId =
       options.resolveConversationIdBySessionId;
+    this.recordTurnChanges = options.recordTurnChanges;
     this.now = options.now ?? (() => new Date().toISOString());
   }
 
@@ -863,6 +877,24 @@ export class CodexAppServerRuntimePort
         });
         return;
       }
+      case "turn/diff/updated": {
+        const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
+        const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
+        const diff = typeof params.diff === "string" ? params.diff : undefined;
+        if (!sessionId || !turnId || diff === undefined) {
+          return;
+        }
+        recordCodexTurnChangesFromUnifiedDiff({
+          sessionId,
+          turnId,
+          diff
+        });
+        const record = getRecordedCodexTurnChanges(sessionId, turnId);
+        if (record) {
+          this.recordTurnChanges?.(record);
+        }
+        return;
+      }
       case "item/started":
       case "item/completed": {
         const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
@@ -1028,6 +1060,19 @@ export class CodexAppServerRuntimePort
             : undefined,
           agentId: this.agentId
       });
+      return;
+    }
+
+    if (isFileChangeThreadItem(item)) {
+      recordCodexTurnChangesFromFileUpdate({
+        sessionId,
+        turnId,
+        changes: item.changes
+      });
+      const record = getRecordedCodexTurnChanges(sessionId, turnId);
+      if (record) {
+        this.recordTurnChanges?.(record);
+      }
       return;
     }
 

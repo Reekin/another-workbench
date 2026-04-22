@@ -43,7 +43,7 @@ export const useSessionOpenController = (input: {
 }): {
   reloadSessionWindow: (sessionId: string) => Promise<void>;
   onLoadOlder: () => Promise<void>;
-  onCreateSession: (workspaceId: string, agentId: string) => Promise<void>;
+  onCreateSession: (workspaceId: string, engineId: string) => Promise<void>;
   onOpenSession: (sessionId: string) => Promise<void>;
 } => {
   const openSessionRequestIdRef = useRef(0);
@@ -206,8 +206,8 @@ export const useSessionOpenController = (input: {
         );
       }
     },
-    onCreateSession: async (workspaceId: string, agentId: string) => {
-      if (!input.transport || !agentId) {
+    onCreateSession: async (workspaceId: string, engineId: string) => {
+      if (!input.transport || !engineId) {
         return;
       }
       input.onStatusNotice({
@@ -224,10 +224,7 @@ export const useSessionOpenController = (input: {
         input.onResetSessionSwitchState();
         const created = await input.transport.sessionBrowser.create({
           workspaceId,
-          agentId,
-          sessionProfile: {
-            engineId: agentId
-          }
+          engineId
         });
         requestId = ++openSessionRequestIdRef.current;
         input.setBrowserSelectedSessionId(created.sessionId);
@@ -241,7 +238,7 @@ export const useSessionOpenController = (input: {
           workspaceId
         });
         input.onStatusNotice({
-          message: `Created session for ${agentId}`,
+          message: `Created session for ${engineId}`,
           source: "create-session"
         });
       } catch (error) {

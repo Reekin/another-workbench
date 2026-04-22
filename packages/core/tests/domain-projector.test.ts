@@ -249,6 +249,7 @@ describe("DomainProjector", () => {
         exitCode: 1
       })
     ]);
+    expect(projector.store.getTurn("turn-1")).not.toHaveProperty("unifiedDiff");
     expect(projector.store.getSession("session-1")).toMatchObject({
       status: "idle",
       lastTurnId: "turn-1"

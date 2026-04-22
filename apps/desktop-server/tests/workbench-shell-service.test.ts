@@ -108,7 +108,7 @@ describe("WorkbenchShellService", () => {
   it("reads and updates persisted shell settings through the workspace registry", async () => {
     const ready = vi.fn().mockResolvedValue(undefined);
     const getState = vi.fn().mockReturnValue({
-      defaultNewSessionAgentId: "pi"
+      defaultNewSessionEngineId: "pi"
     });
     const updateSettings = vi.fn().mockResolvedValue(undefined);
     const selectAgent = vi.fn().mockReturnValue({
@@ -129,21 +129,21 @@ describe("WorkbenchShellService", () => {
     });
 
     await expect(service.getSettings()).resolves.toEqual({
-      defaultNewSessionAgentId: "pi"
+      defaultNewSessionEngineId: "pi"
     });
 
     getState.mockReturnValue({
-      defaultNewSessionAgentId: "codex"
+      defaultNewSessionEngineId: "codex"
     });
     await expect(
       service.updateSettings({
-        defaultNewSessionAgentId: "codex"
+        defaultNewSessionEngineId: "codex"
       })
     ).resolves.toEqual({
-      defaultNewSessionAgentId: "codex"
+      defaultNewSessionEngineId: "codex"
     });
     expect(updateSettings).toHaveBeenCalledWith({
-      defaultNewSessionAgentId: "codex"
+      defaultNewSessionEngineId: "codex"
     });
     expect(selectAgent).toHaveBeenCalledWith({
       agentId: "codex"
@@ -325,9 +325,8 @@ describe("WorkbenchShellService", () => {
     await expect(
       service.createBrowserSession({
         workspaceId: "workspace-1",
-        agentId: "codex",
+        engineId: "codex",
         sessionProfile: {
-          engineId: "codex",
           modeId: "danger-full-access"
         }
       })
@@ -338,11 +337,10 @@ describe("WorkbenchShellService", () => {
 
     expect(createSession).toHaveBeenCalledWith({
       type: "createSession",
-      agentId: "codex",
+      engineId: "codex",
       workspaceId: "workspace-1",
       conversationId: undefined,
       sessionProfile: {
-        engineId: "codex",
         modeId: "danger-full-access"
       },
       metadata: undefined
@@ -521,7 +519,7 @@ describe("WorkbenchShellService", () => {
     await expect(
       service.createBrowserSession({
         workspaceId: "workspace-1",
-        agentId: "codex"
+        engineId: "codex"
       })
     ).resolves.toEqual({
       sessionId: "session-new",
@@ -530,7 +528,7 @@ describe("WorkbenchShellService", () => {
     expect(createSession).toHaveBeenCalledWith({
       type: "createSession",
       workspaceId: "workspace-1",
-      agentId: "codex",
+      engineId: "codex",
       conversationId: undefined,
       metadata: undefined
     });
@@ -608,5 +606,239 @@ describe("WorkbenchShellService", () => {
       relations: 1
     });
     expect(reconcileWorkspace).toHaveBeenCalledWith("workspace-1");
+  });
+
+  it("routes file search, preview, and actions through the injected file services", async () => {
+    const workspace = {
+      workspaceId: "workspace-1",
+      absolutePath: "I:\\repo",
+      label: "repo",
+      createdAt: "2026-04-19T00:00:00.000Z",
+      updatedAt: "2026-04-19T00:00:00.000Z"
+    };
+    const ready = vi.fn().mockResolvedValue(undefined);
+    const getWorkspace = vi.fn().mockReturnValue(workspace);
+    const searchWorkspace = vi.fn().mockResolvedValue([
+      {
+        workspaceId: "workspace-1",
+        workspaceRoot: "I:\\repo",
+        relativePath: "docs\\README.md",
+        matchScore: 0.98,
+        path: "I:\\repo\\docs\\README.md",
+        displayPath: "I:\\repo\\docs\\README.md",
+        fileUrl: "file:///I:/repo/docs/README.md",
+        label: "README.md",
+        fileName: "README.md",
+        extension: "md",
+        isImage: false,
+        source: "inline_path"
+      }
+    ]);
+    const getPreview = vi.fn().mockResolvedValue({
+      kind: "code",
+      target: {
+        path: "I:\\repo\\docs\\README.md",
+        displayPath: "I:\\repo\\docs\\README.md",
+        fileUrl: "file:///I:/repo/docs/README.md",
+        label: "README.md",
+        fileName: "README.md",
+        extension: "md",
+        isImage: false,
+        source: "inline_path"
+      },
+      exists: true,
+      mimeType: "text/markdown",
+      text: "# Hello",
+      truncated: false,
+      lineCount: 1,
+      language: "markdown"
+    });
+    const runAction = vi.fn().mockResolvedValue({
+      action: "open",
+      ok: true,
+      displayPath: "I:\\repo\\docs\\README.md",
+      fileUrl: "file:///I:/repo/docs/README.md"
+    });
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        getWorkspaceRegistry: () => ({
+          ready,
+          getWorkspace
+        })
+      } as never,
+      sessionCatalog: {} as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never,
+      fileSearchService: {
+        searchWorkspace
+      } as never,
+      filePreviewService: {
+        getPreview
+      } as never,
+      fileActionService: {
+        runAction
+      } as never
+    });
+
+    await expect(
+      service.searchWorkspaceFiles({
+        workspaceId: "workspace-1",
+        query: "readme",
+        limit: 5
+      })
+    ).resolves.toEqual({
+      results: [
+        expect.objectContaining({
+          path: "I:\\repo\\docs\\README.md",
+          relativePath: "docs\\README.md"
+        })
+      ]
+    });
+    await expect(service.getFilePreview("I:\\repo\\docs\\README.md")).resolves.toEqual({
+      preview: expect.objectContaining({
+        kind: "code",
+        exists: true,
+        language: "markdown"
+      })
+    });
+    await expect(
+      service.runFileAction({
+        path: "I:\\repo\\docs\\README.md",
+        action: "open"
+      })
+    ).resolves.toEqual({
+      result: {
+        action: "open",
+        ok: true,
+        displayPath: "I:\\repo\\docs\\README.md",
+        fileUrl: "file:///I:/repo/docs/README.md"
+      }
+    });
+
+    expect(ready).toHaveBeenCalledTimes(1);
+    expect(searchWorkspace).toHaveBeenCalledWith({
+      workspace,
+      query: "readme",
+      limit: 5
+    });
+    expect(getPreview).toHaveBeenCalledWith("I:\\repo\\docs\\README.md");
+    expect(runAction).toHaveBeenCalledWith({
+      path: "I:\\repo\\docs\\README.md",
+      action: "open"
+    });
+  });
+
+  it("fails file search when the target workspace is unknown", async () => {
+    const ready = vi.fn().mockResolvedValue(undefined);
+    const getWorkspace = vi.fn().mockReturnValue(undefined);
+    const searchWorkspace = vi.fn();
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        getWorkspaceRegistry: () => ({
+          ready,
+          getWorkspace
+        })
+      } as never,
+      sessionCatalog: {} as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never,
+      fileSearchService: {
+        searchWorkspace
+      } as never
+    });
+
+    await expect(
+      service.searchWorkspaceFiles({
+        workspaceId: "workspace-missing",
+        query: "readme"
+      })
+    ).rejects.toThrow("Workspace not found: workspace-missing");
+    expect(searchWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("routes codex turn-change data and undo through the injected extension service", async () => {
+    const getTurnChanges = vi.fn().mockResolvedValue({
+      engineId: "codex",
+      sessionId: "session-1",
+      turnId: "turn-2",
+      changedFiles: [
+        {
+          path: "I:\\repo\\src\\foo.ts",
+          displayPath: "I:\\repo\\src\\foo.ts",
+          fileUrl: "file:///I:/repo/src/foo.ts",
+          label: "foo.ts",
+          fileName: "foo.ts",
+          extension: "ts",
+          isImage: false,
+          source: "inline_path",
+          changeKind: "update",
+          diff: `diff --git a/src/foo.ts b/src/foo.ts
+--- a/src/foo.ts
++++ b/src/foo.ts
+@@ -1 +1 @@
+-old
++new
+`
+        }
+      ],
+      canUndo: true
+    });
+    const undoTurnChanges = vi.fn().mockResolvedValue({
+      engineId: "codex",
+      sessionId: "session-1",
+      turnId: "turn-2",
+      undone: true,
+      displayPath: "I:\\repo"
+    });
+
+    const service = new WorkbenchShellService({
+      runtimeService: {} as never,
+      sessionCatalog: {} as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never,
+      codexTurnChangesService: {
+        getTurnChanges,
+        undoTurnChanges
+      } as never
+    });
+
+    await expect(
+      service.getCodexTurnChanges({
+        sessionId: "session-1",
+        turnId: "turn-2"
+      })
+    ).resolves.toEqual({
+      engineId: "codex",
+      sessionId: "session-1",
+      turnId: "turn-2",
+      changedFiles: [
+        expect.objectContaining({
+          path: "I:\\repo\\src\\foo.ts",
+          changeKind: "update"
+        })
+      ],
+      canUndo: true
+    });
+    await expect(
+      service.undoCodexTurnChanges({
+        sessionId: "session-1",
+        turnId: "turn-2"
+      })
+    ).resolves.toEqual({
+      engineId: "codex",
+      sessionId: "session-1",
+      turnId: "turn-2",
+      undone: true,
+      displayPath: "I:\\repo",
+      errorMessage: undefined
+    });
+    expect(getTurnChanges).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      turnId: "turn-2"
+    });
+    expect(undoTurnChanges).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      turnId: "turn-2"
+    });
   });
 });

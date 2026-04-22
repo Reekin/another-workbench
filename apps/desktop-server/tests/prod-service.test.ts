@@ -50,7 +50,7 @@ describe("prod runtime service", () => {
       commandId: "create-codex-session",
       command: {
         type: "createSession",
-        agentId: "codex",
+        engineId: "codex",
         conversationId: "conversation-prod"
       }
     });
@@ -129,7 +129,7 @@ describe("prod runtime service", () => {
       commandId: "create-pi-session",
       command: {
         type: "createSession",
-        agentId: "pi-acp",
+        engineId: "pi-acp",
         conversationId: "conversation-pi"
       }
     });

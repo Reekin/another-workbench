@@ -1,17 +1,25 @@
 import { z } from "zod";
 import type { ChatSession } from "./domain.js";
-import { zAgentId, zJsonRecord } from "./common.js";
+import { zJsonRecord } from "./common.js";
 
 export const sessionProfileMetadataKey = "sessionProfile";
 
 export const zSessionExecutionProfileSchema = z.object({
-  engineId: zAgentId,
+  engineId: z.string().min(1),
+  modeId: z.string().min(1).optional(),
+  modelId: z.string().min(1).optional()
+});
+
+export const zSessionExecutionProfileInputSchema = z.object({
   modeId: z.string().min(1).optional(),
   modelId: z.string().min(1).optional()
 });
 
 export type SessionExecutionProfile = z.infer<
   typeof zSessionExecutionProfileSchema
+>;
+export type SessionExecutionProfileInput = z.infer<
+  typeof zSessionExecutionProfileInputSchema
 >;
 
 export const readSessionExecutionProfile = (
@@ -37,12 +45,15 @@ export const writeSessionExecutionProfile = (
 };
 
 export const resolveSessionExecutionProfile = (input: {
+  engineId?: string;
   agentId: ChatSession["agentId"];
   metadata?: Record<string, unknown>;
 }): SessionExecutionProfile => {
-  return (
-    readSessionExecutionProfile(input.metadata) ?? {
-      engineId: input.agentId
-    }
-  );
+  const existing = readSessionExecutionProfile(input.metadata);
+  if (existing) {
+    return existing;
+  }
+  return {
+    engineId: input.engineId ?? input.agentId
+  };
 };

@@ -53,7 +53,7 @@ describe("WorkspaceRegistryService", () => {
       sessionId: "session-42"
     });
     await service.updateSettings({
-      defaultNewSessionAgentId: "pi"
+      defaultNewSessionEngineId: "pi"
     });
 
     const reloaded = new WorkspaceRegistryService({
@@ -68,7 +68,7 @@ describe("WorkspaceRegistryService", () => {
     expect(reloaded.getState()).toMatchObject({
       expandedWorkspaceIds: [beta.workspaceId],
       expandedSessionIds: ["session-42"],
-      defaultNewSessionAgentId: "pi",
+      defaultNewSessionEngineId: "pi",
       lastActiveWorkspaceId: beta.workspaceId,
       lastActiveSessionId: "session-42"
     });

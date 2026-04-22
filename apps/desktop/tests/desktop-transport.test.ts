@@ -136,6 +136,34 @@ const createPreloadMock = (config?: {
         }
       } as const;
     }
+    if (payload.method === "codex.turnChanges.get") {
+      return {
+        id: payload.id,
+        method: "codex.turnChanges.get",
+        ok: true,
+        result: {
+          engineId: "codex",
+          sessionId: payload.params.sessionId,
+          turnId: payload.params.turnId,
+          changedFiles: [],
+          canUndo: false
+        }
+      } as const;
+    }
+    if (payload.method === "codex.turnChanges.undo") {
+      return {
+        id: payload.id,
+        method: "codex.turnChanges.undo",
+        ok: true,
+        result: {
+          engineId: "codex",
+          sessionId: payload.params.sessionId,
+          turnId: payload.params.turnId,
+          undone: true,
+          displayPath: "I:\\repo"
+        }
+      } as const;
+    }
     return {
       id: payload.id,
       method: "runtime.command",
@@ -208,10 +236,9 @@ describe("Desktop transport facade", () => {
     });
 
     const receipt = await transport.session.create({
-      agentId: "agent-1",
+      engineId: "agent-1",
       conversationId: "conversation-1",
       sessionProfile: {
-        engineId: "agent-1",
         modeId: "danger-full-access"
       }
     });
@@ -223,9 +250,8 @@ describe("Desktop transport facade", () => {
       throw new Error("Expected runtime.command request.");
     }
     expect(request.params.envelope.command.type).toBe("createSession");
-    expect(request.params.envelope.command.agentId).toBe("agent-1");
+    expect(request.params.envelope.command.engineId).toBe("agent-1");
     expect(request.params.envelope.command.sessionProfile).toEqual({
-      engineId: "agent-1",
       modeId: "danger-full-access"
     });
   });
@@ -282,6 +308,86 @@ describe("Desktop transport facade", () => {
     });
   });
 
+  it("maps Codex turn-change RPCs to explicit codex transport methods", async () => {
+    const preload = createPreloadMock({
+      onRequest: async (request) => {
+        if (request.method === "codex.turnChanges.get") {
+          return {
+            id: request.id,
+            method: request.method,
+            ok: true,
+            result: {
+              engineId: "codex",
+              sessionId: request.params.sessionId,
+              turnId: request.params.turnId,
+              changedFiles: [
+                {
+                  path: "I:\\repo\\src\\foo.ts",
+                  displayPath: "I:\\repo\\src\\foo.ts",
+                  fileUrl: "file:///I:/repo/src/foo.ts",
+                  label: "foo.ts",
+                  fileName: "foo.ts",
+                  extension: "ts",
+                  isImage: false,
+                  source: "inline_path",
+                  changeKind: "update",
+                  diff: `diff --git a/src/foo.ts b/src/foo.ts
+--- a/src/foo.ts
++++ b/src/foo.ts
+@@ -1 +1 @@
+-old
++new`
+                }
+              ],
+              canUndo: true
+            }
+          } as const;
+        }
+        if (request.method === "codex.turnChanges.undo") {
+          return {
+            id: request.id,
+            method: request.method,
+            ok: true,
+            result: {
+              engineId: "codex",
+              sessionId: request.params.sessionId,
+              turnId: request.params.turnId,
+              undone: true,
+              displayPath: "I:\\repo"
+            }
+          } as const;
+        }
+        throw new Error(`Unexpected method: ${request.method}`);
+      }
+    });
+    const transport = createDesktopTransport(preload.api);
+
+    await expect(
+      transport.codex.getTurnChanges({
+        sessionId: "session-1",
+        turnId: "turn-1"
+      })
+    ).resolves.toMatchObject({
+      engineId: "codex",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      changedFiles: [expect.objectContaining({ changeKind: "update" })],
+      canUndo: true
+    });
+    await expect(
+      transport.codex.undoTurnChanges({
+        sessionId: "session-1",
+        turnId: "turn-1"
+      })
+    ).resolves.toEqual({
+      engineId: "codex",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      undone: true,
+      displayPath: "I:\\repo"
+    });
+  });
+
   it("maps session.list to dedicated session.list read path", async () => {
     const preload = createPreloadMock({
       onRequest: async (request) => {
@@ -332,10 +438,10 @@ describe("Desktop transport facade", () => {
     await expect(transport.settings.get()).resolves.toEqual({});
     await expect(
       transport.settings.update({
-        defaultNewSessionAgentId: "codex"
+        defaultNewSessionEngineId: "codex"
       })
     ).resolves.toEqual({
-      defaultNewSessionAgentId: "codex"
+      defaultNewSessionEngineId: "codex"
     });
 
     const getRequest = preload.request.mock.calls[0][0] as WorkbenchRpcRequest;
@@ -459,6 +565,140 @@ describe("Desktop transport facade", () => {
     expect(replay.envelopes).toEqual([]);
     const request = preload.request.mock.calls[0][0] as WorkbenchRpcRequest;
     expect(request.method).toBe("events.replay");
+  });
+
+  it("maps file search, preview, and action to dedicated typed RPC contracts", async () => {
+    const preload = createPreloadMock({
+      onRequest: async (request) => {
+        if (request.method === "file.searchWorkspace") {
+          return {
+            id: request.id,
+            method: request.method,
+            ok: true,
+            result: {
+              results: [
+                {
+                  workspaceId: request.params.workspaceId,
+                  workspaceRoot: "I:\\repo",
+                  relativePath: "docs\\README.md",
+                  matchScore: 0.98,
+                  path: "I:\\repo\\docs\\README.md",
+                  displayPath: "I:\\repo\\docs\\README.md",
+                  fileUrl: "file:///I:/repo/docs/README.md",
+                  label: "README.md",
+                  fileName: "README.md",
+                  extension: "md",
+                  isImage: false,
+                  source: "inline_path"
+                }
+              ]
+            }
+          } as const;
+        }
+        if (request.method === "file.getPreview") {
+          return {
+            id: request.id,
+            method: request.method,
+            ok: true,
+            result: {
+              preview: {
+                kind: "code",
+                target: {
+                  path: request.params.path,
+                  displayPath: request.params.path,
+                  fileUrl: "file:///I:/repo/docs/README.md",
+                  label: "README.md",
+                  fileName: "README.md",
+                  extension: "md",
+                  isImage: false,
+                  source: "inline_path"
+                },
+                exists: true,
+                mimeType: "text/markdown",
+                text: "# Readme",
+                truncated: false,
+                lineCount: 1,
+                language: "markdown"
+              }
+            }
+          } as const;
+        }
+        if (request.method === "file.runAction") {
+          return {
+            id: request.id,
+            method: request.method,
+            ok: true,
+            result: {
+              result: {
+                action: request.params.action,
+                ok: true,
+                displayPath: request.params.path,
+                fileUrl: "file:///I:/repo/docs/README.md"
+              }
+            }
+          } as const;
+        }
+        throw new Error(`Unexpected method: ${request.method}`);
+      }
+    });
+    const transport = createDesktopTransport(preload.api);
+
+    await expect(
+      transport.file.searchWorkspace({
+        workspaceId: "workspace-1",
+        query: "readme",
+        limit: 5
+      })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        relativePath: "docs\\README.md"
+      })
+    ]);
+    await expect(
+      transport.file.getPreview("I:\\repo\\docs\\README.md")
+    ).resolves.toEqual(
+      expect.objectContaining({
+        kind: "code",
+        exists: true,
+        language: "markdown"
+      })
+    );
+    await expect(
+      transport.file.runAction({
+        path: "I:\\repo\\docs\\README.md",
+        action: "reveal"
+      })
+    ).resolves.toEqual({
+      action: "reveal",
+      ok: true,
+      displayPath: "I:\\repo\\docs\\README.md",
+      fileUrl: "file:///I:/repo/docs/README.md"
+    });
+
+    const searchRequest = preload.request.mock.calls[0][0] as WorkbenchRpcRequest;
+    const previewRequest = preload.request.mock.calls[1][0] as WorkbenchRpcRequest;
+    const actionRequest = preload.request.mock.calls[2][0] as WorkbenchRpcRequest;
+
+    expect(searchRequest.method).toBe("file.searchWorkspace");
+    if (searchRequest.method === "file.searchWorkspace") {
+      expect(searchRequest.params).toEqual({
+        workspaceId: "workspace-1",
+        query: "readme",
+        limit: 5
+      });
+    }
+    expect(previewRequest.method).toBe("file.getPreview");
+    if (previewRequest.method === "file.getPreview") {
+      expect(previewRequest.params.path).toBe("I:\\repo\\docs\\README.md");
+    }
+    expect(actionRequest.method).toBe("file.runAction");
+    if (actionRequest.method === "file.runAction") {
+      expect(actionRequest.params).toEqual({
+        path: "I:\\repo\\docs\\README.md",
+        action: "reveal"
+      });
+    }
   });
 
   it("skips snapshot hydration when store already has domain state and reuses lastCursor for subscription", async () => {

@@ -7,6 +7,10 @@ import {
   CodexSessionDiscoveryProvider,
   SessionReconciliationService
 } from "../src/session-discovery.js";
+import {
+  clearCodexTurnChangesStore,
+  getRecordedCodexTurnChanges
+} from "../src/engine-extensions/codex/turn-changes-store.js";
 import { SessionIndexStore } from "../src/session-index.js";
 import { WorkbenchRuntimeService } from "../src/runtime-service.js";
 import { WorkspaceRegistryService } from "../src/workspace-registry.js";
@@ -47,6 +51,7 @@ const createThread = (input: {
 });
 
 afterEach(async () => {
+  clearCodexTurnChangesStore();
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir) {
@@ -155,6 +160,23 @@ describe("Session discovery and reconciliation", () => {
               text: "Hydrated root response",
               phase: null,
               memoryCitation: null
+            },
+            {
+              type: "fileChange",
+              id: "file-change-1",
+              status: "completed",
+              changes: [
+                {
+                  path: "src/foo.ts",
+                  kind: {
+                    type: "update",
+                    move_path: null
+                  },
+                  diff: `@@ -1 +1 @@
+-old
++new`
+                }
+              ]
             },
             {
               type: "collabAgentToolCall",
@@ -301,12 +323,25 @@ describe("Session discovery and reconciliation", () => {
     expect(runtimeService.getSnapshot().turns).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
+          turnId: "turn-1"
+        }),
+        expect.objectContaining({
           turnId: "turn-2",
           status: "completed",
           finishReason: "failed"
         })
       ])
     );
+    expect(
+      getRecordedCodexTurnChanges("codex-thread:thread-root", "turn-1")
+    ).toMatchObject({
+      changes: [
+        expect.objectContaining({
+          path: "src/foo.ts",
+          changeKind: "update"
+        })
+      ]
+    });
   });
 
   it("aliases discovered subagent relations onto an existing local parent session by provider session id", async () => {

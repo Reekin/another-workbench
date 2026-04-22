@@ -98,7 +98,7 @@ describe("WorkbenchRuntimeService", () => {
       commandId: "cmd-create",
       command: {
         type: "createSession",
-        agentId: "codex",
+        engineId: "codex",
         workspaceId: "workspace-1"
       }
     });
@@ -207,7 +207,7 @@ describe("WorkbenchRuntimeService", () => {
       commandId: "cmd-create",
       command: {
         type: "createSession",
-        agentId: "codex",
+        engineId: "codex",
         workspaceId: "workspace-1"
       }
     });
@@ -247,7 +247,7 @@ describe("WorkbenchRuntimeService", () => {
       commandId: "cmd-create",
       command: {
         type: "createSession",
-        agentId: "codex",
+        engineId: "codex",
         workspaceId: "workspace-1"
       }
     });
@@ -276,7 +276,7 @@ describe("WorkbenchRuntimeService", () => {
       commandId: "cmd-create",
       command: {
         type: "createSession",
-        agentId: "codex",
+        engineId: "codex",
         workspaceId: "workspace-1"
       }
     });
@@ -363,7 +363,7 @@ describe("WorkbenchRuntimeService", () => {
       commandId: "cmd-create",
       command: {
         type: "createSession",
-        agentId: "codex",
+        engineId: "codex",
         workspaceId: "workspace-1"
       }
     });
@@ -438,7 +438,7 @@ describe("WorkbenchRuntimeService", () => {
       commandId: "cmd-create",
       command: {
         type: "createSession",
-        agentId: "codex",
+        engineId: "codex",
         workspaceId: "workspace-1"
       }
     });
@@ -482,7 +482,7 @@ describe("WorkbenchRuntimeService", () => {
       commandId: "cmd-create",
       command: {
         type: "createSession",
-        agentId: "codex",
+        engineId: "codex",
         conversationId: "conversation-main"
       }
     });
@@ -553,7 +553,7 @@ describe("WorkbenchRuntimeService", () => {
       commandId: "cmd-create",
       command: {
         type: "createSession",
-        agentId: "codex"
+        engineId: "codex"
       }
     });
     await service.executeCommand({
@@ -608,7 +608,7 @@ describe("WorkbenchRuntimeService", () => {
       commandId: "cmd-create",
       command: {
         type: "createSession",
-        agentId: "codex",
+        engineId: "codex",
         conversationId: "conversation-main"
       }
     });
@@ -653,7 +653,7 @@ describe("WorkbenchRuntimeService", () => {
       commandId: "cmd-create",
       command: {
         type: "createSession",
-        agentId: "codex",
+        engineId: "codex",
         conversationId: "conversation-main"
       }
     });
@@ -747,7 +747,7 @@ describe("WorkbenchRuntimeService", () => {
       commandId: "cmd-create",
       command: {
         type: "createSession",
-        agentId: "codex",
+        engineId: "codex",
         conversationId: "conversation-main"
       }
     });
@@ -805,7 +805,7 @@ describe("WorkbenchRuntimeService", () => {
       commandId: "cmd-create",
       command: {
         type: "createSession",
-        agentId: "codex",
+        engineId: "codex",
         conversationId: "conversation-main"
       }
     });
@@ -864,7 +864,7 @@ describe("WorkbenchRuntimeService", () => {
       commandId: "cmd-create",
       command: {
         type: "createSession",
-        agentId: "codex",
+        engineId: "codex",
         conversationId: "conversation-main"
       }
     });

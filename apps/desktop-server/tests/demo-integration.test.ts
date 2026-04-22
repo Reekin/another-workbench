@@ -14,7 +14,7 @@ describe("demo runtime fixture", () => {
       commandId: "create-codex-session",
       command: {
         type: "createSession",
-        agentId: "codex",
+        engineId: "codex",
         conversationId: "conv-codex"
       }
     });
@@ -77,7 +77,7 @@ describe("demo runtime fixture", () => {
       commandId: "create-acp-session",
       command: {
         type: "createSession",
-        agentId: "acp",
+        engineId: "acp",
         conversationId: "conv-acp"
       }
     });

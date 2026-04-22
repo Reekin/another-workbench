@@ -6,7 +6,7 @@ describe("resolveComposerStatus", () => {
     expect(
       resolveComposerStatus({
         transportAvailable: true,
-        selectedAgentId: "codex",
+        selectedEngineId: "codex",
         activeSession: {
           sessionId: "session-1",
           conversationId: "conversation-1",
@@ -34,7 +34,7 @@ describe("resolveComposerStatus", () => {
     expect(
       resolveComposerStatus({
         transportAvailable: true,
-        selectedAgentId: "codex",
+        selectedEngineId: "codex",
         activeSession: {
           sessionId: "session-1",
           conversationId: "conversation-1",
@@ -63,7 +63,7 @@ describe("resolveComposerStatus", () => {
     expect(
       resolveComposerStatus({
         transportAvailable: true,
-        selectedAgentId: "codex",
+        selectedEngineId: "codex",
         notice: {
           message: "Message sent.",
           source: "send"

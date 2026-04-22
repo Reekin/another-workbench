@@ -23,6 +23,8 @@ import { CodexCheckpointProvider } from "./codex-checkpoint-provider.js";
 import { CodexDiagnosticsProvider } from "./codex-diagnostics-provider.js";
 import { EngineRegistryService } from "./engine-control/engine-registry.js";
 import { EngineCapabilitySurfaceService } from "./engine-control/capability-surface.js";
+import { CodexTurnChangesStore } from "./engine-extensions/codex/turn-changes-store.js";
+import { FileActionService } from "./file-action-service.js";
 
 export type CreateWorkbenchRuntimeServiceOptions = {
   codexCommandPath?: string;
@@ -35,6 +37,8 @@ export type CreateWorkbenchRuntimeServiceOptions = {
     canceled: boolean;
     rootPath?: string;
   }>;
+  openFilePath?: (path: string) => Promise<string | void> | string | void;
+  revealFilePath?: (path: string) => Promise<string | void> | string | void;
   now?: () => string;
 };
 
@@ -52,12 +56,16 @@ export const createWorkbenchRuntimeService = (
     baseDir: options.persistenceBaseDir,
     now: options.now
   });
+  const codexTurnChangesStore = new CodexTurnChangesStore({
+    now: options.now
+  });
   const codexRuntimePort = createCodexAppServerRuntimePort({
     agentId: codexAgentId,
     commandPath: options.codexCommandPath,
     commandArgs: options.codexCommandArgs,
     resolveConversationIdBySessionId: (sessionId: string) =>
       service?.resolveConversationIdForSession(sessionId),
+    recordTurnChanges: (input) => codexTurnChangesStore.record(input),
     now: options.now
   });
   const piRuntimePort = createPiAcpRuntimePort({
@@ -109,21 +117,16 @@ export const createWorkbenchRuntimeService = (
           "approval",
           "conversationGraph",
           "delegation",
-          "checkpoint"
+          "checkpoint",
+          "worktree",
+          "diagnostics"
         ],
         extensions: [
           {
             engineId: codexAgentId,
-            key: "worktree",
-            displayName: "Worktree Inspector",
-            description: "Codex-specific worktree and rollout context.",
-            available: true
-          },
-          {
-            engineId: codexAgentId,
-            key: "diagnostics",
-            displayName: "Diagnostics Summary",
-            description: "Codex-specific diagnostics snapshot surface.",
+            key: "changed-files",
+            displayName: "Changed Files",
+            description: "Codex turn-level file changes and local undo actions.",
             available: true
           }
         ]
@@ -189,7 +192,8 @@ export const createWorkbenchRuntimeService = (
       {
         agentId: codexAgentId,
         sessionDiscovery: new CodexSessionDiscoveryProvider({
-          codexRuntimePort
+          codexRuntimePort,
+          turnChangesStore: codexTurnChangesStore
         }),
         sessionActions: new CodexSessionActionsProvider({
           codexRuntimePort
@@ -234,7 +238,11 @@ export const createWorkbenchRuntimeService = (
     sessionReconciliation,
     engineRegistry,
     engineCapabilitySurface,
-    pickWorkspaceDirectory: options.pickWorkspaceDirectory
+    pickWorkspaceDirectory: options.pickWorkspaceDirectory,
+    fileActionService: new FileActionService({
+      openPath: options.openFilePath,
+      revealPath: options.revealFilePath
+    })
   });
 };
 

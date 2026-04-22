@@ -463,6 +463,76 @@ export const createRemoteRpcHandler = (
                 backgroundRun: await shellService.getBackgroundRun(request.params.sessionId)
               }
             });
+          case "file.searchWorkspace":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "FILE_BROWSER_UNAVAILABLE",
+                "File browser APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: await shellService.searchWorkspaceFiles(request.params)
+            });
+          case "file.getPreview":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "FILE_PREVIEW_UNAVAILABLE",
+                "File preview APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: await shellService.getFilePreview(request.params.path)
+            });
+          case "file.runAction":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "FILE_ACTION_UNAVAILABLE",
+                "File action APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: await shellService.runFileAction(request.params)
+            });
+          case "codex.turnChanges.get":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "CODEX_TURN_CHANGES_UNAVAILABLE",
+                "Codex turn-change APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: await shellService.getCodexTurnChanges(request.params)
+            });
+          case "codex.turnChanges.undo":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "CODEX_TURN_CHANGES_UNAVAILABLE",
+                "Codex turn-change APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: await shellService.undoCodexTurnChanges(request.params)
+            });
           case "runtime.command": {
             const receipt = await service.executeCommand(request.params.envelope);
             return parseWorkbenchRpcResponse({
@@ -491,27 +561,28 @@ export const createRemoteRpcHandler = (
             });
           }
           case "events.subscribe":
-            return toErrorResponse(
-              request,
-              "REMOTE_EVENTS_REQUIRE_WEBSOCKET",
-              "Remote event subscriptions must use the /events WebSocket endpoint.",
-              {
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: {
                 endpoint: "/events",
                 subscriptionId:
                   request.params.subscriptionId ?? createSubscriptionId(),
                 fromCursor: request.params.fromCursor
               }
-            );
+            });
           case "events.unsubscribe":
-            return toErrorResponse(
-              request,
-              "REMOTE_EVENTS_REQUIRE_WEBSOCKET",
-              "Remote event unsubscription must close the /events WebSocket connection.",
-              {
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: {
                 endpoint: "/events",
+                unsubscribed: true,
                 subscriptionId: request.params.subscriptionId
               }
-            );
+            });
           default: {
             const exhaustive: never = request;
             return exhaustive;

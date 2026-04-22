@@ -91,6 +91,59 @@ describe("MessageMarkdownView", () => {
     expect(html).toContain('src="file:///C:/Users/TestUser/Pictures/cat.png"');
   });
 
+  it("preserves local file links in markdown", () => {
+    const html = renderToStaticMarkup(
+      <MessageMarkdownView
+        participantDirectory={participantDirectory}
+        onActivateResourceLink={() => undefined}
+        block={{
+          blockId: "message-3b:md",
+          messageId: "message-3b",
+          sessionId: "session-1",
+          turnId: "turn-1",
+          role: "user",
+          kind: "markdown",
+          text: "[Spec](file:///C:/repo/docs/spec.md)",
+          actor: {
+            participantId: "participant-1",
+            agentId: "agent-codex"
+          },
+          startedAt: "2026-04-17T00:00:00.000Z"
+        }}
+      />
+    );
+
+    expect(html).toContain('href="file:///C:/repo/docs/spec.md"');
+    expect(html).toContain(">Spec</a>");
+  });
+
+  it("wraps inline images in a preview button when image opening is enabled", () => {
+    const html = renderToStaticMarkup(
+      <MessageMarkdownView
+        participantDirectory={participantDirectory}
+        onPreviewImage={() => undefined}
+        block={{
+          blockId: "message-3c:md",
+          messageId: "message-3c",
+          sessionId: "session-1",
+          turnId: "turn-1",
+          role: "user",
+          kind: "markdown",
+          text: "![Diagram](file:///C:/repo/assets/diagram.png)",
+          actor: {
+            participantId: "participant-1",
+            agentId: "agent-codex"
+          },
+          startedAt: "2026-04-17T00:00:00.000Z"
+        }}
+      />
+    );
+
+    expect(html).toContain("<button");
+    expect(html).toContain('class="awb-inline-image-button"');
+    expect(html).toContain('src="file:///C:/repo/assets/diagram.png"');
+  });
+
   it("preserves data-url images in markdown", () => {
     const html = renderToStaticMarkup(
       <MessageMarkdownView

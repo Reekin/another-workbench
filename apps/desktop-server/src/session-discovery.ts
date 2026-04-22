@@ -20,6 +20,7 @@ import {
 import { isPathInsideWorkspace } from "@another-workbench/shared";
 import type { Thread } from "./codex-app-server-generated/v2/Thread.js";
 import type { CodexErrorInfo } from "./codex-app-server-generated/v2/CodexErrorInfo.js";
+import type { FileUpdateChange } from "./codex-app-server-generated/v2/FileUpdateChange.js";
 import type { ThreadItem } from "./codex-app-server-generated/v2/ThreadItem.js";
 import type { SessionSource } from "./codex-app-server-generated/v2/SessionSource.js";
 import type { UserInput } from "./codex-app-server-generated/v2/UserInput.js";
@@ -34,6 +35,11 @@ import type {
 import type { WorkspaceRecord, WorkspaceRegistryService } from "./workspace-registry.js";
 import type { WorkbenchRuntimeService } from "./runtime-service.js";
 import { CapabilityRegistry } from "./capability-registry.js";
+import {
+  CodexTurnChangesStore,
+  getRecordedCodexTurnChanges,
+  recordCodexTurnChangesFromFileUpdate
+} from "./engine-extensions/codex/turn-changes-store.js";
 import { SessionIdentityRegistry } from "./session-identity-registry.js";
 
 const codexProviderKind = "codex-thread";
@@ -101,6 +107,10 @@ const isCommandExecutionItem = (
   item: ThreadItem
 ): item is Extract<ThreadItem, { type: "commandExecution" }> =>
   item.type === "commandExecution";
+
+const isFileChangeItem = (
+  item: ThreadItem
+): item is Extract<ThreadItem, { type: "fileChange" }> => item.type === "fileChange";
 
 const isCollabAgentToolCallItem = (
   item: ThreadItem
@@ -283,9 +293,14 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
   public readonly agentId = codexAgentId;
 
   private readonly codexRuntimePort: CodexAppServerRuntimePort;
+  private readonly turnChangesStore: CodexTurnChangesStore | undefined;
 
-  public constructor(options: { codexRuntimePort: CodexAppServerRuntimePort }) {
+  public constructor(options: {
+    codexRuntimePort: CodexAppServerRuntimePort;
+    turnChangesStore?: CodexTurnChangesStore;
+  }) {
     this.codexRuntimePort = options.codexRuntimePort;
+    this.turnChangesStore = options.turnChangesStore;
   }
 
   public async discoverWorkspace(
@@ -383,6 +398,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
       const messageIds: string[] = [];
       const toolCallIds: string[] = [];
       const terminalIds: string[] = [];
+      const fileChanges: FileUpdateChange[] = [];
 
       for (const [itemIndex, item] of turn.items.entries()) {
         if (input.isCancelled?.()) {
@@ -468,6 +484,11 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
           continue;
         }
 
+        if (isFileChangeItem(item)) {
+          fileChanges.push(...item.changes);
+          continue;
+        }
+
         if (isCollabAgentToolCallItem(item)) {
           toolCallIds.push(itemEntityId);
           toolCalls.push(
@@ -508,6 +529,16 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
             completedAt: completedAt ?? startedAt
           })
         );
+      }
+
+      recordCodexTurnChangesFromFileUpdate({
+        sessionId: entry.sessionId,
+        turnId: turn.id,
+        changes: fileChanges
+      });
+      const turnChanges = getRecordedCodexTurnChanges(entry.sessionId, turn.id);
+      if (turnChanges) {
+        this.turnChangesStore?.record(turnChanges);
       }
 
       turns.push(

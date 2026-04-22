@@ -13,7 +13,7 @@ await service.executeCommand({
   commandId: "boot-create-codex",
   command: {
     type: "createSession",
-    agentId: "codex",
+    engineId: "codex",
     conversationId: "conv-demo-codex",
     workspaceId: "workspace-demo"
   }
@@ -22,7 +22,7 @@ await service.executeCommand({
   commandId: "boot-create-acp",
   command: {
     type: "createSession",
-    agentId: "acp",
+    engineId: "acp",
     conversationId: "conv-demo-acp",
     workspaceId: "workspace-demo"
   }

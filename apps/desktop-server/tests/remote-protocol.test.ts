@@ -48,7 +48,7 @@ describe("createRemoteRpcHandler", () => {
           commandId: "cmd-create",
           command: {
             type: "createSession",
-            agentId: "codex"
+            engineId: "codex"
           }
         }
       }
@@ -123,7 +123,7 @@ describe("createRemoteRpcHandler", () => {
           commandId: "cmd-create",
           command: {
             type: "createSession",
-            agentId: "codex"
+            engineId: "codex"
           }
         }
       }
@@ -168,7 +168,7 @@ describe("createRemoteRpcHandler", () => {
           commandId: "cmd-create",
           command: {
             type: "createSession",
-            agentId: "codex",
+            engineId: "codex",
             conversationId: "conversation-1"
           }
         }
@@ -232,15 +232,8 @@ describe("createRemoteRpcHandler", () => {
       ],
       getEngineSurface: () => ({
         engineId: "codex",
-        sharedCapabilities: ["chat", "terminal"],
-        extensions: [
-          {
-            engineId: "codex",
-            key: "worktree",
-            displayName: "Worktree Inspector",
-            available: true
-          }
-        ]
+        sharedCapabilities: ["chat", "terminal", "worktree"],
+        extensions: []
       }),
       listAgents: () => [],
       selectAgent: () => ({ selectedAgentId: "codex" }),
@@ -262,10 +255,10 @@ describe("createRemoteRpcHandler", () => {
       }),
       listSessions: () => [],
       getSettings: vi.fn().mockResolvedValue({
-        defaultNewSessionAgentId: "pi"
+        defaultNewSessionEngineId: "pi"
       }),
       updateSettings: vi.fn().mockResolvedValue({
-        defaultNewSessionAgentId: "codex"
+        defaultNewSessionEngineId: "codex"
       }),
       executeCommand: vi.fn(),
       replay: vi.fn().mockReturnValue([])
@@ -281,7 +274,7 @@ describe("createRemoteRpcHandler", () => {
       id: "req-settings-update",
       method: "settings.update",
       params: {
-        defaultNewSessionAgentId: "codex"
+        defaultNewSessionEngineId: "codex"
       }
     });
 
@@ -290,7 +283,7 @@ describe("createRemoteRpcHandler", () => {
       method: "settings.get",
       ok: true,
       result: {
-        defaultNewSessionAgentId: "pi"
+        defaultNewSessionEngineId: "pi"
       }
     });
     expect(updateResponse).toMatchObject({
@@ -298,7 +291,7 @@ describe("createRemoteRpcHandler", () => {
       method: "settings.update",
       ok: true,
       result: {
-        defaultNewSessionAgentId: "codex"
+        defaultNewSessionEngineId: "codex"
       }
     });
   });
@@ -319,15 +312,8 @@ describe("createRemoteRpcHandler", () => {
       ],
       getEngineSurface: (engineId: string) => ({
         engineId,
-        sharedCapabilities: ["chat", "approval"],
-        extensions: [
-          {
-            engineId,
-            key: "diagnostics",
-            displayName: "Diagnostics Summary",
-            available: engineId === "codex"
-          }
-        ]
+        sharedCapabilities: ["chat", "approval", "diagnostics"],
+        extensions: []
       }),
       listAgents: () => [],
       selectAgent: () => ({ selectedAgentId: "codex" }),
@@ -394,18 +380,14 @@ describe("createRemoteRpcHandler", () => {
       result: {
         surface: {
           engineId: "codex",
-          sharedCapabilities: ["chat", "approval"],
-          extensions: [
-            expect.objectContaining({
-              key: "diagnostics"
-            })
-          ]
+          sharedCapabilities: ["chat", "approval", "diagnostics"],
+          extensions: []
         }
       }
     });
   });
 
-  it("requires websocket transport for remote event subscribe and unsubscribe", async () => {
+  it("returns websocket endpoint metadata for remote event subscribe and unsubscribe", async () => {
     const service = createService();
     const handler = createRemoteRpcHandler(service, {
       createSubscriptionId: () => "subscription-1"
@@ -432,26 +414,18 @@ describe("createRemoteRpcHandler", () => {
     expect(subscribeResponse).toMatchObject({
       id: "req-subscribe",
       method: "events.subscribe",
-      ok: false,
-      error: {
-        code: "REMOTE_EVENTS_REQUIRE_WEBSOCKET",
-        details: {
-          endpoint: "/events",
-          subscriptionId: "subscription-1",
-          fromCursor: "3"
-        }
+      ok: true,
+      result: {
+        subscriptionId: "subscription-1",
+        fromCursor: "3"
       }
     });
     expect(unsubscribeResponse).toMatchObject({
       id: "req-unsubscribe",
       method: "events.unsubscribe",
-      ok: false,
-      error: {
-        code: "REMOTE_EVENTS_REQUIRE_WEBSOCKET",
-        details: {
-          endpoint: "/events",
-          subscriptionId: "subscription-1"
-        }
+      ok: true,
+      result: {
+        unsubscribed: true
       }
     });
   });
@@ -817,5 +791,340 @@ describe("createRemoteRpcHandler", () => {
     expect((shellService as any).getCheckpoint).toHaveBeenCalledWith("session-1");
     expect((shellService as any).getDiagnostics).toHaveBeenCalledWith("session-1");
     expect((shellService as any).getBackgroundRun).toHaveBeenCalledWith("session-1");
+  });
+  it("serves file search, preview, and action requests through the shared RPC shape", async () => {
+    const shellService = {
+      listWorkspaces: vi.fn().mockResolvedValue({
+        workspaces: []
+      }),
+      searchWorkspaceFiles: vi.fn().mockResolvedValue({
+        results: [
+          {
+            workspaceId: "workspace-1",
+            workspaceRoot: "I:\\repo",
+            relativePath: "docs\\README.md",
+            matchScore: 0.98,
+            path: "I:\\repo\\docs\\README.md",
+            displayPath: "I:\\repo\\docs\\README.md",
+            fileUrl: "file:///I:/repo/docs/README.md",
+            label: "README.md",
+            fileName: "README.md",
+            extension: "md",
+            isImage: false,
+            source: "inline_path"
+          }
+        ]
+      }),
+      getFilePreview: vi.fn().mockResolvedValue({
+        preview: {
+          kind: "text",
+          target: {
+            path: "I:\\repo\\docs\\README.md",
+            displayPath: "I:\\repo\\docs\\README.md",
+            fileUrl: "file:///I:/repo/docs/README.md",
+            label: "README.md",
+            fileName: "README.md",
+            extension: "md",
+            isImage: false,
+            source: "inline_path"
+          },
+          exists: true,
+          mimeType: "text/markdown",
+          text: "# Readme",
+          truncated: false,
+          lineCount: 1
+        }
+      }),
+      runFileAction: vi.fn().mockResolvedValue({
+        result: {
+          action: "reveal",
+          ok: true,
+          displayPath: "I:\\repo\\docs\\README.md",
+          fileUrl: "file:///I:/repo/docs/README.md"
+        }
+      })
+    };
+    const handler = createRemoteRpcHandler(shellService as never);
+
+    const searchResponse = await handler.handleRequest({
+      id: "req-file-search",
+      method: "file.searchWorkspace",
+      params: {
+        workspaceId: "workspace-1",
+        query: "readme",
+        limit: 5
+      }
+    });
+    const previewResponse = await handler.handleRequest({
+      id: "req-file-preview",
+      method: "file.getPreview",
+      params: {
+        path: "I:\\repo\\docs\\README.md"
+      }
+    });
+    const actionResponse = await handler.handleRequest({
+      id: "req-file-action",
+      method: "file.runAction",
+      params: {
+        path: "I:\\repo\\docs\\README.md",
+        action: "reveal"
+      }
+    });
+
+    expect(searchResponse).toMatchObject({
+      id: "req-file-search",
+      method: "file.searchWorkspace",
+      ok: true,
+      result: {
+        results: [
+          expect.objectContaining({
+            workspaceId: "workspace-1",
+            relativePath: "docs\\README.md"
+          })
+        ]
+      }
+    });
+    expect(previewResponse).toMatchObject({
+      id: "req-file-preview",
+      method: "file.getPreview",
+      ok: true,
+      result: {
+        preview: expect.objectContaining({
+          kind: "text",
+          exists: true,
+          lineCount: 1
+        })
+      }
+    });
+    expect(actionResponse).toMatchObject({
+      id: "req-file-action",
+      method: "file.runAction",
+      ok: true,
+      result: {
+        result: {
+          action: "reveal",
+          ok: true,
+          displayPath: "I:\\repo\\docs\\README.md"
+        }
+      }
+    });
+
+    expect(shellService.searchWorkspaceFiles).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      query: "readme",
+      limit: 5
+    });
+    expect(shellService.getFilePreview).toHaveBeenCalledWith(
+      "I:\\repo\\docs\\README.md"
+    );
+    expect(shellService.runFileAction).toHaveBeenCalledWith({
+      path: "I:\\repo\\docs\\README.md",
+      action: "reveal"
+    });
+  });
+
+  it("serves Codex turn-change extension requests through codex-scoped RPC methods", async () => {
+    const shellService = {
+      listWorkspaces: vi.fn().mockResolvedValue({
+        workspaces: []
+      }),
+      getCodexTurnChanges: vi.fn().mockResolvedValue({
+        engineId: "codex",
+        sessionId: "session-1",
+        turnId: "turn-2",
+        changedFiles: [
+          {
+            path: "I:\\repo\\src\\foo.ts",
+            displayPath: "I:\\repo\\src\\foo.ts",
+            fileUrl: "file:///I:/repo/src/foo.ts",
+            label: "foo.ts",
+            fileName: "foo.ts",
+            extension: "ts",
+            isImage: false,
+            source: "inline_path",
+            changeKind: "update",
+            diff: `diff --git a/src/foo.ts b/src/foo.ts
+--- a/src/foo.ts
++++ b/src/foo.ts
+@@ -1 +1 @@
+-old
++new`
+          }
+        ],
+        canUndo: true
+      }),
+      undoCodexTurnChanges: vi.fn().mockResolvedValue({
+        engineId: "codex",
+        sessionId: "session-1",
+        turnId: "turn-2",
+        undone: true,
+        displayPath: "I:\\repo"
+      }),
+      listAgents: vi.fn().mockReturnValue([]),
+      selectAgent: vi.fn(),
+      listSessions: vi.fn().mockReturnValue([]),
+      getSnapshotResult: vi.fn().mockReturnValue({
+        snapshot: {
+          conversations: [],
+          sessions: [],
+          turns: [],
+          messageBlocks: [],
+          toolCalls: [],
+          terminalStreams: [],
+          approvalRequests: [],
+          participants: [],
+          sessionRelations: []
+        }
+      }),
+      executeCommand: vi.fn(),
+      replay: vi.fn().mockReturnValue([])
+    };
+    const handler = createRemoteRpcHandler(shellService as never);
+
+    const getResponse = await handler.handleRequest({
+      id: "req-codex-turn-changes",
+      method: "codex.turnChanges.get",
+      params: {
+        sessionId: "session-1",
+        turnId: "turn-2"
+      }
+    });
+    const undoResponse = await handler.handleRequest({
+      id: "req-codex-turn-changes-undo",
+      method: "codex.turnChanges.undo",
+      params: {
+        sessionId: "session-1",
+        turnId: "turn-2"
+      }
+    });
+
+    expect(getResponse).toMatchObject({
+      id: "req-codex-turn-changes",
+      method: "codex.turnChanges.get",
+      ok: true,
+      result: {
+        engineId: "codex",
+        sessionId: "session-1",
+        turnId: "turn-2",
+        changedFiles: [
+          expect.objectContaining({
+            path: "I:\\repo\\src\\foo.ts",
+            changeKind: "update"
+          })
+        ],
+        canUndo: true
+      }
+    });
+    expect(undoResponse).toMatchObject({
+      id: "req-codex-turn-changes-undo",
+      method: "codex.turnChanges.undo",
+      ok: true,
+      result: {
+        engineId: "codex",
+        sessionId: "session-1",
+        turnId: "turn-2",
+        undone: true,
+        displayPath: "I:\\repo"
+      }
+    });
+    expect(shellService.getCodexTurnChanges).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      turnId: "turn-2"
+    });
+    expect(shellService.undoCodexTurnChanges).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      turnId: "turn-2"
+    });
+  });
+
+  it("returns typed unavailable errors for file RPCs when shell services are absent", async () => {
+    const handler = createRemoteRpcHandler(createService());
+
+    const searchResponse = await handler.handleRequest({
+      id: "req-file-search",
+      method: "file.searchWorkspace",
+      params: {
+        workspaceId: "workspace-1",
+        query: "readme"
+      }
+    });
+    const previewResponse = await handler.handleRequest({
+      id: "req-file-preview",
+      method: "file.getPreview",
+      params: {
+        path: "I:\\repo\\docs\\README.md"
+      }
+    });
+    const actionResponse = await handler.handleRequest({
+      id: "req-file-action",
+      method: "file.runAction",
+      params: {
+        path: "I:\\repo\\docs\\README.md",
+        action: "open"
+      }
+    });
+
+    expect(searchResponse).toMatchObject({
+      id: "req-file-search",
+      method: "file.searchWorkspace",
+      ok: false,
+      error: {
+        code: "FILE_BROWSER_UNAVAILABLE"
+      }
+    });
+    expect(previewResponse).toMatchObject({
+      id: "req-file-preview",
+      method: "file.getPreview",
+      ok: false,
+      error: {
+        code: "FILE_PREVIEW_UNAVAILABLE"
+      }
+    });
+    expect(actionResponse).toMatchObject({
+      id: "req-file-action",
+      method: "file.runAction",
+      ok: false,
+      error: {
+        code: "FILE_ACTION_UNAVAILABLE"
+      }
+    });
+  });
+
+  it("returns typed unavailable errors for Codex turn-change RPCs when shell services are absent", async () => {
+    const handler = createRemoteRpcHandler(createService());
+
+    const getResponse = await handler.handleRequest({
+      id: "req-codex-turn-changes",
+      method: "codex.turnChanges.get",
+      params: {
+        sessionId: "session-1",
+        turnId: "turn-2"
+      }
+    });
+    const undoResponse = await handler.handleRequest({
+      id: "req-codex-turn-changes-undo",
+      method: "codex.turnChanges.undo",
+      params: {
+        sessionId: "session-1",
+        turnId: "turn-2"
+      }
+    });
+
+    expect(getResponse).toMatchObject({
+      id: "req-codex-turn-changes",
+      method: "codex.turnChanges.get",
+      ok: false,
+      error: {
+        code: "CODEX_TURN_CHANGES_UNAVAILABLE"
+      }
+    });
+    expect(undoResponse).toMatchObject({
+      id: "req-codex-turn-changes-undo",
+      method: "codex.turnChanges.undo",
+      ok: false,
+      error: {
+        code: "CODEX_TURN_CHANGES_UNAVAILABLE"
+      }
+    });
   });
 });

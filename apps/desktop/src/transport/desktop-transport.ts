@@ -11,10 +11,16 @@ import type {
   DomainSnapshot,
   EngineDefinitionRpc,
   EngineSurfaceRpc,
+  CodexTurnChangesResultRpc,
+  CodexTurnChangesUndoResultRpc,
+  FileActionKindRpc,
+  FileActionResultRpc,
+  FilePreviewRpc,
   SessionActionDescriptorRpc,
   SessionActionKindRpc,
   SessionActionResultRpc,
   SessionWindowRpc,
+  WorkspaceFileSearchResultRpc,
   WorkbenchClientApi,
   WorkbenchEventPush,
   WorkbenchEventSubscriptionFilter,
@@ -45,11 +51,10 @@ export type AgentSelectInput = {
 };
 
 export type SessionCreateInput = {
-  agentId: string;
+  engineId: string;
   conversationId?: string;
   workspaceId?: string;
   sessionProfile?: {
-    engineId: string;
     modeId?: string;
     modelId?: string;
   };
@@ -156,7 +161,7 @@ export type DesktopTransport = {
   settings: {
     get: () => Promise<WorkbenchSettingsRpc>;
     update: (input: {
-      defaultNewSessionAgentId?: string;
+      defaultNewSessionEngineId?: string;
     }) => Promise<WorkbenchSettingsRpc>;
   };
   domain: {
@@ -203,10 +208,9 @@ export type DesktopTransport = {
     ) => Promise<{ sessionId: string; expanded: boolean }>;
     create: (input: {
       workspaceId: string;
-      agentId: string;
+      engineId: string;
       conversationId?: string;
       sessionProfile?: {
-        engineId: string;
         modeId?: string;
         modelId?: string;
       };
@@ -248,6 +252,28 @@ export type DesktopTransport = {
   };
   backgroundRun: {
     get: (sessionId: string) => Promise<BackgroundRunSnapshotRpc>;
+  };
+  file: {
+    searchWorkspace: (input: {
+      workspaceId: string;
+      query: string;
+      limit?: number;
+    }) => Promise<WorkspaceFileSearchResultRpc[]>;
+    getPreview: (path: string) => Promise<FilePreviewRpc>;
+    runAction: (input: {
+      path: string;
+      action: FileActionKindRpc;
+    }) => Promise<FileActionResultRpc>;
+  };
+  codex: {
+    getTurnChanges: (input: {
+      sessionId: string;
+      turnId: string;
+    }) => Promise<CodexTurnChangesResultRpc>;
+    undoTurnChanges: (input: {
+      sessionId: string;
+      turnId: string;
+    }) => Promise<CodexTurnChangesUndoResultRpc>;
   };
   approval: {
     respond: (input: ApprovalRespondInput) => Promise<CommandReceipt>;
@@ -383,7 +409,7 @@ export const createDesktopTransport = (
   };
 
   const requestSettingsUpdate = async (input: {
-    defaultNewSessionAgentId?: string;
+    defaultNewSessionEngineId?: string;
   }): Promise<WorkbenchSettingsRpc> => {
     return rpc.request("settings.update", input);
   };
@@ -485,7 +511,7 @@ export const createDesktopTransport = (
       create: (input: SessionCreateInput) =>
         sendCommand({
           type: "createSession",
-          agentId: input.agentId,
+          engineId: input.engineId,
           conversationId: input.conversationId,
           workspaceId: input.workspaceId,
           sessionProfile: input.sessionProfile,
@@ -611,6 +637,30 @@ export const createDesktopTransport = (
           sessionId
         });
         return result.backgroundRun;
+      }
+    },
+    file: {
+      searchWorkspace: async (input) => {
+        const result = await rpc.request("file.searchWorkspace", input);
+        return result.results;
+      },
+      getPreview: async (path: string) => {
+        const result = await rpc.request("file.getPreview", {
+          path
+        });
+        return result.preview;
+      },
+      runAction: async (input) => {
+        const result = await rpc.request("file.runAction", input);
+        return result.result;
+      }
+    },
+    codex: {
+      getTurnChanges: async (input) => {
+        return rpc.request("codex.turnChanges.get", input);
+      },
+      undoTurnChanges: async (input) => {
+        return rpc.request("codex.turnChanges.undo", input);
       }
     },
     approval: {

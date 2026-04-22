@@ -15,7 +15,10 @@ import {
   zEngineSurfaceRpcSchema
 } from "./engine-control.js";
 import { eventTypes, zEventEnvelopeSchema } from "./events.js";
-import { zSessionExecutionProfileSchema } from "./session-profile.js";
+import {
+  zSessionExecutionProfileInputSchema,
+  zSessionExecutionProfileSchema
+} from "./session-profile.js";
 
 export const workbenchRpcMethods = [
   "engine.list",
@@ -47,6 +50,11 @@ export const workbenchRpcMethods = [
   "checkpoint.get",
   "diagnostics.get",
   "backgroundRun.get",
+  "file.searchWorkspace",
+  "file.getPreview",
+  "file.runAction",
+  "codex.turnChanges.get",
+  "codex.turnChanges.undo",
   "runtime.command",
   "events.subscribe",
   "events.unsubscribe",
@@ -73,7 +81,7 @@ const zWorkspaceRecordSchema = z.object({
 });
 
 const zWorkbenchSettingsSchema = z.object({
-  defaultNewSessionAgentId: zAgentId.optional()
+  defaultNewSessionEngineId: z.string().min(1).optional()
 });
 
 const zSessionStatusDotSchema = z.enum(["none", "running", "unread_completed"]);
@@ -278,6 +286,93 @@ const zSessionWindowSchema = z.object({
   hasNewer: z.boolean()
 });
 
+const zFileReferenceSchema = z.object({
+  path: z.string().min(1),
+  displayPath: z.string().min(1),
+  fileUrl: z.string().min(1),
+  label: z.string().min(1),
+  fileName: z.string().min(1),
+  extension: z.string().min(1).optional(),
+  isImage: z.boolean(),
+  source: z.enum(["markdown_link", "markdown_image", "inline_path"])
+});
+
+const zWorkspaceFileSearchResultSchema = zFileReferenceSchema.extend({
+  workspaceId: z.string().min(1),
+  workspaceRoot: z.string().min(1),
+  relativePath: z.string().min(1),
+  matchScore: z.number()
+});
+
+const zFilePreviewSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("image"),
+    target: zFileReferenceSchema,
+    exists: z.boolean(),
+    fileSizeBytes: z.number().int().nonnegative().optional(),
+    mimeType: z.string().min(1).optional(),
+    imageUrl: z.string().min(1)
+  }),
+  z.object({
+    kind: z.literal("text"),
+    target: zFileReferenceSchema,
+    exists: z.boolean(),
+    fileSizeBytes: z.number().int().nonnegative().optional(),
+    mimeType: z.string().min(1).optional(),
+    text: z.string(),
+    truncated: z.boolean(),
+    lineCount: z.number().int().nonnegative()
+  }),
+  z.object({
+    kind: z.literal("code"),
+    target: zFileReferenceSchema,
+    exists: z.boolean(),
+    fileSizeBytes: z.number().int().nonnegative().optional(),
+    mimeType: z.string().min(1).optional(),
+    text: z.string(),
+    truncated: z.boolean(),
+    lineCount: z.number().int().nonnegative(),
+    language: z.string().min(1).optional()
+  }),
+  z.object({
+    kind: z.literal("unsupported"),
+    target: zFileReferenceSchema,
+    exists: z.boolean(),
+    fileSizeBytes: z.number().int().nonnegative().optional(),
+    mimeType: z.string().min(1).optional(),
+    reason: z.string().min(1)
+  }),
+  z.object({
+    kind: z.literal("missing"),
+    target: zFileReferenceSchema,
+    exists: z.literal(false),
+    reason: z.string().min(1)
+  }),
+  z.object({
+    kind: z.literal("error"),
+    target: zFileReferenceSchema,
+    exists: z.boolean(),
+    reason: z.string().min(1)
+  })
+]);
+
+const zFileActionKindSchema = z.enum(["open", "reveal"]);
+
+const zFileActionResultSchema = z.object({
+  action: zFileActionKindSchema,
+  ok: z.boolean(),
+  displayPath: z.string().min(1),
+  fileUrl: z.string().min(1),
+  errorMessage: z.string().min(1).optional()
+});
+
+const zCodexTurnChangeKindSchema = z.enum(["add", "delete", "update"]);
+
+const zCodexChangedFileSchema = zFileReferenceSchema.extend({
+  changeKind: zCodexTurnChangeKindSchema,
+  diff: z.string().min(1).optional()
+});
+
 const zEngineListRequestSchema = z.object({
   id: zRequestId,
   method: z.literal("engine.list"),
@@ -288,7 +383,7 @@ const zEngineGetSurfaceRequestSchema = z.object({
   id: zRequestId,
   method: z.literal("engine.getSurface"),
   params: z.object({
-    engineId: zAgentId
+    engineId: z.string().min(1)
   })
 });
 
@@ -323,7 +418,7 @@ const zSettingsUpdateRequestSchema = z.object({
   id: zRequestId,
   method: z.literal("settings.update"),
   params: z.object({
-    defaultNewSessionAgentId: zAgentId.optional()
+    defaultNewSessionEngineId: z.string().min(1).optional()
   })
 });
 
@@ -410,9 +505,9 @@ const zSessionBrowserCreateRequestSchema = z.object({
   method: z.literal("sessionBrowser.create"),
   params: z.object({
     workspaceId: z.string().min(1),
-    agentId: zAgentId,
+    engineId: z.string().min(1),
     conversationId: zConversationId.optional(),
-    sessionProfile: zSessionExecutionProfileSchema.optional(),
+    sessionProfile: zSessionExecutionProfileInputSchema.optional(),
     metadata: zJsonRecord.optional()
   })
 });
@@ -517,6 +612,51 @@ const zBackgroundRunGetRequestSchema = z.object({
   })
 });
 
+const zFileSearchWorkspaceRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("file.searchWorkspace"),
+  params: z.object({
+    workspaceId: z.string().min(1),
+    query: z.string(),
+    limit: z.number().int().positive().max(100).optional()
+  })
+});
+
+const zFileGetPreviewRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("file.getPreview"),
+  params: z.object({
+    path: z.string().min(1)
+  })
+});
+
+const zFileRunActionRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("file.runAction"),
+  params: z.object({
+    path: z.string().min(1),
+    action: zFileActionKindSchema
+  })
+});
+
+const zCodexTurnChangesGetRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("codex.turnChanges.get"),
+  params: z.object({
+    sessionId: zSessionId,
+    turnId: zTurnId
+  })
+});
+
+const zCodexTurnChangesUndoRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("codex.turnChanges.undo"),
+  params: z.object({
+    sessionId: zSessionId,
+    turnId: zTurnId
+  })
+});
+
 export const zWorkbenchEventSubscriptionFilterSchema = z.object({
   sessionId: zSessionId.optional(),
   conversationId: zConversationId.optional(),
@@ -581,6 +721,11 @@ export const zWorkbenchRpcRequestSchema = z.discriminatedUnion("method", [
   zCheckpointGetRequestSchema,
   zDiagnosticsGetRequestSchema,
   zBackgroundRunGetRequestSchema,
+  zFileSearchWorkspaceRequestSchema,
+  zFileGetPreviewRequestSchema,
+  zFileRunActionRequestSchema,
+  zCodexTurnChangesGetRequestSchema,
+  zCodexTurnChangesUndoRequestSchema,
   zRuntimeCommandRequestSchema,
   zEventsSubscribeRequestSchema,
   zEventsUnsubscribeRequestSchema,
@@ -853,6 +998,60 @@ const zBackgroundRunGetResponseSchema = z.object({
   })
 });
 
+const zFileSearchWorkspaceResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("file.searchWorkspace"),
+  ok: z.literal(true),
+  result: z.object({
+    results: z.array(zWorkspaceFileSearchResultSchema).default([])
+  })
+});
+
+const zFileGetPreviewResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("file.getPreview"),
+  ok: z.literal(true),
+  result: z.object({
+    preview: zFilePreviewSchema
+  })
+});
+
+const zFileRunActionResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("file.runAction"),
+  ok: z.literal(true),
+  result: z.object({
+    result: zFileActionResultSchema
+  })
+});
+
+const zCodexTurnChangesGetResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("codex.turnChanges.get"),
+  ok: z.literal(true),
+  result: z.object({
+    engineId: z.literal("codex"),
+    sessionId: zSessionId,
+    turnId: zTurnId,
+    changedFiles: z.array(zCodexChangedFileSchema).default([]),
+    canUndo: z.boolean()
+  })
+});
+
+const zCodexTurnChangesUndoResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("codex.turnChanges.undo"),
+  ok: z.literal(true),
+  result: z.object({
+    engineId: z.literal("codex"),
+    sessionId: zSessionId,
+    turnId: zTurnId,
+    undone: z.boolean(),
+    displayPath: z.string().min(1),
+    errorMessage: z.string().min(1).optional()
+  })
+});
+
 const zRuntimeCommandResponseSchema = z.object({
   id: zRequestId,
   method: z.literal("runtime.command"),
@@ -936,6 +1135,11 @@ export const zWorkbenchRpcResponseSchema = z.union([
   zCheckpointGetResponseSchema,
   zDiagnosticsGetResponseSchema,
   zBackgroundRunGetResponseSchema,
+  zFileSearchWorkspaceResponseSchema,
+  zFileGetPreviewResponseSchema,
+  zFileRunActionResponseSchema,
+  zCodexTurnChangesGetResponseSchema,
+  zCodexTurnChangesUndoResponseSchema,
   zRuntimeCommandResponseSchema,
   zEventsSubscribeResponseSchema,
   zEventsUnsubscribeResponseSchema,
@@ -974,6 +1178,21 @@ export type CheckpointSnapshotRpc = z.infer<typeof zCheckpointSnapshotSchema>;
 export type DiagnosticsSnapshotRpc = z.infer<typeof zDiagnosticsSnapshotSchema>;
 export type BackgroundRunSnapshotRpc = z.infer<typeof zBackgroundRunSnapshotSchema>;
 export type SessionWindowRpc = z.infer<typeof zSessionWindowSchema>;
+export type FileReferenceRpc = z.infer<typeof zFileReferenceSchema>;
+export type WorkspaceFileSearchResultRpc = z.infer<
+  typeof zWorkspaceFileSearchResultSchema
+>;
+export type FilePreviewRpc = z.infer<typeof zFilePreviewSchema>;
+export type FileActionKindRpc = z.infer<typeof zFileActionKindSchema>;
+export type FileActionResultRpc = z.infer<typeof zFileActionResultSchema>;
+export type CodexTurnChangeKindRpc = z.infer<typeof zCodexTurnChangeKindSchema>;
+export type CodexChangedFileRpc = z.infer<typeof zCodexChangedFileSchema>;
+export type CodexTurnChangesResultRpc = z.infer<
+  typeof zCodexTurnChangesGetResponseSchema
+>["result"];
+export type CodexTurnChangesUndoResultRpc = z.infer<
+  typeof zCodexTurnChangesUndoResponseSchema
+>["result"];
 
 export type WorkbenchEventHandler = (event: WorkbenchEventPush) => void;
 

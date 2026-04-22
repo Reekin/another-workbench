@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
 import { createCodexAppServerRuntimePort } from "../src/codex-app-server-runtime-port.js";
+import {
+  clearCodexTurnChangesStore,
+  getRecordedCodexTurnChanges
+} from "../src/engine-extensions/codex/turn-changes-store.js";
 
 const fixturePath = fileURLToPath(
   new URL("./fixtures/fake-codex-app-server.mjs", import.meta.url)
@@ -26,6 +30,7 @@ describe("Codex app-server runtime port", () => {
   const disposers: Array<() => Promise<void>> = [];
 
   afterEach(async () => {
+    clearCodexTurnChangesStore();
     while (disposers.length > 0) {
       const dispose = disposers.pop();
       if (dispose) {
@@ -341,5 +346,65 @@ describe("Codex app-server runtime port", () => {
 
     expect(finalText).toContain('"sandbox":"danger-full-access"');
     expect(finalText).toContain('"approvalPolicy":"never"');
+  });
+
+  it("records fileChange items for the Codex turn-changes extension without emitting shared diff events", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+    port.subscribe((event) => {
+      events.push({
+        method: event.method,
+        params: event.params
+      });
+    });
+
+    await port.start();
+    await port.request({
+      id: "turn-file-change",
+      method: "turn/start",
+      params: {
+        sessionId: "session-1",
+        content: "please trigger file-change"
+      }
+    });
+
+    await waitFor(() =>
+      events.some((event) => event.method === "turn.completed")
+    );
+
+    expect(events).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "turn.diff.updated"
+        })
+      ])
+    );
+    const turnId = String(
+      events.find((event) => event.method === "turn.completed")?.params.turnId
+    );
+    expect(
+      getRecordedCodexTurnChanges("session-1", turnId)
+    ).toMatchObject({
+      mergedDiff: `diff --git a/apps/desktop/abc.txt b/apps/desktop/abc.txt
+--- a/apps/desktop/abc.txt
++++ b/apps/desktop/abc.txt
+@@ -1 +1,3 @@
+-
++第一行内容
++第二行内容
++第三行内容`,
+      changes: [
+        expect.objectContaining({
+          path: "apps/desktop/abc.txt",
+          changeKind: "update"
+        })
+      ]
+    });
   });
 });

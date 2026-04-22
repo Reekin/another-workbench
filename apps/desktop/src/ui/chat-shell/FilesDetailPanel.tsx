@@ -42,12 +42,7 @@ const renderPreviewBody = (
   onOpenImage: FilesDetailPanelProps["onOpenImage"]
 ): ReactElement => {
   if (!selectedFile) {
-    return (
-      <div className="awb-files-panel__empty">
-        <h4>Select a file</h4>
-        <p>Choose a file from search results or open a file link from the transcript.</p>
-      </div>
-    );
+    return <></>;
   }
 
   if (!preview) {
@@ -193,11 +188,7 @@ export const FilesDetailPanel = ({
           <span>{isSearching ? "Searching…" : searchResults.length}</span>
         </div>
         <div className="awb-files-panel__results-body">
-          {query.trim().length === 0 ? (
-            <div className="awb-files-panel__empty">
-              <p>Enter a file name or path fragment to search inside the active workspace.</p>
-            </div>
-          ) : (
+          {query.trim().length === 0 ? null : (
             <div className="awb-files-panel__list">
               {searchResults.map((result) => (
                 <button

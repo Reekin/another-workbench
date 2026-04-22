@@ -1,24 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { buildParticipantDirectory } from "../src/ui/chat-shell/participant-directory.js";
 import { MessageMarkdownView } from "../src/ui/chat-shell/MessageMarkdownView.js";
-
-const participantDirectory = buildParticipantDirectory([
-  {
-    participantId: "participant-1",
-    conversationId: "conv-1",
-    engineId: "agent-codex",
-    role: "primary",
-    capabilities: ["chat"],
-    activeSessionIds: ["session-1"]
-  }
-]);
 
 describe("MessageMarkdownView", () => {
   it("renders markdown content into semantic HTML", () => {
     const html = renderToStaticMarkup(
       <MessageMarkdownView
-        participantDirectory={participantDirectory}
         block={{
           blockId: "message-1:md",
           messageId: "message-1",
@@ -38,13 +25,12 @@ describe("MessageMarkdownView", () => {
 
     expect(html).toContain("<h1>Heading</h1>");
     expect(html).toContain("<li>item</li>");
-    expect(html).toContain("agent-codex");
+    expect(html).not.toContain("awb-participant-badge");
   });
 
   it("sanitizes unsafe html fragments in markdown source", () => {
     const html = renderToStaticMarkup(
       <MessageMarkdownView
-        participantDirectory={participantDirectory}
         block={{
           blockId: "message-2:md",
           messageId: "message-2",
@@ -69,7 +55,6 @@ describe("MessageMarkdownView", () => {
   it("preserves local file images in markdown", () => {
     const html = renderToStaticMarkup(
       <MessageMarkdownView
-        participantDirectory={participantDirectory}
         block={{
           blockId: "message-3:md",
           messageId: "message-3",
@@ -94,7 +79,6 @@ describe("MessageMarkdownView", () => {
   it("preserves local file links in markdown", () => {
     const html = renderToStaticMarkup(
       <MessageMarkdownView
-        participantDirectory={participantDirectory}
         onActivateResourceLink={() => undefined}
         block={{
           blockId: "message-3b:md",
@@ -120,7 +104,6 @@ describe("MessageMarkdownView", () => {
   it("wraps inline images in a preview button when image opening is enabled", () => {
     const html = renderToStaticMarkup(
       <MessageMarkdownView
-        participantDirectory={participantDirectory}
         onPreviewImage={() => undefined}
         block={{
           blockId: "message-3c:md",
@@ -147,7 +130,6 @@ describe("MessageMarkdownView", () => {
   it("preserves data-url images in markdown", () => {
     const html = renderToStaticMarkup(
       <MessageMarkdownView
-        participantDirectory={participantDirectory}
         block={{
           blockId: "message-4:md",
           messageId: "message-4",

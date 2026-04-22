@@ -585,6 +585,12 @@ button {
   gap: 6px;
 }
 
+.awb-chat-entry__identity {
+  display: flex;
+  align-items: center;
+  min-height: 0;
+}
+
 .awb-chat-entry__meta {
   display: flex;
   justify-content: flex-start;
@@ -619,19 +625,6 @@ button {
 
 .awb-message.is-system {
   border-left-color: rgba(140, 137, 135, 0.28);
-}
-
-.awb-message__meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 6px;
-  color: var(--awb-ink-faint);
-  font-size: 0.66rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  font-family: var(--awb-font-mono);
 }
 
 .awb-message__empty {

@@ -28,6 +28,7 @@ import { ChatTreePanel } from "./ChatTreePanel.js";
 import { FilesDetailPanel } from "./FilesDetailPanel.js";
 import { ImageLightbox, type ImageLightboxState } from "./ImageLightbox.js";
 import { MessageMarkdownView } from "./MessageMarkdownView.js";
+import { ParticipantIdentityBadge } from "./ParticipantIdentityBadge.js";
 import {
   resolveProcessExpanded,
   toggleProcessVisibility,
@@ -141,6 +142,19 @@ const formatTimestamp = (iso: string | undefined): string => {
     return iso;
   }
   return date.toLocaleString();
+};
+
+const maxSessionHeadingLength = 20;
+
+export const truncateSessionHeading = (value: string | undefined): string => {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return "Thread";
+  }
+  if (normalized.length <= maxSessionHeadingLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxSessionHeadingLength)}…`;
 };
 
 const buildWorkspaceEngineFallbacks = (
@@ -279,6 +293,9 @@ const TranscriptPane = memo(
             data-turn-id={row.turn.turnId}
             className={`awb-chat-entry ${isUserTurn ? "is-user" : "is-assistant"}`}
           >
+            <header className="awb-chat-entry__identity">
+              <ParticipantIdentityBadge identity={row.turnIdentity} compact />
+            </header>
             <div className="awb-chat-entry__messages">
               {row.blocks.length === 0 && (
                 <p className="awb-turn__empty">
@@ -289,7 +306,6 @@ const TranscriptPane = memo(
                 <MessageMarkdownView
                   key={block.blockId}
                   block={block}
-                  participantDirectory={participantDirectory}
                   onActivateResourceLink={onActivateResourceLink}
                   onPreviewImage={onPreviewImage}
                 />
@@ -1041,13 +1057,7 @@ export const ChatShellApp = ({
         <main className="awb-shell__main">
           <header className="awb-main__header">
             <div>
-              <span className="awb-main__eyebrow">Thread</span>
-              <h2>{displayedSessionNode?.title ?? "Thread"}</h2>
-              <p>
-                {displayedSessionId
-                  ? `${displayedSessionNode?.displaySessionId ?? displayedSessionId} · ${turns.length} turn(s)`
-                  : "Open a session from the workspace tree"}
-              </p>
+              <h2>{truncateSessionHeading(displayedSessionNode?.title)}</h2>
             </div>
           </header>
 

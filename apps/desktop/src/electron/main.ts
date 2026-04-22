@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { createWorkbenchRuntimeService } from "@another-workbench/desktop-server";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -77,6 +77,10 @@ const boot = async (): Promise<void> => {
         canceled: result.canceled,
         rootPath: result.filePaths[0]
       };
+    },
+    openFilePath: (path) => shell.openPath(path),
+    revealFilePath: (path) => {
+      shell.showItemInFolder(path);
     }
   });
   let window = createMainWindow();

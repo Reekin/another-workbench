@@ -6,7 +6,7 @@
   "main": "dist-electron/main.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "pnpm exec tsc -p tsconfig.json && pnpm exec node ./scripts/build-electron.mjs && pnpm exec vite build",
+    "build": "pnpm exec tsc -b tsconfig.json --pretty false && pnpm exec node ./scripts/build-electron.mjs && pnpm exec vite build",
     "dev": "pnpm exec node ./scripts/dev-electron.mjs",
     "dev:web": "pnpm exec vite --host 127.0.0.1 --port 4173",
     "dev:demo": "pnpm exec vite --host 127.0.0.1 --port 4173 --open /demo.html",

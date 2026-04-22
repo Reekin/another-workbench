@@ -1,6 +1,7 @@
 import type { ContentBlock } from "@agentclientprotocol/sdk";
 import {
   appendAttachmentMarkdown,
+  fileUriToPath,
   isImageAttachment,
   resolveAttachmentDisplayName,
   type Attachment
@@ -11,28 +12,6 @@ const dataUriPattern = /^data:([^;,]+)?(?:;charset=[^;,]+)?(;base64)?,(.*)$/isu;
 
 const joinTextSections = (sections: Array<string | undefined>): string =>
   sections.map((section) => section?.trim() ?? "").filter(Boolean).join("\n\n");
-
-const attachmentUriToFilePath = (uri: string): string | undefined => {
-  if (!uri.toLowerCase().startsWith("file:")) {
-    return undefined;
-  }
-  try {
-    const parsed = new URL(uri);
-    if (parsed.protocol !== "file:") {
-      return undefined;
-    }
-    const pathname = decodeURIComponent(parsed.pathname ?? "");
-    if (parsed.host && parsed.host !== "localhost") {
-      return `\\\\${decodeURIComponent(parsed.host)}${pathname.replace(/\//g, "\\")}`;
-    }
-    if (/^\/[a-z]:/i.test(pathname)) {
-      return pathname.slice(1).replace(/\//g, "\\");
-    }
-    return pathname;
-  } catch {
-    return undefined;
-  }
-};
 
 const parseDataUri = (
   uri: string
@@ -58,7 +37,7 @@ const parseDataUri = (
 
 const buildCodexAttachmentContext = (attachment: Attachment): string => {
   const label = resolveAttachmentDisplayName(attachment);
-  const filePath = attachmentUriToFilePath(attachment.uri);
+  const filePath = fileUriToPath(attachment.uri);
   if (filePath) {
     return `Attached file: ${label}\nPath: ${filePath}`;
   }
@@ -83,7 +62,7 @@ export const buildCodexTurnInput = (
 
   for (const attachment of attachments) {
     if (isImageAttachment(attachment)) {
-      const filePath = attachmentUriToFilePath(attachment.uri);
+      const filePath = fileUriToPath(attachment.uri);
       if (filePath) {
         inputs.push({
           type: "localImage",

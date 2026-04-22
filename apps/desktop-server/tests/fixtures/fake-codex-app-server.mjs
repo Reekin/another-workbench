@@ -228,6 +228,62 @@ const emitCollabPath = ({ threadId, turnId }) => {
   });
 };
 
+const emitFileChangePath = ({ threadId, turnId }) => {
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "active" }
+    }
+  });
+  send({
+    method: "turn/started",
+    params: {
+      threadId,
+      turn: { id: turnId }
+    }
+  });
+  send({
+    method: "item/completed",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "fileChange",
+        id: `file-${turnId}`,
+        status: "completed",
+        changes: [
+          {
+            path: "apps/desktop/abc.txt",
+            kind: {
+              type: "update",
+              move_path: null
+            },
+            diff: "@@ -1 +1,3 @@\n-\n+第一行内容\n+第二行内容\n+第三行内容\n"
+          }
+        ]
+      }
+    }
+  });
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "idle" }
+    }
+  });
+  send({
+    method: "turn/completed",
+    params: {
+      threadId,
+      turn: {
+        id: turnId,
+        status: "completed"
+      }
+    }
+  });
+};
+
 const emitApprovalResolution = ({ threadId, turnId, requestId, action }) => {
   const commandId = `cmd-${turnId}`;
 
@@ -400,6 +456,11 @@ const handleRequest = (payload) => {
 
           if (prompt.includes("subagent")) {
             emitCollabPath({ threadId, turnId });
+            return;
+          }
+
+          if (prompt.includes("file-change")) {
+            emitFileChangePath({ threadId, turnId });
             return;
           }
 

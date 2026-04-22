@@ -1,7 +1,12 @@
 import { createConnection, type AddressInfo, type Socket } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
+import { RemoteAuthSessionService } from "../src/remote-auth-session-service.js";
+import { RemoteBootstrapService } from "../src/remote-bootstrap-service.js";
+import { RemoteConnectionService } from "../src/remote-connection-service.js";
+import { RemotePairingService } from "../src/remote-pairing-service.js";
 import { WorkbenchRemoteServer } from "../src/remote-server.js";
 import { WorkbenchRuntimeService } from "../src/runtime-service.js";
+import { WorkbenchShellService } from "../src/workbench-shell-service.js";
 
 const createService = () =>
   new WorkbenchRuntimeService({
@@ -207,7 +212,7 @@ describe("WorkbenchRemoteServer", () => {
             commandId: "cmd-create",
             command: {
               type: "createSession",
-              agentId: "codex"
+              engineId: "codex"
             }
           }
         }
@@ -235,7 +240,7 @@ describe("WorkbenchRemoteServer", () => {
             commandId: "cmd-create",
             command: {
               type: "createSession",
-              agentId: "codex"
+              engineId: "codex"
             }
           }
         }
@@ -260,7 +265,7 @@ describe("WorkbenchRemoteServer", () => {
       commandId: "cmd-create",
       command: {
         type: "createSession",
-        agentId: "codex",
+        engineId: "codex",
         conversationId: "conversation-1"
       }
     });
@@ -307,5 +312,145 @@ describe("WorkbenchRemoteServer", () => {
       "session.archived",
       "conversation.updated"
     ]);
+  });
+
+  it("serves bootstrap and pairing exchange endpoints when remote control services are configured", async () => {
+    const service = createService();
+    const shell = new WorkbenchShellService({
+      runtimeService: service,
+      sessionCatalog: {} as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never,
+      engineRegistry: {
+        list: () => [
+          {
+            engineId: "codex",
+            displayName: "Codex",
+            integrationTier: "native"
+          }
+        ]
+      } as never
+    });
+    const connection = new RemoteConnectionService({
+      hostId: "host-1",
+      relayId: "relay-1"
+    });
+    const pairing = new RemotePairingService({
+      hostId: "host-1",
+      createPairingId: () => "pair-1",
+      createCode: () => "PAIR99"
+    });
+    const authSessions = new RemoteAuthSessionService({
+      hostId: "host-1",
+      createToken: (() => {
+        let index = 0;
+        return () => `token-${++index}`;
+      })(),
+      createClientId: () => "client-1"
+    });
+    const bootstrap = new RemoteBootstrapService({
+      shellService: shell,
+      connectionService: connection,
+      relay: {
+        relayId: "relay-1",
+        label: "Relay",
+        httpBaseUrl: "https://relay.example.com",
+        wsBaseUrl: "wss://relay.example.com"
+      },
+      host: {
+        hostId: "host-1",
+        label: "Home Host",
+        appVersion: "0.1.0",
+        serverInstanceId: "srv-1"
+      }
+    });
+    const server = new WorkbenchRemoteServer({
+      service: shell,
+      host: "127.0.0.1",
+      port: 0,
+      bootstrapService: bootstrap,
+      pairingService: pairing,
+      authSessions
+    });
+    servers.push(server);
+
+    await server.listen();
+    const address = server.getHttpServer().address() as AddressInfo;
+
+    const bootstrapResponse = await fetch(
+      `http://127.0.0.1:${address.port}/bootstrap?clientSurface=desktop-full`
+    );
+    expect(bootstrapResponse.status).toBe(200);
+    await expect(bootstrapResponse.json()).resolves.toMatchObject({
+      host: {
+        hostId: "host-1"
+      },
+      clientSurface: "desktop-full",
+      version: {
+        protocolVersion: "2026-04-remote-v1"
+      }
+    });
+
+    const pairingResponse = await fetch(
+      `http://127.0.0.1:${address.port}/pairing/code`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          clientSurface: "desktop-full"
+        })
+      }
+    );
+    expect(pairingResponse.status).toBe(200);
+    await expect(pairingResponse.json()).resolves.toMatchObject({
+      ok: true,
+      pairing: {
+        pairingId: "pair-1",
+        code: "PAIR99"
+      }
+    });
+
+    const exchangeResponse = await fetch(
+      `http://127.0.0.1:${address.port}/pairing/exchange`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          code: "PAIR99",
+          clientSurface: "desktop-full"
+        })
+      }
+    );
+    expect(exchangeResponse.status).toBe(200);
+    const exchanged = await exchangeResponse.json();
+    expect(exchanged).toMatchObject({
+      ok: true,
+      session: {
+        clientId: "client-1"
+      }
+    });
+
+    const authedRpc = await fetch(`http://127.0.0.1:${address.port}/rpc`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${exchanged.session.sessionToken}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        id: "req-session-list",
+        method: "session.list",
+        params: {}
+      })
+    });
+
+    expect(authedRpc.status).toBe(200);
+    await expect(authedRpc.json()).resolves.toMatchObject({
+      ok: true,
+      method: "session.list"
+    });
   });
 });

@@ -155,6 +155,8 @@ export const FilesDetailPanel = ({
   const previewStyle = {
     "--awb-files-preview-height": `${previewHeight}px`
   } as CSSProperties;
+  const hasSearchQuery = query.trim().length > 0;
+  const hasPreviewPane = Boolean(selectedFile) || isLoadingPreview;
 
   return (
     <section className="awb-files-panel" ref={containerRef} style={previewStyle}>
@@ -162,9 +164,6 @@ export const FilesDetailPanel = ({
         <div>
           <span className="awb-main__eyebrow">Files</span>
           <h3>{workspaceLabel ?? "Workspace files"}</h3>
-          {selectedFile && (
-            <p className="awb-files-panel__selection-path">{selectedFile.displayPath}</p>
-          )}
         </div>
         <label className="awb-files-panel__search">
           <span className="awb-visually-hidden">Search workspace files</span>
@@ -185,10 +184,10 @@ export const FilesDetailPanel = ({
       <section className="awb-files-panel__results">
         <div className="awb-files-panel__section-header">
           <h4>Search Results</h4>
-          <span>{isSearching ? "Searching…" : searchResults.length}</span>
+          {hasSearchQuery && <span>{isSearching ? "Searching…" : searchResults.length}</span>}
         </div>
         <div className="awb-files-panel__results-body">
-          {query.trim().length === 0 ? null : (
+          {hasSearchQuery ? (
             <div className="awb-files-panel__list">
               {searchResults.map((result) => (
                 <button
@@ -209,52 +208,61 @@ export const FilesDetailPanel = ({
                 </div>
               )}
             </div>
-          )}
+          ) : null}
         </div>
       </section>
 
-      <button
-        type="button"
-        className="awb-files-panel__resize-handle"
-        onPointerDown={onResizeStart}
-        aria-label="Resize search results and preview panels"
-      >
-        <span />
-      </button>
+      {hasPreviewPane && (
+        <>
+          <button
+            type="button"
+            className="awb-files-panel__resize-handle"
+            onPointerDown={onResizeStart}
+            aria-label="Resize search results and preview panels"
+          >
+            <span />
+          </button>
 
-      <section className="awb-files-panel__preview">
-        <div className="awb-files-panel__section-header">
-          <h4>Preview</h4>
-          {selectedFile && (
-            <span className="awb-files-panel__preview-file">{selectedFile.fileName}</span>
-          )}
-        </div>
-        {selectedFile && (
-          <div className="awb-files-panel__preview-actions">
-            <button
-              type="button"
-              className="awb-ghost-button"
-              onClick={() => onRunFileAction({ path: selectedFile.path, action: "open" })}
-            >
-              Open
-            </button>
-            <button
-              type="button"
-              className="awb-ghost-button"
-              onClick={() => onRunFileAction({ path: selectedFile.path, action: "reveal" })}
-            >
-              Reveal
-            </button>
-          </div>
-        )}
-        {isLoadingPreview ? (
-          <div className="awb-files-panel__empty">
-            <p>Loading preview…</p>
-          </div>
-        ) : (
-          renderPreviewBody(selectedFile, preview, onOpenImage)
-        )}
-      </section>
+          <section className="awb-files-panel__preview">
+            <div className="awb-files-panel__section-header">
+              <h4>Preview</h4>
+              {selectedFile && (
+                <span className="awb-files-panel__preview-file">{selectedFile.fileName}</span>
+              )}
+            </div>
+            {selectedFile && (
+              <>
+                <p className="awb-files-panel__selection-path">{selectedFile.displayPath}</p>
+                <div className="awb-files-panel__preview-actions">
+                  <button
+                    type="button"
+                    className="awb-ghost-button"
+                    onClick={() => onRunFileAction({ path: selectedFile.path, action: "open" })}
+                  >
+                    Open
+                  </button>
+                  <button
+                    type="button"
+                    className="awb-ghost-button"
+                    onClick={() =>
+                      onRunFileAction({ path: selectedFile.path, action: "reveal" })
+                    }
+                  >
+                    Reveal
+                  </button>
+                </div>
+              </>
+            )}
+            {isLoadingPreview ? (
+              <div className="awb-files-panel__empty">
+                <p>Loading preview…</p>
+              </div>
+            ) : (
+              renderPreviewBody(selectedFile, preview, onOpenImage)
+            )}
+          </section>
+        </>
+      )}
     </section>
   );
 };

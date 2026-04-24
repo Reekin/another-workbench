@@ -22,7 +22,7 @@ describe("FilesDetailPanel", () => {
     );
 
     expect(html).toContain("Search Results");
-    expect(html).toContain("Preview");
+    expect(html).not.toContain("Preview");
     expect(html).not.toContain("Enter a file name or path fragment");
     expect(html).not.toContain("Select a file");
     expect(html).not.toContain("Choose a file from search results");

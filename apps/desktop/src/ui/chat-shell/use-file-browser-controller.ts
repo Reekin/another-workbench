@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ExtractedFileReference,
   FilePreviewRpc,
@@ -79,7 +79,7 @@ export const useFileBrowserController = (input: {
     return () => clearTimeout(timeoutId);
   }, [input.activeWorkspaceId, input.onStatusNotice, input.transport, query]);
 
-  const loadPreview = (reference: FileSelection): void => {
+  const loadPreview = useCallback((reference: FileSelection): void => {
     if (!input.transport) {
       return;
     }
@@ -110,7 +110,37 @@ export const useFileBrowserController = (input: {
           setIsLoadingPreview(false);
         }
       });
-  };
+  }, [input.onStatusNotice, input.transport]);
+
+  const runFileAction = useCallback(async (actionInput: {
+    path: string;
+    action: "open" | "reveal";
+  }): Promise<void> => {
+    if (!input.transport) {
+      return;
+    }
+    const result = await input.transport.file.runAction(actionInput);
+    if (result.ok) {
+      input.onStatusNotice({
+        message:
+          actionInput.action === "open"
+            ? `Opened ${result.displayPath}`
+            : `Revealed ${result.displayPath}`,
+        source: "files"
+      });
+      return;
+    }
+
+    if (typeof window !== "undefined") {
+      window.open(result.fileUrl, "_blank", "noopener,noreferrer");
+    }
+    input.onStatusNotice({
+      message:
+        result.errorMessage ??
+        `Falling back to the browser for ${result.displayPath}.`,
+      source: "files"
+    });
+  }, [input.onStatusNotice, input.transport]);
 
   return {
     query,
@@ -121,31 +151,6 @@ export const useFileBrowserController = (input: {
     preview,
     isLoadingPreview,
     selectFile: loadPreview,
-    runFileAction: async (actionInput) => {
-      if (!input.transport) {
-        return;
-      }
-      const result = await input.transport.file.runAction(actionInput);
-      if (result.ok) {
-        input.onStatusNotice({
-          message:
-            actionInput.action === "open"
-              ? `Opened ${result.displayPath}`
-              : `Revealed ${result.displayPath}`,
-          source: "files"
-        });
-        return;
-      }
-
-      if (typeof window !== "undefined") {
-        window.open(result.fileUrl, "_blank", "noopener,noreferrer");
-      }
-      input.onStatusNotice({
-        message:
-          result.errorMessage ??
-          `Falling back to the browser for ${result.displayPath}.`,
-        source: "files"
-      });
-    }
+    runFileAction
   };
 };

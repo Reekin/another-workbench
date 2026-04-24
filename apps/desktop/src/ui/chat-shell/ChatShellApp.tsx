@@ -1,5 +1,6 @@
 import {
   memo,
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -9,17 +10,15 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type {
+  AgentParticipant,
   EngineDefinitionRpc,
   EngineSurfaceRpc,
   ExtractedFileReference,
+  Turn,
   SessionWindowRpc,
   WorkspaceBrowserNodeRpc
 } from "@another-workbench/shared";
 import "xterm/css/xterm.css";
-import {
-  selectParticipantsForConversation,
-  selectTurnsForSession
-} from "../../store/selectors.js";
 import type { RendererStore } from "../../store/store.js";
 import type { DesktopTransport } from "../../transport/desktop-transport.js";
 import { connectDesktopTransportToStore } from "../../transport/store-bridge.js";
@@ -52,10 +51,9 @@ import {
   useSessionActionsController,
   type SessionMenuState
 } from "./use-session-actions-controller.js";
-import { useComposerController } from "./use-composer-controller.js";
 import { useChatTreeController } from "./use-chat-tree-controller.js";
 import { buildEngineInspectorViewModel } from "./engine-summary.js";
-import { ComposerPanel } from "./composer/ComposerPanel.js";
+import { ComposerContainer } from "./composer/ComposerContainer.js";
 import "./chat-shell.css";
 
 type SettingsLauncherProps = {
@@ -96,6 +94,9 @@ type RenderedTurnGroup = {
   visibleRow: TranscriptRow;
   hiddenRows: TranscriptRow[];
 };
+
+const emptyTurns: Turn[] = [];
+const emptyParticipants: AgentParticipant[] = [];
 
 const resolveSessionMenuViewportStyle = (
   sessionMenu: SessionMenuState
@@ -705,12 +706,30 @@ export const ChatShellApp = ({
     (state.activeConversationId
       ? state.entities.conversations[state.activeConversationId]
       : undefined);
-  const turns = displayedSessionId
-    ? selectTurnsForSession(state, displayedSessionId)
-    : [];
-  const participants = activeConversation
-    ? selectParticipantsForConversation(state, activeConversation.conversationId)
-    : [];
+  const turnIds = displayedSessionId
+    ? state.indexes.turnIdsBySession[displayedSessionId]
+    : undefined;
+  const turns = useMemo(
+    () =>
+      turnIds
+        ? turnIds
+            .map((turnId) => state.entities.turns[turnId])
+            .filter((turn): turn is Turn => Boolean(turn))
+        : emptyTurns,
+    [state.entities.turns, turnIds]
+  );
+  const participantIds = activeConversation
+    ? state.indexes.participantIdsByConversation[activeConversation.conversationId]
+    : undefined;
+  const participants = useMemo(
+    () =>
+      participantIds
+        ? participantIds
+            .map((participantId) => state.entities.participants[participantId])
+            .filter((participant): participant is AgentParticipant => Boolean(participant))
+        : emptyParticipants,
+    [participantIds, state.entities.participants]
+  );
   const participantDirectory = useMemo(
     () => buildParticipantDirectory(participants),
     [participants]
@@ -789,23 +808,6 @@ export const ChatShellApp = ({
       refreshSessionBrowser,
       onStatusNotice: setStatusNotice
     });
-
-  const composer = useComposerController({
-    transport,
-    activeSession,
-    activeSessionId,
-    displayedSessionId,
-    selectedEngineId,
-    activeWorkspaceId: activeWorkspace?.workspaceId,
-    activeWorkspaceRootPath: activeWorkspace?.rootPath,
-    turns,
-    approvals: renderedTranscriptRows.at(-1)?.approvals ?? [],
-    isOpeningSelectedSession,
-    statusNotice,
-    onStatusNotice: setStatusNotice,
-    onCreateSession,
-    onOpenSession
-  });
 
   const fallbackEngines = useMemo(
     () => buildWorkspaceEngineFallbacks(workspaceTree),
@@ -983,7 +985,7 @@ export const ChatShellApp = ({
     };
   }, [transport, store]);
 
-  const onRespondApproval = async (input: {
+  const onRespondApproval = useCallback(async (input: {
     sessionId: string;
     requestId: string;
     action: "approve" | "deny" | "defer";
@@ -992,22 +994,22 @@ export const ChatShellApp = ({
       return;
     }
     await transport.approval.respond(input);
-  };
+  }, [transport]);
 
-  const onToggleProcess = (turnId: string, defaultExpanded: boolean): void => {
+  const onToggleProcess = useCallback((turnId: string, defaultExpanded: boolean): void => {
     setProcessVisibilityByTurnId((current) =>
       toggleProcessVisibility(current, turnId, defaultExpanded)
     );
-  };
+  }, []);
 
-  const onActivateResourceLink = (reference: ExtractedFileReference): void => {
+  const onActivateResourceLink = useCallback((reference: ExtractedFileReference): void => {
     setDetailTab("files");
     fileBrowser.selectFile(reference);
-  };
+  }, [fileBrowser.selectFile]);
 
-  const onPreviewImage = (image: ImageLightboxState): void => {
+  const onPreviewImage = useCallback((image: ImageLightboxState): void => {
     setLightboxImage(image);
-  };
+  }, []);
 
   const renderSessionNode = (
     session: WorkspaceBrowserNodeRpc["sessions"][number],
@@ -1181,49 +1183,21 @@ export const ChatShellApp = ({
             />
           </div>
 
-          <ComposerPanel
-            isDropTarget={composer.isDropTarget}
-            fileInputRef={composer.composerFileInputRef}
-            textareaRef={composer.composerTextareaRef}
-            draft={composer.draft}
-            selectedSkills={composer.selectedSkills}
-            attachments={composer.attachments}
-            queue={composer.queue}
-            suggestions={composer.suggestions}
-            status={composer.status}
-            intent={composer.intent}
-            supportsSteer={composer.capabilities.supportsSteer}
-            supportsAttachments={composer.capabilities.supportsAttachments}
-            canSubmit={composer.canSubmit}
-            canQueue={composer.canQueue}
-            canStop={composer.canStop}
-            isDispatching={composer.isDispatching}
-            onTextareaChange={composer.onDraftChange}
-            onTextareaSelect={composer.onTextareaSelect}
-            onInputKeyDown={composer.onInputKeyDown}
-            onPaste={composer.onComposerPaste}
-            onFileInputChange={composer.onComposerInputChange}
-            onDragEnter={composer.onComposerDragEnter}
-            onDragOver={composer.onComposerDragOver}
-            onDragLeave={composer.onComposerDragLeave}
-            onDrop={composer.onComposerDrop}
-            onRemoveSkill={composer.onRemoveSkill}
-            onRemoveAttachment={composer.onRemoveAttachment}
-            onPickAttachments={composer.onPickAttachments}
-            onPrimaryAction={composer.onPrimaryAction}
-            onQueueCurrent={composer.onQueueCurrent}
-            onStop={composer.onStop}
-            onSuggestionHover={composer.onSuggestionHover}
-            onSuggestionSelect={async (index) => {
-              const item = composer.suggestions?.items[index];
-              if (item) {
-                await composer.onSuggestionSelect(item);
-              }
-            }}
-            onEditQueuedMessage={composer.onEditQueuedMessage}
-            onDeleteQueuedMessage={composer.onDeleteQueuedMessage}
-            onSendQueuedMessageNow={composer.onSendQueuedMessageNow}
-            onSteerQueuedMessageNow={composer.onSteerQueuedMessageNow}
+          <ComposerContainer
+            transport={transport}
+            activeSession={activeSession}
+            activeSessionId={activeSessionId}
+            displayedSessionId={displayedSessionId}
+            selectedEngineId={selectedEngineId}
+            activeWorkspaceId={activeWorkspace?.workspaceId}
+            activeWorkspaceRootPath={activeWorkspace?.rootPath}
+            turns={turns}
+            approvals={renderedTranscriptRows.at(-1)?.approvals ?? []}
+            isOpeningSelectedSession={isOpeningSelectedSession}
+            statusNotice={statusNotice}
+            onStatusNotice={setStatusNotice}
+            onCreateSession={onCreateSession}
+            onOpenSession={onOpenSession}
           />
         </main>
 

@@ -59,16 +59,45 @@ const sortByStartTime = <T extends { startedAt?: string }>(
     return getStableId(left).localeCompare(getStableId(right));
   });
 
+const groupByTurnId = <T extends { turnId: string }>(
+  items: Iterable<T>
+): Record<string, T[]> => {
+  const result: Record<string, T[]> = {};
+  for (const item of items) {
+    (result[item.turnId] ??= []).push(item);
+  }
+  return result;
+};
+
+type TranscriptEntityIndexes = {
+  messageBlocksByTurnId: Record<string, MessageBlock[]>;
+  toolCallsByTurnId: Record<string, ToolCall[]>;
+  terminalStreamsByTurnId: Record<string, TerminalStream[]>;
+  approvalRequestsByTurnId: Record<string, ApprovalRequest[]>;
+};
+
+const buildTranscriptEntityIndexes = (
+  state: RendererStoreState
+): TranscriptEntityIndexes => ({
+  messageBlocksByTurnId: groupByTurnId(Object.values(state.entities.messageBlocks)),
+  toolCallsByTurnId: groupByTurnId(Object.values(state.entities.toolCalls)),
+  terminalStreamsByTurnId: groupByTurnId(
+    Object.values(state.entities.terminalStreams)
+  ),
+  approvalRequestsByTurnId: groupByTurnId(
+    Object.values(state.entities.approvalRequests)
+  )
+});
+
 const selectMessageBlocksForTurn = (
   state: RendererStoreState,
-  turn: Turn
+  turn: Turn,
+  indexes: TranscriptEntityIndexes
 ): MessageBlock[] => {
   const fromMessageRefs = turn.messageIds.flatMap((messageId) =>
     selectMessageBlocksForMessage(state, messageId)
   );
-  const fromTurnScan = Object.values(state.entities.messageBlocks).filter(
-    (block) => block.turnId === turn.turnId
-  );
+  const fromTurnScan = indexes.messageBlocksByTurnId[turn.turnId] ?? [];
 
   return sortByStartTime(
     uniqueById([...fromMessageRefs, ...fromTurnScan], (block) => block.blockId),
@@ -78,39 +107,45 @@ const selectMessageBlocksForTurn = (
 
 const selectToolCallsForTurn = (
   state: RendererStoreState,
-  turn: Turn
+  turn: Turn,
+  indexes: TranscriptEntityIndexes
 ): ToolCall[] => {
   const byTurnOrder = turn.toolCallIds
     .map((toolCallId) => state.entities.toolCalls[toolCallId])
     .filter((item): item is ToolCall => Boolean(item));
-  const fallback = Object.values(state.entities.toolCalls).filter(
-    (item) => item.turnId === turn.turnId && !turn.toolCallIds.includes(item.toolCallId)
+  const orderedIds = new Set(turn.toolCallIds);
+  const fallback = (indexes.toolCallsByTurnId[turn.turnId] ?? []).filter(
+    (item) => !orderedIds.has(item.toolCallId)
   );
   return [...byTurnOrder, ...sortByStartTime(fallback, (item) => item.toolCallId)];
 };
 
 const selectTerminalStreamsForTurn = (
   state: RendererStoreState,
-  turn: Turn
+  turn: Turn,
+  indexes: TranscriptEntityIndexes
 ): TerminalStream[] => {
   const byTurnOrder = turn.terminalIds
     .map((terminalId) => state.entities.terminalStreams[terminalId])
     .filter((item): item is TerminalStream => Boolean(item));
-  const fallback = Object.values(state.entities.terminalStreams).filter(
-    (item) => item.turnId === turn.turnId && !turn.terminalIds.includes(item.terminalId)
+  const orderedIds = new Set(turn.terminalIds);
+  const fallback = (indexes.terminalStreamsByTurnId[turn.turnId] ?? []).filter(
+    (item) => !orderedIds.has(item.terminalId)
   );
   return [...byTurnOrder, ...sortByStartTime(fallback, (item) => item.terminalId)];
 };
 
 const selectApprovalRequestsForTurn = (
   state: RendererStoreState,
-  turn: Turn
+  turn: Turn,
+  indexes: TranscriptEntityIndexes
 ): ApprovalRequest[] => {
   const byTurnOrder = turn.approvalRequestIds
     .map((requestId) => state.entities.approvalRequests[requestId])
     .filter((item): item is ApprovalRequest => Boolean(item));
-  const fallback = Object.values(state.entities.approvalRequests).filter(
-    (item) => item.turnId === turn.turnId && !turn.approvalRequestIds.includes(item.requestId)
+  const orderedIds = new Set(turn.approvalRequestIds);
+  const fallback = (indexes.approvalRequestsByTurnId[turn.turnId] ?? []).filter(
+    (item) => !orderedIds.has(item.requestId)
   );
   const sortedFallback = [...fallback].sort((left, right) => {
     const byDate = compareIsoDateAsc(left.requestedAt, right.requestedAt);
@@ -227,12 +262,13 @@ export const buildTurnTranscriptRows = (
   state: RendererStoreState,
   turns: Turn[],
   participantDirectory = buildParticipantDirectory([])
-): TurnTranscriptRow[] =>
-  sortTurnsForTranscript(turns).flatMap((turn) => {
-    const blocks = selectMessageBlocksForTurn(state, turn);
-    const toolCalls = selectToolCallsForTurn(state, turn);
-    const terminalStreams = selectTerminalStreamsForTurn(state, turn);
-    const approvals = selectApprovalRequestsForTurn(state, turn);
+): TurnTranscriptRow[] => {
+  const indexes = buildTranscriptEntityIndexes(state);
+  return sortTurnsForTranscript(turns).flatMap((turn) => {
+    const blocks = selectMessageBlocksForTurn(state, turn, indexes);
+    const toolCalls = selectToolCallsForTurn(state, turn, indexes);
+    const terminalStreams = selectTerminalStreamsForTurn(state, turn, indexes);
+    const approvals = selectApprovalRequestsForTurn(state, turn, indexes);
 
     const blockGroups = splitBlocksByRole(blocks, turn.finalMessageId);
     const hasProcessDetails =
@@ -293,3 +329,4 @@ export const buildTurnTranscriptRows = (
       };
     });
   });
+};

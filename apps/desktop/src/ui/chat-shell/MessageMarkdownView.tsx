@@ -1,4 +1,11 @@
-import { useDeferredValue, useEffect, useState, type ReactElement } from "react";
+import {
+  memo,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactElement
+} from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
@@ -258,7 +265,7 @@ type MarkdownRendererProps = {
   onPreviewImage?: (input: { src: string; alt: string }) => void;
 };
 
-const MarkdownRenderer = ({
+const MarkdownRenderer = memo(({
   text,
   onActivateResourceLink,
   onPreviewImage
@@ -316,7 +323,7 @@ const MarkdownRenderer = ({
   >
     {text}
   </ReactMarkdown>
-);
+));
 
 type MermaidBlockProps = {
   source: string;
@@ -389,7 +396,7 @@ const MermaidBlock = ({ source, renderId }: MermaidBlockProps): ReactElement => 
   );
 };
 
-export const MessageMarkdownView = ({
+export const MessageMarkdownView = memo(({
   block,
   onActivateResourceLink,
   onPreviewImage
@@ -397,7 +404,10 @@ export const MessageMarkdownView = ({
   const sourceText = block.text ?? "";
   const deferredText = useDeferredValue(sourceText);
   const isEmpty = deferredText.trim().length === 0;
-  const renderableSegments = buildRenderableSegments(deferredText);
+  const renderableSegments = useMemo(
+    () => buildRenderableSegments(deferredText),
+    [deferredText]
+  );
   const roleClass =
     block.role === "assistant"
       ? "is-assistant"
@@ -487,4 +497,4 @@ export const MessageMarkdownView = ({
       </div>
     </article>
   );
-};
+});

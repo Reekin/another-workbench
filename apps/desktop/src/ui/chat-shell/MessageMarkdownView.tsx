@@ -1,4 +1,4 @@
-import { useDeferredValue, type ReactElement } from "react";
+import { useDeferredValue, useEffect, useState, type ReactElement } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
@@ -30,6 +30,365 @@ const allowLocalFileUrls = (url: string): string => url;
 const isRenderableMarkdownBlock = (block: MessageBlock): boolean =>
   block.kind === "markdown" || block.kind === "plain_text";
 
+type CodeCommentDirective = {
+  title?: string;
+  body?: string;
+  file?: string;
+  start?: string;
+  end?: string;
+  priority?: string;
+};
+
+type RenderableSegment =
+  | {
+      kind: "markdown";
+      text: string;
+    }
+  | {
+      kind: "directive";
+      directive: CodeCommentDirective;
+    }
+  | {
+      kind: "mermaid";
+      source: string;
+    };
+
+const codeCommentLinePattern = /^::code-comment\{(?<attributes>.*)\}$/;
+const directiveAttributeKeys = new Set<keyof CodeCommentDirective>([
+  "title",
+  "body",
+  "file",
+  "start",
+  "end",
+  "priority"
+]);
+
+const readQuotedDirectiveValue = (
+  attributes: string,
+  startIndex: number,
+  quote: string
+): { value: string; nextIndex: number } => {
+  let value = "";
+  let index = startIndex;
+  while (index < attributes.length) {
+    const character = attributes[index];
+    const nextCharacter = attributes[index + 1];
+    if (character === quote) {
+      return { value, nextIndex: index + 1 };
+    }
+    if (character === "\\" && (nextCharacter === quote || nextCharacter === "\\")) {
+      value += nextCharacter;
+      index += 2;
+      continue;
+    }
+    value += character;
+    index += 1;
+  }
+  return { value, nextIndex: index };
+};
+
+const readBareDirectiveValue = (
+  attributes: string,
+  startIndex: number
+): { value: string; nextIndex: number } => {
+  let index = startIndex;
+  while (index < attributes.length && !/[\s,}]/.test(attributes[index]!)) {
+    index += 1;
+  }
+  return {
+    value: attributes.slice(startIndex, index),
+    nextIndex: index
+  };
+};
+
+const parseDirectiveAttributes = (attributes: string): CodeCommentDirective => {
+  const directive: CodeCommentDirective = {};
+  let index = 0;
+  while (index < attributes.length) {
+    while (index < attributes.length && /[\s,]/.test(attributes[index]!)) {
+      index += 1;
+    }
+
+    const keyStart = index;
+    while (index < attributes.length && /[A-Za-z0-9_]/.test(attributes[index]!)) {
+      index += 1;
+    }
+    const key = attributes.slice(keyStart, index) as keyof CodeCommentDirective;
+
+    while (index < attributes.length && /\s/.test(attributes[index]!)) {
+      index += 1;
+    }
+    if (!key || attributes[index] !== "=") {
+      index += 1;
+      continue;
+    }
+    index += 1;
+    while (index < attributes.length && /\s/.test(attributes[index]!)) {
+      index += 1;
+    }
+
+    const quote = attributes[index];
+    const parsedValue =
+      quote === '"' || quote === "'"
+        ? readQuotedDirectiveValue(attributes, index + 1, quote)
+        : readBareDirectiveValue(attributes, index);
+    if (directiveAttributeKeys.has(key)) {
+      directive[key] = parsedValue.value;
+    }
+    index = parsedValue.nextIndex;
+  }
+  return directive;
+};
+
+const parseCodeCommentDirective = (
+  line: string
+): CodeCommentDirective | undefined => {
+  const match = line.match(codeCommentLinePattern);
+  const attributes = match?.groups?.attributes;
+  if (!attributes) {
+    return undefined;
+  }
+
+  const directive = parseDirectiveAttributes(attributes);
+
+  if (!directive.title && !directive.body && !directive.file) {
+    return undefined;
+  }
+  return directive;
+};
+
+const mermaidFencePattern = /^(`{3,}|~{3,})\s*mermaid\s*$/i;
+
+const buildRenderableSegments = (sourceText: string): RenderableSegment[] => {
+  const lines = sourceText.split(/\r?\n/);
+  const segments: RenderableSegment[] = [];
+  const markdownBuffer: string[] = [];
+
+  const flushMarkdown = (): void => {
+    if (markdownBuffer.length === 0) {
+      return;
+    }
+    segments.push({
+      kind: "markdown",
+      text: markdownBuffer.join("\n")
+    });
+    markdownBuffer.length = 0;
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    const mermaidFence = line.trim().match(mermaidFencePattern);
+    if (mermaidFence) {
+      const fence = mermaidFence[1]!;
+      const fencePrefix = fence[0]!;
+      const closingFencePattern = new RegExp(
+        `^${fencePrefix}{${fence.length},}\\s*$`
+      );
+      const chartLines: string[] = [];
+      let closingIndex: number | undefined;
+      for (let nextIndex = index + 1; nextIndex < lines.length; nextIndex += 1) {
+        const nextLine = lines[nextIndex]!;
+        if (closingFencePattern.test(nextLine.trim())) {
+          closingIndex = nextIndex;
+          break;
+        }
+        chartLines.push(nextLine);
+      }
+
+      if (closingIndex !== undefined) {
+        flushMarkdown();
+        segments.push({
+          kind: "mermaid",
+          source: chartLines.join("\n").trim()
+        });
+        index = closingIndex;
+        continue;
+      }
+    }
+
+    const directive = parseCodeCommentDirective(line.trim());
+    if (!directive) {
+      markdownBuffer.push(line);
+      continue;
+    }
+    flushMarkdown();
+    segments.push({
+      kind: "directive",
+      directive
+    });
+  }
+
+  flushMarkdown();
+  return segments;
+};
+
+const renderLocationLabel = (directive: CodeCommentDirective): string | undefined => {
+  if (!directive.file) {
+    return undefined;
+  }
+  if (!directive.start) {
+    return directive.file;
+  }
+  return directive.end && directive.end !== directive.start
+    ? `${directive.file}:${directive.start}-${directive.end}`
+    : `${directive.file}:${directive.start}`;
+};
+
+const renderPriorityLabel = (priority: string | undefined): string | undefined => {
+  if (!priority) {
+    return undefined;
+  }
+  return `P${priority}`;
+};
+
+const hashMermaidSource = (value: string): string => {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash.toString(36);
+};
+
+const buildMermaidRenderId = (blockId: string, index: number, source: string): string =>
+  `awb-mermaid-${blockId.replace(/[^A-Za-z0-9_-]/g, "-")}-${index}-${hashMermaidSource(source)}`;
+
+type MarkdownRendererProps = {
+  text: string;
+  onActivateResourceLink?: (reference: ExtractedFileReference) => void;
+  onPreviewImage?: (input: { src: string; alt: string }) => void;
+};
+
+const MarkdownRenderer = ({
+  text,
+  onActivateResourceLink,
+  onPreviewImage
+}: MarkdownRendererProps): ReactElement => (
+  <ReactMarkdown
+    remarkPlugins={[remarkGfm]}
+    rehypePlugins={[[rehypeSanitize, sanitizeSchema]]}
+    urlTransform={allowLocalFileUrls}
+    components={{
+      a: ({ href, children, ...props }) => {
+        const filePath = href ? fileTargetToPath(href) : undefined;
+        if (!href || !filePath || !onActivateResourceLink) {
+          return (
+            <a href={href} {...props}>
+              {children}
+            </a>
+          );
+        }
+        const label =
+          typeof children === "string"
+            ? children
+            : Array.isArray(children)
+              ? children.filter((item) => typeof item === "string").join("")
+              : "";
+        return (
+          <a
+            href={href}
+            {...props}
+            onClick={(event) => {
+              event.preventDefault();
+              onActivateResourceLink(
+                createFileReferenceFromPath(filePath, "markdown_link", label || undefined)
+              );
+            }}
+          >
+            {children}
+          </a>
+        );
+      },
+      img: ({ src, alt, ...props }) => {
+        if (!src || !onPreviewImage) {
+          return <img src={src} alt={alt ?? ""} {...props} />;
+        }
+        return (
+          <button
+            type="button"
+            className="awb-inline-image-button"
+            onClick={() => onPreviewImage({ src, alt: alt ?? "Image preview" })}
+          >
+            <img src={src} alt={alt ?? ""} {...props} />
+          </button>
+        );
+      }
+    }}
+  >
+    {text}
+  </ReactMarkdown>
+);
+
+type MermaidBlockProps = {
+  source: string;
+  renderId: string;
+};
+
+const MermaidFallbackCode = ({ source }: { source: string }): ReactElement => (
+  <pre className="awb-mermaid__fallback">
+    <code>{source}</code>
+  </pre>
+);
+
+const MermaidBlock = ({ source, renderId }: MermaidBlockProps): ReactElement => {
+  const [state, setState] = useState<
+    | { status: "pending" }
+    | { status: "rendered"; svg: string }
+    | { status: "failed"; error: string }
+  >({ status: "pending" });
+
+  useEffect(() => {
+    let disposed = false;
+    if (source.trim().length === 0) {
+      setState({ status: "failed", error: "Empty Mermaid diagram." });
+      return () => {
+        disposed = true;
+      };
+    }
+
+    void import("mermaid")
+      .then(async (module) => {
+        const mermaid = module.default;
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: "dark",
+          securityLevel: "strict"
+        });
+        const result = await mermaid.render(renderId, source);
+        if (!disposed) {
+          setState({ status: "rendered", svg: result.svg });
+        }
+      })
+      .catch((error) => {
+        if (!disposed) {
+          setState({
+            status: "failed",
+            error: error instanceof Error ? error.message : "Mermaid render failed."
+          });
+        }
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [renderId, source]);
+
+  return (
+    <figure className="awb-mermaid" aria-label="Mermaid diagram">
+      {state.status === "rendered" ? (
+        <div
+          className="awb-mermaid__surface"
+          dangerouslySetInnerHTML={{ __html: state.svg }}
+        />
+      ) : (
+        <MermaidFallbackCode source={source} />
+      )}
+      {state.status === "failed" && (
+        <figcaption className="awb-mermaid__error">{state.error}</figcaption>
+      )}
+    </figure>
+  );
+};
+
 export const MessageMarkdownView = ({
   block,
   onActivateResourceLink,
@@ -38,6 +397,7 @@ export const MessageMarkdownView = ({
   const sourceText = block.text ?? "";
   const deferredText = useDeferredValue(sourceText);
   const isEmpty = deferredText.trim().length === 0;
+  const renderableSegments = buildRenderableSegments(deferredText);
   const roleClass =
     block.role === "assistant"
       ? "is-assistant"
@@ -59,65 +419,70 @@ export const MessageMarkdownView = ({
           </p>
         )}
         {isRenderableMarkdownBlock(block) && !isEmpty && (
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            rehypePlugins={[[rehypeSanitize, sanitizeSchema]]}
-            urlTransform={allowLocalFileUrls}
-            components={{
-              a: ({ href, children, ...props }) => {
-                const filePath = href ? fileTargetToPath(href) : undefined;
-                if (!href || !filePath || !onActivateResourceLink) {
-                  return (
-                    <a href={href} {...props}>
-                      {children}
-                    </a>
-                  );
-                }
-                const label =
-                  typeof children === "string"
-                    ? children
-                    : Array.isArray(children)
-                      ? children.filter((item) => typeof item === "string").join("")
-                      : "";
+          <>
+            {renderableSegments.map((segment, index) => {
+              if (segment.kind === "markdown") {
                 return (
-                  <a
-                    href={href}
-                    {...props}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      onActivateResourceLink(
-                        createFileReferenceFromPath(
-                          filePath,
-                          "markdown_link",
-                          label || undefined
-                        )
-                      );
-                    }}
-                  >
-                    {children}
-                  </a>
-                );
-              },
-              img: ({ src, alt, ...props }) => {
-                if (!src || !onPreviewImage) {
-                  return <img src={src} alt={alt ?? ""} {...props} />;
-                }
-                return (
-                  <button
-                    type="button"
-                    className="awb-inline-image-button"
-                    onClick={() =>
-                      onPreviewImage({ src, alt: alt ?? "Image preview" })
-                    }
-                  >
-                    <img src={src} alt={alt ?? ""} {...props} />
-                  </button>
+                  <MarkdownRenderer
+                    key={`${block.blockId}:markdown:${index}`}
+                    text={segment.text}
+                    onActivateResourceLink={onActivateResourceLink}
+                    onPreviewImage={onPreviewImage}
+                  />
                 );
               }
-            }}
-          >
-            {deferredText}
-          </ReactMarkdown>
+
+              if (segment.kind === "mermaid") {
+                return (
+                  <MermaidBlock
+                    key={`${block.blockId}:mermaid:${index}`}
+                    source={segment.source}
+                    renderId={buildMermaidRenderId(block.blockId, index, segment.source)}
+                  />
+                );
+              }
+
+              const locationLabel = renderLocationLabel(segment.directive);
+              const priorityLabel = renderPriorityLabel(segment.directive.priority);
+              return (
+                <section
+                  key={`${block.blockId}:directive:${index}`}
+                  className="awb-code-comment"
+                  aria-label="Code review finding"
+                >
+                  <header className="awb-code-comment__header">
+                    <span className="awb-code-comment__eyebrow">Finding</span>
+                    {priorityLabel && (
+                      <span className="awb-code-comment__priority">{priorityLabel}</span>
+                    )}
+                  </header>
+                  {segment.directive.title && (
+                    <div className="awb-code-comment__title">
+                      <MarkdownRenderer
+                        text={segment.directive.title}
+                        onActivateResourceLink={onActivateResourceLink}
+                        onPreviewImage={onPreviewImage}
+                      />
+                    </div>
+                  )}
+                  {segment.directive.body && (
+                    <div className="awb-code-comment__body">
+                      <MarkdownRenderer
+                        text={segment.directive.body}
+                        onActivateResourceLink={onActivateResourceLink}
+                        onPreviewImage={onPreviewImage}
+                      />
+                    </div>
+                  )}
+                  {locationLabel && (
+                    <p className="awb-code-comment__meta">
+                      <code>{locationLabel}</code>
+                    </p>
+                  )}
+                </section>
+              );
+            })}
+          </>
         )}
       </div>
     </article>

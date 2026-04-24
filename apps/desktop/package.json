@@ -21,6 +21,7 @@
     "@another-workbench/core": "workspace:*",
     "@another-workbench/desktop-server": "workspace:*",
     "@another-workbench/shared": "workspace:*",
+    "mermaid": "^11.14.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",

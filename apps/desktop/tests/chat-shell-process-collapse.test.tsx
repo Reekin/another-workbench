@@ -35,7 +35,7 @@ describe("ChatShellApp inline process output", () => {
     expect(afterSecondToggle).toEqual({});
   });
 
-  it("renders process output controls inline under assistant turns", () => {
+  it("keeps completed turn history collapsed while leaving running turn process open", () => {
     const store = createRendererStore();
     store.hydrateSnapshot(
       parseDomainSnapshot({
@@ -64,9 +64,14 @@ describe("ChatShellApp inline process output", () => {
             turnId: "turn-completed",
             sessionId: "session-1",
             status: "completed",
+            completedAt: "2026-04-18T00:01:20.000Z",
+            finalMessageId: "message-completed-final",
             startedAt: "2026-04-18T00:01:00.000Z",
-            finishedAt: "2026-04-18T00:01:20.000Z",
-            messageIds: ["message-completed"],
+            messageIds: [
+              "message-completed-user",
+              "message-completed-thinking",
+              "message-completed-final"
+            ],
             toolCallIds: ["tool-completed"],
             terminalIds: [],
             approvalRequestIds: []
@@ -84,14 +89,34 @@ describe("ChatShellApp inline process output", () => {
         ],
         messageBlocks: [
           {
-            blockId: "message-completed:md",
-            messageId: "message-completed",
+            blockId: "message-completed-user:md",
+            messageId: "message-completed-user",
+            sessionId: "session-1",
+            turnId: "turn-completed",
+            role: "user",
+            kind: "markdown",
+            text: "Please summarize.",
+            startedAt: "2026-04-18T00:01:00.500Z"
+          },
+          {
+            blockId: "message-completed-thinking:md",
+            messageId: "message-completed-thinking",
             sessionId: "session-1",
             turnId: "turn-completed",
             role: "assistant",
             kind: "markdown",
-            text: "completed turn",
+            text: "internal draft",
             startedAt: "2026-04-18T00:01:01.000Z"
+          },
+          {
+            blockId: "message-completed-final:md",
+            messageId: "message-completed-final",
+            sessionId: "session-1",
+            turnId: "turn-completed",
+            role: "assistant",
+            kind: "markdown",
+            text: "completed final",
+            startedAt: "2026-04-18T00:01:05.000Z"
           },
           {
             blockId: "message-running:md",
@@ -133,10 +158,21 @@ describe("ChatShellApp inline process output", () => {
     const html = renderToStaticMarkup(<ChatShellApp store={store} />);
 
     expect(html).not.toContain(">Inspector<");
-    expect(html).toContain("Show process output");
+    expect(html).toContain("1 previous message &gt;");
     expect(html).toContain("Hide process output");
     expect(html).toContain("1 tool");
+    expect(html).not.toContain("Show turn details");
+    expect(html).not.toContain("1 earlier message");
     expect((html.match(/Tool activity/g) ?? []).length).toBe(1);
     expect(html).toContain('class="awb-turn__process"');
+    expect(html).toContain("completed final");
+    expect(html).toContain("Please summarize.");
+    expect(html).not.toContain("internal draft");
+    expect(html.indexOf("1 previous message &gt;")).toBeLessThan(
+      html.indexOf("completed final")
+    );
+    expect(html.indexOf("Hide process output")).toBeLessThan(
+      html.indexOf("running turn")
+    );
   });
 });

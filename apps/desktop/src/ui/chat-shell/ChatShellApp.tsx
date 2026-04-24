@@ -80,7 +80,7 @@ type TranscriptPaneProps = {
   loadingOlderTurns: boolean;
   onLoadOlder: () => void;
   processVisibilityByTurnId: Readonly<Record<string, ProcessVisibilityOverride>>;
-  onToggleProcess: (turnId: string) => void;
+  onToggleProcess: (turnId: string, defaultExpanded: boolean) => void;
   onActivateResourceLink: (reference: ExtractedFileReference) => void;
   onPreviewImage?: (input: ImageLightboxState) => void;
   onRespondApproval?: (input: {
@@ -91,6 +91,11 @@ type TranscriptPaneProps = {
 };
 
 type DetailTab = "graph" | "files";
+type TranscriptRow = ReturnType<typeof buildTurnTranscriptRows>[number];
+type RenderedTurnGroup = {
+  visibleRow: TranscriptRow;
+  hiddenRows: TranscriptRow[];
+};
 
 const resolveSessionMenuViewportStyle = (
   sessionMenu: SessionMenuState
@@ -199,11 +204,19 @@ const sessionActionLabel = (
 ): string => action.label;
 
 const summarizeProcessToggle = (input: {
+  hiddenMessageCount?: number;
   toolCount: number;
   terminalCount: number;
   approvalCount: number;
 }): string => {
   const parts: string[] = [];
+  if (input.hiddenMessageCount && input.hiddenMessageCount > 0) {
+    parts.push(
+      `${input.hiddenMessageCount} earlier message${
+        input.hiddenMessageCount === 1 ? "" : "s"
+      }`
+    );
+  }
   if (input.toolCount > 0) {
     parts.push(`${input.toolCount} tool${input.toolCount === 1 ? "" : "s"}`);
   }
@@ -219,6 +232,75 @@ const summarizeProcessToggle = (input: {
   }
   return parts.join(" · ");
 };
+
+const countHiddenMessages = (rows: TranscriptRow[]): number => {
+  const messageIds = new Set<string>();
+  for (const row of rows) {
+    for (const block of row.blocks) {
+      messageIds.add(block.messageId);
+    }
+  }
+  return messageIds.size;
+};
+
+const buildRenderedTurnGroups = (
+  rows: ReturnType<typeof buildTurnTranscriptRows>
+): RenderedTurnGroup[] => {
+  const groups: RenderedTurnGroup[] = [];
+
+  for (let index = 0; index < rows.length; ) {
+    const turnId = rows[index]!.turn.turnId;
+    const turnRows: TranscriptRow[] = [];
+    while (index < rows.length && rows[index]!.turn.turnId === turnId) {
+      turnRows.push(rows[index]!);
+      index += 1;
+    }
+
+    const turn = turnRows[0]!.turn;
+    if (turn.status !== "completed") {
+      groups.push(
+        ...turnRows.map((row) => ({
+          visibleRow: row,
+          hiddenRows: []
+        }))
+      );
+      continue;
+    }
+
+    const visibleRow =
+      turnRows.find((row) => row.isFinalResponseRow) ??
+      turnRows.find((row) => row.messageRole !== "user") ??
+      turnRows.at(-1) ??
+      turnRows[0]!;
+    const hiddenRows = turnRows.filter(
+      (row) => row.rowId !== visibleRow.rowId && row.messageRole !== "user"
+    );
+
+    for (const row of turnRows) {
+      if (row.rowId === visibleRow.rowId) {
+        groups.push({
+          visibleRow,
+          hiddenRows
+        });
+        continue;
+      }
+      if (row.messageRole === "user") {
+        groups.push({
+          visibleRow: row,
+          hiddenRows: []
+        });
+      }
+    }
+  }
+
+  return groups;
+};
+
+const resolveProcessOutputToggleLabel = (expanded: boolean): string =>
+  expanded ? "Hide process output" : "Show process output";
+
+const formatPreviousMessagesLabel = (count: number): string =>
+  `${count} previous message${count === 1 ? "" : "s"} >`;
 
 const TranscriptPane = memo(
   ({
@@ -273,37 +355,84 @@ const TranscriptPane = memo(
         </div>
       )}
 
-      {renderedTranscriptRows.map((row) => {
-        const isUserTurn = row.messageRole === "user";
+      {buildRenderedTurnGroups(renderedTranscriptRows).map(({ visibleRow, hiddenRows }) => {
+        const isUserTurn = visibleRow.messageRole === "user";
+        const hiddenMessageCount = countHiddenMessages(hiddenRows);
+        const hasCollapsedContent = hiddenRows.length > 0;
+        const hasExpandableDetails =
+          !isUserTurn && (visibleRow.hasProcessDetails || hasCollapsedContent);
+        const defaultExpanded = hasCollapsedContent
+          ? false
+          : visibleRow.defaultProcessExpanded;
         const isProcessExpanded =
-          !isUserTurn &&
-          row.hasProcessDetails &&
+          hasExpandableDetails &&
           resolveProcessExpanded(
-            row.defaultProcessExpanded,
-            processVisibilityByTurnId[row.turn.turnId]
+            defaultExpanded,
+            processVisibilityByTurnId[visibleRow.turn.turnId]
           );
         const processSummary = summarizeProcessToggle({
-          toolCount: row.toolCalls.length,
-          terminalCount: row.terminalStreams.length,
-          approvalCount: row.approvals.length
+          hiddenMessageCount,
+          toolCount: visibleRow.toolCalls.length,
+          terminalCount: visibleRow.terminalStreams.length,
+          approvalCount: visibleRow.approvals.length
         });
+        const processToggleLabel = resolveProcessOutputToggleLabel(isProcessExpanded);
+        const previousMessagesLabel = formatPreviousMessagesLabel(hiddenMessageCount);
         return (
           <article
-            key={row.rowId}
-            data-turn-id={row.turn.turnId}
-            data-final-response-row={row.isFinalResponseRow ? "true" : "false"}
+            key={visibleRow.rowId}
+            data-turn-id={visibleRow.turn.turnId}
+            data-final-response-row={visibleRow.isFinalResponseRow ? "true" : "false"}
             className={`awb-chat-entry ${isUserTurn ? "is-user" : "is-assistant"}`}
           >
             <header className="awb-chat-entry__identity">
-              <ParticipantIdentityBadge identity={row.turnIdentity} compact />
+              <ParticipantIdentityBadge identity={visibleRow.turnIdentity} compact />
+              <time className="awb-chat-entry__timestamp">
+                {formatTimestamp(visibleRow.turn.completedAt ?? visibleRow.turn.startedAt)}
+              </time>
             </header>
+            {hasExpandableDetails && (
+              <div className="awb-turn__process">
+                <button
+                  type="button"
+                  className={`awb-turn__process-toggle ${
+                    hasCollapsedContent ? "is-history-divider" : ""
+                  }`}
+                  onClick={() => onToggleProcess(visibleRow.turn.turnId, defaultExpanded)}
+                  aria-expanded={isProcessExpanded}
+                >
+                  {hasCollapsedContent ? (
+                    <>
+                      <span aria-hidden="true" />
+                      <span>{previousMessagesLabel}</span>
+                      <span aria-hidden="true" />
+                    </>
+                  ) : (
+                    <>
+                      <span>{processToggleLabel}</span>
+                      <span>{processSummary}</span>
+                    </>
+                  )}
+                </button>
+                {isProcessExpanded && (
+                  <TurnProcessPanel
+                    row={visibleRow}
+                    hiddenRows={hiddenRows}
+                    participantDirectory={participantDirectory}
+                    onActivateResourceLink={onActivateResourceLink}
+                    onPreviewImage={onPreviewImage}
+                    onRespondApproval={onRespondApproval}
+                  />
+                )}
+              </div>
+            )}
             <div className="awb-chat-entry__messages">
-              {row.blocks.length === 0 && (
+              {visibleRow.blocks.length === 0 && (
                 <p className="awb-turn__empty">
                   {isUserTurn ? "No message content." : "Waiting for response…"}
                 </p>
               )}
-              {row.blocks.map((block) => (
+              {visibleRow.blocks.map((block) => (
                 <MessageMarkdownView
                   key={block.blockId}
                   block={block}
@@ -312,40 +441,15 @@ const TranscriptPane = memo(
                 />
               ))}
             </div>
-            {!isUserTurn && row.hasProcessDetails && (
-              <div className="awb-turn__process">
-                <button
-                  type="button"
-                  className="awb-turn__process-toggle"
-                  onClick={() => onToggleProcess(row.turn.turnId)}
-                  aria-expanded={isProcessExpanded}
-                >
-                  <span>
-                    {isProcessExpanded ? "Hide process output" : "Show process output"}
-                  </span>
-                  <span>{processSummary}</span>
-                </button>
-                {isProcessExpanded && (
-                  <TurnProcessPanel
-                    row={row}
-                    participantDirectory={participantDirectory}
-                    onRespondApproval={onRespondApproval}
-                  />
-                )}
-              </div>
-            )}
             {!isUserTurn
               ? renderTurnExtensions({
                   transport,
                   engineId,
                   engineSurface,
-                  sessionId: row.turn.sessionId,
-                  turnId: row.turn.turnId
+                  sessionId: visibleRow.turn.sessionId,
+                  turnId: visibleRow.turn.turnId
                 })
               : null}
-            <footer className="awb-chat-entry__meta">
-              <span>{formatTimestamp(row.turn.completedAt ?? row.turn.startedAt)}</span>
-            </footer>
           </article>
         );
       })}
@@ -890,13 +994,9 @@ export const ChatShellApp = ({
     await transport.approval.respond(input);
   };
 
-  const onToggleProcess = (turnId: string): void => {
-    const row = renderedTranscriptRows.find((candidate) => candidate.turn.turnId === turnId);
-    if (!row) {
-      return;
-    }
+  const onToggleProcess = (turnId: string, defaultExpanded: boolean): void => {
     setProcessVisibilityByTurnId((current) =>
-      toggleProcessVisibility(current, turnId, row.defaultProcessExpanded)
+      toggleProcessVisibility(current, turnId, defaultExpanded)
     );
   };
 
@@ -944,9 +1044,7 @@ export const ChatShellApp = ({
             {statusDot ? <span className={`awb-tree__dot is-${statusDot}`} /> : <span className="awb-tree__dot-placeholder" />}
             <div className="awb-tree__labels">
               <strong>{session.title}</strong>
-              <span>
-                {session.engineId} · {session.displaySessionId}
-              </span>
+              <span>{session.engineId}</span>
             </div>
           </div>
         </div>

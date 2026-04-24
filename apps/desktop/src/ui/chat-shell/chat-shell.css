@@ -570,7 +570,7 @@ button {
 .awb-chat-entry {
   display: grid;
   gap: 6px;
-  padding: 10px 16px 12px;
+  padding: 10px 33.333% 12px;
   border-bottom: 1px solid var(--awb-rule);
 }
 
@@ -578,6 +578,14 @@ button {
 .awb-chat-entry.is-assistant {
   align-self: stretch;
   width: 100%;
+}
+
+.awb-chat-entry.is-user {
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.awb-chat-entry.is-assistant {
+  background: rgba(0, 0, 0, 0.055);
 }
 
 .awb-chat-entry__messages {
@@ -588,14 +596,13 @@ button {
 .awb-chat-entry__identity {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   min-height: 0;
 }
 
-.awb-chat-entry__meta {
-  display: flex;
-  justify-content: flex-start;
-  align-items: center;
-  gap: 8px;
+.awb-chat-entry__timestamp {
+  flex: 0 0 auto;
   font-size: 0.71rem;
   color: var(--awb-ink-faint);
   font-family: var(--awb-font-mono);
@@ -717,12 +724,20 @@ button {
   color: var(--awb-ink-muted);
 }
 
+.awb-message__content img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-left: auto;
+  margin-right: auto;
+}
+
 .awb-turn__process {
   display: grid;
   gap: 10px;
-  margin-top: 4px;
-  padding-top: 12px;
-  border-top: 1px solid var(--awb-rule);
+  margin-bottom: 4px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--awb-rule);
 }
 
 .awb-turn__process-toggle {
@@ -760,9 +775,64 @@ button {
   text-decoration: underline;
 }
 
+.awb-turn__process-toggle.is-history-divider {
+  display: grid;
+  grid-template-columns: minmax(32px, 1fr) auto minmax(32px, 1fr);
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+  font-family: var(--awb-font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.awb-turn__process-toggle.is-history-divider span:first-child,
+.awb-turn__process-toggle.is-history-divider span:last-child {
+  height: 1px;
+  background: var(--awb-rule);
+}
+
+.awb-turn__process-toggle.is-history-divider span:nth-child(2) {
+  color: var(--awb-ink-muted);
+}
+
+.awb-turn__process-toggle.is-history-divider:hover span:nth-child(2) {
+  color: var(--awb-ink-strong);
+  text-decoration: underline;
+}
+
 .awb-turn-process {
   display: grid;
   gap: 10px;
+}
+
+.awb-turn-process__history {
+  display: grid;
+  gap: 10px;
+}
+
+.awb-turn-process__history-entry {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 5px;
+  border: 1px solid var(--awb-rule);
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.awb-turn-process__history-entry.is-user {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.awb-turn-process__history-identity {
+  display: flex;
+  align-items: center;
+}
+
+.awb-turn-process__history-messages {
+  display: grid;
+  gap: 8px;
 }
 
 .awb-turn-process__section {
@@ -793,6 +863,70 @@ button {
   text-transform: uppercase;
   color: var(--awb-ink-faint);
   font-family: var(--awb-font-mono);
+}
+
+.awb-code-comment {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 0.72rem;
+  padding: 12px;
+  border: 1px solid rgba(145, 141, 142, 0.28);
+  border-radius: 6px;
+  background: rgba(145, 141, 142, 0.08);
+}
+
+.awb-code-comment:last-child {
+  margin-bottom: 0;
+}
+
+.awb-code-comment__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.awb-code-comment__eyebrow,
+.awb-code-comment__priority {
+  font-family: var(--awb-font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.awb-code-comment__eyebrow {
+  color: var(--awb-ink-faint);
+}
+
+.awb-code-comment__priority {
+  color: var(--awb-ink-strong);
+}
+
+.awb-code-comment__title,
+.awb-code-comment__body,
+.awb-code-comment__meta {
+  margin: 0;
+}
+
+.awb-code-comment__title {
+  font-size: 0.88rem;
+  line-height: 1.4;
+  color: var(--awb-ink-strong);
+}
+
+.awb-code-comment__title p,
+.awb-code-comment__body p {
+  margin: 0;
+}
+
+.awb-code-comment__body {
+  font-size: 0.84rem;
+  line-height: 1.55;
+  color: var(--awb-ink);
+}
+
+.awb-code-comment__meta code {
+  font-size: 0.72rem;
 }
 
 .awb-composer {
@@ -1684,6 +1818,9 @@ button {
 
 .awb-inline-image-button {
   display: block;
+  max-width: 100%;
+  margin-left: auto;
+  margin-right: auto;
   padding: 0;
   border: 0;
   background: transparent;
@@ -1691,6 +1828,36 @@ button {
 
 .awb-inline-image-button img {
   display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.awb-mermaid {
+  display: grid;
+  justify-items: center;
+  margin: 0 0 0.72rem;
+}
+
+.awb-mermaid__surface {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.awb-mermaid__surface svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.awb-mermaid__fallback {
+  width: 100%;
+}
+
+.awb-mermaid__error {
+  margin-top: 6px;
+  color: var(--awb-ink-muted);
+  font-size: 0.76rem;
 }
 
 .awb-turn-changes {
@@ -2087,5 +2254,9 @@ button {
 
   .awb-transcript {
     padding: 12px;
+  }
+
+  .awb-chat-entry {
+    padding: 10px 16px 12px;
   }
 }

@@ -516,7 +516,7 @@ describe("transcript view model", () => {
     });
   });
 
-  it("marks only the row containing turn.finalMessageId as the final response row", () => {
+  it("splits completed assistant history so only the final message row carries turn.finalMessageId", () => {
     const store = createRendererStore();
     store.hydrateSnapshot(
       parseDomainSnapshot({
@@ -605,14 +605,30 @@ describe("transcript view model", () => {
       buildParticipantDirectory([])
     );
 
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(3);
     expect(rows[0]).toMatchObject({
       messageRole: "user",
       isFinalResponseRow: false
     });
     expect(rows[1]).toMatchObject({
       messageRole: "assistant",
-      isFinalResponseRow: true
+      isFinalResponseRow: false,
+      blocks: [
+        expect.objectContaining({
+          blockId: "message-assistant-1:md",
+          text: "Thinking aloud."
+        })
+      ]
+    });
+    expect(rows[2]).toMatchObject({
+      messageRole: "assistant",
+      isFinalResponseRow: true,
+      blocks: [
+        expect.objectContaining({
+          blockId: "message-assistant-2:md",
+          text: "Final answer."
+        })
+      ]
     });
   });
 });

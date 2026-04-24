@@ -150,4 +150,113 @@ describe("MessageMarkdownView", () => {
     expect(html).toContain("<img");
     expect(html).toContain('src="data:image/png;base64,AAAA"');
   });
+
+  it("renders closed mermaid fences as diagram containers with code fallback", () => {
+    const html = renderToStaticMarkup(
+      <MessageMarkdownView
+        block={{
+          blockId: "message-4b:md",
+          messageId: "message-4b",
+          sessionId: "session-1",
+          turnId: "turn-1",
+          role: "assistant",
+          kind: "markdown",
+          text: "Before\n\n```mermaid\ngraph TD\n  A --> B\n```\n\nAfter",
+          actor: {
+            participantId: "participant-1",
+            engineId: "agent-codex"
+          },
+          startedAt: "2026-04-17T00:00:00.000Z"
+        }}
+      />
+    );
+
+    expect(html).toContain("Before");
+    expect(html).toContain('class="awb-mermaid"');
+    expect(html).toContain("graph TD");
+    expect(html).toContain("A --&gt; B");
+    expect(html).toContain("After");
+    expect(html).not.toContain("language-mermaid");
+  });
+
+  it("keeps incomplete mermaid fences as normal markdown code", () => {
+    const html = renderToStaticMarkup(
+      <MessageMarkdownView
+        block={{
+          blockId: "message-4c:md",
+          messageId: "message-4c",
+          sessionId: "session-1",
+          turnId: "turn-1",
+          role: "assistant",
+          kind: "markdown",
+          text: "```mermaid\ngraph TD\n  A --> B",
+          actor: {
+            participantId: "participant-1",
+            engineId: "agent-codex"
+          },
+          startedAt: "2026-04-17T00:00:00.000Z"
+        }}
+      />
+    );
+
+    expect(html).toContain("language-mermaid");
+    expect(html).toContain("graph TD");
+    expect(html).not.toContain('class="awb-mermaid"');
+  });
+
+  it("renders code review findings as a readable card instead of raw directive text", () => {
+    const html = renderToStaticMarkup(
+      <MessageMarkdownView
+        block={{
+          blockId: "message-5:md",
+          messageId: "message-5",
+          sessionId: "session-1",
+          turnId: "turn-1",
+          role: "assistant",
+          kind: "markdown",
+          text: '::code-comment{title="[P2] Off-by-one" body="Loop iterates past the end when length is 0." file="I:/repo/src/foo.ts" start=10 end=11 priority=2}',
+          actor: {
+            participantId: "participant-1",
+            engineId: "agent-codex"
+          },
+          startedAt: "2026-04-17T00:00:00.000Z"
+        }}
+      />
+    );
+
+    expect(html).toContain('class="awb-code-comment"');
+    expect(html).toContain("Finding");
+    expect(html).toContain("[P2] Off-by-one");
+    expect(html).toContain("Loop iterates past the end when length is 0.");
+    expect(html).toContain("I:/repo/src/foo.ts:10-11");
+    expect(html).toContain("P2");
+    expect(html).not.toContain("::code-comment{");
+  });
+
+  it("renders finding inline code and keeps Windows paths separate from locations", () => {
+    const html = renderToStaticMarkup(
+      <MessageMarkdownView
+        block={{
+          blockId: "message-6:md",
+          messageId: "message-6",
+          sessionId: "session-1",
+          turnId: "turn-1",
+          role: "assistant",
+          kind: "markdown",
+          text: '::code-comment{title="[P2] \`finalMessageId\` drift" body="When \`turn.completed\` lands before \`message.completed\`, the fallback can stick." file="I:\\\\gpt-projects\\\\agent-wrappers\\\\another-workbench\\\\packages\\\\core\\\\src\\\\domain-projector.ts" start=326 end=434 priority=2 confidence=0.84}',
+          actor: {
+            participantId: "participant-1",
+            engineId: "agent-codex"
+          },
+          startedAt: "2026-04-17T00:00:00.000Z"
+        }}
+      />
+    );
+
+    expect(html).toContain("<code>finalMessageId</code>");
+    expect(html).toContain("<code>turn.completed</code>");
+    expect(html).toContain("<code>message.completed</code>");
+    expect(html).toContain("I:\\gpt-projects\\agent-wrappers\\another-workbench\\packages\\core\\src\\domain-projector.ts:326-434");
+    expect(html).not.toContain("start=326");
+  });
 });

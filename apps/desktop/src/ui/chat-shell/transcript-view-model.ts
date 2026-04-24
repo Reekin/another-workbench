@@ -131,8 +131,25 @@ const sortTurnsForTranscript = (turns: Turn[]): Turn[] =>
     return left.turnId.localeCompare(right.turnId);
   });
 
+const splitBlocksByMessageId = (blocks: MessageBlock[]): MessageBlock[][] => {
+  const groups: MessageBlock[][] = [];
+
+  for (const block of blocks) {
+    const current = groups.at(-1);
+    const currentMessageId = current?.[0]?.messageId;
+    if (!current || currentMessageId !== block.messageId) {
+      groups.push([block]);
+      continue;
+    }
+    current.push(block);
+  }
+
+  return groups;
+};
+
 const splitBlocksByRole = (
-  blocks: MessageBlock[]
+  blocks: MessageBlock[],
+  finalMessageId?: string
 ): Array<{ role: MessageRole; blocks: MessageBlock[] }> => {
   const groups: Array<{ role: MessageRole; blocks: MessageBlock[] }> = [];
 
@@ -148,7 +165,29 @@ const splitBlocksByRole = (
     current.blocks.push(block);
   }
 
-  return groups;
+  if (!finalMessageId) {
+    return groups;
+  }
+
+  return groups.flatMap((group) => {
+    if (group.role !== "assistant") {
+      return [group];
+    }
+    const messageGroups = splitBlocksByMessageId(group.blocks);
+    if (messageGroups.length <= 1) {
+      return [group];
+    }
+    const containsFinalMessage = messageGroups.some(
+      (messageGroup) => messageGroup[0]?.messageId === finalMessageId
+    );
+    if (!containsFinalMessage) {
+      return [group];
+    }
+    return messageGroups.map((messageGroup) => ({
+      role: group.role,
+      blocks: messageGroup
+    }));
+  });
 };
 
 const resolveTurnIdentity = (
@@ -195,7 +234,7 @@ export const buildTurnTranscriptRows = (
     const terminalStreams = selectTerminalStreamsForTurn(state, turn);
     const approvals = selectApprovalRequestsForTurn(state, turn);
 
-    const blockGroups = splitBlocksByRole(blocks);
+    const blockGroups = splitBlocksByRole(blocks, turn.finalMessageId);
     const hasProcessDetails =
       toolCalls.length > 0 || terminalStreams.length > 0 || approvals.length > 0;
 

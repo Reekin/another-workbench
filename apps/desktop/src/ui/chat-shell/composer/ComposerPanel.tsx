@@ -29,11 +29,6 @@ const primaryLabel = (intent: ComposerIntent): string => {
   }
 };
 
-const composerPlaceholder = (supportsAttachments: boolean): string =>
-  supportsAttachments
-    ? "Message the active session, use / for actions, $ for skills, or drop files here..."
-    : "Message the active session, use / for actions or $ for skills...";
-
 export const ComposerPanel = ({
   isDropTarget,
   fileInputRef,
@@ -207,7 +202,6 @@ export const ComposerPanel = ({
         onKeyUp={(event) => onTextareaSelect(event.currentTarget.selectionStart ?? 0)}
         onKeyDown={(event) => void onInputKeyDown(event)}
         onPaste={onPaste}
-        placeholder={composerPlaceholder(supportsAttachments)}
       />
       <ComposerSuggestions
         suggestions={suggestions}
@@ -216,18 +210,8 @@ export const ComposerPanel = ({
       />
     </div>
     <div className="awb-composer__actions awb-composer-panel__actions">
-      <ComposerStatusBar status={status} intent={intent} />
+      <ComposerStatusBar status={status} />
       <div className="awb-composer__buttons">
-        {supportsAttachments ? (
-          <button
-            type="button"
-            className="awb-ghost-button"
-            onClick={onPickAttachments}
-            disabled={isDispatching}
-          >
-            Attach files
-          </button>
-        ) : null}
         {canQueue ? (
           <button
             type="button"

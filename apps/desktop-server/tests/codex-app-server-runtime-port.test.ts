@@ -267,6 +267,45 @@ describe("Codex app-server runtime port", () => {
     expect(finalText).not.toContain('"approvalPolicy":"on-request"');
   });
 
+  it("uses command-scoped cwd when starting a Codex thread", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const completedMessages: Array<Record<string, unknown>> = [];
+    port.subscribe((event) => {
+      if (event.method === "message.completed") {
+        completedMessages.push(event.params);
+      }
+    });
+
+    await port.start({
+      cwd: "D:/workspace/another-workbench/apps/desktop"
+    });
+    await port.request({
+      id: "turn-thread-start-command-cwd",
+      method: "turn/start",
+      params: {
+        sessionId: "session-command-cwd",
+        content: "__THREAD_START_PARAMS__",
+        cwd: "D:/workspace"
+      }
+    });
+
+    await waitFor(() =>
+      completedMessages.some((params) => typeof params.finalText === "string")
+    );
+
+    const finalText = String(
+      completedMessages.find((params) => typeof params.finalText === "string")?.finalText
+    );
+
+    expect(finalText).toContain('"cwd":"D:/workspace"');
+  });
+
   it("maps subagent collaboration items into tool activity and child session events", async () => {
     const port = createCodexAppServerRuntimePort({
       commandPath: process.execPath,

@@ -418,13 +418,23 @@ export class WorkbenchShellService {
     sessionId: string;
     conversationId: string;
   }> {
+    const registry = this.requireWorkspaceRegistry();
+    await registry.ready();
+    const workspace = registry.getWorkspace(input.workspaceId);
+    if (!workspace) {
+      throw new Error(`Workspace not found: ${input.workspaceId}`);
+    }
+    const metadata = {
+      ...(input.metadata ?? {}),
+      cwd: workspace.absolutePath
+    };
     const session = await this.runtimeService.createSession({
       type: "createSession",
       engineId: input.engineId,
       workspaceId: input.workspaceId,
       conversationId: input.conversationId,
       sessionProfile: input.sessionProfile,
-      metadata: input.metadata
+      metadata
     });
     await this.sessionCatalog.markSessionRead(session.sessionId);
     return {

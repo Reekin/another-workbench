@@ -173,6 +173,90 @@ describe("RuntimeOrchestrator", () => {
     });
   });
 
+  it("forwards session working directories to adapters generically", async () => {
+    const executeCommand = vi.fn().mockResolvedValue({
+      commandId: "send-1",
+      commandType: "sendUserMessage",
+      accepted: true
+    });
+    const adapter: AgentAdapter = {
+      id: "acp-adapter",
+      kind: "acp",
+      getLifecycleState: () => "idle",
+      initialize: vi.fn().mockResolvedValue(undefined),
+      executeCommand,
+      subscribe: vi.fn().mockReturnValue(() => {}),
+      dispose: vi.fn().mockResolvedValue(undefined)
+    };
+
+    let orchestrator: RuntimeOrchestrator | undefined;
+    const domainService = new DomainService({
+      now: () => "2026-04-20T00:04:00Z",
+      createSessionId: () => "session-cwd",
+      assertEngineRegistered: (engineId) =>
+        orchestrator?.assertEngineRegistered(engineId),
+      resolveEngineCapabilities: (engineId) =>
+        orchestrator?.getEngineCapabilities(engineId) ?? [],
+      publishRuntimeEvent: () => {}
+    });
+
+    orchestrator = new RuntimeOrchestrator({
+      domainService,
+      sessionIndexSyncService: {
+        syncSession: vi.fn().mockResolvedValue(undefined),
+        syncRelation: vi.fn().mockResolvedValue(undefined),
+        markSessionUnreadCompleted: vi.fn().mockResolvedValue(undefined)
+      } as never,
+      workspaceSelectionService: {
+        activateSelection: vi.fn().mockResolvedValue(undefined),
+        selectWorkspace: vi.fn().mockResolvedValue({
+          workspaceId: "workspace-1"
+        })
+      } as never,
+      publishRuntimeEvent: () => {},
+      createConversationId: () => "conversation-cwd",
+      agentBindings: [
+        {
+          descriptor: {
+            engineId: "pi-acp",
+            displayName: "Pi",
+            capabilities: ["chat"]
+          },
+          adapter
+        }
+      ]
+    });
+
+    const session = await orchestrator.createSession({
+      engineId: "pi-acp",
+      workspaceId: "workspace-1",
+      metadata: {
+        cwd: "I:/repo"
+      }
+    });
+
+    await orchestrator.executeCommand({
+      commandId: "send-1",
+      command: {
+        type: "sendUserMessage",
+        sessionId: session.sessionId,
+        messageId: "message-1",
+        content: "hello",
+        attachments: []
+      }
+    });
+
+    expect(executeCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: expect.objectContaining({
+          type: "sendUserMessage",
+          sessionId: "session-cwd",
+          cwd: "I:/repo"
+        })
+      })
+    );
+  });
+
   it("persists a session execution profile snapshot for create and resume flows", async () => {
     const syncSession = vi.fn().mockResolvedValue(undefined);
 

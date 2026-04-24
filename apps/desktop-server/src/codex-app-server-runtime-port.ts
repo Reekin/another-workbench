@@ -616,7 +616,11 @@ export class CodexAppServerRuntimePort
     const attachments = Array.isArray(payload.params.attachments)
       ? (payload.params.attachments as Attachment[])
       : [];
-    const threadId = await this.ensureThreadForSession(sessionId);
+    const cwd =
+      typeof payload.params.cwd === "string" && payload.params.cwd.trim().length > 0
+        ? payload.params.cwd
+        : undefined;
+    const threadId = await this.ensureThreadForSession(sessionId, cwd);
     const input = buildCodexTurnInput(content, attachments);
 
     const result = (await this.rpc("turn/start", {
@@ -693,7 +697,10 @@ export class CodexAppServerRuntimePort
     this.pendingApprovalResolutionsById.set(requestId, { action });
   }
 
-  private async ensureThreadForSession(sessionId: string): Promise<string> {
+  private async ensureThreadForSession(
+    sessionId: string,
+    cwd?: string
+  ): Promise<string> {
     const existing = this.threadIdBySessionId.get(sessionId);
     if (existing) {
       return existing;
@@ -706,7 +713,7 @@ export class CodexAppServerRuntimePort
       persistExtendedHistory: true
     };
 
-    const resolvedCwd = selected.cwd ?? this.startConfig.cwd;
+    const resolvedCwd = cwd ?? selected.cwd ?? this.startConfig.cwd;
     if (resolvedCwd) {
       threadStartParams.cwd = resolvedCwd;
     }

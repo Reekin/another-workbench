@@ -66,6 +66,17 @@ const buildSessionSnapshot = (sessionId = "session-1") => ({
   sessionRelations: []
 });
 
+const buildWorkspaceRegistry = (absolutePath = "I:/repo") => ({
+  ready: vi.fn().mockResolvedValue(undefined),
+  getWorkspace: vi.fn().mockReturnValue({
+    workspaceId: "workspace-1",
+    absolutePath,
+    label: "repo",
+    createdAt: "2026-04-19T00:00:00.000Z",
+    updatedAt: "2026-04-19T00:00:00.000Z"
+  })
+});
+
 describe("WorkbenchShellService", () => {
   it("serves engine registry and surface from injected engine-control services", () => {
     const service = new WorkbenchShellService({
@@ -406,7 +417,8 @@ describe("WorkbenchShellService", () => {
     const markSessionRead = vi.fn().mockResolvedValue(undefined);
     const service = new WorkbenchShellService({
       runtimeService: {
-        createSession
+        createSession,
+        getWorkspaceRegistry: () => buildWorkspaceRegistry("I:/repo")
       } as never,
       sessionCatalog: {
         markSessionRead
@@ -436,7 +448,9 @@ describe("WorkbenchShellService", () => {
       sessionProfile: {
         modeId: "danger-full-access"
       },
-      metadata: undefined
+      metadata: {
+        cwd: "I:/repo"
+      }
     });
     expect(markSessionRead).toHaveBeenCalledWith("session-created");
   });
@@ -600,7 +614,8 @@ describe("WorkbenchShellService", () => {
     const markSessionRead = vi.fn().mockResolvedValue(undefined);
     const service = new WorkbenchShellService({
       runtimeService: {
-        createSession
+        createSession,
+        getWorkspaceRegistry: () => buildWorkspaceRegistry("I:/repo")
       } as never,
       sessionCatalog: {
         markSessionRead
@@ -623,7 +638,9 @@ describe("WorkbenchShellService", () => {
       workspaceId: "workspace-1",
       engineId: "codex",
       conversationId: undefined,
-      metadata: undefined
+      metadata: {
+        cwd: "I:/repo"
+      }
     });
     expect(markSessionRead).toHaveBeenCalledWith("session-new");
   });

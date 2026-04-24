@@ -470,6 +470,10 @@ class PiAcpRuntimePort
     const attachments = Array.isArray(payload.params.attachments)
       ? (payload.params.attachments as Attachment[])
       : [];
+    const cwd =
+      typeof payload.params.cwd === "string" && payload.params.cwd.trim().length > 0
+        ? payload.params.cwd
+        : undefined;
     if (!sessionId) {
       return {
         id: payload.id,
@@ -482,7 +486,7 @@ class PiAcpRuntimePort
     }
 
     try {
-      const backingSession = await this.ensureBackingSession(sessionId);
+      const backingSession = await this.ensureBackingSession(sessionId, cwd);
       const turnState: TurnState = {
         sessionId,
         turnId: `acp-turn-${randomUUID()}`,
@@ -617,14 +621,15 @@ class PiAcpRuntimePort
   }
 
   private async ensureBackingSession(
-    workbenchSessionId: string
+    workbenchSessionId: string,
+    cwdOverride?: string
   ): Promise<BackingSession> {
     const existing = this.backingSessionByWorkbenchId.get(workbenchSessionId);
     if (existing) {
       return existing;
     }
 
-    const cwd = this.resolveSessionCwd();
+    const cwd = this.resolveSessionCwd(cwdOverride);
     const response = await this.requireConnection().newSession({
       cwd,
       mcpServers: []
@@ -640,9 +645,10 @@ class PiAcpRuntimePort
     return session;
   }
 
-  private resolveSessionCwd(): string {
+  private resolveSessionCwd(cwdOverride?: string): string {
     const selectedConfig = resolveSelectedConfig(this.startConfig);
     return (
+      cwdOverride ??
       selectedConfig?.cwd ??
       this.startConfig.cwd ??
       process.cwd()

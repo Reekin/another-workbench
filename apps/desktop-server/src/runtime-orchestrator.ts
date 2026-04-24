@@ -351,8 +351,30 @@ export class RuntimeOrchestrator {
 
     await this.ensureAdapterReady(engineId);
     hooks.before?.();
-    const result = await binding.adapter.executeCommand(envelope);
+    const result = await binding.adapter.executeCommand(
+      this.withSessionWorkingDirectory(envelope, session)
+    );
     return this.accept(envelope, result.accepted);
+  }
+
+  private withSessionWorkingDirectory(
+    envelope: CommandEnvelope,
+    session: ReturnType<DomainService["requireSession"]>
+  ): CommandEnvelope {
+    const cwd =
+      session.metadata && typeof session.metadata.cwd === "string"
+        ? session.metadata.cwd
+        : undefined;
+    if (!cwd || !("sessionId" in envelope.command)) {
+      return envelope;
+    }
+    return {
+      ...envelope,
+      command: {
+        ...envelope.command,
+        cwd
+      } as CommandEnvelope["command"]
+    };
   }
 
   private bindRuntime(sessionId: string): void {

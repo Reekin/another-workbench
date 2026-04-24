@@ -76,7 +76,8 @@ const zSendUserMessageCommand = z.object({
   sessionId: zSessionId,
   messageId: zMessageId,
   content: z.string(),
-  attachments: z.array(zAttachmentSchema).default([])
+  attachments: z.array(zAttachmentSchema).default([]),
+  cwd: z.string().min(1).optional()
 });
 
 const zSteerTurnCommand = z.object({
@@ -85,14 +86,16 @@ const zSteerTurnCommand = z.object({
   turnId: zTurnId,
   messageId: zMessageId,
   content: z.string(),
-  attachments: z.array(zAttachmentSchema).default([])
+  attachments: z.array(zAttachmentSchema).default([]),
+  cwd: z.string().min(1).optional()
 });
 
 const zInterruptTurnCommand = z.object({
   type: z.literal("interruptTurn"),
   sessionId: zSessionId,
   turnId: zTurnId,
-  reason: z.string().optional()
+  reason: z.string().optional(),
+  cwd: z.string().min(1).optional()
 });
 
 const zRespondApprovalCommand = z.object({
@@ -100,7 +103,8 @@ const zRespondApprovalCommand = z.object({
   sessionId: zSessionId,
   requestId: zRequestId,
   action: z.enum(["approve", "deny", "defer"]),
-  note: z.string().optional()
+  note: z.string().optional(),
+  cwd: z.string().min(1).optional()
 });
 
 const zDisposeSessionCommand = z.object({

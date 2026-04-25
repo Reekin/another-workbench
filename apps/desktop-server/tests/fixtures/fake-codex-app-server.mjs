@@ -284,6 +284,58 @@ const emitFileChangePath = ({ threadId, turnId }) => {
   });
 };
 
+const emitRuntimeErrorPath = ({ threadId, turnId }) => {
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "active" }
+    }
+  });
+  send({
+    method: "turn/started",
+    params: {
+      threadId,
+      turn: { id: turnId }
+    }
+  });
+  send({
+    method: "error",
+    params: {
+      threadId,
+      turnId,
+      error: {
+        message: "Boom from app-server",
+        codexErrorInfo: "other",
+        additionalDetails: "extra details"
+      },
+      willRetry: false
+    }
+  });
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "idle" }
+    }
+  });
+  send({
+    method: "turn/completed",
+    params: {
+      threadId,
+      turn: {
+        id: turnId,
+        status: "failed",
+        error: {
+          message: "Boom from app-server",
+          codexErrorInfo: "other",
+          additionalDetails: "extra details"
+        }
+      }
+    }
+  });
+};
+
 const emitApprovalResolution = ({ threadId, turnId, requestId, action }) => {
   const commandId = `cmd-${turnId}`;
 
@@ -461,6 +513,11 @@ const handleRequest = (payload) => {
 
           if (prompt.includes("file-change")) {
             emitFileChangePath({ threadId, turnId });
+            return;
+          }
+
+          if (prompt.includes("runtime-error")) {
+            emitRuntimeErrorPath({ threadId, turnId });
             return;
           }
 

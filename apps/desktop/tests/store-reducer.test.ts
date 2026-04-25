@@ -814,6 +814,60 @@ describe("desktop store reducer", () => {
     expect(state.eventStream.seenEventIds["evt-2050"]).toBe(true);
   });
 
+  it("renders runtime errors as failed turn content when no assistant message exists", () => {
+    let state = createInitialRendererStoreState();
+
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelopeAt("evt-session-created-error", "1", "2026-04-17T00:00:00.000Z", {
+          type: "session.created",
+          conversationId: "conversation-a",
+          sessionId: "session-a",
+          engineId: "codex",
+          status: "running"
+        })
+      )
+    );
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelopeAt("evt-turn-started-error", "2", "2026-04-17T00:00:01.000Z", {
+          type: "turn.started",
+          sessionId: "session-a",
+          turnId: "turn-error"
+        })
+      )
+    );
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelopeAt("evt-runtime-error", "3", "2026-04-17T00:00:02.000Z", {
+          type: "runtime.error",
+          sessionId: "session-a",
+          turnId: "turn-error",
+          code: "other",
+          message: "Client sent an HTTP request to an HTTPS server.",
+          recoverable: false
+        })
+      )
+    );
+
+    expect(state.entities.sessions["session-a"]).toMatchObject({
+      status: "error",
+      lastTurnId: "turn-error"
+    });
+    expect(state.entities.turns["turn-error"]).toMatchObject({
+      status: "completed",
+      finishReason: "failed",
+      messageIds: ["runtime-error:turn-error"]
+    });
+    expect(state.entities.messageBlocks["runtime-error:turn-error:md"]).toMatchObject({
+      role: "system",
+      text: "Runtime error (other): Client sent an HTTP request to an HTTPS server."
+    });
+  });
+
   it("disposes a session by pruning session-scoped entities and rebuilding indexes only", () => {
     let state = createInitialRendererStoreState();
 

@@ -28,6 +28,13 @@ const maxSeenEventIds = 2_048;
 
 type ActorFields = { participantId?: string; engineId?: string };
 
+const runtimeErrorMessageId = (turnId: string): string => `runtime-error:${turnId}`;
+
+const formatRuntimeErrorText = (
+  event: Extract<RuntimeEvent, { type: "runtime.error" }>
+): string =>
+  event.code ? `Runtime error (${event.code}): ${event.message}` : `Runtime error: ${event.message}`;
+
 const buildActorRef = (event: ActorFields) =>
   event.participantId || event.engineId
     ? {
@@ -996,7 +1003,7 @@ const applyRuntimeEvent = (
       );
     }
     case "runtime.error": {
-      return {
+      const withError = {
         ...withEventType(state, event.type),
         lastError: {
           code: event.code,
@@ -1004,6 +1011,63 @@ const applyRuntimeEvent = (
           recoverable: event.recoverable
         }
       };
+      if (!event.sessionId || !event.turnId) {
+        return withError;
+      }
+
+      const existingTurn = withError.entities.turns[event.turnId];
+      const messageId =
+        existingTurn?.messageIds.find((candidateMessageId) => {
+          const block = withError.entities.messageBlocks[`${candidateMessageId}${markdownBlockSuffix}`];
+          return block !== undefined && (block.text ?? "").trim().length === 0;
+        }) ?? runtimeErrorMessageId(event.turnId);
+      const blockId = `${messageId}${markdownBlockSuffix}`;
+      const existingBlock = withError.entities.messageBlocks[blockId];
+      const withBlock = upsertMessageBlock(withError, {
+        blockId,
+        messageId,
+        sessionId: event.sessionId,
+        turnId: event.turnId,
+        role: "system",
+        kind: "markdown",
+        text: formatRuntimeErrorText(event),
+        actor: existingBlock?.actor,
+        startedAt: existingBlock?.startedAt ?? timestamp,
+        completedAt: timestamp
+      });
+      const withTurnCollection = appendTurnCollection(
+        withBlock,
+        event.turnId,
+        event.sessionId,
+        "messageIds",
+        messageId,
+        timestamp
+      );
+      const turn = withTurnCollection.entities.turns[event.turnId];
+      const withTurn = upsertTurn(withTurnCollection, {
+        turnId: event.turnId,
+        sessionId: event.sessionId,
+        status: "completed",
+        finishReason: "failed",
+        startedAt: turn?.startedAt ?? timestamp,
+        completedAt: timestamp,
+        actor: turn?.actor,
+        finalMessageId: turn?.finalMessageId,
+        messageIds: turn?.messageIds ?? [messageId],
+        toolCallIds: turn?.toolCallIds ?? [],
+        terminalIds: turn?.terminalIds ?? [],
+        approvalRequestIds: turn?.approvalRequestIds ?? []
+      });
+      const existingSession = withTurn.entities.sessions[event.sessionId];
+      if (!existingSession) {
+        return withTurn;
+      }
+      return upsertSession(withTurn, {
+        ...existingSession,
+        status: "error",
+        lastTurnId: event.turnId,
+        updatedAt: timestamp
+      });
     }
     default: {
       return state;

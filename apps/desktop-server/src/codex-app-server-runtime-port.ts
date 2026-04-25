@@ -1010,16 +1010,29 @@ export class CodexAppServerRuntimePort
         return;
       case "error": {
         const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
+        const error = isRecord(params.error) ? params.error : undefined;
+        const codexErrorInfo = error?.codexErrorInfo;
+        const additionalDetails = error?.additionalDetails;
         this.emitEvent("runtime.error", {
           sessionId,
           turnId: typeof params.turnId === "string" ? params.turnId : undefined,
           code:
-            typeof params.code === "string" ? params.code : "CODEX_APP_SERVER_ERROR",
+            typeof codexErrorInfo === "string"
+              ? codexErrorInfo
+              : typeof params.code === "string"
+                ? params.code
+                : "CODEX_APP_SERVER_ERROR",
           message:
-            typeof params.message === "string"
-              ? params.message
+            typeof error?.message === "string"
+              ? error.message
+              : typeof params.message === "string"
+                ? params.message
               : "Unknown codex app-server error",
-          recoverable: false
+          recoverable: false,
+          details:
+            typeof additionalDetails === "string" && additionalDetails
+              ? { additionalDetails }
+              : undefined
         });
         return;
       }

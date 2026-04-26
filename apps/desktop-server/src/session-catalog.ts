@@ -290,6 +290,8 @@ export class SessionCatalogService {
         input.seed.runtimeStatus === "running" ||
         input.seed.runtimeStatus === "awaiting_approval"
           ? "running"
+          : input.activeSessionId === input.seed.sessionId
+            ? "none"
           : input.seed.unreadState === "unread_completed"
             ? "unread_completed"
             : "none",

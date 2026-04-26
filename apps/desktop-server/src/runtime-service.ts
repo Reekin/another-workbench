@@ -74,7 +74,7 @@ export class WorkbenchRuntimeService {
         this.eventBus.publish(event);
       },
       markSessionUnreadCompleted: (sessionId) => {
-        void this.sessionIndexStore?.markSessionUnreadCompleted(sessionId);
+        void this.markSessionUnreadCompleted(sessionId);
       }
     });
     this.eventBus = new RuntimeEventBus({
@@ -161,6 +161,20 @@ export class WorkbenchRuntimeService {
     sessionId: string
   ): string | undefined {
     return this.domainService.resolveConversationIdForSession(sessionId);
+  }
+
+  private async markSessionUnreadCompleted(sessionId: string): Promise<void> {
+    if (!this.sessionIndexStore) {
+      return;
+    }
+    if (this.workspaceRegistry) {
+      await this.workspaceRegistry.ready();
+      if (this.workspaceRegistry.getState().lastActiveSessionId === sessionId) {
+        await this.sessionIndexStore.markSessionRead(sessionId);
+        return;
+      }
+    }
+    await this.sessionIndexStore.markSessionUnreadCompleted(sessionId);
   }
 
   public resolveProviderSessionHandle(

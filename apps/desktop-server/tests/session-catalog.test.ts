@@ -254,7 +254,30 @@ describe("SessionCatalogService", () => {
     });
 
     const runtimeService = {
-      getSnapshot: () => emptySnapshot()
+      getSnapshot: () => ({
+        ...emptySnapshot(),
+        conversations: [
+          {
+            conversationId: "conversation-1",
+            workspaceId: "workspace-1",
+            participantEngineIds: ["codex"],
+            activeSessionId: "session-1",
+            sessionIds: ["session-1"],
+            createdAt: "2026-04-18T00:00:00Z",
+            updatedAt: "2026-04-18T00:00:02Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-1",
+            conversationId: "conversation-1",
+            engineId: "codex",
+            status: "idle",
+            createdAt: "2026-04-18T00:00:01Z",
+            updatedAt: "2026-04-18T00:00:02Z"
+          }
+        ]
+      })
     } as unknown as WorkbenchRuntimeService;
     const service = new SessionCatalogService({
       runtimeService,
@@ -265,5 +288,74 @@ describe("SessionCatalogService", () => {
     await service.markSessionRead("session-1");
 
     expect(indexStore.getEntry("session-1")?.unreadState).toBe("read");
+  });
+
+  it("does not expose an unread dot for the active session", async () => {
+    const baseDir = await createTempDir();
+    const workspaceRegistry = new WorkspaceRegistryService({
+      baseDir
+    });
+    const indexStore = new SessionIndexStore({
+      baseDir
+    });
+    await workspaceRegistry.registerWorkspace({
+      workspaceId: "workspace-1",
+      absolutePath: "I:/workspace-alpha"
+    });
+    await workspaceRegistry.setLastActiveSelection({
+      workspaceId: "workspace-1",
+      sessionId: "session-1"
+    });
+    await indexStore.upsertSession({
+      workspaceId: "workspace-1",
+      session: {
+        sessionId: "session-1",
+        conversationId: "conversation-1",
+        engineId: "codex",
+        createdAt: "2026-04-18T00:00:01Z",
+        updatedAt: "2026-04-18T00:00:02Z"
+      },
+      unreadState: "unread_completed"
+    });
+
+    const runtimeService = {
+      getSnapshot: () => ({
+        ...emptySnapshot(),
+        conversations: [
+          {
+            conversationId: "conversation-1",
+            workspaceId: "workspace-1",
+            participantEngineIds: ["codex"],
+            activeSessionId: "session-1",
+            sessionIds: ["session-1"],
+            createdAt: "2026-04-18T00:00:00Z",
+            updatedAt: "2026-04-18T00:00:02Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-1",
+            conversationId: "conversation-1",
+            engineId: "codex",
+            status: "idle",
+            createdAt: "2026-04-18T00:00:01Z",
+            updatedAt: "2026-04-18T00:00:02Z"
+          }
+        ]
+      })
+    } as unknown as WorkbenchRuntimeService;
+    const service = new SessionCatalogService({
+      runtimeService,
+      workspaceRegistry,
+      sessionIndexStore: indexStore
+    });
+
+    const tree = await service.listWorkspaceTree("workspace-1");
+
+    expect(tree[0]?.sessions[0]).toMatchObject({
+      sessionId: "session-1",
+      isActive: true,
+      statusDot: "none"
+    });
   });
 });

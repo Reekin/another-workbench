@@ -228,7 +228,7 @@ describe("WorkbenchRuntimeService", () => {
     });
   });
 
-  it("marks workspace-backed sessions unread when a turn completes", async () => {
+  it("keeps the active workspace-backed session read when a turn completes", async () => {
     const baseDir = await createTempDir();
     const workspaceRegistry = new WorkspaceRegistryService({
       baseDir,
@@ -265,7 +265,60 @@ describe("WorkbenchRuntimeService", () => {
     await flushAsyncEffects();
 
     expect(service.getSessionIndexStore()?.getEntry("session-1")).toMatchObject({
+      unreadState: "read"
+    });
+  });
+
+  it("marks inactive workspace-backed sessions unread when a turn completes", async () => {
+    const baseDir = await createTempDir();
+    const workspaceRegistry = new WorkspaceRegistryService({
+      baseDir,
+      createWorkspaceId: () => "workspace-1"
+    });
+    await workspaceRegistry.registerWorkspace({
+      workspaceId: "workspace-1",
+      absolutePath: "D:/workspace/another-workbench"
+    });
+
+    const service = createService({
+      persistenceBaseDir: baseDir
+    });
+
+    await service.executeCommand({
+      commandId: "cmd-create-1",
+      command: {
+        type: "createSession",
+        engineId: "codex",
+        workspaceId: "workspace-1"
+      }
+    });
+    await service.executeCommand({
+      commandId: "cmd-create-2",
+      command: {
+        type: "createSession",
+        engineId: "codex",
+        workspaceId: "workspace-1"
+      }
+    });
+
+    service.applyRuntimeEvent({
+      type: "turn.started",
+      sessionId: "session-1",
+      turnId: "turn-1"
+    });
+    service.applyRuntimeEvent({
+      type: "turn.completed",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      finishReason: "completed"
+    });
+    await flushAsyncEffects();
+
+    expect(service.getSessionIndexStore()?.getEntry("session-1")).toMatchObject({
       unreadState: "unread_completed"
+    });
+    expect(service.getSessionIndexStore()?.getEntry("session-2")).toMatchObject({
+      unreadState: "read"
     });
   });
 

@@ -54,6 +54,43 @@ describe("desktop store reducer", () => {
     ]);
   });
 
+  it("stores session context usage from incremental events", () => {
+    let state = createInitialRendererStoreState();
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-session-created", "1", {
+          type: "session.created",
+          conversationId: "conversation-a",
+          sessionId: "session-a",
+          engineId: "agent-a",
+          status: "idle"
+        })
+      )
+    );
+
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-context", "2", {
+          type: "session.context.updated",
+          sessionId: "session-a",
+          contextUsage: {
+            usedTokens: 42000,
+            contextWindow: 128000,
+            lastUsedTokens: 2200
+          }
+        })
+      )
+    );
+
+    expect(state.entities.sessions["session-a"]?.contextUsage).toMatchObject({
+      usedTokens: 42000,
+      contextWindow: 128000,
+      lastUsedTokens: 2200
+    });
+  });
+
   it("maintains conversation/turn aggregate links during incremental ingestion", () => {
     let state = createInitialRendererStoreState();
 
@@ -155,6 +192,39 @@ describe("desktop store reducer", () => {
     const conversation = state.entities.conversations["conversation-a"];
     expect(conversation.sessionIds).toContain("session-a");
     expect(conversation.participantEngineIds).toContain("agent-a");
+  });
+
+  it("updates session titles from session update events", () => {
+    let state = createInitialRendererStoreState();
+
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-session-created", "1", {
+          type: "session.created",
+          conversationId: "conversation-a",
+          sessionId: "session-a",
+          engineId: "agent-a",
+          status: "idle"
+        })
+      )
+    );
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-session-title", "2", {
+          type: "session.updated",
+          conversationId: "conversation-a",
+          sessionId: "session-a",
+          status: "idle",
+          title: "Mini PC research"
+        })
+      )
+    );
+
+    expect(state.entities.sessions["session-a"]).toMatchObject({
+      title: "Mini PC research"
+    });
   });
 
   it("marks terminal streams as failed when exitCode is non-zero", () => {
@@ -1017,5 +1087,132 @@ describe("desktop store reducer", () => {
     expect(state.activeSessionId).toBe("session-b");
     expect(state.entities.sessions["session-b"]).toBeDefined();
     expect(state.entities.turns["turn-b"]).toBeDefined();
+  });
+
+  it("preserves active session while replacing the active session window", () => {
+    let state = createInitialRendererStoreState();
+
+    state = rendererStoreReducer(state, {
+      type: "store/hydrateSnapshot",
+      snapshot: {
+        conversations: [
+          {
+            conversationId: "conversation-a",
+            participantEngineIds: ["agent-a"],
+            sessionIds: ["session-a"],
+            activeSessionId: "session-a",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          },
+          {
+            conversationId: "conversation-b",
+            participantEngineIds: ["agent-b"],
+            sessionIds: ["session-b"],
+            activeSessionId: "session-b",
+            createdAt: "2026-04-17T00:01:00.000Z",
+            updatedAt: "2026-04-17T00:01:00.000Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-a",
+            conversationId: "conversation-a",
+            engineId: "agent-a",
+            status: "idle",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          },
+          {
+            sessionId: "session-b",
+            conversationId: "conversation-b",
+            engineId: "agent-b",
+            status: "idle",
+            createdAt: "2026-04-17T00:01:00.000Z",
+            updatedAt: "2026-04-17T00:01:00.000Z"
+          }
+        ],
+        turns: [],
+        messageBlocks: [],
+        toolCalls: [],
+        terminalStreams: [],
+        approvalRequests: [],
+        participants: [],
+        sessionRelations: []
+      }
+    });
+    state = rendererStoreReducer(state, {
+      type: "store/setActiveConversation",
+      conversationId: "conversation-a"
+    });
+    state = rendererStoreReducer(state, {
+      type: "store/setActiveSession",
+      sessionId: "session-a"
+    });
+
+    state = rendererStoreReducer(state, {
+      type: "store/hydrateSessionWindow",
+      sessionId: "session-a",
+      mode: "replace",
+      snapshot: {
+        conversations: [
+          {
+            conversationId: "conversation-a",
+            participantEngineIds: ["agent-a"],
+            sessionIds: ["session-a"],
+            activeSessionId: "session-a",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:05.000Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-a",
+            conversationId: "conversation-a",
+            engineId: "agent-a",
+            status: "completed",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:05.000Z",
+            lastTurnId: "turn-a"
+          }
+        ],
+        turns: [
+          {
+            turnId: "turn-a",
+            sessionId: "session-a",
+            status: "completed",
+            startedAt: "2026-04-17T00:00:01.000Z",
+            completedAt: "2026-04-17T00:00:05.000Z",
+            messageIds: ["message-a"],
+            toolCallIds: [],
+            terminalIds: [],
+            approvalRequestIds: []
+          }
+        ],
+        messageBlocks: [
+          {
+            blockId: "message-a:md",
+            messageId: "message-a",
+            sessionId: "session-a",
+            turnId: "turn-a",
+            role: "assistant",
+            kind: "markdown",
+            text: "updated",
+            startedAt: "2026-04-17T00:00:01.000Z"
+          }
+        ],
+        toolCalls: [],
+        terminalStreams: [],
+        approvalRequests: [],
+        participants: [],
+        sessionRelations: []
+      }
+    });
+
+    expect(state.activeConversationId).toBe("conversation-a");
+    expect(state.activeSessionId).toBe("session-a");
+    expect(state.entities.conversations["conversation-b"]).toBeDefined();
+    expect(state.entities.sessions["session-b"]).toBeDefined();
+    expect(state.entities.turns["turn-a"]).toBeDefined();
+    expect(state.entities.messageBlocks["message-a:md"]?.text).toBe("updated");
   });
 });

@@ -33,6 +33,7 @@ const codexEventTypeByMethod: Record<string, RuntimeEvent["type"]> = {
   "conversation.updated": "conversation.updated",
   "session.created": "session.created",
   "session.updated": "session.updated",
+  "session.context.updated": "session.context.updated",
   "session.archived": "session.archived",
   "session.disposed": "session.disposed",
   "turn.started": "turn.started",

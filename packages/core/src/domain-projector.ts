@@ -1,4 +1,4 @@
-import type { RuntimeEvent } from "@another-workbench/shared";
+import type { ContextUsage, RuntimeEvent } from "@another-workbench/shared";
 import {
   parseAgentParticipant,
   parseApprovalRequest,
@@ -28,6 +28,7 @@ type SessionRecordInput = {
   archivedAt?: string;
   lastTurnId?: string;
   metadata?: Record<string, unknown>;
+  contextUsage?: ContextUsage;
 };
 
 type TurnRecordInput = {
@@ -201,7 +202,7 @@ export class DomainProjector {
           conversationId: event.conversationId,
           engineId: existing?.engineId ?? unknownAgentId,
           status: event.status,
-          title: existing?.title,
+          title: event.title ?? existing?.title,
           metadata: event.metadata ?? existing?.metadata,
           createdAt: existing?.createdAt ?? timestamp,
           updatedAt: timestamp,
@@ -222,6 +223,18 @@ export class DomainProjector {
               : existingConversation?.activeSessionId
         });
         this.syncParticipantState(event.conversationId, session.engineId);
+        return;
+      }
+      case "session.context.updated": {
+        const existing = this.store.getSession(event.sessionId);
+        if (!existing) {
+          return;
+        }
+        this.upsertSessionRecord({
+          ...existing,
+          contextUsage: event.contextUsage,
+          updatedAt: timestamp
+        });
         return;
       }
       case "session.archived": {
@@ -666,6 +679,7 @@ export class DomainProjector {
       updatedAt: input.updatedAt ?? existing?.updatedAt ?? this.now(),
       archivedAt: input.archivedAt ?? existing?.archivedAt,
       lastTurnId: input.lastTurnId ?? existing?.lastTurnId,
+      contextUsage: input.contextUsage ?? existing?.contextUsage,
       metadata: input.metadata ?? existing?.metadata
     });
     this.store.upsertSession(session);

@@ -3,6 +3,42 @@ import { DomainProjector } from "../src/domain-projector.js";
 import { DomainStore } from "../src/domain-store.js";
 
 describe("DomainProjector", () => {
+  it("projects session context usage", () => {
+    const projector = new DomainProjector();
+
+    projector.apply(
+      {
+        type: "session.created",
+        conversationId: "conversation-a",
+        sessionId: "session-1",
+        engineId: "agent-a",
+        status: "idle"
+      },
+      "2026-04-18T00:00:00.000Z"
+    );
+    projector.apply(
+      {
+        type: "session.context.updated",
+        sessionId: "session-1",
+        contextUsage: {
+          usedTokens: 42000,
+          contextWindow: 128000,
+          inputTokens: 40000,
+          outputTokens: 1200,
+          reasoningOutputTokens: 800,
+          lastUsedTokens: 2200
+        }
+      },
+      "2026-04-18T00:00:01.000Z"
+    );
+
+    expect(projector.store.getSession("session-1")?.contextUsage).toMatchObject({
+      usedTokens: 42000,
+      contextWindow: 128000,
+      lastUsedTokens: 2200
+    });
+  });
+
   it("projects sessions, relations, participants, and filtered snapshots", () => {
     const store = new DomainStore();
     const projector = new DomainProjector({ store });
@@ -420,6 +456,36 @@ describe("DomainProjector", () => {
     });
     expect(projector.store.getConversation("conversation-a")).toMatchObject({
       participantEngineIds: ["agent-a"]
+    });
+  });
+
+  it("projects generated session titles from session updates", () => {
+    const projector = new DomainProjector();
+
+    projector.apply(
+      {
+        type: "session.created",
+        conversationId: "conversation-a",
+        sessionId: "session-1",
+        engineId: "agent-a",
+        status: "idle"
+      },
+      "2026-04-18T00:02:30.000Z"
+    );
+    projector.apply(
+      {
+        type: "session.updated",
+        conversationId: "conversation-a",
+        sessionId: "session-1",
+        status: "running",
+        title: "Mini PC research"
+      },
+      "2026-04-18T00:02:31.000Z"
+    );
+
+    expect(projector.store.getSession("session-1")).toMatchObject({
+      title: "Mini PC research",
+      status: "running"
     });
   });
 

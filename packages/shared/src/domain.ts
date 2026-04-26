@@ -57,6 +57,16 @@ export const zSessionRelationType = z.enum([
   "manual"
 ]);
 
+export const zContextUsageSchema = z.object({
+  usedTokens: z.number().int().nonnegative(),
+  contextWindow: z.number().int().positive().optional(),
+  inputTokens: z.number().int().nonnegative().optional(),
+  cachedInputTokens: z.number().int().nonnegative().optional(),
+  outputTokens: z.number().int().nonnegative().optional(),
+  reasoningOutputTokens: z.number().int().nonnegative().optional(),
+  lastUsedTokens: z.number().int().nonnegative().optional()
+});
+
 export const zConversationSchema = z.object({
   conversationId: zConversationId,
   workspaceId: z.string().min(1).optional(),
@@ -79,6 +89,7 @@ export const zChatSessionSchema = z.object({
   updatedAt: zIsoDateTime,
   archivedAt: zIsoDateTime.optional(),
   lastTurnId: zTurnId.optional(),
+  contextUsage: zContextUsageSchema.optional(),
   metadata: zJsonRecord.optional()
 });
 
@@ -206,6 +217,7 @@ export type ApprovalStatus = z.infer<typeof zApprovalStatus>;
 export type ApprovalKind = z.infer<typeof zApprovalKind>;
 export type ParticipantRole = z.infer<typeof zParticipantRole>;
 export type SessionRelationType = z.infer<typeof zSessionRelationType>;
+export type ContextUsage = z.infer<typeof zContextUsageSchema>;
 
 export type Conversation = z.infer<typeof zConversationSchema>;
 export type ChatSession = z.infer<typeof zChatSessionSchema>;

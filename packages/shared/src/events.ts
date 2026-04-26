@@ -14,12 +14,13 @@ import {
   zToolCallId,
   zTurnId
 } from "./common.js";
-import { zSessionRelationSchema } from "./domain.js";
+import { zContextUsageSchema, zSessionRelationSchema } from "./domain.js";
 
 export const eventTypes = [
   "conversation.updated",
   "session.created",
   "session.updated",
+  "session.context.updated",
   "session.archived",
   "session.disposed",
   "turn.started",
@@ -68,7 +69,14 @@ const zSessionUpdatedEvent = z.object({
   conversationId: zConversationId,
   sessionId: zSessionId,
   status: z.enum(["idle", "running", "awaiting_approval", "error", "completed"]),
+  title: z.string().min(1).optional(),
   metadata: zJsonRecord.optional()
+});
+
+const zSessionContextUpdatedEvent = z.object({
+  type: z.literal("session.context.updated"),
+  sessionId: zSessionId,
+  contextUsage: zContextUsageSchema
 });
 
 const zSessionArchivedEvent = z.object({
@@ -248,6 +256,7 @@ export const zEventSchema = z
     zConversationUpdatedEvent,
     zSessionCreatedEvent,
     zSessionUpdatedEvent,
+    zSessionContextUpdatedEvent,
     zSessionArchivedEvent,
     zSessionDisposedEvent,
     zTurnStartedEvent,

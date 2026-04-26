@@ -18,6 +18,7 @@ export const acpRuntimeEventNames = [
   "conversation.updated",
   "session.created",
   "session.updated",
+  "session.context.updated",
   "session.archived",
   "session.disposed",
   "turn.started",

@@ -579,7 +579,8 @@ const applyRuntimeEvent = (
         updatedAt: timestamp,
         archivedAt: existing?.archivedAt,
         lastTurnId: existing?.lastTurnId,
-        title: existing?.title,
+        title: event.title ?? existing?.title,
+        contextUsage: existing?.contextUsage,
         metadata: event.metadata ?? existing?.metadata
       });
       return ensureConversationSessionLink(
@@ -589,6 +590,17 @@ const applyRuntimeEvent = (
         timestamp,
         existing?.engineId
       );
+    }
+    case "session.context.updated": {
+      const existing = state.entities.sessions[event.sessionId];
+      if (!existing) {
+        return withEventType(state, event.type);
+      }
+      return upsertSession(withEventType(state, event.type), {
+        ...existing,
+        contextUsage: event.contextUsage,
+        updatedAt: timestamp
+      });
     }
     case "session.archived": {
       const existing = state.entities.sessions[event.sessionId];
@@ -1114,11 +1126,25 @@ export const rendererStoreReducer = (
     case "store/hydrateSnapshot":
       return hydrateFromSnapshot(state, action.snapshot);
     case "store/hydrateSessionWindow": {
+      const shouldPreserveActiveSession =
+        action.mode !== "prepend" && state.activeSessionId === action.sessionId;
       const baseState =
         action.mode === "prepend"
           ? state
           : disposeSessionState(state, action.sessionId);
-      return mergeSnapshotIntoState(baseState, action.snapshot);
+      const nextState = mergeSnapshotIntoState(baseState, action.snapshot);
+      if (!shouldPreserveActiveSession) {
+        return nextState;
+      }
+      const restoredSession = nextState.entities.sessions[action.sessionId];
+      if (!restoredSession) {
+        return nextState;
+      }
+      return {
+        ...nextState,
+        activeConversationId: restoredSession.conversationId,
+        activeSessionId: action.sessionId
+      };
     }
     case "store/disposeSession":
       return disposeSessionState(state, action.sessionId);

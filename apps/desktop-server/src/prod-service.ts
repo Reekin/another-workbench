@@ -25,6 +25,11 @@ import { EngineRegistryService } from "./engine-control/engine-registry.js";
 import { EngineCapabilitySurfaceService } from "./engine-control/capability-surface.js";
 import { CodexTurnChangesStore } from "./engine-extensions/codex/turn-changes-store.js";
 import { FileActionService } from "./file-action-service.js";
+import { ErrorLogService } from "./error-log-service.js";
+import {
+  createOpenAiSessionTitleGenerator,
+  type SessionTitleGenerator
+} from "./title-generation-service.js";
 import type { SkillDescriptorRpc } from "@another-workbench/shared";
 
 export type CreateWorkbenchRuntimeServiceOptions = {
@@ -40,6 +45,7 @@ export type CreateWorkbenchRuntimeServiceOptions = {
   }>;
   openFilePath?: (path: string) => Promise<string | void> | string | void;
   revealFilePath?: (path: string) => Promise<string | void> | string | void;
+  titleGenerator?: SessionTitleGenerator;
   now?: () => string;
 };
 
@@ -146,6 +152,11 @@ export const createWorkbenchRuntimeService = (
     now: options.now,
     workspaceRegistry,
     sessionIndexStore,
+    titleGenerator:
+      options.titleGenerator ??
+      createOpenAiSessionTitleGenerator({
+        resolveAuth: () => codexRuntimePort.readOpenAiCompatibleAuth()
+      }),
     agentBindings: [
       {
         descriptor: {
@@ -264,6 +275,10 @@ export const createWorkbenchRuntimeService = (
     fileActionService: new FileActionService({
       openPath: options.openFilePath,
       revealPath: options.revealFilePath
+    }),
+    errorLogService: new ErrorLogService({
+      baseDir: options.persistenceBaseDir,
+      now: options.now
     })
   });
 };

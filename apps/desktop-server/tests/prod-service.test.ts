@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import { createWorkbenchRuntimeService } from "../src/prod-service.js";
 
@@ -29,6 +29,7 @@ describe("prod runtime service", () => {
   const disposers: Array<() => Promise<void>> = [];
 
   afterEach(async () => {
+    vi.unstubAllGlobals();
     while (disposers.length > 0) {
       const dispose = disposers.pop();
       if (dispose) {
@@ -112,6 +113,84 @@ describe("prod runtime service", () => {
     expect(snapshot.terminalStreams.some((stream) =>
       stream.outputText.includes("D:/workspace")
     )).toBe(true);
+  });
+
+  it("borrows Codex auth for first-message title generation", async () => {
+    const previousFakeToken = process.env.FAKE_CODEX_AUTH_TOKEN;
+    const previousFakeBaseUrl = process.env.FAKE_CODEX_AUTH_BASE_URL;
+    process.env.FAKE_CODEX_AUTH_TOKEN = "codex-borrowed-token";
+    process.env.FAKE_CODEX_AUTH_BASE_URL = "https://codex-auth.example.test/v1";
+
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        output_text: "Codex borrowed title"
+      })
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+
+    try {
+      const service = createWorkbenchRuntimeService({
+        codexCommandPath: process.execPath,
+        codexCommandArgs: [codexFixturePath],
+        piAcpCommandPath: process.execPath,
+        piAcpCommandArgs: [piFixturePath]
+      });
+      disposers.push(() => service.dispose());
+
+      await service.executeCommand({
+        commandId: "create-codex-title-session",
+        command: {
+          type: "createSession",
+          engineId: "codex",
+          conversationId: "conversation-title"
+        }
+      });
+
+      const sessionId = service.listSessions({
+        conversationId: "conversation-title",
+        includeArchived: true
+      })[0]?.sessionId;
+
+      expect(sessionId).toBeDefined();
+
+      await service.executeCommand({
+        commandId: "send-codex-title",
+        command: {
+          type: "sendUserMessage",
+          sessionId: sessionId!,
+          messageId: "msg-title-1",
+          content: "帮我调研低功耗迷你主机 CPU",
+          attachments: []
+        }
+      });
+
+      await waitFor(() =>
+        service.getSnapshot().sessions.some((session) =>
+          session.sessionId === sessionId && session.title === "Codex borrowed title"
+        )
+      );
+
+      expect(fetchImpl).toHaveBeenCalledWith(
+        "https://codex-auth.example.test/v1/responses",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "Bearer codex-borrowed-token"
+          })
+        })
+      );
+    } finally {
+      if (previousFakeToken === undefined) {
+        delete process.env.FAKE_CODEX_AUTH_TOKEN;
+      } else {
+        process.env.FAKE_CODEX_AUTH_TOKEN = previousFakeToken;
+      }
+      if (previousFakeBaseUrl === undefined) {
+        delete process.env.FAKE_CODEX_AUTH_BASE_URL;
+      } else {
+        process.env.FAKE_CODEX_AUTH_BASE_URL = previousFakeBaseUrl;
+      }
+    }
   });
 
   it("exposes pi-acp as a real ACP-backed agent with streamed transcript and tool output", async () => {

@@ -260,6 +260,26 @@ export class DomainService {
     return session;
   }
 
+  public updateSessionTitle(input: {
+    sessionId: string;
+    title: string;
+  }): ChatSession {
+    const session = this.requireSession(input.sessionId);
+    const title = input.title.trim();
+    if (!title || session.title === title) {
+      return session;
+    }
+
+    this.commitRuntimeEvent({
+      type: "session.updated",
+      conversationId: session.conversationId,
+      sessionId: session.sessionId,
+      status: session.status,
+      title
+    });
+    return this.requireSession(session.sessionId);
+  }
+
   public forkSession(input: {
     sessionId: string;
     fromTurnId?: string;

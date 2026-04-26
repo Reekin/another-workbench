@@ -15,6 +15,7 @@ import type { HydratedSessionSnapshot } from "./session-discovery.js";
 import { DomainService } from "./domain-service.js";
 import { RuntimeOrchestrator } from "./runtime-orchestrator.js";
 import { SessionIndexSyncService } from "./session-index-sync-service.js";
+import type { SessionTitleGenerator } from "./title-generation-service.js";
 import type {
   EngineSelectionInput,
   CommandReceipt,
@@ -48,6 +49,7 @@ export type WorkbenchRuntimeServiceOptions = {
   createRelationId?: IdFactory;
   createSessionId?: IdFactory;
   createEventId?: IdFactory;
+  titleGenerator?: SessionTitleGenerator;
 };
 
 export class WorkbenchRuntimeService {
@@ -98,6 +100,7 @@ export class WorkbenchRuntimeService {
       },
       engines: options.engines,
       agentBindings: options.agentBindings,
+      titleGenerator: options.titleGenerator,
       now: options.now,
       createConversationId: options.createConversationId
     });

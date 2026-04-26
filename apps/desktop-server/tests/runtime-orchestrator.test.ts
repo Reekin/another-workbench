@@ -5,6 +5,8 @@ import { readSessionExecutionProfile } from "@another-workbench/shared";
 import { DomainService } from "../src/domain-service.js";
 import { RuntimeOrchestrator } from "../src/runtime-orchestrator.js";
 
+const flushAsyncWork = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 describe("RuntimeOrchestrator", () => {
   it("initializes adapters once and forwards selected config metadata", async () => {
     const initialize = vi.fn().mockResolvedValue(undefined);
@@ -255,6 +257,107 @@ describe("RuntimeOrchestrator", () => {
         })
       })
     );
+  });
+
+  it("generates a title from the first user message without blocking send", async () => {
+    const syncSession = vi.fn().mockResolvedValue(undefined);
+    const generateTitle = vi.fn().mockResolvedValue("Mini PC research");
+    const executeCommand = vi.fn().mockResolvedValue({
+      commandId: "send-1",
+      commandType: "sendUserMessage",
+      accepted: true
+    });
+    const adapter: AgentAdapter = {
+      id: "codex-adapter",
+      kind: "codex",
+      getLifecycleState: () => "idle",
+      initialize: vi.fn().mockResolvedValue(undefined),
+      executeCommand,
+      subscribe: vi.fn().mockReturnValue(() => {}),
+      dispose: vi.fn().mockResolvedValue(undefined)
+    };
+
+    let orchestrator: RuntimeOrchestrator | undefined;
+    const domainService = new DomainService({
+      now: () => "2026-04-20T00:04:00Z",
+      createSessionId: () => "session-title",
+      assertEngineRegistered: (engineId) =>
+        orchestrator?.assertEngineRegistered(engineId),
+      resolveEngineCapabilities: (engineId) =>
+        orchestrator?.getEngineCapabilities(engineId) ?? [],
+      publishRuntimeEvent: () => {}
+    });
+
+    orchestrator = new RuntimeOrchestrator({
+      domainService,
+      sessionIndexSyncService: {
+        syncSession,
+        syncRelation: vi.fn().mockResolvedValue(undefined),
+        markSessionUnreadCompleted: vi.fn().mockResolvedValue(undefined)
+      } as never,
+      workspaceSelectionService: {
+        activateSelection: vi.fn().mockResolvedValue(undefined),
+        selectWorkspace: vi.fn().mockResolvedValue({
+          workspaceId: "workspace-1"
+        })
+      } as never,
+      publishRuntimeEvent: () => {},
+      createConversationId: () => "conversation-title",
+      titleGenerator: {
+        generateTitle
+      },
+      agentBindings: [
+        {
+          descriptor: {
+            engineId: "codex",
+            displayName: "Codex",
+            capabilities: ["chat", "terminal"]
+          },
+          adapter
+        }
+      ]
+    });
+
+    const session = await orchestrator.createSession({
+      engineId: "codex",
+      workspaceId: "workspace-1"
+    });
+
+    await orchestrator.executeCommand({
+      commandId: "send-1",
+      command: {
+        type: "sendUserMessage",
+        sessionId: session.sessionId,
+        messageId: "message-1",
+        content: "帮我调研低功耗迷你主机 CPU",
+        attachments: []
+      }
+    });
+    await flushAsyncWork();
+
+    expect(executeCommand).toHaveBeenCalled();
+    expect(generateTitle).toHaveBeenCalledWith({
+      content: "帮我调研低功耗迷你主机 CPU",
+      attachments: []
+    });
+    expect(domainService.getSession(session.sessionId)).toMatchObject({
+      title: "Mini PC research"
+    });
+    expect(syncSession).toHaveBeenCalledWith("session-title");
+
+    await orchestrator.executeCommand({
+      commandId: "send-2",
+      command: {
+        type: "sendUserMessage",
+        sessionId: session.sessionId,
+        messageId: "message-2",
+        content: "继续",
+        attachments: []
+      }
+    });
+    await flushAsyncWork();
+
+    expect(generateTitle).toHaveBeenCalledTimes(1);
   });
 
   it("persists a session execution profile snapshot for create and resume flows", async () => {

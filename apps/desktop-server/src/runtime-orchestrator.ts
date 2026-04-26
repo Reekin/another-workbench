@@ -1,5 +1,6 @@
 import type {
   ProviderSessionHandle,
+  Command,
   SessionExecutionProfile,
   SessionExecutionProfileInput
 } from "@another-workbench/shared";
@@ -19,6 +20,7 @@ import {
   type WorkbenchAgentBinding,
   type WorkbenchEngineDescriptor
 } from "./runtime-types.js";
+import type { SessionTitleGenerator } from "./title-generation-service.js";
 import { WorkspaceSelectionService } from "./workspace-selection-service.js";
 
 type Clock = () => string;
@@ -31,6 +33,7 @@ export type RuntimeOrchestratorOptions = {
   publishRuntimeEvent: (event: EventEnvelope["event"]) => void;
   engines?: WorkbenchEngineDescriptor[];
   agentBindings?: WorkbenchAgentBinding[];
+  titleGenerator?: SessionTitleGenerator;
   now?: Clock;
   createConversationId?: IdFactory;
 };
@@ -49,6 +52,8 @@ export class RuntimeOrchestrator {
   private readonly sessionIndexSyncService: SessionIndexSyncService;
   private readonly workspaceSelectionService: WorkspaceSelectionService;
   private readonly publishRuntimeEvent: (event: EventEnvelope["event"]) => void;
+  private readonly titleGenerator: SessionTitleGenerator | undefined;
+  private readonly titleGenerationSessionIds = new Set<string>();
   private readonly now: Clock;
   private readonly createConversationId: IdFactory;
   private selectedEngineId: string | undefined;
@@ -58,6 +63,7 @@ export class RuntimeOrchestrator {
     this.sessionIndexSyncService = options.sessionIndexSyncService;
     this.workspaceSelectionService = options.workspaceSelectionService;
     this.publishRuntimeEvent = options.publishRuntimeEvent;
+    this.titleGenerator = options.titleGenerator;
     this.now = options.now ?? (() => new Date().toISOString());
     this.createConversationId =
       options.createConversationId ?? (() => createOpaqueId("conversation"));
@@ -165,6 +171,9 @@ export class RuntimeOrchestrator {
         return this.accept(envelope, true);
       case "sendUserMessage": {
         const session = this.domainService.requireSession(envelope.command.sessionId);
+        const shouldGenerateTitle = this.shouldGenerateTitleFromFirstUserMessage(
+          envelope.command
+        );
         this.domainService.commitLocalUserMessage(envelope.command);
         const receipt = await this.forwardSessionCommand(envelope.command.sessionId, envelope, {
           before: () => {
@@ -183,6 +192,9 @@ export class RuntimeOrchestrator {
             sessionId: session.sessionId,
             status: "idle"
           });
+        }
+        if (shouldGenerateTitle && receipt.accepted) {
+          this.scheduleTitleGeneration(envelope.command);
         }
         return receipt;
       }
@@ -327,6 +339,64 @@ export class RuntimeOrchestrator {
       providerKind: record.providerKind,
       providerSessionId: record.providerSessionId
     };
+  }
+
+  private shouldGenerateTitleFromFirstUserMessage(
+    command: Extract<Command, { type: "sendUserMessage" }>
+  ): boolean {
+    if (!this.titleGenerator) {
+      return false;
+    }
+    if (this.titleGenerationSessionIds.has(command.sessionId)) {
+      return false;
+    }
+    const session = this.domainService.requireSession(command.sessionId);
+    if (session.title?.trim()) {
+      return false;
+    }
+    if (!command.content.trim() && command.attachments.length === 0) {
+      return false;
+    }
+    return !this.domainService
+      .getSnapshot()
+      .turns.some((turn) => turn.sessionId === command.sessionId);
+  }
+
+  private scheduleTitleGeneration(
+    command: Extract<Command, { type: "sendUserMessage" }>
+  ): void {
+    if (!this.titleGenerator) {
+      return;
+    }
+    this.titleGenerationSessionIds.add(command.sessionId);
+    void this.generateTitle(command).finally(() => {
+      this.titleGenerationSessionIds.delete(command.sessionId);
+    });
+  }
+
+  private async generateTitle(
+    command: Extract<Command, { type: "sendUserMessage" }>
+  ): Promise<void> {
+    try {
+      const title = await this.titleGenerator?.generateTitle({
+        content: command.content,
+        attachments: command.attachments
+      });
+      if (!title) {
+        return;
+      }
+      const session = this.domainService.getSession(command.sessionId);
+      if (!session || session.title?.trim()) {
+        return;
+      }
+      this.domainService.updateSessionTitle({
+        sessionId: command.sessionId,
+        title
+      });
+      await this.sessionIndexSyncService.syncSession(command.sessionId);
+    } catch (error) {
+      console.warn("[another-workbench] Failed to generate session title", error);
+    }
   }
 
   private accept(envelope: CommandEnvelope, accepted: boolean): CommandReceipt {

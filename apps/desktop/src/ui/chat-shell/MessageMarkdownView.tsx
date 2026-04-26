@@ -34,6 +34,23 @@ const sanitizeSchema = {
 };
 const allowLocalFileUrls = (url: string): string => url;
 
+const externalLinkProtocols = new Set(["http:", "https:", "mailto:"]);
+
+const isExternalLinkHref = (href: string): boolean => {
+  try {
+    return externalLinkProtocols.has(new URL(href).protocol);
+  } catch {
+    return false;
+  }
+};
+
+const openExternalLink = (href: string): void => {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.open(href, "_blank", "noopener,noreferrer");
+};
+
 const isRenderableMarkdownBlock = (block: MessageBlock): boolean =>
   block.kind === "markdown" || block.kind === "plain_text";
 
@@ -278,6 +295,22 @@ const MarkdownRenderer = memo(({
       a: ({ href, children, ...props }) => {
         const filePath = href ? fileTargetToPath(href) : undefined;
         if (!href || !filePath || !onActivateResourceLink) {
+          if (href && isExternalLinkHref(href)) {
+            return (
+              <a
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+                {...props}
+                onClick={(event) => {
+                  event.preventDefault();
+                  openExternalLink(href);
+                }}
+              >
+                {children}
+              </a>
+            );
+          }
           return (
             <a href={href} {...props}>
               {children}

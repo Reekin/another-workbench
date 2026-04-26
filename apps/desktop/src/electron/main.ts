@@ -8,6 +8,10 @@ import {
   WORKBENCH_IPC_REQUEST_CHANNEL
 } from "./ipc-channels.js";
 import { createWorkbenchIpcRouter } from "./workbench-ipc-router.js";
+import {
+  resolveWillNavigate,
+  resolveWindowOpenNavigation
+} from "./external-navigation.js";
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const currentDir = dirname(currentFilePath);
@@ -35,8 +39,37 @@ const createMainWindow = (): BrowserWindow => {
   window.once("ready-to-show", () => {
     window.show();
   });
+  installExternalNavigationHandlers(window);
 
   return window;
+};
+
+const openExternalUrl = (url: string | undefined): void => {
+  if (!url) {
+    return;
+  }
+  void shell.openExternal(url);
+};
+
+const installExternalNavigationHandlers = (window: BrowserWindow): void => {
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    const decision = resolveWindowOpenNavigation(url);
+    if (decision.action === "deny") {
+      openExternalUrl(decision.externalUrl);
+    }
+    return {
+      action: decision.action
+    };
+  });
+
+  window.webContents.on("will-navigate", (event, url) => {
+    const decision = resolveWillNavigate(url, window.webContents.getURL());
+    if (decision.action === "allow") {
+      return;
+    }
+    event.preventDefault();
+    openExternalUrl(decision.externalUrl);
+  });
 };
 
 const resolveRendererTarget = (): { type: "url" | "file"; value: string } => {

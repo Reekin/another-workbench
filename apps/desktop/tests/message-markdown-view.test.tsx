@@ -101,6 +101,31 @@ describe("MessageMarkdownView", () => {
     expect(html).toContain(">Spec</a>");
   });
 
+  it("renders web links as external browser targets", () => {
+    const html = renderToStaticMarkup(
+      <MessageMarkdownView
+        block={{
+          blockId: "message-3d:md",
+          messageId: "message-3d",
+          sessionId: "session-1",
+          turnId: "turn-1",
+          role: "assistant",
+          kind: "markdown",
+          text: "[OpenAI](https://openai.com/)",
+          actor: {
+            participantId: "participant-1",
+            engineId: "agent-codex"
+          },
+          startedAt: "2026-04-17T00:00:00.000Z"
+        }}
+      />
+    );
+
+    expect(html).toContain('href="https://openai.com/"');
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain('rel="noreferrer"');
+  });
+
   it("wraps inline images in a preview button when image opening is enabled", () => {
     const html = renderToStaticMarkup(
       <MessageMarkdownView

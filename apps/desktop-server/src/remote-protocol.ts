@@ -488,6 +488,20 @@ export const createRemoteRpcHandler = (
                 backgroundRun: await shellService.getBackgroundRun(request.params.sessionId)
               }
             });
+          case "errorLog.write":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "ERROR_LOG_UNAVAILABLE",
+                "Error log APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: await shellService.writeErrorLog(request.params)
+            });
           case "file.searchWorkspace":
             if (!shellService) {
               return toErrorResponse(

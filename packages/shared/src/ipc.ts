@@ -3,6 +3,7 @@ import {
   zConversationId,
   zCursor,
   zEngineId,
+  zIsoDateTime,
   zJsonRecord,
   zRequestId,
   zSessionId,
@@ -52,6 +53,7 @@ export const workbenchRpcMethods = [
   "checkpoint.get",
   "diagnostics.get",
   "backgroundRun.get",
+  "errorLog.write",
   "file.searchWorkspace",
   "file.getPreview",
   "file.runAction",
@@ -643,6 +645,21 @@ const zBackgroundRunGetRequestSchema = z.object({
   })
 });
 
+const zErrorLogSeveritySchema = z.enum(["info", "warning", "error"]);
+
+const zErrorLogWriteRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("errorLog.write"),
+  params: z.object({
+    message: z.string().min(1),
+    severity: zErrorLogSeveritySchema.default("error"),
+    source: z.string().min(1).optional(),
+    stack: z.string().min(1).optional(),
+    occurredAt: zIsoDateTime.optional(),
+    context: zJsonRecord.optional()
+  })
+});
+
 const zFileSearchWorkspaceRequestSchema = z.object({
   id: zRequestId,
   method: z.literal("file.searchWorkspace"),
@@ -753,6 +770,7 @@ export const zWorkbenchRpcRequestSchema = z.discriminatedUnion("method", [
   zCheckpointGetRequestSchema,
   zDiagnosticsGetRequestSchema,
   zBackgroundRunGetRequestSchema,
+  zErrorLogWriteRequestSchema,
   zFileSearchWorkspaceRequestSchema,
   zFileGetPreviewRequestSchema,
   zFileRunActionRequestSchema,
@@ -1039,6 +1057,17 @@ const zBackgroundRunGetResponseSchema = z.object({
   })
 });
 
+const zErrorLogWriteResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("errorLog.write"),
+  ok: z.literal(true),
+  result: z.object({
+    logged: z.literal(true),
+    entryId: z.string().min(1),
+    logPath: z.string().min(1)
+  })
+});
+
 const zFileSearchWorkspaceResponseSchema = z.object({
   id: zRequestId,
   method: z.literal("file.searchWorkspace"),
@@ -1177,6 +1206,7 @@ export const zWorkbenchRpcResponseSchema = z.union([
   zCheckpointGetResponseSchema,
   zDiagnosticsGetResponseSchema,
   zBackgroundRunGetResponseSchema,
+  zErrorLogWriteResponseSchema,
   zFileSearchWorkspaceResponseSchema,
   zFileGetPreviewResponseSchema,
   zFileRunActionResponseSchema,
@@ -1225,6 +1255,12 @@ export type WorktreeSnapshotRpc = z.infer<typeof zWorktreeSnapshotSchema>;
 export type CheckpointSnapshotRpc = z.infer<typeof zCheckpointSnapshotSchema>;
 export type DiagnosticsSnapshotRpc = z.infer<typeof zDiagnosticsSnapshotSchema>;
 export type BackgroundRunSnapshotRpc = z.infer<typeof zBackgroundRunSnapshotSchema>;
+export type ErrorLogWriteInputRpc = z.infer<
+  typeof zErrorLogWriteRequestSchema
+>["params"];
+export type ErrorLogWriteResultRpc = z.infer<
+  typeof zErrorLogWriteResponseSchema
+>["result"];
 export type SessionWindowRpc = z.infer<typeof zSessionWindowSchema>;
 export type FileReferenceRpc = z.infer<typeof zFileReferenceSchema>;
 export type WorkspaceFileSearchResultRpc = z.infer<

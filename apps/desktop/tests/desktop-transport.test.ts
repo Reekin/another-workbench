@@ -126,6 +126,18 @@ const createPreloadMock = (config?: {
         }
       } as const;
     }
+    if (payload.method === "errorLog.write") {
+      return {
+        id: payload.id,
+        method: "errorLog.write",
+        ok: true,
+        result: {
+          logged: true,
+          entryId: "error-1",
+          logPath: "I:\\logs\\errors-2026-04-26.jsonl"
+        }
+      } as const;
+    }
     if (payload.method === "codex.turnChanges.get") {
       return {
         id: payload.id,
@@ -295,6 +307,36 @@ describe("Desktop transport facade", () => {
       engineId: "codex",
       sharedCapabilities: ["chat", "terminal"],
       extensions: []
+    });
+  });
+
+  it("writes renderer error logs through the typed RPC contract", async () => {
+    const preload = createPreloadMock();
+    const transport = createDesktopTransport(preload.api, {
+      createId: () => "fixed-id"
+    });
+
+    const result = await transport.errorLog.write({
+      message: "Send failed: boom",
+      severity: "error",
+      source: "send",
+      stack: "Error: boom\n    at send"
+    });
+
+    expect(result).toEqual({
+      logged: true,
+      entryId: "error-1",
+      logPath: "I:\\logs\\errors-2026-04-26.jsonl"
+    });
+    expect(preload.request).toHaveBeenCalledWith({
+      id: "fixed-id",
+      method: "errorLog.write",
+      params: {
+        message: "Send failed: boom",
+        severity: "error",
+        source: "send",
+        stack: "Error: boom\n    at send"
+      }
     });
   });
 

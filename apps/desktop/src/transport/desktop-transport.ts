@@ -11,6 +11,8 @@ import type {
   DomainSnapshot,
   EngineDefinitionRpc,
   EngineSurfaceRpc,
+  ErrorLogWriteInputRpc,
+  ErrorLogWriteResultRpc,
   CodexTurnChangesResultRpc,
   CodexTurnChangesUndoResultRpc,
   FileActionKindRpc,
@@ -266,6 +268,9 @@ export type DesktopTransport = {
   };
   backgroundRun: {
     get: (sessionId: string) => Promise<BackgroundRunSnapshotRpc>;
+  };
+  errorLog: {
+    write: (input: ErrorLogWriteInputRpc) => Promise<ErrorLogWriteResultRpc>;
   };
   file: {
     searchWorkspace: (input: {
@@ -668,6 +673,10 @@ export const createDesktopTransport = (
         });
         return result.backgroundRun;
       }
+    },
+    errorLog: {
+      write: (input: ErrorLogWriteInputRpc) =>
+        rpc.request("errorLog.write", input)
     },
     file: {
       searchWorkspace: async (input) => {

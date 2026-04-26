@@ -10,6 +10,8 @@ import type {
   EngineSharedCapabilityRpc,
   EngineSurfaceRpc,
   EventEnvelope,
+  ErrorLogWriteInputRpc,
+  ErrorLogWriteResultRpc,
   SkillDescriptorRpc
 } from "@another-workbench/shared";
 import type { RuntimeEventFilter, RuntimeEventReplayInput } from "@another-workbench/core";
@@ -47,6 +49,7 @@ import { FilePreviewService } from "./file-preview-service.js";
 import { WorkspaceFileSearchService } from "./workspace-file-search-service.js";
 import { TurnChangeService } from "./turn-change-service.js";
 import { CodexTurnChangesService } from "./engine-extensions/codex/turn-changes-service.js";
+import { ErrorLogService } from "./error-log-service.js";
 
 const defaultSessionWindowLimit = 8;
 
@@ -140,6 +143,7 @@ export type WorkbenchShellServiceOptions = {
   fileSearchService?: WorkspaceFileSearchService;
   filePreviewService?: FilePreviewService;
   fileActionService?: FileActionService;
+  errorLogService?: ErrorLogService;
   turnChangeService?: TurnChangeService;
   codexTurnChangesService?: CodexTurnChangesService;
 };
@@ -163,6 +167,7 @@ export class WorkbenchShellService {
   private readonly fileSearchService: WorkspaceFileSearchService;
   private readonly filePreviewService: FilePreviewService;
   private readonly fileActionService: FileActionService;
+  private readonly errorLogService: ErrorLogService;
   private readonly turnChangeService: TurnChangeService;
   private readonly codexTurnChangesService: CodexTurnChangesService;
   private openSessionGeneration = 0;
@@ -196,6 +201,8 @@ export class WorkbenchShellService {
       options.filePreviewService ?? new FilePreviewService();
     this.fileActionService =
       options.fileActionService ?? new FileActionService();
+    this.errorLogService =
+      options.errorLogService ?? new ErrorLogService();
     this.turnChangeService =
       options.turnChangeService ?? new TurnChangeService();
     this.codexTurnChangesService =
@@ -633,6 +640,12 @@ export class WorkbenchShellService {
       };
     }
     return this.capabilities.getBackgroundRun(sessionId);
+  }
+
+  public async writeErrorLog(
+    input: ErrorLogWriteInputRpc
+  ): Promise<ErrorLogWriteResultRpc> {
+    return this.errorLogService.write(input);
   }
 
   public async searchWorkspaceFiles(input: {

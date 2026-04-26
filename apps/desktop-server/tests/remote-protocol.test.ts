@@ -245,6 +245,56 @@ describe("createRemoteRpcHandler", () => {
     });
   });
 
+  it("routes typed error log writes to the shell service", async () => {
+    const runtimeService = createService();
+    const writeErrorLog = vi.fn().mockResolvedValue({
+      logged: true,
+      entryId: "error-1",
+      logPath: "I:\\logs\\errors-2026-04-26.jsonl"
+    });
+    const handler = createRemoteRpcHandler(
+      {
+        executeCommand: runtimeService.executeCommand.bind(runtimeService),
+        replay: runtimeService.replay.bind(runtimeService),
+        listWorkspaces: vi.fn().mockResolvedValue({
+          workspaces: []
+        }),
+        writeErrorLog
+      } as never,
+      {
+        createSubscriptionId: () => "subscription-1"
+      }
+    );
+
+    const response = await handler.handleRequest({
+      id: "req-error-log",
+      method: "errorLog.write",
+      params: {
+        message: "Send failed: boom",
+        severity: "error",
+        source: "send",
+        stack: "Error: boom\n    at send"
+      }
+    });
+
+    expect(response).toEqual({
+      id: "req-error-log",
+      method: "errorLog.write",
+      ok: true,
+      result: {
+        logged: true,
+        entryId: "error-1",
+        logPath: "I:\\logs\\errors-2026-04-26.jsonl"
+      }
+    });
+    expect(writeErrorLog).toHaveBeenCalledWith({
+      message: "Send failed: boom",
+      severity: "error",
+      source: "send",
+      stack: "Error: boom\n    at send"
+    });
+  });
+
   it("serves settings get and update through the shared RPC shape", async () => {
     const shellService = {
       listEngines: () => [

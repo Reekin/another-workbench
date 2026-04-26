@@ -17,6 +17,7 @@ export * from "./prod-service.js";
 export * from "./pi-acp-runtime-port.js";
 export * from "./local-preload.js";
 export * from "./file-action-service.js";
+export * from "./error-log-service.js";
 export * from "./file-preview-service.js";
 export * from "./workspace-file-search-service.js";
 export * from "./workspace-registry.js";

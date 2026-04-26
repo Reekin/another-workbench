@@ -43,7 +43,17 @@ if (watchMode) {
   await preloadContext.watch();
   await mainContext.rebuild();
   await preloadContext.rebuild();
-  await new Promise(() => {});
+  const keepAlive = setInterval(() => {}, 2 ** 31 - 1);
+  const shutdown = async () => {
+    clearInterval(keepAlive);
+    await Promise.all([mainContext.dispose(), preloadContext.dispose()]);
+    process.exit(0);
+  };
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    process.on(signal, () => {
+      void shutdown();
+    });
+  }
 } else {
   await build(mainBuildOptions);
   await build(preloadBuildOptions);

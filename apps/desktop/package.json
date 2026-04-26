@@ -7,7 +7,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "pnpm exec tsc -b tsconfig.json --pretty false && pnpm exec node ./scripts/build-electron.mjs && pnpm exec vite build",
-    "dev": "pnpm exec node ./scripts/dev-electron.mjs",
+    "dev": "node -e \"const fs=require('node:fs'),cp=require('node:child_process');if(!fs.existsSync('scripts/dev-electron.mjs')){console.log('Skipping packaged @another-workbench/desktop dev copy.');process.exit(0)}const child=cp.spawn(process.execPath,['scripts/dev-electron.mjs'],{stdio:'inherit'});for(const sig of ['SIGINT','SIGTERM'])process.on(sig,()=>child.kill(sig));child.on('exit',(code,signal)=>signal?process.kill(process.pid,signal):process.exit(code??1))\"",
     "dev:web": "pnpm exec vite --host 127.0.0.1 --port 4173",
     "dev:demo": "pnpm exec vite --host 127.0.0.1 --port 4173 --open /demo.html",
     "preview": "pnpm exec vite preview --host 127.0.0.1 --port 4173",

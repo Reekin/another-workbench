@@ -35,7 +35,7 @@ describe("CodexTurnChangesService", () => {
     });
 
     const service = new CodexTurnChangesService({
-      resolveSessionAgentId: () => "codex",
+      resolveSessionEngineId: () => "codex",
       resolveWorkingDirectory: vi.fn().mockResolvedValue("I:\\repo"),
       undoTurnChanges: vi.fn()
     });
@@ -92,7 +92,7 @@ describe("CodexTurnChangesService", () => {
     });
 
     const service = new CodexTurnChangesService({
-      resolveSessionAgentId: () => "codex",
+      resolveSessionEngineId: () => "codex",
       resolveWorkingDirectory: vi.fn().mockResolvedValue("I:\\repo"),
       undoTurnChanges
     });

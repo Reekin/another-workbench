@@ -134,6 +134,30 @@ const emitHappyPath = ({ threadId, turnId, prompt, messagePhase = null }) => {
     }
   });
   send({
+    method: "thread/tokenUsage/updated",
+    params: {
+      threadId,
+      turnId,
+      tokenUsage: {
+        total: {
+          totalTokens: 42000,
+          inputTokens: 40000,
+          cachedInputTokens: 12000,
+          outputTokens: 1200,
+          reasoningOutputTokens: 800
+        },
+        last: {
+          totalTokens: 2200,
+          inputTokens: 1500,
+          cachedInputTokens: 200,
+          outputTokens: 400,
+          reasoningOutputTokens: 300
+        },
+        modelContextWindow: 128000
+      }
+    }
+  });
+  send({
     method: "turn/completed",
     params: {
       threadId,
@@ -262,6 +286,187 @@ const emitFileChangePath = ({ threadId, turnId }) => {
             diff: "@@ -1 +1,3 @@\n-\n+第一行内容\n+第二行内容\n+第三行内容\n"
           }
         ]
+      }
+    }
+  });
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "idle" }
+    }
+  });
+  send({
+    method: "turn/completed",
+    params: {
+      threadId,
+      turn: {
+        id: turnId,
+        status: "completed"
+      }
+    }
+  });
+};
+
+const emitProcessPath = ({ threadId, turnId }) => {
+  const reasoningId = `reason-${turnId}`;
+  const webSearchId = `web-${turnId}`;
+  const messageId = `msg-${turnId}`;
+
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "active" }
+    }
+  });
+  send({
+    method: "turn/started",
+    params: {
+      threadId,
+      turn: { id: turnId }
+    }
+  });
+  send({
+    method: "item/started",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "reasoning",
+        id: reasoningId,
+        summary: [],
+        content: []
+      }
+    }
+  });
+  send({
+    method: "item/reasoning/summaryPartAdded",
+    params: {
+      threadId,
+      turnId,
+      itemId: reasoningId,
+      summaryIndex: 0
+    }
+  });
+  send({
+    method: "item/reasoning/summaryTextDelta",
+    params: {
+      threadId,
+      turnId,
+      itemId: reasoningId,
+      delta: "Looking up current market data.\n",
+      summaryIndex: 0
+    }
+  });
+  send({
+    method: "item/completed",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "reasoning",
+        id: reasoningId,
+        summary: ["Looking up current market data."],
+        content: []
+      }
+    }
+  });
+  send({
+    method: "rawResponseItem/completed",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "reasoning",
+        summary: [
+          {
+            type: "summary_text",
+            text: "Comparing low-power CPU options."
+          }
+        ],
+        content: [],
+        encrypted_content: null
+      }
+    }
+  });
+  send({
+    method: "rawResponseItem/completed",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "web_search_call",
+        status: "completed",
+        action: {
+          type: "search",
+          query: "AMD Ryzen low power official specs",
+          queries: ["Ryzen 7840U official TDP"]
+        }
+      }
+    }
+  });
+  send({
+    method: "item/started",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "webSearch",
+        id: webSearchId,
+        query: "mini PC low power CPUs",
+        action: {
+          type: "search",
+          query: "mini PC low power CPUs",
+          queries: ["Intel N150 official specs"]
+        }
+      }
+    }
+  });
+  send({
+    method: "rawResponseItem/completed",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "web_search_call",
+        status: "completed",
+        action: {
+          type: "search",
+          query: "mini PC low power CPUs",
+          queries: ["Intel N150 official specs"]
+        }
+      }
+    }
+  });
+  send({
+    method: "item/completed",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "webSearch",
+        id: webSearchId,
+        query: "mini PC low power CPUs",
+        action: {
+          type: "search",
+          query: "mini PC low power CPUs",
+          queries: ["Intel N150 official specs"]
+        }
+      }
+    }
+  });
+  send({
+    method: "item/completed",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "agentMessage",
+        id: messageId,
+        text: "Finished process events.",
+        phase: "final_answer",
+        memoryCitation: null
       }
     }
   });
@@ -521,6 +726,11 @@ const handleRequest = (payload) => {
             return;
           }
 
+          if (prompt.includes("process-events")) {
+            emitProcessPath({ threadId, turnId });
+            return;
+          }
+
           emitHappyPath({
             threadId,
             turnId,
@@ -535,6 +745,37 @@ const handleRequest = (payload) => {
           id: payload.id,
           result: {
             interrupted: true
+          }
+        });
+        return;
+      case "getAuthStatus":
+        send({
+          id: payload.id,
+          result: {
+            authMethod: "apikey",
+            authToken: payload.params?.includeToken
+              ? process.env.FAKE_CODEX_AUTH_TOKEN ?? null
+              : null,
+            requiresOpenaiAuth: false
+          }
+        });
+        return;
+      case "config/read":
+        send({
+          id: payload.id,
+          result: {
+            config: {
+              model_provider: "fake-provider",
+              model_providers: {
+                "fake-provider": {
+                  base_url:
+                    process.env.FAKE_CODEX_AUTH_BASE_URL ??
+                    "https://codex-auth.example.test/v1"
+                }
+              }
+            },
+            origins: {},
+            layers: null
           }
         });
         return;

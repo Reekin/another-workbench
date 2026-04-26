@@ -40,6 +40,12 @@ import {
   getRecordedCodexTurnChanges,
   recordCodexTurnChangesFromFileUpdate
 } from "./engine-extensions/codex/turn-changes-store.js";
+import {
+  isCodexReasoningThreadItem,
+  isCodexWebSearchThreadItem,
+  summarizeCodexReasoningThreadItem,
+  summarizeCodexWebSearchAction
+} from "./engine-extensions/codex/process-activity.js";
 import { SessionIdentityRegistry } from "./session-identity-registry.js";
 
 const codexProviderKind = "codex-thread";
@@ -498,6 +504,42 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
 
         if (isFileChangeItem(item)) {
           fileChanges.push(...item.changes);
+          continue;
+        }
+
+        if (isCodexReasoningThreadItem(item)) {
+          toolCallIds.push(itemEntityId);
+          toolCalls.push(
+            parseToolCall({
+              toolCallId: itemEntityId,
+              sessionId: entry.sessionId,
+              turnId: turn.id,
+              toolName: "reasoning",
+              inputSummary: "Reasoning",
+              outputSummary: summarizeCodexReasoningThreadItem(item),
+              status: "completed",
+              startedAt: itemStartedAt,
+              completedAt: itemStartedAt
+            })
+          );
+          continue;
+        }
+
+        if (isCodexWebSearchThreadItem(item)) {
+          toolCallIds.push(itemEntityId);
+          toolCalls.push(
+            parseToolCall({
+              toolCallId: itemEntityId,
+              sessionId: entry.sessionId,
+              turnId: turn.id,
+              toolName: "webSearch",
+              inputSummary: summarizeCodexWebSearchAction(item.action, item.query),
+              outputSummary: summarizeCodexWebSearchAction(item.action, item.query),
+              status: "completed",
+              startedAt: itemStartedAt,
+              completedAt: itemStartedAt
+            })
+          );
           continue;
         }
 

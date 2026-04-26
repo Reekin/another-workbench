@@ -7,12 +7,15 @@ import type {
   CodexRuntimeResponse
 } from "@another-workbench/adapters";
 import type { AgentAdapterRuntimeConfig } from "@another-workbench/adapters";
-import type { Attachment, EventType } from "@another-workbench/shared";
+import type { Attachment, ContextUsage, EventType } from "@another-workbench/shared";
 import type { GetAuthStatusParams } from "./codex-app-server-generated/GetAuthStatusParams.js";
 import type { GetAuthStatusResponse } from "./codex-app-server-generated/GetAuthStatusResponse.js";
 import type { GitDiffToRemoteParams } from "./codex-app-server-generated/GitDiffToRemoteParams.js";
 import type { GitDiffToRemoteResponse } from "./codex-app-server-generated/GitDiffToRemoteResponse.js";
 import type { AskForApproval } from "./codex-app-server-generated/v2/AskForApproval.js";
+import type { Config } from "./codex-app-server-generated/v2/Config.js";
+import type { ConfigReadParams } from "./codex-app-server-generated/v2/ConfigReadParams.js";
+import type { ConfigReadResponse } from "./codex-app-server-generated/v2/ConfigReadResponse.js";
 import type { SandboxMode } from "./codex-app-server-generated/v2/SandboxMode.js";
 import type { ReasoningEffort } from "./codex-app-server-generated/ReasoningEffort.js";
 import type { ServiceTier } from "./codex-app-server-generated/ServiceTier.js";
@@ -31,6 +34,7 @@ import type { ThreadResumeResponse } from "./codex-app-server-generated/v2/Threa
 import type { TurnSteerParams } from "./codex-app-server-generated/v2/TurnSteerParams.js";
 import type { TurnStartResponse } from "./codex-app-server-generated/v2/TurnStartResponse.js";
 import type { ThreadItem } from "./codex-app-server-generated/v2/ThreadItem.js";
+import type { ResponseItem } from "./codex-app-server-generated/ResponseItem.js";
 import type { SkillsListParams } from "./codex-app-server-generated/v2/SkillsListParams.js";
 import type { SkillsListResponse } from "./codex-app-server-generated/v2/SkillsListResponse.js";
 import { buildCodexTurnInput } from "./attachment-inputs.js";
@@ -40,6 +44,15 @@ import {
   recordCodexTurnChangesFromFileUpdate,
   recordCodexTurnChangesFromUnifiedDiff
 } from "./engine-extensions/codex/turn-changes-store.js";
+import {
+  codexRawResponseToolCallId,
+  isCodexReasoningThreadItem,
+  isCodexWebSearchThreadItem,
+  mapCodexResponseItemStatus,
+  summarizeCodexRawReasoningItem,
+  summarizeCodexReasoningThreadItem,
+  summarizeCodexWebSearchAction
+} from "./engine-extensions/codex/process-activity.js";
 
 type RuntimeListener = (event: CodexRuntimeEvent) => void;
 
@@ -79,6 +92,11 @@ type PendingApprovalResolution = {
   action: "approve" | "deny" | "defer";
 };
 
+type ProcessActivitySummaryState = {
+  reasoning: Set<string>;
+  webSearch: Set<string>;
+};
+
 type CodexSelectedConfig = {
   model?: string;
   modelProvider?: string;
@@ -87,6 +105,11 @@ type CodexSelectedConfig = {
   cwd?: string;
   reasoningEffort?: ReasoningEffort;
   serviceTier?: ServiceTier;
+};
+
+export type CodexOpenAiCompatibleAuth = {
+  apiKey?: string;
+  baseUrl?: string;
 };
 
 export type CodexAppServerRuntimePortOptions = {
@@ -197,6 +220,31 @@ const resolveApprovalDecision = (
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
+const optionalString = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+
+const resolveCodexConfigBaseUrl = (config: Config): string | undefined => {
+  const activeProfileName = optionalString(config.profile);
+  const activeProfile = activeProfileName
+    ? config.profiles?.[activeProfileName]
+    : undefined;
+  const modelProviderName =
+    optionalString(activeProfile?.model_provider) ?? optionalString(config.model_provider);
+  const modelProviders = isRecord(config.model_providers)
+    ? config.model_providers
+    : undefined;
+  const modelProvider = modelProviderName && isRecord(modelProviders?.[modelProviderName])
+    ? modelProviders[modelProviderName]
+    : undefined;
+  return (
+    optionalString(modelProvider?.base_url) ??
+    optionalString(activeProfile?.chatgpt_base_url) ??
+    optionalString(config.chatgpt_base_url) ??
+    optionalString(config.openai_base_url) ??
+    optionalString(config.base_url)
+  );
+};
+
 const isTextThreadItem = (
   item: ThreadItem | Record<string, unknown>
 ): item is Extract<ThreadItem, { type: "agentMessage" }> =>
@@ -290,6 +338,69 @@ const summarizeCollabOutput = (
   return lines.length > 0 ? lines.join("\n") : undefined;
 };
 
+const readNonNegativeInteger = (
+  record: Record<string, unknown>,
+  key: string
+): number | undefined => {
+  const value = record[key];
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : undefined;
+};
+
+const readPositiveInteger = (
+  record: Record<string, unknown>,
+  key: string
+): number | undefined => {
+  const value = readNonNegativeInteger(record, key);
+  return value && value > 0 ? value : undefined;
+};
+
+const mapTokenUsageBreakdown = (
+  value: unknown
+):
+  | {
+      totalTokens: number;
+      inputTokens: number;
+      cachedInputTokens: number;
+      outputTokens: number;
+      reasoningOutputTokens: number;
+    }
+  | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  return {
+    totalTokens: readNonNegativeInteger(value, "totalTokens") ?? 0,
+    inputTokens: readNonNegativeInteger(value, "inputTokens") ?? 0,
+    cachedInputTokens: readNonNegativeInteger(value, "cachedInputTokens") ?? 0,
+    outputTokens: readNonNegativeInteger(value, "outputTokens") ?? 0,
+    reasoningOutputTokens: readNonNegativeInteger(value, "reasoningOutputTokens") ?? 0
+  };
+};
+
+const mapContextUsage = (value: unknown): ContextUsage | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const total = mapTokenUsageBreakdown(value.total);
+  if (!total) {
+    return undefined;
+  }
+  const last = mapTokenUsageBreakdown(value.last);
+  const contextWindow = readPositiveInteger(value, "modelContextWindow");
+  const effectiveUsage = last ?? total;
+  return {
+    usedTokens: effectiveUsage.inputTokens,
+    contextWindow,
+    inputTokens: effectiveUsage.inputTokens,
+    cachedInputTokens: effectiveUsage.cachedInputTokens,
+    outputTokens: effectiveUsage.outputTokens,
+    reasoningOutputTokens: effectiveUsage.reasoningOutputTokens,
+    lastUsedTokens: last?.totalTokens
+  };
+};
+
 export class CodexAppServerRuntimePort
   implements
     AdapterRuntimePort<CodexRuntimeRequest, CodexRuntimeResponse, CodexRuntimeEvent>
@@ -309,6 +420,10 @@ export class CodexAppServerRuntimePort
   private readonly pendingApprovalResolutionsById = new Map<
     string,
     PendingApprovalResolution
+  >();
+  private readonly processActivitySummariesByTurn = new Map<
+    string,
+    ProcessActivitySummaryState
   >();
   private process: ChildProcessWithoutNullStreams | undefined;
   private buffer = "";
@@ -579,12 +694,37 @@ export class CodexAppServerRuntimePort
     } satisfies ThreadArchiveParams);
   }
 
-  public async readAuthStatus(): Promise<GetAuthStatusResponse> {
+  public async readAuthStatus(
+    options: { includeToken?: boolean; refreshToken?: boolean } = {}
+  ): Promise<GetAuthStatusResponse> {
     await this.start(this.startConfig);
     return (await this.rpc("getAuthStatus", {
-      includeToken: false,
-      refreshToken: false
+      includeToken: options.includeToken ?? false,
+      refreshToken: options.refreshToken ?? false
     } satisfies GetAuthStatusParams)) as GetAuthStatusResponse;
+  }
+
+  public async readConfig(cwd?: string): Promise<ConfigReadResponse> {
+    await this.start(this.startConfig);
+    return (await this.rpc("config/read", {
+      includeLayers: false,
+      cwd: cwd ?? null
+    } satisfies ConfigReadParams)) as ConfigReadResponse;
+  }
+
+  public async readOpenAiCompatibleAuth(cwd?: string): Promise<CodexOpenAiCompatibleAuth> {
+    const auth = await this.readAuthStatus({
+      includeToken: true,
+      refreshToken: true
+    });
+    if (!auth.authToken) {
+      return {};
+    }
+    const config = await this.readConfig(cwd).catch(() => undefined);
+    return {
+      apiKey: auth.authToken,
+      baseUrl: config ? resolveCodexConfigBaseUrl(config.config) : undefined
+    };
   }
 
   public async readGitDiffToRemote(cwd: string): Promise<GitDiffToRemoteResponse> {
@@ -908,6 +1048,18 @@ export class CodexAppServerRuntimePort
         });
         return;
       }
+      case "thread/tokenUsage/updated": {
+        const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
+        const contextUsage = mapContextUsage(params.tokenUsage);
+        if (!sessionId || !contextUsage) {
+          return;
+        }
+        this.emitEvent("session.context.updated", {
+          sessionId,
+          contextUsage
+        });
+        return;
+      }
       case "turn/started": {
         const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
         const turn = isRecord(params.turn) ? params.turn : undefined;
@@ -933,6 +1085,9 @@ export class CodexAppServerRuntimePort
             typeof turn.status === "string" ? turn.status : undefined
           )
         });
+        this.processActivitySummariesByTurn.delete(
+          this.processActivityKey(sessionId, turn.id)
+        );
         return;
       }
       case "turn/diff/updated": {
@@ -964,6 +1119,16 @@ export class CodexAppServerRuntimePort
         this.handleItemLifecycle(method, sessionId, turnId, item);
         return;
       }
+      case "rawResponseItem/completed": {
+        const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
+        const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
+        const item = isRecord(params.item) ? (params.item as ResponseItem) : undefined;
+        if (!sessionId || !turnId || !item) {
+          return;
+        }
+        this.handleRawResponseItemCompleted(sessionId, turnId, item);
+        return;
+      }
       case "item/agentMessage/delta": {
         const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
         const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
@@ -976,6 +1141,52 @@ export class CodexAppServerRuntimePort
           sessionId,
           turnId,
           messageId,
+          delta,
+          engineId: this.engineId
+        });
+        return;
+      }
+      case "item/reasoning/summaryPartAdded": {
+        const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
+        const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
+        const toolCallId = typeof params.itemId === "string" ? params.itemId : undefined;
+        if (!sessionId || !turnId || !toolCallId) {
+          return;
+        }
+        this.emitEvent("tool.started", {
+          sessionId,
+          turnId,
+          toolCallId,
+          toolName: "reasoning",
+          inputSummary: "Reasoning summary",
+          engineId: this.engineId
+        });
+        return;
+      }
+      case "item/reasoning/summaryTextDelta":
+      case "item/reasoning/textDelta": {
+        const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
+        const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
+        const toolCallId = typeof params.itemId === "string" ? params.itemId : undefined;
+        const delta = typeof params.delta === "string" ? params.delta : "";
+        if (!sessionId || !turnId || !toolCallId || !delta) {
+          return;
+        }
+        this.emitEvent("tool.started", {
+          sessionId,
+          turnId,
+          toolCallId,
+          toolName: "reasoning",
+          inputSummary:
+            method === "item/reasoning/summaryTextDelta"
+              ? "Reasoning summary"
+              : "Reasoning",
+          engineId: this.engineId
+        });
+        this.emitEvent("tool.delta", {
+          sessionId,
+          turnId,
+          toolCallId,
           delta,
           engineId: this.engineId
         });
@@ -1137,6 +1348,75 @@ export class CodexAppServerRuntimePort
       return;
     }
 
+    if (isCodexReasoningThreadItem(item)) {
+      if (method === "item/started") {
+        this.emitEvent("tool.started", {
+          sessionId,
+          turnId,
+          toolCallId: item.id,
+          toolName: "reasoning",
+          inputSummary: "Reasoning",
+          engineId: this.engineId
+        });
+        return;
+      }
+
+      const outputSummary = summarizeCodexReasoningThreadItem(item);
+      this.rememberProcessActivitySummary(
+        sessionId,
+        turnId,
+        "reasoning",
+        outputSummary
+      );
+      this.emitEvent("tool.completed", {
+        sessionId,
+        turnId,
+        toolCallId: item.id,
+        status: "completed",
+        outputSummary,
+        engineId: this.engineId
+      });
+      return;
+    }
+
+    if (isCodexWebSearchThreadItem(item)) {
+      if (method === "item/started") {
+        const inputSummary = summarizeCodexWebSearchAction(item.action, item.query);
+        this.rememberProcessActivitySummary(
+          sessionId,
+          turnId,
+          "webSearch",
+          inputSummary
+        );
+        this.emitEvent("tool.started", {
+          sessionId,
+          turnId,
+          toolCallId: item.id,
+          toolName: "webSearch",
+          inputSummary,
+          engineId: this.engineId
+        });
+        return;
+      }
+
+      const outputSummary = summarizeCodexWebSearchAction(item.action, item.query);
+      this.rememberProcessActivitySummary(
+        sessionId,
+        turnId,
+        "webSearch",
+        outputSummary
+      );
+      this.emitEvent("tool.completed", {
+        sessionId,
+        turnId,
+        toolCallId: item.id,
+        status: "completed",
+        outputSummary,
+        engineId: this.engineId
+      });
+      return;
+    }
+
     if (isFileChangeThreadItem(item)) {
       recordCodexTurnChangesFromFileUpdate({
         sessionId,
@@ -1174,6 +1454,115 @@ export class CodexAppServerRuntimePort
         engineId: this.engineId
       });
     }
+  }
+
+  private handleRawResponseItemCompleted(
+    sessionId: string,
+    turnId: string,
+    item: ResponseItem
+  ): void {
+    if (item.type === "reasoning") {
+      const outputSummary = summarizeCodexRawReasoningItem(item);
+      if (
+        this.hasProcessActivitySummary(sessionId, turnId, "reasoning", outputSummary)
+      ) {
+        return;
+      }
+      this.rememberProcessActivitySummary(
+        sessionId,
+        turnId,
+        "reasoning",
+        outputSummary
+      );
+      const toolCallId = codexRawResponseToolCallId(turnId, item, "reasoning");
+      this.emitEvent("tool.started", {
+        sessionId,
+        turnId,
+        toolCallId,
+        toolName: "reasoning",
+        inputSummary: "Reasoning summary",
+        engineId: this.engineId
+      });
+      this.emitEvent("tool.completed", {
+        sessionId,
+        turnId,
+        toolCallId,
+        status: "completed",
+        outputSummary,
+        engineId: this.engineId
+      });
+      return;
+    }
+
+    if (item.type === "web_search_call") {
+      const toolCallId = codexRawResponseToolCallId(turnId, item, "webSearch");
+      const summary = summarizeCodexWebSearchAction(item.action);
+      if (this.hasProcessActivitySummary(sessionId, turnId, "webSearch", summary)) {
+        return;
+      }
+      this.rememberProcessActivitySummary(sessionId, turnId, "webSearch", summary);
+      this.emitEvent("tool.started", {
+        sessionId,
+        turnId,
+        toolCallId,
+        toolName: "webSearch",
+        inputSummary: summary,
+        engineId: this.engineId
+      });
+      this.emitEvent("tool.completed", {
+        sessionId,
+        turnId,
+        toolCallId,
+        status: mapCodexResponseItemStatus(item.status),
+        outputSummary: summary,
+        engineId: this.engineId
+      });
+    }
+  }
+
+  private processActivityKey(sessionId: string, turnId: string): string {
+    return `${sessionId}:${turnId}`;
+  }
+
+  private getProcessActivitySummaryState(
+    sessionId: string,
+    turnId: string
+  ): ProcessActivitySummaryState {
+    const key = this.processActivityKey(sessionId, turnId);
+    const current = this.processActivitySummariesByTurn.get(key);
+    if (current) {
+      return current;
+    }
+    const next = {
+      reasoning: new Set<string>(),
+      webSearch: new Set<string>()
+    };
+    this.processActivitySummariesByTurn.set(key, next);
+    return next;
+  }
+
+  private hasProcessActivitySummary(
+    sessionId: string,
+    turnId: string,
+    kind: keyof ProcessActivitySummaryState,
+    summary: string | undefined
+  ): boolean {
+    if (!summary) {
+      return false;
+    }
+    return this.getProcessActivitySummaryState(sessionId, turnId)[kind].has(summary);
+  }
+
+  private rememberProcessActivitySummary(
+    sessionId: string,
+    turnId: string,
+    kind: keyof ProcessActivitySummaryState,
+    summary: string | undefined
+  ): void {
+    if (!summary) {
+      return;
+    }
+    this.getProcessActivitySummaryState(sessionId, turnId)[kind].add(summary);
   }
 
   private syncCollabAgentSessions(

@@ -529,6 +529,84 @@ describe("Session discovery and reconciliation", () => {
     );
   });
 
+  it("hydrates reasoning and web search items as generic tool calls", async () => {
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        resumeThread: vi.fn().mockResolvedValue({
+          ...createThread({
+            id: "thread-process",
+            name: "Process thread",
+            preview: "Process thread"
+          }),
+          turns: [
+            {
+              id: "turn-process",
+              status: "completed",
+              error: null,
+              items: [
+                {
+                  type: "reasoning",
+                  id: "reason-1",
+                  summary: ["Checked official CPU specs"],
+                  content: ["Compared low-power options"]
+                },
+                {
+                  type: "webSearch",
+                  id: "search-1",
+                  query: "Intel N150 official specs",
+                  action: {
+                    type: "search",
+                    query: "Intel N150 official specs",
+                    queries: ["Intel N150 Processor Base Power"]
+                  }
+                },
+                {
+                  type: "agentMessage",
+                  id: "msg-1",
+                  text: "Done",
+                  phase: "final_answer",
+                  memoryCitation: null
+                }
+              ]
+            }
+          ]
+        }),
+        attachThreadToSession: vi.fn()
+      } as never
+    });
+
+    const hydrated = await provider.hydrateSession({
+      workspaceId: "workspace-1",
+      sessionId: "codex-thread:thread-process",
+      conversationId: "conversation-process",
+      engineId: "codex",
+      providerKind: "codex-thread",
+      providerSessionId: "thread-process",
+      createdAt: "2026-04-19T00:00:00.000Z",
+      updatedAt: "2026-04-19T00:00:01.000Z"
+    });
+
+    expect(hydrated?.turns[0]?.toolCallIds).toEqual([
+      "hydrated:codex-thread:thread-process:reason-1",
+      "hydrated:codex-thread:thread-process:search-1"
+    ]);
+    expect(hydrated?.toolCalls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          toolCallId: "hydrated:codex-thread:thread-process:reason-1",
+          toolName: "reasoning",
+          outputSummary: expect.stringContaining("Checked official CPU specs")
+        }),
+        expect.objectContaining({
+          toolCallId: "hydrated:codex-thread:thread-process:search-1",
+          toolName: "webSearch",
+          inputSummary: expect.stringContaining("Intel N150 official specs"),
+          outputSummary: expect.stringContaining("Intel N150 Processor Base Power")
+        })
+      ])
+    );
+  });
+
   it("recovers turn.finalMessageId only when a hydrated agent message is marked final_answer", async () => {
     const provider = new CodexSessionDiscoveryProvider({
       codexRuntimePort: {

@@ -50,6 +50,7 @@ describe("Codex app-server runtime port", () => {
     const events: string[] = [];
     const chunks: string[] = [];
     const completedMessages: Array<Record<string, unknown>> = [];
+    const contextUpdates: Array<Record<string, unknown>> = [];
     port.subscribe((event) => {
       events.push(event.method);
       if (event.method === "message.delta") {
@@ -60,6 +61,9 @@ describe("Codex app-server runtime port", () => {
       }
       if (event.method === "terminal.output") {
         chunks.push(String(event.params.chunk));
+      }
+      if (event.method === "session.context.updated") {
+        contextUpdates.push(event.params);
       }
     });
 
@@ -88,6 +92,7 @@ describe("Codex app-server runtime port", () => {
         "terminal.started",
         "terminal.output",
         "terminal.completed",
+        "session.context.updated",
         "turn.completed"
       ])
     );
@@ -100,6 +105,16 @@ describe("Codex app-server runtime port", () => {
         })
       ])
     );
+    expect(contextUpdates).toEqual([
+      expect.objectContaining({
+        sessionId: "session-1",
+        contextUsage: expect.objectContaining({
+          usedTokens: 1500,
+          contextWindow: 128000,
+          lastUsedTokens: 2200
+        })
+      })
+    ]);
   });
 
   it("marks message.completed as final for the turn when upstream phase is final_answer", async () => {
@@ -135,6 +150,84 @@ describe("Codex app-server runtime port", () => {
         isFinalForTurn: true
       })
     ]);
+  });
+
+  it("maps reasoning and web search process items into generic tool events", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+    port.subscribe((event) => {
+      events.push({
+        method: event.method,
+        params: event.params
+      });
+    });
+
+    await port.start();
+    await port.request({
+      id: "turn-process-events",
+      method: "turn/start",
+      params: {
+        sessionId: "session-1",
+        content: "please trigger process-events"
+      }
+    });
+
+    await waitFor(() => events.some((event) => event.method === "turn.completed"));
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "tool.started",
+          params: expect.objectContaining({
+            toolCallId: expect.stringMatching(/^reason-/),
+            toolName: "reasoning",
+            inputSummary: "Reasoning"
+          })
+        }),
+        expect.objectContaining({
+          method: "tool.delta",
+          params: expect.objectContaining({
+            toolCallId: expect.stringMatching(/^reason-/),
+            delta: "Looking up current market data.\n"
+          })
+        }),
+        expect.objectContaining({
+          method: "tool.completed",
+          params: expect.objectContaining({
+            toolCallId: expect.stringMatching(/^reason-/),
+            outputSummary: "Looking up current market data."
+          })
+        }),
+        expect.objectContaining({
+          method: "tool.completed",
+          params: expect.objectContaining({
+            toolCallId: expect.stringContaining(":reasoning:"),
+            outputSummary: "Comparing low-power CPU options."
+          })
+        }),
+        expect.objectContaining({
+          method: "tool.started",
+          params: expect.objectContaining({
+            toolCallId: expect.stringMatching(/^web-/),
+            toolName: "webSearch",
+            inputSummary: expect.stringContaining("mini PC low power CPUs")
+          })
+        }),
+        expect.objectContaining({
+          method: "tool.completed",
+          params: expect.objectContaining({
+            toolCallId: expect.stringContaining(":webSearch:"),
+            outputSummary: expect.stringContaining("AMD Ryzen low power official specs")
+          })
+        })
+      ])
+    );
   });
 
   it("maps app-server error notifications from TurnError payloads", async () => {

@@ -76,6 +76,27 @@ type TranscriptEntityIndexes = {
   approvalRequestsByTurnId: Record<string, ApprovalRequest[]>;
 };
 
+type ProcessTranscriptEntry =
+  | {
+      kind: "tool";
+      id: string;
+      startedAt?: string;
+      toolCall: ToolCall;
+      terminalStreams: TerminalStream[];
+    }
+  | {
+      kind: "terminal";
+      id: string;
+      startedAt?: string;
+      terminalStream: TerminalStream;
+    }
+  | {
+      kind: "approval";
+      id: string;
+      startedAt?: string;
+      approval: ApprovalRequest;
+    };
+
 const buildTranscriptEntityIndexes = (
   state: RendererStoreState
 ): TranscriptEntityIndexes => ({
@@ -225,6 +246,79 @@ const splitBlocksByRole = (
   });
 };
 
+const splitBlocksByMessage = (
+  blocks: MessageBlock[]
+): Array<{ role: MessageRole; blocks: MessageBlock[] }> =>
+  splitBlocksByMessageId(blocks)
+    .map((messageBlocks) => {
+      const firstBlock = messageBlocks[0];
+      return firstBlock
+        ? {
+            role: firstBlock.role,
+            blocks: messageBlocks
+          }
+        : undefined;
+    })
+    .filter((group): group is { role: MessageRole; blocks: MessageBlock[] } =>
+      Boolean(group)
+    );
+
+const buildProcessTranscriptEntries = (
+  toolCalls: ToolCall[],
+  terminalStreams: TerminalStream[],
+  approvals: ApprovalRequest[]
+): ProcessTranscriptEntry[] => {
+  const terminalStreamsByToolCallId = new Map<string, TerminalStream[]>();
+  const unlinkedTerminalStreams: TerminalStream[] = [];
+
+  for (const terminalStream of terminalStreams) {
+    if (terminalStream.toolCallId) {
+      const group = terminalStreamsByToolCallId.get(terminalStream.toolCallId) ?? [];
+      group.push(terminalStream);
+      terminalStreamsByToolCallId.set(terminalStream.toolCallId, group);
+      continue;
+    }
+    unlinkedTerminalStreams.push(terminalStream);
+  }
+
+  const toolEntries = toolCalls.map((toolCall) => ({
+    kind: "tool" as const,
+    id: `tool:${toolCall.toolCallId}`,
+    startedAt: toolCall.startedAt,
+    toolCall,
+    terminalStreams: sortByStartTime(
+      terminalStreamsByToolCallId.get(toolCall.toolCallId) ?? [],
+      (terminalStream) => terminalStream.terminalId
+    )
+  }));
+  const linkedToolIds = new Set(toolCalls.map((toolCall) => toolCall.toolCallId));
+  const terminalEntries = [
+    ...unlinkedTerminalStreams,
+    ...Array.from(terminalStreamsByToolCallId.entries())
+      .filter(([toolCallId]) => !linkedToolIds.has(toolCallId))
+      .flatMap(([, streams]) => streams)
+  ].map((terminalStream) => ({
+    kind: "terminal" as const,
+    id: `terminal:${terminalStream.terminalId}`,
+    startedAt: terminalStream.startedAt,
+    terminalStream
+  }));
+  const approvalEntries = approvals.map((approval) => ({
+    kind: "approval" as const,
+    id: `approval:${approval.requestId}`,
+    startedAt: approval.requestedAt,
+    approval
+  }));
+
+  return [...toolEntries, ...terminalEntries, ...approvalEntries].sort((left, right) => {
+    const byDate = compareIsoDateAsc(left.startedAt, right.startedAt);
+    if (byDate !== 0) {
+      return byDate;
+    }
+    return left.id.localeCompare(right.id);
+  });
+};
+
 const resolveTurnIdentity = (
   participantDirectory: ParticipantDirectory,
   messageRole: MessageRole,
@@ -246,6 +340,8 @@ const resolveTurnIdentity = (
 
 export type TurnTranscriptRow = {
   rowId: string;
+  rowKind: "message" | "process";
+  startedAt?: string;
   turn: Turn;
   turnIdentity: ParticipantIdentity;
   messageRole: MessageRole;
@@ -256,6 +352,129 @@ export type TurnTranscriptRow = {
   approvals: ApprovalRequest[];
   hasProcessDetails: boolean;
   defaultProcessExpanded: boolean;
+};
+
+const buildRunningTurnRows = (
+  turn: Turn,
+  blocks: MessageBlock[],
+  toolCalls: ToolCall[],
+  terminalStreams: TerminalStream[],
+  approvals: ApprovalRequest[],
+  participantDirectory: ParticipantDirectory,
+  hasProcessDetails: boolean
+): TurnTranscriptRow[] => {
+  const messageEntries = splitBlocksByMessage(blocks).map((group, index) => ({
+    kind: "message" as const,
+    id: `message:${index}:${group.blocks[0]?.blockId ?? index}`,
+    startedAt: group.blocks[0]?.startedAt,
+    group,
+    index
+  }));
+  const processEntries = buildProcessTranscriptEntries(
+    toolCalls,
+    terminalStreams,
+    approvals
+  ).map((entry, index) => ({
+    ...entry,
+    index
+  }));
+  const entries = [...messageEntries, ...processEntries].sort((left, right) => {
+    const byDate = compareIsoDateAsc(left.startedAt, right.startedAt);
+    if (byDate !== 0) {
+      return byDate;
+    }
+    return left.id.localeCompare(right.id);
+  });
+
+  if (entries.length === 0) {
+    return [
+      {
+        rowId: `${turn.turnId}:assistant:0`,
+        rowKind: "message",
+        startedAt: turn.startedAt,
+        turn,
+        turnIdentity: resolveTurnIdentity(
+          participantDirectory,
+          "assistant",
+          turn,
+          blocks,
+          toolCalls,
+          terminalStreams,
+          approvals
+        ),
+        messageRole: "assistant",
+        isFinalResponseRow: false,
+        blocks,
+        toolCalls,
+        terminalStreams,
+        approvals,
+        hasProcessDetails,
+        defaultProcessExpanded: true
+      }
+    ];
+  }
+
+  return entries.map((entry, index) => {
+    if (entry.kind === "message") {
+      const isAssistantLike = entry.group.role !== "user";
+      return {
+        rowId: `${turn.turnId}:${entry.group.role}:${entry.index}`,
+        rowKind: "message" as const,
+        startedAt: entry.startedAt,
+        turn,
+        turnIdentity: resolveTurnIdentity(
+          participantDirectory,
+          entry.group.role,
+          turn,
+          entry.group.blocks,
+          isAssistantLike ? toolCalls : [],
+          isAssistantLike ? terminalStreams : [],
+          isAssistantLike ? approvals : []
+        ),
+        messageRole: entry.group.role,
+        isFinalResponseRow: false,
+        blocks: entry.group.blocks,
+        toolCalls: [],
+        terminalStreams: [],
+        approvals: [],
+        hasProcessDetails: false,
+        defaultProcessExpanded: false
+      };
+    }
+
+    const processBlocks: MessageBlock[] = [];
+    const processToolCalls = entry.kind === "tool" ? [entry.toolCall] : [];
+    const processTerminalStreams =
+      entry.kind === "tool"
+        ? entry.terminalStreams
+        : entry.kind === "terminal"
+          ? [entry.terminalStream]
+          : [];
+    const processApprovals = entry.kind === "approval" ? [entry.approval] : [];
+    return {
+      rowId: `${turn.turnId}:process:${index}:${entry.id}`,
+      rowKind: "process" as const,
+      startedAt: entry.startedAt,
+      turn,
+      turnIdentity: resolveTurnIdentity(
+        participantDirectory,
+        "assistant",
+        turn,
+        processBlocks,
+        processToolCalls,
+        processTerminalStreams,
+        processApprovals
+      ),
+      messageRole: "assistant" as const,
+      isFinalResponseRow: false,
+      blocks: processBlocks,
+      toolCalls: processToolCalls,
+      terminalStreams: processTerminalStreams,
+      approvals: processApprovals,
+      hasProcessDetails: true,
+      defaultProcessExpanded: true
+    };
+  });
 };
 
 export const buildTurnTranscriptRows = (
@@ -274,10 +493,24 @@ export const buildTurnTranscriptRows = (
     const hasProcessDetails =
       toolCalls.length > 0 || terminalStreams.length > 0 || approvals.length > 0;
 
+    if (turn.status !== "completed") {
+      return buildRunningTurnRows(
+        turn,
+        blocks,
+        toolCalls,
+        terminalStreams,
+        approvals,
+        participantDirectory,
+        hasProcessDetails
+      );
+    }
+
     if (blockGroups.length === 0) {
       return [
         {
           rowId: `${turn.turnId}:assistant:0`,
+          rowKind: "message",
+          startedAt: turn.startedAt,
           turn,
           turnIdentity: resolveTurnIdentity(
             participantDirectory,
@@ -308,6 +541,8 @@ export const buildTurnTranscriptRows = (
         group.blocks.some((block) => block.messageId === turn.finalMessageId);
       return {
         rowId: `${turn.turnId}:${group.role}:${index}`,
+        rowKind: "message",
+        startedAt: group.blocks[0]?.startedAt ?? turn.startedAt,
         turn,
         turnIdentity: resolveTurnIdentity(
           participantDirectory,

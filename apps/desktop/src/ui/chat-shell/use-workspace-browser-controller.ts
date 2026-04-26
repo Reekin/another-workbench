@@ -3,7 +3,10 @@ import type { WorkspaceBrowserNodeRpc } from "@another-workbench/shared";
 import type { DesktopTransport } from "../../transport/desktop-transport.js";
 import { prioritizeWorkspaceIdsForReconciliation } from "./workspace-reconciliation.js";
 import { mergeWorkspaceBrowserTree } from "./workspace-browser-tree.js";
-import type { ComposerStatusNotice } from "./composer-status.js";
+import {
+  statusNoticeErrorDetails,
+  type ComposerStatusNotice
+} from "./composer-status.js";
 
 type StatusNoticeSetter = (
   notice: ComposerStatusNotice | undefined
@@ -126,7 +129,8 @@ export const useWorkspaceBrowserController = (input: {
           }
           input.onStatusNotice({
             message: `Background session sync failed: ${(error as Error).message}`,
-            source: "session-browser"
+            source: "session-browser",
+            ...statusNoticeErrorDetails(error)
           });
         }
       }
@@ -166,7 +170,8 @@ export const useWorkspaceBrowserController = (input: {
       input.onStatusNotice({
         message: `Session browser failed: ${(error as Error).message}`,
         persistent: true,
-        source: "session-browser"
+        source: "session-browser",
+        ...statusNoticeErrorDetails(error)
       });
     });
   }, [input.transport, input.eventCursor]);
@@ -206,7 +211,8 @@ export const useWorkspaceBrowserController = (input: {
         input.onStatusNotice({
           message: `Add workspace failed: ${(error as Error).message}`,
           persistent: true,
-          source: "workspace-add"
+          source: "workspace-add",
+          ...statusNoticeErrorDetails(error)
         });
       }
     },

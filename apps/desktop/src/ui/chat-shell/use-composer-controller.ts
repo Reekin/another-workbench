@@ -24,6 +24,7 @@ import {
 } from "./composer-attachments.js";
 import {
   resolveComposerStatusModel,
+  statusNoticeErrorDetails,
   type ComposerStatusNotice
 } from "./composer-status.js";
 import { resolveSlashSuggestionItems } from "./composer/composer-suggestions.js";
@@ -344,7 +345,8 @@ export const useComposerController = (
         if (!cancelled) {
           input.onStatusNotice({
             message: `Capability lookup failed: ${(error as Error).message}`,
-            source: "send"
+            source: "send",
+            ...statusNoticeErrorDetails(error)
           });
         }
       });
@@ -384,7 +386,8 @@ export const useComposerController = (
         input.onStatusNotice({
           message: `Skills lookup failed: ${(error as Error).message}`,
           persistent: true,
-          source: "send"
+          source: "send",
+          ...statusNoticeErrorDetails(error)
         });
       });
 
@@ -634,7 +637,8 @@ export const useComposerController = (
       input.onStatusNotice({
         message: `Send failed: ${(error as Error).message}`,
         persistent: true,
-        source: "send"
+        source: "send",
+        ...statusNoticeErrorDetails(error)
       });
       return false;
     } finally {
@@ -692,7 +696,8 @@ export const useComposerController = (
       input.onStatusNotice({
         message: `Stop failed: ${(error as Error).message}`,
         persistent: true,
-        source: "send"
+        source: "send",
+        ...statusNoticeErrorDetails(error)
       });
     } finally {
       setIsDispatching(false);
@@ -839,7 +844,8 @@ export const useComposerController = (
       input.onStatusNotice({
         message: `Attachment failed: ${(error as Error).message}`,
         persistent: true,
-        source: "send"
+        source: "send",
+        ...statusNoticeErrorDetails(error)
       });
     });
   };
@@ -858,7 +864,8 @@ export const useComposerController = (
       input.onStatusNotice({
         message: `Paste attachment failed: ${(error as Error).message}`,
         persistent: true,
-        source: "send"
+        source: "send",
+        ...statusNoticeErrorDetails(error)
       });
     });
   };
@@ -907,7 +914,8 @@ export const useComposerController = (
       input.onStatusNotice({
         message: `Drop attachment failed: ${(error as Error).message}`,
         persistent: true,
-        source: "send"
+        source: "send",
+        ...statusNoticeErrorDetails(error)
       });
     });
   };

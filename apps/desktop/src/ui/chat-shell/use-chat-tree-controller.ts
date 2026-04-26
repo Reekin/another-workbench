@@ -1,7 +1,10 @@
 import { useEffect, useState, type RefObject } from "react";
 import type { ChatTreeSnapshotRpc } from "@another-workbench/shared";
 import type { DesktopTransport } from "../../transport/desktop-transport.js";
-import type { ComposerStatusNotice } from "./composer-status.js";
+import {
+  statusNoticeErrorDetails,
+  type ComposerStatusNotice
+} from "./composer-status.js";
 
 type StatusNoticeSetter = (
   notice: ComposerStatusNotice | undefined
@@ -50,7 +53,8 @@ export const useChatTreeController = (input: {
         if (!disposed && input.displayedSessionIdRef.current === input.browsedSessionId) {
           input.onStatusNotice({
             message: `Chat tree refresh failed: ${(error as Error).message}`,
-            source: "chat-tree"
+            source: "chat-tree",
+            ...statusNoticeErrorDetails(error)
           });
         }
       });
@@ -87,7 +91,8 @@ export const useChatTreeController = (input: {
         input.onStatusNotice({
           message: `Chat tree jump failed: ${(error as Error).message}`,
           persistent: true,
-          source: "chat-tree"
+          source: "chat-tree",
+          ...statusNoticeErrorDetails(error)
         });
       }
     }

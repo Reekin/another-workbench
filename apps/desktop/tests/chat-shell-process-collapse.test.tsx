@@ -13,6 +13,8 @@ vi.mock("xterm", () => ({
 }));
 
 import { ChatShellApp } from "../src/ui/chat-shell/ChatShellApp.js";
+import { TurnProcessPanel } from "../src/ui/chat-shell/TurnProcessPanel.js";
+import { buildParticipantDirectory } from "../src/ui/chat-shell/participant-directory.js";
 import {
   resolveProcessExpanded,
   toggleProcessVisibility
@@ -159,20 +161,131 @@ describe("ChatShellApp inline process output", () => {
 
     expect(html).not.toContain(">Inspector<");
     expect(html).toContain("1 previous message &gt;");
-    expect(html).toContain("Hide process output");
-    expect(html).toContain("1 tool");
+    expect(html).not.toContain("Hide process output");
     expect(html).not.toContain("Show turn details");
     expect(html).not.toContain("1 earlier message");
-    expect((html.match(/Tool activity/g) ?? []).length).toBe(1);
+    expect(html).not.toContain("<h4>Activity</h4>");
     expect(html).toContain('class="awb-turn__process"');
+    expect((html.match(/awb-chat-entry__timestamp/g) ?? []).length).toBe(2);
     expect(html).toContain("completed final");
     expect(html).toContain("Please summarize.");
     expect(html).not.toContain("internal draft");
     expect(html.indexOf("1 previous message &gt;")).toBeLessThan(
       html.indexOf("completed final")
     );
-    expect(html.indexOf("Hide process output")).toBeLessThan(
-      html.indexOf("running turn")
+    expect(html.indexOf("running turn")).toBeLessThan(
+      html.indexOf("grep")
     );
+  });
+
+  it("interleaves hidden messages and activity by time inside previous turn details", () => {
+    const row = {
+      rowId: "turn-1:assistant:final",
+      rowKind: "message" as const,
+      startedAt: "2026-04-18T00:01:05.000Z",
+      turn: {
+        turnId: "turn-1",
+        sessionId: "session-1",
+        status: "completed" as const,
+        startedAt: "2026-04-18T00:01:00.000Z",
+        completedAt: "2026-04-18T00:01:20.000Z",
+        messageIds: [],
+        toolCallIds: ["tool-1"],
+        terminalIds: ["terminal-1"],
+        approvalRequestIds: []
+      },
+      turnIdentity: {
+        label: "assistant",
+        kind: "turn" as const
+      },
+      messageRole: "assistant" as const,
+      isFinalResponseRow: true,
+      blocks: [],
+      toolCalls: [
+        {
+          toolCallId: "tool-1",
+          sessionId: "session-1",
+          turnId: "turn-1",
+          toolName: "commandExecution",
+          status: "completed" as const,
+          inputSummary: "pwd",
+          startedAt: "2026-04-18T00:01:02.000Z",
+          completedAt: "2026-04-18T00:01:03.000Z"
+        }
+      ],
+      terminalStreams: [
+        {
+          terminalId: "terminal-1",
+          sessionId: "session-1",
+          turnId: "turn-1",
+          toolCallId: "tool-1",
+          status: "completed" as const,
+          outputText: "$ pwd\n/I/project\n",
+          exitCode: 0,
+          startedAt: "2026-04-18T00:01:02.000Z",
+          completedAt: "2026-04-18T00:01:03.000Z"
+        }
+      ],
+      approvals: [],
+      hasProcessDetails: true,
+      defaultProcessExpanded: false
+    };
+    const hiddenRows = [
+      {
+        ...row,
+        rowId: "turn-1:assistant:draft",
+        startedAt: "2026-04-18T00:01:01.000Z",
+        isFinalResponseRow: false,
+        blocks: [
+          {
+            blockId: "draft:md",
+            messageId: "draft",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "assistant" as const,
+            kind: "markdown" as const,
+            text: "internal draft",
+            startedAt: "2026-04-18T00:01:01.000Z"
+          }
+        ],
+        toolCalls: [],
+        terminalStreams: []
+      },
+      {
+        ...row,
+        rowId: "turn-1:assistant:note",
+        startedAt: "2026-04-18T00:01:04.000Z",
+        isFinalResponseRow: false,
+        blocks: [
+          {
+            blockId: "note:md",
+            messageId: "note",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "assistant" as const,
+            kind: "markdown" as const,
+            text: "after tool note",
+            startedAt: "2026-04-18T00:01:04.000Z"
+          }
+        ],
+        toolCalls: [],
+        terminalStreams: []
+      }
+    ];
+
+    const html = renderToStaticMarkup(
+      <TurnProcessPanel
+        row={row}
+        hiddenRows={hiddenRows}
+        participantDirectory={buildParticipantDirectory([])}
+        onActivateResourceLink={() => undefined}
+      />
+    );
+
+    expect(html).toContain("Earlier in this turn");
+    expect(html).not.toContain("<h4>Activity</h4>");
+    expect(html).not.toContain("awb-turn-process__history-entry");
+    expect(html.indexOf("internal draft")).toBeLessThan(html.indexOf("Shell pwd"));
+    expect(html.indexOf("Shell pwd")).toBeLessThan(html.indexOf("after tool note"));
   });
 });

@@ -2,7 +2,10 @@ import type { ApprovalRequest, ChatSession } from "@another-workbench/shared";
 
 export type ComposerStatusNotice = {
   message: string;
+  severity?: "info" | "warning" | "error";
   persistent?: boolean;
+  stack?: string;
+  context?: Record<string, unknown>;
   source?:
     | "engine-list"
     | "engine-select"
@@ -18,6 +21,13 @@ export type ComposerStatusNotice = {
     | "files"
     | "settings";
 };
+
+export const statusNoticeErrorDetails = (
+  error: unknown
+): Pick<ComposerStatusNotice, "severity" | "stack"> => ({
+  severity: "error",
+  stack: error instanceof Error ? error.stack : undefined
+});
 
 export type ResolveComposerStatusInput = {
   transportAvailable: boolean;

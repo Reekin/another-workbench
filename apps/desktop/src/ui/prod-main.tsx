@@ -1,7 +1,10 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { createRendererStore } from "../store/store.js";
-import { createDesktopTransport } from "../transport/desktop-transport.js";
+import {
+  createDesktopTransport,
+  type DesktopTransport
+} from "../transport/desktop-transport.js";
 import { resolveWorkbenchClientApi } from "../transport/workbench-client-bootstrap.js";
 import { ChatShellApp } from "./chat-shell/ChatShellApp.js";
 
@@ -9,6 +12,45 @@ const root = document.getElementById("root");
 if (!root) {
   throw new Error("Missing #root element.");
 }
+
+const describeUnknownError = (error: unknown): { message: string; stack?: string } => {
+  if (error instanceof Error) {
+    return {
+      message: error.message,
+      stack: error.stack
+    };
+  }
+  return {
+    message: typeof error === "string" ? error : String(error)
+  };
+};
+
+const installRendererErrorLogging = (transport: DesktopTransport): void => {
+  window.addEventListener("error", (event) => {
+    const details = describeUnknownError(event.error ?? event.message);
+    void transport.errorLog.write({
+      message: details.message,
+      severity: "error",
+      source: "renderer-error",
+      stack: details.stack,
+      context: {
+        filename: event.filename,
+        lineno: event.lineno,
+        colno: event.colno
+      }
+    }).catch(() => undefined);
+  });
+
+  window.addEventListener("unhandledrejection", (event) => {
+    const details = describeUnknownError(event.reason);
+    void transport.errorLog.write({
+      message: details.message,
+      severity: "error",
+      source: "renderer-unhandled-rejection",
+      stack: details.stack
+    }).catch(() => undefined);
+  });
+};
 
 let transport: ReturnType<typeof createDesktopTransport> | undefined;
 let selectionLabel = "local";
@@ -19,6 +61,7 @@ try {
   });
   selectionLabel = selection.mode === "remote" ? `remote: ${selection.label}` : "local";
   transport = createDesktopTransport(selection.api);
+  installRendererErrorLogging(transport);
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   root.innerHTML = [

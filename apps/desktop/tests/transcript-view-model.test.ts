@@ -201,13 +201,13 @@ describe("transcript view model", () => {
     );
     const rows = buildTurnTranscriptRows(state, turns, participantDirectory);
 
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(8);
     expect(rows[0]?.turn.turnId).toBe("turn-1");
     expect(rows[1]?.turn.turnId).toBe("turn-2");
     expect(rows[0]?.defaultProcessExpanded).toBe(false);
-    expect(rows[1]?.defaultProcessExpanded).toBe(true);
+    expect(rows[1]?.defaultProcessExpanded).toBe(false);
     expect(rows[0]?.hasProcessDetails).toBe(false);
-    expect(rows[1]?.hasProcessDetails).toBe(true);
+    expect(rows[1]?.hasProcessDetails).toBe(false);
 
     expect(rows[0]?.turnIdentity).toMatchObject({
       label: "agent-1",
@@ -222,18 +222,43 @@ describe("transcript view model", () => {
       startedAt: "2026-04-17T00:00:01.000Z",
       text: "hello"
     });
-    expect(rows[1]?.toolCalls.map((toolCall) => toolCall.toolCallId)).toEqual([
-      "tool-ordered",
-      "tool-fallback"
+    expect(rows[1]).toMatchObject({
+      rowKind: "message",
+      blocks: [expect.objectContaining({ blockId: "message-2:md" })]
+    });
+    expect(rows.slice(2).map((row) => row.rowKind)).toEqual([
+      "process",
+      "process",
+      "process",
+      "process",
+      "process",
+      "process"
     ]);
-    expect(rows[1]?.terminalStreams.map((stream) => stream.terminalId)).toEqual([
-      "terminal-ordered",
-      "terminal-fallback"
+    expect(rows.slice(2).map((row) => row.defaultProcessExpanded)).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
     ]);
-    expect(rows[1]?.approvals.map((approval) => approval.requestId)).toEqual([
-      "approval-ordered",
-      "approval-fallback"
+    expect(rows.slice(2).map((row) => row.hasProcessDetails)).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
     ]);
+    expect(
+      rows.slice(2).map((row) => row.approvals.map((approval) => approval.requestId))
+    ).toEqual([["approval-ordered"], [], [], ["approval-fallback"], [], []]);
+    expect(
+      rows.slice(2).map((row) => row.toolCalls.map((toolCall) => toolCall.toolCallId))
+    ).toEqual([[], [], ["tool-ordered"], [], [], ["tool-fallback"]]);
+    expect(
+      rows.slice(2).map((row) => row.terminalStreams.map((stream) => stream.terminalId))
+    ).toEqual([[], ["terminal-ordered"], [], [], ["terminal-fallback"], []]);
   });
 
   it("splits a mixed user and assistant turn into separate transcript rows", () => {
@@ -340,6 +365,107 @@ describe("transcript view model", () => {
     expect(rows[1]?.toolCalls.map((tool) => tool.toolCallId)).toEqual(["tool-1"]);
     expect(rows[1]?.terminalStreams.map((stream) => stream.terminalId)).toEqual([
       "terminal-1"
+    ]);
+  });
+
+  it("interleaves running process rows with assistant messages by start time", () => {
+    const store = createRendererStore();
+    store.hydrateSnapshot(
+      parseDomainSnapshot({
+        conversations: [
+          {
+            conversationId: "conv-1",
+            participantEngineIds: ["agent-1"],
+            activeSessionId: "session-1",
+            sessionIds: ["session-1"],
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-1",
+            conversationId: "conv-1",
+            engineId: "agent-1",
+            status: "running",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        turns: [
+          {
+            turnId: "turn-1",
+            sessionId: "session-1",
+            status: "streaming",
+            startedAt: "2026-04-17T00:00:01.000Z",
+            messageIds: ["message-commentary", "message-final"],
+            toolCallIds: ["tool-search"],
+            terminalIds: [],
+            approvalRequestIds: []
+          }
+        ],
+        messageBlocks: [
+          {
+            blockId: "message-commentary:md",
+            messageId: "message-commentary",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "assistant",
+            kind: "markdown",
+            text: "I will look this up.",
+            startedAt: "2026-04-17T00:00:02.000Z"
+          },
+          {
+            blockId: "message-final:md",
+            messageId: "message-final",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "assistant",
+            kind: "markdown",
+            text: "Here is the answer.",
+            startedAt: "2026-04-17T00:00:04.000Z"
+          }
+        ],
+        toolCalls: [
+          {
+            toolCallId: "tool-search",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            toolName: "webSearch",
+            status: "completed",
+            inputSummary: "Search\nquery: mini PC",
+            outputSummary: "Search complete",
+            startedAt: "2026-04-17T00:00:03.000Z",
+            completedAt: "2026-04-17T00:00:03.500Z"
+          }
+        ],
+        terminalStreams: [],
+        approvalRequests: [],
+        participants: [],
+        sessionRelations: []
+      })
+    );
+
+    const rows = buildTurnTranscriptRows(
+      store.getState(),
+      selectTurnsForSession(store.getState(), "session-1"),
+      buildParticipantDirectory([])
+    );
+
+    expect(rows.map((row) => row.rowKind)).toEqual(["message", "process", "message"]);
+    expect(rows.map((row) => row.rowId)).toEqual([
+      "turn-1:assistant:0",
+      "turn-1:process:1:tool:tool-search",
+      "turn-1:assistant:1"
+    ]);
+    expect(rows[0]?.blocks.map((block) => block.text)).toEqual([
+      "I will look this up."
+    ]);
+    expect(rows[1]?.toolCalls.map((toolCall) => toolCall.toolName)).toEqual([
+      "webSearch"
+    ]);
+    expect(rows[2]?.blocks.map((block) => block.text)).toEqual([
+      "Here is the answer."
     ]);
   });
 

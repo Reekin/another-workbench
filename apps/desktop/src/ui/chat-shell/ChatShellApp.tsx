@@ -6,11 +6,13 @@ import {
   useState,
   type CSSProperties,
   type ReactElement,
-  type RefObject
+  type RefObject,
+  type SetStateAction
 } from "react";
 import { createPortal } from "react-dom";
 import type {
   AgentParticipant,
+  ApprovalRequest,
   EngineDefinitionRpc,
   EngineSurfaceRpc,
   ExtractedFileReference,
@@ -27,7 +29,6 @@ import { ChatTreePanel } from "./ChatTreePanel.js";
 import { FilesDetailPanel } from "./FilesDetailPanel.js";
 import { ImageLightbox, type ImageLightboxState } from "./ImageLightbox.js";
 import { MessageMarkdownView } from "./MessageMarkdownView.js";
-import { ParticipantIdentityBadge } from "./ParticipantIdentityBadge.js";
 import {
   resolveProcessExpanded,
   toggleProcessVisibility,
@@ -35,7 +36,10 @@ import {
 } from "./process-visibility.js";
 import { TurnProcessPanel } from "./TurnProcessPanel.js";
 import { buildParticipantDirectory } from "./participant-directory.js";
-import { type ComposerStatusNotice } from "./composer-status.js";
+import {
+  statusNoticeErrorDetails,
+  type ComposerStatusNotice
+} from "./composer-status.js";
 import { filterTranscriptRowsForChatTree } from "./chat-tree-transcript.js";
 import { buildTurnTranscriptRows } from "./transcript-view-model.js";
 import { useFileBrowserController } from "./use-file-browser-controller.js";
@@ -244,6 +248,44 @@ const countHiddenMessages = (rows: TranscriptRow[]): number => {
   return messageIds.size;
 };
 
+const buildTranscriptContentVersion = (rows: TranscriptRow[]): string =>
+  rows
+    .map((row) =>
+      [
+        row.rowId,
+        row.turn.status,
+        row.turn.completedAt ?? "",
+        row.blocks
+          .map(
+            (block) =>
+              `${block.blockId}:${block.kind}:${block.text?.length ?? 0}:${
+                block.startedAt ?? ""
+              }`
+          )
+          .join(","),
+        row.toolCalls
+          .map(
+            (toolCall) =>
+              `${toolCall.toolCallId}:${toolCall.status}:${
+                toolCall.inputSummary?.length ?? 0
+              }:${toolCall.outputSummary?.length ?? 0}`
+          )
+          .join(","),
+        row.terminalStreams
+          .map(
+            (stream) =>
+              `${stream.terminalId}:${stream.status}:${stream.outputText.length}:${
+                stream.exitCode ?? ""
+              }`
+          )
+          .join(","),
+        row.approvals
+          .map((approval) => `${approval.requestId}:${approval.status}`)
+          .join(",")
+      ].join("|")
+    )
+    .join("||");
+
 const buildRenderedTurnGroups = (
   rows: ReturnType<typeof buildTurnTranscriptRows>
 ): RenderedTurnGroup[] => {
@@ -358,10 +400,14 @@ const TranscriptPane = memo(
 
       {buildRenderedTurnGroups(renderedTranscriptRows).map(({ visibleRow, hiddenRows }) => {
         const isUserTurn = visibleRow.messageRole === "user";
+        const isInlineProcessRow =
+          visibleRow.rowKind === "process" && visibleRow.turn.status !== "completed";
         const hiddenMessageCount = countHiddenMessages(hiddenRows);
         const hasCollapsedContent = hiddenRows.length > 0;
         const hasExpandableDetails =
-          !isUserTurn && (visibleRow.hasProcessDetails || hasCollapsedContent);
+          !isUserTurn &&
+          !isInlineProcessRow &&
+          (visibleRow.hasProcessDetails || hasCollapsedContent);
         const defaultExpanded = hasCollapsedContent
           ? false
           : visibleRow.defaultProcessExpanded;
@@ -379,6 +425,10 @@ const TranscriptPane = memo(
         });
         const processToggleLabel = resolveProcessOutputToggleLabel(isProcessExpanded);
         const previousMessagesLabel = formatPreviousMessagesLabel(hiddenMessageCount);
+        const isFinalDisplayedAssistantRow =
+          !isUserTurn && visibleRow.turn.status === "completed" && !isInlineProcessRow;
+        const shouldShowTimestamp = isUserTurn || isFinalDisplayedAssistantRow;
+        const shouldRenderExtensions = isFinalDisplayedAssistantRow;
         return (
           <article
             key={visibleRow.rowId}
@@ -386,12 +436,17 @@ const TranscriptPane = memo(
             data-final-response-row={visibleRow.isFinalResponseRow ? "true" : "false"}
             className={`awb-chat-entry ${isUserTurn ? "is-user" : "is-assistant"}`}
           >
-            <header className="awb-chat-entry__identity">
-              <ParticipantIdentityBadge identity={visibleRow.turnIdentity} compact />
-              <time className="awb-chat-entry__timestamp">
-                {formatTimestamp(visibleRow.turn.completedAt ?? visibleRow.turn.startedAt)}
-              </time>
-            </header>
+            {shouldShowTimestamp && (
+              <header className="awb-chat-entry__identity">
+                <time className="awb-chat-entry__timestamp">
+                  {formatTimestamp(
+                    visibleRow.startedAt ??
+                      visibleRow.turn.completedAt ??
+                      visibleRow.turn.startedAt
+                  )}
+                </time>
+              </header>
+            )}
             {hasExpandableDetails && (
               <div className="awb-turn__process">
                 <button
@@ -427,22 +482,36 @@ const TranscriptPane = memo(
                 )}
               </div>
             )}
-            <div className="awb-chat-entry__messages">
-              {visibleRow.blocks.length === 0 && (
-                <p className="awb-turn__empty">
-                  {isUserTurn ? "No message content." : "Waiting for response…"}
-                </p>
-              )}
-              {visibleRow.blocks.map((block) => (
-                <MessageMarkdownView
-                  key={block.blockId}
-                  block={block}
+            {isInlineProcessRow && (
+              <div className="awb-turn__process awb-turn__process--inline">
+                <TurnProcessPanel
+                  row={visibleRow}
+                  hiddenRows={[]}
+                  participantDirectory={participantDirectory}
                   onActivateResourceLink={onActivateResourceLink}
                   onPreviewImage={onPreviewImage}
+                  onRespondApproval={onRespondApproval}
                 />
-              ))}
-            </div>
-            {!isUserTurn
+              </div>
+            )}
+            {!isInlineProcessRow && (
+              <div className="awb-chat-entry__messages">
+                {visibleRow.blocks.length === 0 && (
+                  <p className="awb-turn__empty">
+                    {isUserTurn ? "No message content." : "Waiting for response…"}
+                  </p>
+                )}
+                {visibleRow.blocks.map((block) => (
+                  <MessageMarkdownView
+                    key={block.blockId}
+                    block={block}
+                    onActivateResourceLink={onActivateResourceLink}
+                    onPreviewImage={onPreviewImage}
+                  />
+                ))}
+              </div>
+            )}
+            {shouldRenderExtensions
               ? renderTurnExtensions({
                   transport,
                   engineId,
@@ -537,7 +606,8 @@ const SettingsLauncher = ({
       onStatusNotice({
         message: `Settings save failed: ${(error as Error).message}`,
         persistent: true,
-        source: "settings"
+        source: "settings",
+        ...statusNoticeErrorDetails(error)
       });
     } finally {
       setIsSaving(false);
@@ -634,7 +704,7 @@ export const ChatShellApp = ({
     Record<string, EngineSurfaceRpc | undefined>
   >({});
   const [selectedEngineId, setSelectedEngineId] = useState<string>("");
-  const [statusNotice, setStatusNotice] = useState<ComposerStatusNotice | undefined>();
+  const [statusNotice, setStatusNoticeState] = useState<ComposerStatusNotice | undefined>();
   const [sessionWindows, setSessionWindows] = useState<
     Record<string, SessionWindowRpc | undefined>
   >({});
@@ -651,6 +721,50 @@ export const ChatShellApp = ({
   >({});
   const [lightboxImage, setLightboxImage] = useState<ImageLightboxState | undefined>();
   const [settingsHydrated, setSettingsHydrated] = useState(false);
+
+  const writeStatusNoticeLog = useCallback(
+    (notice: ComposerStatusNotice): void => {
+      if (notice.severity !== "error" || !transport) {
+        return;
+      }
+      const stack =
+        notice.stack ??
+        new Error(`Status notice emitted: ${notice.message}`).stack;
+      void transport.errorLog
+        .write({
+          message: notice.message,
+          severity: "error",
+          source: notice.source,
+          stack,
+          context: {
+            persistent: notice.persistent ?? false,
+            ...notice.context
+          }
+        })
+        .catch(() => undefined);
+    },
+    [transport]
+  );
+
+  const setStatusNotice = useCallback(
+    (action: SetStateAction<ComposerStatusNotice | undefined>): void => {
+      if (typeof action === "function") {
+        setStatusNoticeState((current) => {
+          const next = action(current);
+          if (next && next !== current) {
+            writeStatusNoticeLog(next);
+          }
+          return next;
+        });
+        return;
+      }
+      if (action) {
+        writeStatusNoticeLog(action);
+      }
+      setStatusNoticeState(action);
+    },
+    [writeStatusNoticeLog]
+  );
 
   const {
     workspaceTree,
@@ -738,13 +852,18 @@ export const ChatShellApp = ({
     () => buildTurnTranscriptRows(state, turns, participantDirectory),
     [state, turns, participantDirectory]
   );
+  const transcriptContentVersion = useMemo(
+    () => buildTranscriptContentVersion(transcriptRows),
+    [transcriptRows]
+  );
 
   const viewport = useTranscriptViewportController({
     displayedSessionId,
     isOpeningSelectedSession,
     windowStartTurnId: activeSessionWindow?.windowStartTurnId,
     windowEndTurnId: activeSessionWindow?.windowEndTurnId,
-    renderedTranscriptRowCount: transcriptRows.length
+    renderedTranscriptRowCount: transcriptRows.length,
+    transcriptContentVersion
   });
 
   const resetSessionSwitchState = (): void => {
@@ -794,6 +913,16 @@ export const ChatShellApp = ({
     [transcriptRows, activeChatTree]
   );
   const renderedTranscriptRows = isOpeningSelectedSession ? [] : visibleTranscriptRows;
+  const activeSessionApprovals = useMemo(
+    () =>
+      activeSessionId
+        ? Object.values(state.entities.approvalRequests).filter(
+            (approval): approval is ApprovalRequest =>
+              approval.sessionId === activeSessionId && approval.status === "pending"
+          )
+        : [],
+    [activeSessionId, state.entities.approvalRequests]
+  );
 
   const fileBrowser = useFileBrowserController({
     transport,
@@ -845,7 +974,8 @@ export const ChatShellApp = ({
           setStatusNotice({
             message: `Engine list failed: ${(error as Error).message}`,
             persistent: true,
-            source: "settings"
+            source: "settings",
+            ...statusNoticeErrorDetails(error)
           });
         }
       });
@@ -883,7 +1013,8 @@ export const ChatShellApp = ({
           setStatusNotice({
             message: `Settings load failed: ${(error as Error).message}`,
             persistent: true,
-            source: "settings"
+            source: "settings",
+            ...statusNoticeErrorDetails(error)
           });
         }
       });
@@ -909,7 +1040,8 @@ export const ChatShellApp = ({
           setStatusNotice({
             message: `Engine select failed: ${(error as Error).message}`,
             persistent: true,
-            source: "engine-select"
+            source: "engine-select",
+            ...statusNoticeErrorDetails(error)
           });
         }
       });
@@ -942,7 +1074,8 @@ export const ChatShellApp = ({
           setStatusNotice({
             message: `Engine surface failed: ${(error as Error).message}`,
             persistent: true,
-            source: "settings"
+            source: "settings",
+            ...statusNoticeErrorDetails(error)
           });
         }
       });
@@ -973,7 +1106,8 @@ export const ChatShellApp = ({
           setStatusNotice({
             message: `Event subscribe failed: ${(error as Error).message}`,
             persistent: true,
-            source: "subscription"
+            source: "subscription",
+            ...statusNoticeErrorDetails(error)
           });
         }
       });
@@ -1192,12 +1326,14 @@ export const ChatShellApp = ({
             activeWorkspaceId={activeWorkspace?.workspaceId}
             activeWorkspaceRootPath={activeWorkspace?.rootPath}
             turns={turns}
-            approvals={renderedTranscriptRows.at(-1)?.approvals ?? []}
+            approvals={activeSessionApprovals}
             isOpeningSelectedSession={isOpeningSelectedSession}
             statusNotice={statusNotice}
             onStatusNotice={setStatusNotice}
+            onPreviewImage={onPreviewImage}
             onCreateSession={onCreateSession}
             onOpenSession={onOpenSession}
+            onRespondApproval={transport ? onRespondApproval : undefined}
           />
         </main>
 

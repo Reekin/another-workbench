@@ -26,7 +26,7 @@ describe("ChatShellApp header and transcript labels", () => {
     expect(truncateSessionHeading("   ")).toBe("Thread");
   });
 
-  it("shows the assistant identity once for multiple assistant blocks in one turn", () => {
+  it("shows only the final assistant timestamp for multiple assistant blocks in one turn", () => {
     const store = createRendererStore();
     store.hydrateSnapshot(
       parseDomainSnapshot({
@@ -112,10 +112,11 @@ describe("ChatShellApp header and transcript labels", () => {
 
     const html = renderToStaticMarkup(<ChatShellApp store={store} />);
 
-    expect((html.match(/agent-codex/g) ?? []).length).toBe(1);
+    expect(html).not.toContain("agent-codex");
     expect(html).toContain("first line");
     expect(html).toContain("second line");
     expect(html).toContain('class="awb-chat-entry__timestamp"');
+    expect((html.match(/awb-chat-entry__timestamp/g) ?? []).length).toBe(1);
     expect(html).not.toContain("awb-chat-entry__meta");
     expect(html.indexOf("awb-chat-entry__timestamp")).toBeLessThan(
       html.indexOf("awb-chat-entry__messages")
@@ -161,5 +162,60 @@ describe("ChatShellApp header and transcript labels", () => {
     expect(html).not.toContain("Attach files");
     expect(html).not.toContain("Message the active session");
     expect(html).not.toContain("In session-1");
+  });
+
+  it("surfaces pending approvals above the composer from the active session", () => {
+    const store = createRendererStore();
+    store.hydrateSnapshot(
+      parseDomainSnapshot({
+        conversations: [
+          {
+            conversationId: "conversation-1",
+            participantEngineIds: ["agent-codex"],
+            activeSessionId: "session-1",
+            sessionIds: ["session-1"],
+            createdAt: "2026-04-26T00:00:00.000Z",
+            updatedAt: "2026-04-26T00:00:00.000Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-1",
+            conversationId: "conversation-1",
+            engineId: "agent-codex",
+            status: "awaiting_approval",
+            createdAt: "2026-04-26T00:00:00.000Z",
+            updatedAt: "2026-04-26T00:01:00.000Z"
+          }
+        ],
+        turns: [],
+        messageBlocks: [],
+        toolCalls: [],
+        terminalStreams: [],
+        approvalRequests: [
+          {
+            requestId: "approval-1",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            approvalKind: "command",
+            status: "pending",
+            title: "Approve shell command",
+            details: "echo approval",
+            requestedAt: "2026-04-26T00:01:00.000Z"
+          }
+        ],
+        participants: [],
+        sessionRelations: []
+      })
+    );
+
+    const html = renderToStaticMarkup(<ChatShellApp store={store} />);
+
+    expect(html).toContain('aria-label="Pending approvals"');
+    expect(html).toContain("Approve shell command");
+    expect(html).toContain("echo approval");
+    expect(html.indexOf("awb-composer-approvals")).toBeLessThan(
+      html.indexOf("<textarea")
+    );
   });
 });

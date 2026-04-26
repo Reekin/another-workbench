@@ -5,7 +5,10 @@ import type {
   WorkspaceFileSearchResultRpc
 } from "@another-workbench/shared";
 import type { DesktopTransport } from "../../transport/desktop-transport.js";
-import type { ComposerStatusNotice } from "./composer-status.js";
+import {
+  statusNoticeErrorDetails,
+  type ComposerStatusNotice
+} from "./composer-status.js";
 
 type FileSelection = ExtractedFileReference | WorkspaceFileSearchResultRpc;
 
@@ -66,7 +69,8 @@ export const useFileBrowserController = (input: {
           input.onStatusNotice({
             message: `File search failed: ${(error as Error).message}`,
             persistent: true,
-            source: "files"
+            source: "files",
+            ...statusNoticeErrorDetails(error)
           });
         })
         .finally(() => {
@@ -102,7 +106,8 @@ export const useFileBrowserController = (input: {
         input.onStatusNotice({
           message: `File preview failed: ${(error as Error).message}`,
           persistent: true,
-          source: "files"
+          source: "files",
+          ...statusNoticeErrorDetails(error)
         });
       })
       .finally(() => {

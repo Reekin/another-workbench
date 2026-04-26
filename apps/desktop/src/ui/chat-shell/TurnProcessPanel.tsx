@@ -1,13 +1,16 @@
 import type { ExtractedFileReference } from "@another-workbench/shared";
-import type { ReactElement } from "react";
+import { Fragment, type ReactElement } from "react";
 import type { ImageLightboxState } from "./ImageLightbox.js";
 import { MessageMarkdownView } from "./MessageMarkdownView.js";
 import type { ParticipantDirectory } from "./participant-directory.js";
-import { ParticipantIdentityBadge } from "./ParticipantIdentityBadge.js";
 import type { TurnTranscriptRow } from "./transcript-view-model.js";
 import { ApprovalFlowView, type ApprovalAction } from "./ApprovalFlowView.js";
-import { TerminalStreamView } from "./TerminalStreamView.js";
-import { ToolTimelineView } from "./ToolTimelineView.js";
+import {
+  buildProcessActivityEntries,
+  ProcessActivityItemView,
+  ProcessActivityView,
+  type ProcessActivityEntry
+} from "./ProcessActivityView.js";
 
 export type TurnProcessPanelProps = {
   row: TurnTranscriptRow;
@@ -22,6 +25,63 @@ export type TurnProcessPanelProps = {
   }) => Promise<void>;
 };
 
+const compareIsoDateAsc = (left?: string, right?: string): number => {
+  if (!left && !right) {
+    return 0;
+  }
+  if (!left) {
+    return 1;
+  }
+  if (!right) {
+    return -1;
+  }
+  const leftDate = Date.parse(left);
+  const rightDate = Date.parse(right);
+  if (Number.isNaN(leftDate) || Number.isNaN(rightDate)) {
+    return left.localeCompare(right);
+  }
+  return leftDate - rightDate;
+};
+
+type TurnHistoryItem =
+  | {
+      kind: "message";
+      id: string;
+      startedAt?: string;
+      row: TurnTranscriptRow;
+    }
+  | {
+      kind: "activity";
+      id: string;
+      startedAt?: string;
+      entry: ProcessActivityEntry;
+    };
+
+const buildTurnHistoryItems = (
+  row: TurnTranscriptRow,
+  hiddenRows: TurnTranscriptRow[]
+): TurnHistoryItem[] =>
+  [
+    ...hiddenRows.map((hiddenRow) => ({
+      kind: "message" as const,
+      id: `message:${hiddenRow.rowId}`,
+      startedAt: hiddenRow.startedAt,
+      row: hiddenRow
+    })),
+    ...buildProcessActivityEntries(row.toolCalls, row.terminalStreams).map((entry) => ({
+      kind: "activity" as const,
+      id: `activity:${entry.id}`,
+      startedAt: entry.startedAt,
+      entry
+    }))
+  ].sort((left, right) => {
+    const byDate = compareIsoDateAsc(left.startedAt, right.startedAt);
+    if (byDate !== 0) {
+      return byDate;
+    }
+    return left.id.localeCompare(right.id);
+  });
+
 export const TurnProcessPanel = ({
   row,
   hiddenRows = [],
@@ -29,79 +89,61 @@ export const TurnProcessPanel = ({
   onActivateResourceLink,
   onPreviewImage,
   onRespondApproval
-}: TurnProcessPanelProps): ReactElement => (
-  <div className="awb-turn-process">
-    {hiddenRows.length > 0 && (
-      <section className="awb-turn-process__section">
-        <header className="awb-turn-process__section-header">
-          <h4>Earlier in this turn</h4>
-          <span>{hiddenRows.length}</span>
-        </header>
-        <div className="awb-turn-process__history">
-          {hiddenRows.map((hiddenRow) => (
-            <article
-              key={hiddenRow.rowId}
-              className={`awb-turn-process__history-entry ${
-                hiddenRow.messageRole === "user" ? "is-user" : "is-assistant"
-              }`}
-            >
-              <header className="awb-turn-process__history-identity">
-                <ParticipantIdentityBadge identity={hiddenRow.turnIdentity} compact />
-              </header>
-              <div className="awb-turn-process__history-messages">
-                {hiddenRow.blocks.map((block) => (
-                  <MessageMarkdownView
-                    key={block.blockId}
-                    block={block}
-                    onActivateResourceLink={onActivateResourceLink}
-                    onPreviewImage={onPreviewImage}
-                  />
-                ))}
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
-    )}
+}: TurnProcessPanelProps): ReactElement => {
+  const historyItems =
+    hiddenRows.length > 0 ? buildTurnHistoryItems(row, hiddenRows) : [];
+  const renderStandaloneActivity = historyItems.length === 0;
 
-    {row.toolCalls.length > 0 && (
-      <section className="awb-turn-process__section">
-        <header className="awb-turn-process__section-header">
-          <h4>Tool activity</h4>
-          <span>{row.toolCalls.length}</span>
-        </header>
-        <ToolTimelineView
-          toolCalls={row.toolCalls}
-          participantDirectory={participantDirectory}
-        />
-      </section>
-    )}
+  return (
+    <div className="awb-turn-process">
+      {historyItems.length > 0 && (
+        <section className="awb-turn-process__section awb-turn-process__section--plain">
+          <header className="awb-turn-process__section-header">
+            <h4>Earlier in this turn</h4>
+            <span>{historyItems.length}</span>
+          </header>
+          <div className="awb-turn-process__history">
+            {historyItems.map((item) =>
+              item.kind === "activity" ? (
+                <ProcessActivityItemView key={item.id} entry={item.entry} />
+              ) : (
+                <Fragment key={item.row.rowId}>
+                  {item.row.blocks.map((block) => (
+                    <MessageMarkdownView
+                      key={block.blockId}
+                      block={block}
+                      onActivateResourceLink={onActivateResourceLink}
+                      onPreviewImage={onPreviewImage}
+                    />
+                  ))}
+                </Fragment>
+              )
+            )}
+          </div>
+        </section>
+      )}
 
-    {row.terminalStreams.length > 0 && (
-      <section className="awb-turn-process__section">
-        <header className="awb-turn-process__section-header">
-          <h4>Terminal streams</h4>
-          <span>{row.terminalStreams.length}</span>
-        </header>
-        <TerminalStreamView
-          terminalStreams={row.terminalStreams}
-          participantDirectory={participantDirectory}
-        />
-      </section>
-    )}
+      {renderStandaloneActivity &&
+        (row.toolCalls.length > 0 || row.terminalStreams.length > 0) && (
+          <ProcessActivityView
+            toolCalls={row.toolCalls}
+            terminalStreams={row.terminalStreams}
+          />
+        )}
 
-    {row.approvals.length > 0 && (
-      <section className="awb-turn-process__section">
-        <header className="awb-turn-process__section-header">
-          <h4>Approval requests</h4>
-          <span>{row.approvals.length}</span>
-        </header>
-        <ApprovalFlowView
-          approvals={row.approvals}
-          participantDirectory={participantDirectory}
-          onRespond={onRespondApproval}
-        />
-      </section>
-    )}
-  </div>
-);
+      {row.approvals.length > 0 && (
+        <section className="awb-turn-process__section">
+          <header className="awb-turn-process__section-header">
+            <h4>Approval requests</h4>
+            <span>{row.approvals.length}</span>
+          </header>
+          <ApprovalFlowView
+            approvals={row.approvals}
+            participantDirectory={participantDirectory}
+            onRespond={onRespondApproval}
+          />
+        </section>
+      )}
+    </div>
+  );
+};

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createComposerAttachment,
+  createComposerAttachments,
   formatComposerAttachmentSize,
   mergeComposerAttachments,
   releaseComposerAttachments,
@@ -43,6 +44,28 @@ describe("composer attachment helpers", () => {
     expect(attachment.attachment.uri.startsWith("data:image/png;base64,")).toBe(true);
     expect(attachment.previewUrl).toBe(attachment.attachment.uri);
     expect(attachment.releasePreviewUrl).toBe(false);
+  });
+
+  it("keeps multiple pasted images as separate composer attachments", async () => {
+    const attachments = await createComposerAttachments(
+      [
+        new File([Uint8Array.from([137, 80, 78, 71])], "", {
+          type: "image/png"
+        }),
+        new File([Uint8Array.from([255, 216, 255])], "", {
+          type: "image/jpeg"
+        })
+      ],
+      "paste"
+    );
+
+    expect(attachments).toHaveLength(2);
+    expect(attachments.map((attachment) => attachment.displayName)).toEqual([
+      "pasted-image.png",
+      "pasted-image.jpg"
+    ]);
+    expect(attachments.every((attachment) => attachment.isImage)).toBe(true);
+    expect(attachments.every((attachment) => attachment.previewUrl)).toBe(true);
   });
 
   it("deduplicates merged attachments by dedupe key", () => {

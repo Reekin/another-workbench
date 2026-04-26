@@ -7,7 +7,10 @@ import {
 import type { SessionWindowRpc, WorkspaceBrowserNodeRpc } from "@another-workbench/shared";
 import type { RendererStore } from "../../store/store.js";
 import type { DesktopTransport } from "../../transport/desktop-transport.js";
-import type { ComposerStatusNotice } from "./composer-status.js";
+import {
+  statusNoticeErrorDetails,
+  type ComposerStatusNotice
+} from "./composer-status.js";
 import type { TranscriptViewportController } from "./use-transcript-viewport-controller.js";
 import { findSessionNode } from "./workspace-browser-tree.js";
 
@@ -198,7 +201,8 @@ export const useSessionOpenController = (input: {
         input.onStatusNotice({
           message: `Load earlier turns failed: ${(error as Error).message}`,
           persistent: true,
-          source: "session-browser"
+          source: "session-browser",
+          ...statusNoticeErrorDetails(error)
         });
       } finally {
         input.setLoadingOlderSessionId((current) =>
@@ -249,7 +253,8 @@ export const useSessionOpenController = (input: {
         input.onStatusNotice({
           message: `Create session failed: ${(error as Error).message}`,
           persistent: true,
-          source: "create-session"
+          source: "create-session",
+          ...statusNoticeErrorDetails(error)
         });
       }
     },
@@ -288,7 +293,8 @@ export const useSessionOpenController = (input: {
         input.onStatusNotice({
           message: `Open session failed: ${(error as Error).message}`,
           persistent: true,
-          source: "session-browser"
+          source: "session-browser",
+          ...statusNoticeErrorDetails(error)
         });
       }
     }

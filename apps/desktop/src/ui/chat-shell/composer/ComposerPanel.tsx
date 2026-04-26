@@ -1,12 +1,19 @@
 import type {
   ChangeEvent as ReactChangeEvent,
   ClipboardEvent as ReactClipboardEvent,
+  CSSProperties,
   DragEvent as ReactDragEvent,
   KeyboardEvent as ReactKeyboardEvent,
   ReactElement,
   RefObject
 } from "react";
+import type { ApprovalRequest, ContextUsage } from "@another-workbench/shared";
 import type { ComposerAttachment } from "../composer-attachments.js";
+import type { ImageLightboxState } from "../ImageLightbox.js";
+import {
+  ApprovalFlowView,
+  type ApprovalResponseInput
+} from "../ApprovalFlowView.js";
 import { ComposerQueue } from "./ComposerQueue.js";
 import { ComposerStatusBar } from "./ComposerStatusBar.js";
 import { ComposerSuggestions } from "./ComposerSuggestions.js";
@@ -29,6 +36,35 @@ const primaryLabel = (intent: ComposerIntent): string => {
   }
 };
 
+const formatTokenCount = (value: number): string => {
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(1)}M`;
+  }
+  if (value >= 1_000) {
+    return `${(value / 1_000).toFixed(value >= 100_000 ? 0 : 1)}k`;
+  }
+  return String(value);
+};
+
+const contextUsagePercent = (contextUsage: ContextUsage): number | undefined => {
+  if (!contextUsage.contextWindow) {
+    return undefined;
+  }
+  return Math.min(
+    100,
+    Math.max(0, Math.round((contextUsage.usedTokens / contextUsage.contextWindow) * 100))
+  );
+};
+
+const formatContextUsageLabel = (contextUsage: ContextUsage): string => {
+  const percent = contextUsagePercent(contextUsage);
+  const usedTokens = formatTokenCount(contextUsage.usedTokens);
+  if (percent === undefined || !contextUsage.contextWindow) {
+    return `${usedTokens} tokens`;
+  }
+  return `${percent}% · ${usedTokens}/${formatTokenCount(contextUsage.contextWindow)}`;
+};
+
 export const ComposerPanel = ({
   isDropTarget,
   fileInputRef,
@@ -39,6 +75,8 @@ export const ComposerPanel = ({
   queue,
   suggestions,
   status,
+  pendingApprovals = [],
+  contextUsage,
   intent,
   supportsSteer,
   supportsAttachments,
@@ -57,6 +95,7 @@ export const ComposerPanel = ({
   onDrop,
   onRemoveSkill,
   onRemoveAttachment,
+  onPreviewAttachment,
   onPickAttachments,
   onPrimaryAction,
   onQueueCurrent,
@@ -66,7 +105,8 @@ export const ComposerPanel = ({
   onEditQueuedMessage,
   onDeleteQueuedMessage,
   onSendQueuedMessageNow,
-  onSteerQueuedMessageNow
+  onSteerQueuedMessageNow,
+  onRespondApproval
 }: {
   isDropTarget: boolean;
   fileInputRef: RefObject<HTMLInputElement | null>;
@@ -77,6 +117,8 @@ export const ComposerPanel = ({
   queue: QueuedComposerMessage[];
   suggestions: ComposerSuggestionState | undefined;
   status: ComposerStatusModel;
+  pendingApprovals?: ApprovalRequest[];
+  contextUsage?: ContextUsage;
   intent: ComposerIntent;
   supportsSteer: boolean;
   supportsAttachments: boolean;
@@ -97,6 +139,7 @@ export const ComposerPanel = ({
   onDrop: (event: ReactDragEvent<HTMLElement>) => void;
   onRemoveSkill: (skillId: string) => void;
   onRemoveAttachment: (attachmentId: string) => void;
+  onPreviewAttachment?: (input: ImageLightboxState) => void;
   onPickAttachments: () => void;
   onPrimaryAction: () => Promise<void>;
   onQueueCurrent: () => void;
@@ -107,6 +150,7 @@ export const ComposerPanel = ({
   onDeleteQueuedMessage: (messageId: string) => void;
   onSendQueuedMessageNow: (messageId: string) => Promise<void>;
   onSteerQueuedMessageNow: (messageId: string) => Promise<void>;
+  onRespondApproval?: (input: ApprovalResponseInput) => Promise<void>;
 }): ReactElement => (
   <footer
     className={`awb-composer awb-composer-panel${
@@ -160,11 +204,20 @@ export const ComposerPanel = ({
             className="awb-composer__attachment"
           >
             {attachment.previewUrl ? (
-              <img
+              <button
+                type="button"
                 className="awb-composer__attachment-preview"
-                src={attachment.previewUrl}
-                alt={attachment.displayName}
-              />
+                onClick={() =>
+                  onPreviewAttachment?.({
+                    src: attachment.previewUrl ?? "",
+                    alt: attachment.displayName
+                  })
+                }
+                aria-label={`Preview ${attachment.displayName}`}
+                disabled={!onPreviewAttachment}
+              >
+                <img src={attachment.previewUrl} alt={attachment.displayName} />
+              </button>
             ) : (
               <div className="awb-composer__attachment-icon" aria-hidden="true">
                 FILE
@@ -186,6 +239,14 @@ export const ComposerPanel = ({
           </article>
         ))}
       </div>
+    ) : null}
+    {pendingApprovals.length > 0 ? (
+      <section className="awb-composer-approvals" aria-label="Pending approvals">
+        <ApprovalFlowView
+          approvals={pendingApprovals}
+          onRespond={onRespondApproval}
+        />
+      </section>
     ) : null}
     <div className="awb-composer-panel__editor">
       <textarea
@@ -210,7 +271,28 @@ export const ComposerPanel = ({
       />
     </div>
     <div className="awb-composer__actions awb-composer-panel__actions">
-      <ComposerStatusBar status={status} />
+      <div className="awb-composer__meta">
+        <ComposerStatusBar status={status} />
+        {contextUsage ? (
+          <div
+            className="awb-composer-context"
+            aria-label={`Context usage ${formatContextUsageLabel(contextUsage)}`}
+            tabIndex={0}
+            style={
+              {
+                "--awb-composer-context-percent": `${
+                  contextUsagePercent(contextUsage) ?? 0
+                }%`
+              } as CSSProperties
+            }
+          >
+            <span className="awb-composer-context__ring" aria-hidden="true" />
+            <span className="awb-composer-context__tooltip" role="tooltip">
+              Context {formatContextUsageLabel(contextUsage)}
+            </span>
+          </div>
+        ) : null}
+      </div>
       <div className="awb-composer__buttons">
         {canQueue ? (
           <button

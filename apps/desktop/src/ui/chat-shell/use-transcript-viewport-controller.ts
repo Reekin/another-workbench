@@ -1,5 +1,7 @@
 import { useEffect, useRef, type RefObject } from "react";
 
+const STICKY_BOTTOM_THRESHOLD_PX = 96;
+
 type PendingPrependScroll = {
   sessionId: string;
   previousScrollHeight: number;
@@ -27,9 +29,11 @@ export const useTranscriptViewportController = (input: {
   windowStartTurnId?: string;
   windowEndTurnId?: string;
   renderedTranscriptRowCount: number;
+  transcriptContentVersion: string;
 }): TranscriptViewportController => {
   const transcriptRef = useRef<HTMLElement | null>(null);
   const displayedSessionIdRef = useRef<string | undefined>(undefined);
+  const isStickyToBottomRef = useRef(true);
   const pendingPrependScrollRef = useRef<PendingPrependScroll | undefined>(
     undefined
   );
@@ -39,6 +43,23 @@ export const useTranscriptViewportController = (input: {
 
   useEffect(() => {
     displayedSessionIdRef.current = input.displayedSessionId;
+  }, [input.displayedSessionId]);
+
+  useEffect(() => {
+    const element = transcriptRef.current;
+    if (!element) {
+      return;
+    }
+
+    const updateStickyState = (): void => {
+      isStickyToBottomRef.current = isTranscriptNearBottom(element);
+    };
+
+    updateStickyState();
+    element.addEventListener("scroll", updateStickyState, { passive: true });
+    return () => {
+      element.removeEventListener("scroll", updateStickyState);
+    };
   }, [input.displayedSessionId]);
 
   useEffect(() => {
@@ -53,6 +74,7 @@ export const useTranscriptViewportController = (input: {
       return;
     }
     pendingPrependScrollRef.current = undefined;
+    isStickyToBottomRef.current = false;
     const animationFrameId = window.requestAnimationFrame(() => {
       element.scrollTop =
         element.scrollHeight -
@@ -79,6 +101,7 @@ export const useTranscriptViewportController = (input: {
     }
 
     pendingViewportTargetRef.current = undefined;
+    isStickyToBottomRef.current = pendingTarget.type === "bottom";
     const animationFrameId = window.requestAnimationFrame(() => {
       if (pendingTarget.type === "turn" && pendingTarget.turnId) {
         const targetRow = element.querySelector<HTMLElement>(
@@ -91,7 +114,7 @@ export const useTranscriptViewportController = (input: {
           return;
         }
       }
-      element.scrollTop = element.scrollHeight;
+      scrollTranscriptToBottom(element);
     });
 
     return () => window.cancelAnimationFrame(animationFrameId);
@@ -100,6 +123,33 @@ export const useTranscriptViewportController = (input: {
     input.isOpeningSelectedSession,
     input.windowEndTurnId,
     input.renderedTranscriptRowCount
+  ]);
+
+  useEffect(() => {
+    const element = transcriptRef.current;
+    if (
+      !element ||
+      input.isOpeningSelectedSession ||
+      pendingPrependScrollRef.current ||
+      pendingViewportTargetRef.current ||
+      !isStickyToBottomRef.current
+    ) {
+      return;
+    }
+
+    const animationFrameId = window.requestAnimationFrame(() => {
+      if (isStickyToBottomRef.current) {
+        scrollTranscriptToBottom(element);
+      }
+    });
+
+    return () => window.cancelAnimationFrame(animationFrameId);
+  }, [
+    input.displayedSessionId,
+    input.isOpeningSelectedSession,
+    input.windowEndTurnId,
+    input.renderedTranscriptRowCount,
+    input.transcriptContentVersion
   ]);
 
   return {
@@ -119,4 +169,16 @@ export const useTranscriptViewportController = (input: {
       pendingViewportTargetRef.current = undefined;
     }
   };
+};
+
+export const isTranscriptNearBottom = (element: {
+  scrollHeight: number;
+  scrollTop: number;
+  clientHeight: number;
+}): boolean =>
+  element.scrollHeight - element.scrollTop - element.clientHeight <=
+  STICKY_BOTTOM_THRESHOLD_PX;
+
+const scrollTranscriptToBottom = (element: HTMLElement): void => {
+  element.scrollTop = element.scrollHeight;
 };

@@ -8,6 +8,8 @@ const row = (
 ): TurnTranscriptRow =>
   ({
     rowId: `${turnId}:${messageRole}`,
+    rowKind: "message",
+    startedAt: "2026-04-18T00:00:00Z",
     turn: {
       turnId,
       sessionId: "session-1",

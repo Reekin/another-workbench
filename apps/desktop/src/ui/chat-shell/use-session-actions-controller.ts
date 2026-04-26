@@ -1,7 +1,10 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { SessionActionDescriptorRpc, WorkspaceBrowserNodeRpc } from "@another-workbench/shared";
 import type { DesktopTransport } from "../../transport/desktop-transport.js";
-import type { ComposerStatusNotice } from "./composer-status.js";
+import {
+  statusNoticeErrorDetails,
+  type ComposerStatusNotice
+} from "./composer-status.js";
 import { findSessionNode } from "./workspace-browser-tree.js";
 
 export type SessionMenuState = {
@@ -99,7 +102,8 @@ export const useSessionActionsController = (input: {
         input.onStatusNotice({
           message: `${action} failed: ${(error as Error).message}`,
           persistent: true,
-          source: "session-action"
+          source: "session-action",
+          ...statusNoticeErrorDetails(error)
         });
       }
     }

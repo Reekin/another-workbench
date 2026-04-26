@@ -5,7 +5,9 @@ import type {
   Turn
 } from "@another-workbench/shared";
 import type { DesktopTransport } from "../../../transport/desktop-transport.js";
+import type { ImageLightboxState } from "../ImageLightbox.js";
 import type { ComposerStatusNotice } from "../composer-status.js";
+import type { ApprovalResponseInput } from "../ApprovalFlowView.js";
 import { useComposerController } from "../use-composer-controller.js";
 import { ComposerPanel } from "./ComposerPanel.js";
 
@@ -22,8 +24,10 @@ export type ComposerContainerProps = {
   isOpeningSelectedSession: boolean;
   statusNotice?: ComposerStatusNotice;
   onStatusNotice: (notice: ComposerStatusNotice | undefined) => void;
+  onPreviewImage?: (input: ImageLightboxState) => void;
   onCreateSession?: (workspaceId: string, engineId: string) => Promise<void>;
   onOpenSession?: (sessionId: string) => Promise<void>;
+  onRespondApproval?: (input: ApprovalResponseInput) => Promise<void>;
 };
 
 export const ComposerContainer = ({
@@ -39,8 +43,10 @@ export const ComposerContainer = ({
   isOpeningSelectedSession,
   statusNotice,
   onStatusNotice,
+  onPreviewImage,
   onCreateSession,
-  onOpenSession
+  onOpenSession,
+  onRespondApproval
 }: ComposerContainerProps): ReactElement => {
   const composer = useComposerController({
     transport,
@@ -70,6 +76,8 @@ export const ComposerContainer = ({
       queue={composer.queue}
       suggestions={composer.suggestions}
       status={composer.status}
+      pendingApprovals={approvals.filter((approval) => approval.status === "pending")}
+      contextUsage={activeSession?.contextUsage}
       intent={composer.intent}
       supportsSteer={composer.capabilities.supportsSteer}
       supportsAttachments={composer.capabilities.supportsAttachments}
@@ -88,6 +96,7 @@ export const ComposerContainer = ({
       onDrop={composer.onComposerDrop}
       onRemoveSkill={composer.onRemoveSkill}
       onRemoveAttachment={composer.onRemoveAttachment}
+      onPreviewAttachment={onPreviewImage}
       onPickAttachments={composer.onPickAttachments}
       onPrimaryAction={composer.onPrimaryAction}
       onQueueCurrent={composer.onQueueCurrent}
@@ -103,6 +112,7 @@ export const ComposerContainer = ({
       onDeleteQueuedMessage={composer.onDeleteQueuedMessage}
       onSendQueuedMessageNow={composer.onSendQueuedMessageNow}
       onSteerQueuedMessageNow={composer.onSteerQueuedMessageNow}
+      onRespondApproval={onRespondApproval}
     />
   );
 };

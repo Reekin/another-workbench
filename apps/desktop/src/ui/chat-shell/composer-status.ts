@@ -14,6 +14,7 @@ export type ComposerStatusNotice = {
     | "create-session"
     | "approval"
     | "workspace-add"
+    | "workspace-action"
     | "session-browser"
     | "session-action"
     | "chat-tree"

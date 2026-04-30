@@ -5,6 +5,7 @@ import {
   useMemo,
   useState,
   type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
   type ReactElement,
   type RefObject,
   type SetStateAction
@@ -55,6 +56,10 @@ import {
   useSessionActionsController,
   type SessionMenuState
 } from "./use-session-actions-controller.js";
+import {
+  openWorkspaceDirectory,
+  workspaceDirectoryActionLabel
+} from "./workspace-actions.js";
 import { useChatTreeController } from "./use-chat-tree-controller.js";
 import { buildEngineInspectorViewModel } from "./engine-summary.js";
 import { ComposerContainer } from "./composer/ComposerContainer.js";
@@ -98,29 +103,58 @@ type RenderedTurnGroup = {
   visibleRow: TranscriptRow;
   hiddenRows: TranscriptRow[];
 };
+type WorkspaceMenuAction = "open_directory";
+type WorkspaceMenuState = {
+  workspaceId: string;
+  label: string;
+  rootPath: string;
+  x: number;
+  y: number;
+  actions: WorkspaceMenuAction[];
+};
 
 const emptyTurns: Turn[] = [];
 const emptyParticipants: AgentParticipant[] = [];
 
-const resolveSessionMenuViewportStyle = (
-  sessionMenu: SessionMenuState
-): CSSProperties => {
+const resolveFloatingMenuViewportStyle = (input: {
+  x: number;
+  y: number;
+  itemCount: number;
+}): CSSProperties => {
   const estimatedWidth = 188;
-  const estimatedHeight = sessionMenu.actions.length * 37 + 8;
+  const estimatedHeight = input.itemCount * 37 + 8;
   const gutter = 8;
   if (typeof window === "undefined") {
     return {
-      left: sessionMenu.x,
-      top: sessionMenu.y
+      left: input.x,
+      top: input.y
     };
   }
   const maxLeft = Math.max(gutter, window.innerWidth - estimatedWidth - gutter);
   const maxTop = Math.max(gutter, window.innerHeight - estimatedHeight - gutter);
   return {
-    left: Math.min(sessionMenu.x, maxLeft),
-    top: Math.min(sessionMenu.y, maxTop)
+    left: Math.min(input.x, maxLeft),
+    top: Math.min(input.y, maxTop)
   };
 };
+
+const resolveSessionMenuViewportStyle = (
+  sessionMenu: SessionMenuState
+): CSSProperties =>
+  resolveFloatingMenuViewportStyle({
+    x: sessionMenu.x,
+    y: sessionMenu.y,
+    itemCount: sessionMenu.actions.length
+  });
+
+const resolveWorkspaceMenuViewportStyle = (
+  workspaceMenu: WorkspaceMenuState
+): CSSProperties =>
+  resolveFloatingMenuViewportStyle({
+    x: workspaceMenu.x,
+    y: workspaceMenu.y,
+    itemCount: workspaceMenu.actions.length
+  });
 
 export type ChatShellAppProps = {
   store: RendererStore;
@@ -721,6 +755,7 @@ export const ChatShellApp = ({
   >({});
   const [lightboxImage, setLightboxImage] = useState<ImageLightboxState | undefined>();
   const [settingsHydrated, setSettingsHydrated] = useState(false);
+  const [workspaceMenu, setWorkspaceMenu] = useState<WorkspaceMenuState | undefined>();
 
   const writeStatusNoticeLog = useCallback(
     (notice: ComposerStatusNotice): void => {
@@ -777,6 +812,12 @@ export const ChatShellApp = ({
     eventCursor: state.eventStream.lastCursor,
     onStatusNotice: setStatusNotice
   });
+
+  useEffect(() => {
+    const handleWindowClick = () => setWorkspaceMenu(undefined);
+    window.addEventListener("click", handleWindowClick);
+    return () => window.removeEventListener("click", handleWindowClick);
+  }, []);
 
   const activeWorkspace = workspaceTree.find((workspace) => workspace.isActive);
   const activeSessionNode =
@@ -1145,6 +1186,46 @@ export const ChatShellApp = ({
     setLightboxImage(image);
   }, []);
 
+  const onOpenWorkspaceMenu = useCallback(
+    (
+      event: ReactMouseEvent,
+      workspace: WorkspaceBrowserNodeRpc
+    ): void => {
+      event.preventDefault();
+      event.stopPropagation();
+      setWorkspaceMenu({
+        workspaceId: workspace.workspaceId,
+        label: workspace.label,
+        rootPath: workspace.rootPath,
+        x: event.clientX,
+        y: event.clientY,
+        actions: ["open_directory"]
+      });
+    },
+    []
+  );
+
+  const onRunWorkspaceMenuAction = useCallback(
+    async (
+      workspaceMenuState: WorkspaceMenuState,
+      action: WorkspaceMenuAction
+    ): Promise<void> => {
+      setWorkspaceMenu(undefined);
+      if (action !== "open_directory") {
+        return;
+      }
+      await openWorkspaceDirectory({
+        transport,
+        workspace: {
+          label: workspaceMenuState.label,
+          rootPath: workspaceMenuState.rootPath
+        },
+        onStatusNotice: setStatusNotice
+      });
+    },
+    [transport, setStatusNotice]
+  );
+
   const renderSessionNode = (
     session: WorkspaceBrowserNodeRpc["sessions"][number],
     depth = 0
@@ -1215,6 +1296,24 @@ export const ChatShellApp = ({
     </div>
   ) : null;
 
+  const workspaceMenuMarkup = workspaceMenu ? (
+    <div
+      className="awb-session-menu awb-workspace-menu"
+      style={resolveWorkspaceMenuViewportStyle(workspaceMenu)}
+      onClick={(event) => event.stopPropagation()}
+    >
+      {workspaceMenu.actions.map((action) => (
+        <button
+          key={action}
+          type="button"
+          onClick={() => void onRunWorkspaceMenuAction(workspaceMenu, action)}
+        >
+          {action === "open_directory" ? workspaceDirectoryActionLabel : action}
+        </button>
+      ))}
+    </div>
+  ) : null;
+
   return (
     <>
       <div className="awb-shell">
@@ -1245,6 +1344,7 @@ export const ChatShellApp = ({
                   <header
                     className={`awb-workspace__header ${workspace.isActive ? "is-active" : ""}`}
                     onClick={() => void onToggleWorkspace(workspace.workspaceId)}
+                    onContextMenu={(event) => onOpenWorkspaceMenu(event, workspace)}
                   >
                     <div className="awb-workspace__main">
                       <span className="awb-workspace__disclosure" aria-hidden="true">
@@ -1393,6 +1493,10 @@ export const ChatShellApp = ({
         (typeof document === "undefined"
           ? sessionMenuMarkup
           : createPortal(sessionMenuMarkup, document.body))}
+      {workspaceMenuMarkup &&
+        (typeof document === "undefined"
+          ? workspaceMenuMarkup
+          : createPortal(workspaceMenuMarkup, document.body))}
       <ImageLightbox image={lightboxImage} onClose={() => setLightboxImage(undefined)} />
     </>
   );

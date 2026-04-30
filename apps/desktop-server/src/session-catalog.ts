@@ -60,14 +60,23 @@ type SessionCatalogSeed = {
   engineId: string;
   title?: string;
   summaryText?: string;
+  createdAt: string;
   updatedAt: string;
   archivedAt?: string;
   runtimeStatus?: ChatSession["status"];
   unreadState?: SessionIndexEntry["unreadState"];
 };
 
-const compareIsoDesc = (left: string, right: string): number =>
-  right.localeCompare(left);
+const compareSeedCreatedAtDesc = (
+  left: SessionCatalogSeed,
+  right: SessionCatalogSeed
+): number => {
+  const byCreatedAt = right.createdAt.localeCompare(left.createdAt);
+  if (byCreatedAt !== 0) {
+    return byCreatedAt;
+  }
+  return left.sessionId.localeCompare(right.sessionId);
+};
 
 const relationKey = (
   parentSessionId: string,
@@ -91,6 +100,7 @@ const toSeedFromRuntime = (
     conversationId: session.conversationId,
     engineId: session.engineId,
     title: session.title,
+    createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     archivedAt: session.archivedAt,
     runtimeStatus: session.status
@@ -137,6 +147,7 @@ export class SessionCatalogService {
         engineId: entry.engineId,
         title: entry.title,
         summaryText: entry.summaryText,
+        createdAt: entry.createdAt,
         updatedAt: entry.updatedAt,
         archivedAt: entry.archivedAt,
         unreadState: entry.unreadState
@@ -178,7 +189,7 @@ export class SessionCatalogService {
       );
       const roots = workspaceSeeds
         .filter((seed) => !parentByChildId.has(seed.sessionId))
-        .sort((left, right) => compareIsoDesc(left.updatedAt, right.updatedAt));
+        .sort(compareSeedCreatedAtDesc);
 
       return {
         workspaceId: workspace.workspaceId,
@@ -261,7 +272,7 @@ export class SessionCatalogService {
       .filter(
         (seed): seed is SessionCatalogSeed => Boolean(seed && !seed.archivedAt)
       )
-      .sort((left, right) => compareIsoDesc(left.updatedAt, right.updatedAt))
+      .sort(compareSeedCreatedAtDesc)
       .map((seed) =>
         this.buildSessionNode({
           ...input,

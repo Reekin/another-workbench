@@ -290,6 +290,61 @@ describe("SessionCatalogService", () => {
     expect(indexStore.getEntry("session-1")?.unreadState).toBe("read");
   });
 
+  it("orders sessions by creation time instead of latest update time", async () => {
+    const baseDir = await createTempDir();
+    const workspaceRegistry = new WorkspaceRegistryService({
+      baseDir
+    });
+    const indexStore = new SessionIndexStore({
+      baseDir
+    });
+    await workspaceRegistry.registerWorkspace({
+      workspaceId: "workspace-1",
+      absolutePath: "I:/workspace-alpha"
+    });
+
+    await indexStore.upsertSession({
+      workspaceId: "workspace-1",
+      session: {
+        sessionId: "session-old",
+        conversationId: "conversation-old",
+        engineId: "codex",
+        title: "Old but recently updated",
+        createdAt: "2026-04-18T00:00:01Z",
+        updatedAt: "2026-04-18T00:30:00Z"
+      },
+      providerSessionId: "thread-old"
+    });
+    await indexStore.upsertSession({
+      workspaceId: "workspace-1",
+      session: {
+        sessionId: "session-new",
+        conversationId: "conversation-new",
+        engineId: "codex",
+        title: "New but quiet",
+        createdAt: "2026-04-18T00:10:00Z",
+        updatedAt: "2026-04-18T00:10:01Z"
+      },
+      providerSessionId: "thread-new"
+    });
+
+    const runtimeService = {
+      getSnapshot: () => emptySnapshot()
+    } as unknown as WorkbenchRuntimeService;
+    const service = new SessionCatalogService({
+      runtimeService,
+      workspaceRegistry,
+      sessionIndexStore: indexStore
+    });
+
+    const tree = await service.listWorkspaceTree("workspace-1");
+
+    expect(tree[0]?.sessions.map((item) => item.sessionId)).toEqual([
+      "session-new",
+      "session-old"
+    ]);
+  });
+
   it("does not expose an unread dot for the active session", async () => {
     const baseDir = await createTempDir();
     const workspaceRegistry = new WorkspaceRegistryService({

@@ -441,15 +441,20 @@ export const MessageMarkdownView = memo(({
     () => buildRenderableSegments(deferredText),
     [deferredText]
   );
+  const hasMermaidSegment = renderableSegments.some((segment) => segment.kind === "mermaid");
   const roleClass =
     block.role === "assistant"
       ? "is-assistant"
       : block.role === "user"
         ? "is-user"
         : "is-system";
+  const mermaidClass = hasMermaidSegment ? " awb-message--contains-mermaid" : "";
 
   return (
-    <article className={`awb-message ${roleClass}`} data-block-id={block.blockId}>
+    <article
+      className={`awb-message ${roleClass}${mermaidClass}`}
+      data-block-id={block.blockId}
+    >
       <div className="awb-message__content">
         {!isRenderableMarkdownBlock(block) && (
           <p className="awb-message__empty">

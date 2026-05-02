@@ -197,6 +197,7 @@ describe("MessageMarkdownView", () => {
     );
 
     expect(html).toContain("Before");
+    expect(html).toContain("awb-message--contains-mermaid");
     expect(html).toContain('class="awb-mermaid"');
     expect(html).toContain("graph TD");
     expect(html).toContain("A --&gt; B");

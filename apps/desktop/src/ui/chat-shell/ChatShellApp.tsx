@@ -432,10 +432,13 @@ const TranscriptPane = memo(
         </div>
       )}
 
-      {buildRenderedTurnGroups(renderedTranscriptRows).map(({ visibleRow, hiddenRows }) => {
+      {buildRenderedTurnGroups(renderedTranscriptRows).map(({ visibleRow, hiddenRows }, index, groups) => {
         const isUserTurn = visibleRow.messageRole === "user";
         const isInlineProcessRow =
           visibleRow.rowKind === "process" && visibleRow.turn.status !== "completed";
+        const nextGroup = groups[index + 1];
+        const isFollowedBySameTurn =
+          nextGroup?.visibleRow.turn.turnId === visibleRow.turn.turnId;
         const hiddenMessageCount = countHiddenMessages(hiddenRows);
         const hasCollapsedContent = hiddenRows.length > 0;
         const hasExpandableDetails =
@@ -468,7 +471,9 @@ const TranscriptPane = memo(
             key={visibleRow.rowId}
             data-turn-id={visibleRow.turn.turnId}
             data-final-response-row={visibleRow.isFinalResponseRow ? "true" : "false"}
-            className={`awb-chat-entry ${isUserTurn ? "is-user" : "is-assistant"}`}
+            className={`awb-chat-entry ${isUserTurn ? "is-user" : "is-assistant"} ${
+              isFollowedBySameTurn ? "is-followed-by-same-turn" : ""
+            }`}
           >
             {shouldShowTimestamp && (
               <header className="awb-chat-entry__identity">

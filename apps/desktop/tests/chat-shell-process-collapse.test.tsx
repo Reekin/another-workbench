@@ -170,6 +170,7 @@ describe("ChatShellApp inline process output", () => {
     expect(html).toContain("completed final");
     expect(html).toContain("Please summarize.");
     expect(html).not.toContain("internal draft");
+    expect(html).toContain("is-followed-by-same-turn");
     expect(html.indexOf("1 previous message &gt;")).toBeLessThan(
       html.indexOf("completed final")
     );

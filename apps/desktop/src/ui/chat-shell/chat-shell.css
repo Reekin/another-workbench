@@ -575,6 +575,10 @@ button {
   border-bottom: 1px solid var(--awb-rule);
 }
 
+.awb-chat-entry.is-followed-by-same-turn {
+  border-bottom-color: transparent;
+}
+
 .awb-chat-entry.is-user,
 .awb-chat-entry.is-assistant {
   align-self: stretch;
@@ -2042,7 +2046,14 @@ button {
 .awb-mermaid {
   display: grid;
   justify-items: center;
+  width: 100%;
   margin: 0 0 0.72rem;
+}
+
+.awb-chat-entry .awb-message--contains-mermaid .awb-mermaid {
+  width: 300%;
+  margin-left: -100%;
+  margin-right: -100%;
 }
 
 .awb-mermaid__surface {
@@ -2052,7 +2063,8 @@ button {
 
 .awb-mermaid__surface svg {
   display: block;
-  max-width: 100%;
+  max-width: none;
+  width: auto;
   height: auto;
   margin: 0 auto;
 }

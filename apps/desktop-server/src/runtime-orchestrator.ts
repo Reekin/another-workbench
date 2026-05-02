@@ -320,12 +320,31 @@ export class RuntimeOrchestrator {
     const conversation = this.domainService.getConversation(session.conversationId);
     const engineId = this.resolveSessionEngineId(session);
     const binding = this.bindings.get(engineId);
+    const lastCompletedTurnAt = this.resolveLastCompletedTurnAt(sessionId);
     return {
       workspaceId: conversation?.workspaceId,
       session,
       providerKind: binding?.providerKind,
-      providerSessionId: binding?.resolveProviderSessionId?.(session.sessionId)
+      providerSessionId: binding?.resolveProviderSessionId?.(session.sessionId),
+      lastCompletedTurnAt
     };
+  }
+
+  private resolveLastCompletedTurnAt(sessionId: string): string | undefined {
+    let latestCompletedAt: string | undefined;
+    for (const turn of this.domainService.getSnapshot().turns) {
+      if (
+        turn.sessionId !== sessionId ||
+        turn.status !== "completed" ||
+        !turn.completedAt
+      ) {
+        continue;
+      }
+      if (!latestCompletedAt || turn.completedAt > latestCompletedAt) {
+        latestCompletedAt = turn.completedAt;
+      }
+    }
+    return latestCompletedAt;
   }
 
   public resolveProviderSessionHandle(

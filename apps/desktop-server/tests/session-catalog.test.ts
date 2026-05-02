@@ -290,7 +290,7 @@ describe("SessionCatalogService", () => {
     expect(indexStore.getEntry("session-1")?.unreadState).toBe("read");
   });
 
-  it("orders sessions by creation time instead of latest update time", async () => {
+  it("orders sessions by last completed turn time instead of latest update time", async () => {
     const baseDir = await createTempDir();
     const workspaceRegistry = new WorkspaceRegistryService({
       baseDir
@@ -303,33 +303,84 @@ describe("SessionCatalogService", () => {
       absolutePath: "I:/workspace-alpha"
     });
 
-    await indexStore.upsertSession({
-      workspaceId: "workspace-1",
-      session: {
-        sessionId: "session-old",
-        conversationId: "conversation-old",
-        engineId: "codex",
-        title: "Old but recently updated",
-        createdAt: "2026-04-18T00:00:01Z",
-        updatedAt: "2026-04-18T00:30:00Z"
-      },
-      providerSessionId: "thread-old"
-    });
-    await indexStore.upsertSession({
-      workspaceId: "workspace-1",
-      session: {
-        sessionId: "session-new",
-        conversationId: "conversation-new",
-        engineId: "codex",
-        title: "New but quiet",
-        createdAt: "2026-04-18T00:10:00Z",
-        updatedAt: "2026-04-18T00:10:01Z"
-      },
-      providerSessionId: "thread-new"
-    });
-
     const runtimeService = {
-      getSnapshot: () => emptySnapshot()
+      getSnapshot: () => ({
+        ...emptySnapshot(),
+        conversations: [
+          {
+            conversationId: "conversation-old",
+            workspaceId: "workspace-1",
+            participantEngineIds: ["codex"],
+            activeSessionId: "session-old",
+            sessionIds: ["session-old"],
+            createdAt: "2026-04-18T00:00:00Z",
+            updatedAt: "2026-04-18T00:30:00Z"
+          },
+          {
+            conversationId: "conversation-new",
+            workspaceId: "workspace-1",
+            participantEngineIds: ["codex"],
+            activeSessionId: "session-new",
+            sessionIds: ["session-new"],
+            createdAt: "2026-04-18T00:10:00Z",
+            updatedAt: "2026-04-18T00:10:01Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-old",
+            conversationId: "conversation-old",
+            engineId: "codex",
+            status: "running",
+            title: "Old running session",
+            createdAt: "2026-04-18T00:00:01Z",
+            updatedAt: "2026-04-18T00:30:00Z"
+          },
+          {
+            sessionId: "session-new",
+            conversationId: "conversation-new",
+            engineId: "codex",
+            status: "idle",
+            title: "New completed session",
+            createdAt: "2026-04-18T00:10:00Z",
+            updatedAt: "2026-04-18T00:10:01Z"
+          }
+        ],
+        turns: [
+          {
+            turnId: "turn-old-completed",
+            sessionId: "session-old",
+            status: "completed",
+            startedAt: "2026-04-18T00:04:00Z",
+            completedAt: "2026-04-18T00:05:00Z",
+            messageIds: [],
+            toolCallIds: [],
+            terminalIds: [],
+            approvalRequestIds: []
+          },
+          {
+            turnId: "turn-old-running",
+            sessionId: "session-old",
+            status: "streaming",
+            startedAt: "2026-04-18T00:20:00Z",
+            messageIds: [],
+            toolCallIds: [],
+            terminalIds: [],
+            approvalRequestIds: []
+          },
+          {
+            turnId: "turn-new-completed",
+            sessionId: "session-new",
+            status: "completed",
+            startedAt: "2026-04-18T00:14:00Z",
+            completedAt: "2026-04-18T00:15:00Z",
+            messageIds: [],
+            toolCallIds: [],
+            terminalIds: [],
+            approvalRequestIds: []
+          }
+        ]
+      })
     } as unknown as WorkbenchRuntimeService;
     const service = new SessionCatalogService({
       runtimeService,

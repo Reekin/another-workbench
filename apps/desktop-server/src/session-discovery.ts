@@ -109,6 +109,16 @@ const buildDeterministicTurnTimestamp = (
 const buildRelationId = (parentSessionId: string, childSessionId: string): string =>
   `relation-discovered:${parentSessionId}:${childSessionId}:subagent`;
 
+const resolveThreadLastCompletedTurnAt = (thread: Thread): string | undefined => {
+  for (let turnIndex = thread.turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
+    const turn = thread.turns[turnIndex];
+    if (turn?.status !== "inProgress") {
+      return buildDeterministicTurnTimestamp(thread, turnIndex, turn.items.length + 1);
+    }
+  }
+  return undefined;
+};
+
 const isCommandExecutionItem = (
   item: ThreadItem
 ): item is Extract<ThreadItem, { type: "commandExecution" }> =>
@@ -257,6 +267,7 @@ export type DiscoveredSessionRecord = {
   summaryText?: string;
   createdAt: string;
   updatedAt: string;
+  lastCompletedTurnAt?: string;
   archivedAt?: string;
   metadata?: Record<string, unknown>;
 };
@@ -663,6 +674,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
       summaryText: summarizeThread(thread),
       createdAt: isoFromUnixSeconds(thread.createdAt),
       updatedAt: isoFromUnixSeconds(thread.updatedAt),
+      lastCompletedTurnAt: resolveThreadLastCompletedTurnAt(thread),
       metadata: {
         rolloutPath: thread.path ?? undefined,
         cwd: thread.cwd
@@ -773,6 +785,7 @@ export class SessionReconciliationService {
           providerKind: session.providerKind,
           providerSessionId: session.providerSessionId,
           summaryText: session.summaryText,
+          lastCompletedTurnAt: session.lastCompletedTurnAt,
           source: "reconciled"
         }));
         const relations: UpsertSessionRelationInput[] = normalizedRelations.map((relation) => ({

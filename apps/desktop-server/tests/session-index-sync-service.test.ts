@@ -66,13 +66,15 @@ describe("SessionIndexSyncService", () => {
         updatedAt: "2026-04-18T00:00:02.000Z"
       },
       providerKind: "codex-thread",
-      providerSessionId: "thread-123"
+      providerSessionId: "thread-123",
+      lastCompletedTurnAt: "2026-04-18T00:00:01.500Z"
     });
     await service.syncSession("session-1");
 
     expect(store.getEntry("session-1")).toMatchObject({
       providerKind: "codex-thread",
       providerSessionId: "thread-123",
+      lastCompletedTurnAt: "2026-04-18T00:00:01.500Z",
       updatedAt: "2026-04-18T00:00:02.000Z"
     });
 

@@ -66,4 +66,5 @@ export type SessionIndexSyncRecord = {
   >;
   providerKind?: string;
   providerSessionId?: string;
+  lastCompletedTurnAt?: string;
 };

@@ -62,20 +62,39 @@ type SessionCatalogSeed = {
   summaryText?: string;
   createdAt: string;
   updatedAt: string;
+  lastCompletedTurnAt?: string;
   archivedAt?: string;
   runtimeStatus?: ChatSession["status"];
   unreadState?: SessionIndexEntry["unreadState"];
 };
 
-const compareSeedCreatedAtDesc = (
+const compareSeedLastCompletedTurnAtDesc = (
   left: SessionCatalogSeed,
   right: SessionCatalogSeed
 ): number => {
-  const byCreatedAt = right.createdAt.localeCompare(left.createdAt);
-  if (byCreatedAt !== 0) {
-    return byCreatedAt;
+  const leftSortAt = left.lastCompletedTurnAt ?? left.createdAt;
+  const rightSortAt = right.lastCompletedTurnAt ?? right.createdAt;
+  const bySortAt = rightSortAt.localeCompare(leftSortAt);
+  if (bySortAt !== 0) {
+    return bySortAt;
   }
   return left.sessionId.localeCompare(right.sessionId);
+};
+
+const collectLastCompletedTurnAtBySessionId = (
+  turns: DomainSnapshot["turns"]
+): Map<string, string> => {
+  const lastCompletedTurnAtBySessionId = new Map<string, string>();
+  for (const turn of turns) {
+    if (turn.status !== "completed" || !turn.completedAt) {
+      continue;
+    }
+    const existing = lastCompletedTurnAtBySessionId.get(turn.sessionId);
+    if (!existing || turn.completedAt > existing) {
+      lastCompletedTurnAtBySessionId.set(turn.sessionId, turn.completedAt);
+    }
+  }
+  return lastCompletedTurnAtBySessionId;
 };
 
 const relationKey = (
@@ -86,7 +105,8 @@ const relationKey = (
 
 const toSeedFromRuntime = (
   snapshot: DomainSnapshot,
-  session: ChatSession
+  session: ChatSession,
+  lastCompletedTurnAtBySessionId: ReadonlyMap<string, string>
 ): SessionCatalogSeed | undefined => {
   const conversation = snapshot.conversations.find(
     (item) => item.conversationId === session.conversationId
@@ -102,6 +122,7 @@ const toSeedFromRuntime = (
     title: session.title,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
+    lastCompletedTurnAt: lastCompletedTurnAtBySessionId.get(session.sessionId),
     archivedAt: session.archivedAt,
     runtimeStatus: session.status
   };
@@ -132,8 +153,11 @@ export class SessionCatalogService {
     const registryState = this.workspaceRegistry.getState();
     const indexState = this.sessionIndexStore.getState();
     const runtimeSessionIds = new Set(snapshot.sessions.map((session) => session.sessionId));
+    const lastCompletedTurnAtBySessionId = collectLastCompletedTurnAtBySessionId(snapshot.turns);
     const runtimeSeeds = snapshot.sessions
-      .map((session) => toSeedFromRuntime(snapshot, session))
+      .map((session) =>
+        toSeedFromRuntime(snapshot, session, lastCompletedTurnAtBySessionId)
+      )
       .filter((seed): seed is SessionCatalogSeed => Boolean(seed));
     const bySessionId = new Map<string, SessionCatalogSeed>();
 
@@ -149,6 +173,7 @@ export class SessionCatalogService {
         summaryText: entry.summaryText,
         createdAt: entry.createdAt,
         updatedAt: entry.updatedAt,
+        lastCompletedTurnAt: entry.lastCompletedTurnAt,
         archivedAt: entry.archivedAt,
         unreadState: entry.unreadState
       });
@@ -158,6 +183,8 @@ export class SessionCatalogService {
       bySessionId.set(runtimeSeed.sessionId, {
         ...existing,
         ...runtimeSeed,
+        lastCompletedTurnAt:
+          runtimeSeed.lastCompletedTurnAt ?? existing?.lastCompletedTurnAt,
         summaryText: existing?.summaryText,
         unreadState: existing?.unreadState
       });
@@ -189,7 +216,7 @@ export class SessionCatalogService {
       );
       const roots = workspaceSeeds
         .filter((seed) => !parentByChildId.has(seed.sessionId))
-        .sort(compareSeedCreatedAtDesc);
+        .sort(compareSeedLastCompletedTurnAtDesc);
 
       return {
         workspaceId: workspace.workspaceId,
@@ -272,7 +299,7 @@ export class SessionCatalogService {
       .filter(
         (seed): seed is SessionCatalogSeed => Boolean(seed && !seed.archivedAt)
       )
-      .sort(compareSeedCreatedAtDesc)
+      .sort(compareSeedLastCompletedTurnAtDesc)
       .map((seed) =>
         this.buildSessionNode({
           ...input,

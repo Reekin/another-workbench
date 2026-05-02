@@ -17,6 +17,7 @@ const sessionIndexEntrySchema = z.object({
   summaryText: z.string().min(1).optional(),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
+  lastCompletedTurnAt: z.string().min(1).optional(),
   archivedAt: z.string().min(1).optional(),
   lastTurnId: z.string().min(1).optional(),
   unreadState: unreadStateSchema.default("read"),
@@ -68,6 +69,7 @@ export type UpsertSessionIndexInput = {
   providerKind?: string;
   providerSessionId?: string;
   summaryText?: string;
+  lastCompletedTurnAt?: string;
   unreadState?: SessionUnreadState;
   source?: SessionIndexEntry["source"];
 };
@@ -175,6 +177,8 @@ export class SessionIndexStore {
         input.summaryText ?? existing?.summaryText,
       createdAt: input.session.createdAt,
       updatedAt: input.session.updatedAt,
+      lastCompletedTurnAt:
+        input.lastCompletedTurnAt ?? existing?.lastCompletedTurnAt,
       archivedAt: input.session.archivedAt,
       lastTurnId: input.session.lastTurnId,
       unreadState: input.unreadState ?? existing?.unreadState ?? "read",

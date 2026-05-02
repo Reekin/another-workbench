@@ -33,7 +33,8 @@ export class SessionIndexSyncService {
       workspaceId: record.workspaceId,
       session: record.session,
       providerKind: record.providerKind,
-      providerSessionId: record.providerSessionId
+      providerSessionId: record.providerSessionId,
+      lastCompletedTurnAt: record.lastCompletedTurnAt
     });
   }
 

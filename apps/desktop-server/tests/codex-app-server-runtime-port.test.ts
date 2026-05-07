@@ -180,6 +180,15 @@ describe("Codex app-server runtime port", () => {
 
     await waitFor(() => events.some((event) => event.method === "turn.completed"));
 
+    expect(events).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          params: expect.objectContaining({
+            toolCallId: expect.stringMatching(/^reason-empty-/)
+          })
+        })
+      ])
+    );
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -223,7 +232,22 @@ describe("Codex app-server runtime port", () => {
           method: "tool.completed",
           params: expect.objectContaining({
             toolCallId: expect.stringContaining(":webSearch:"),
-            outputSummary: expect.stringContaining("AMD Ryzen low power official specs")
+            status: "completed"
+          })
+        }),
+        expect.objectContaining({
+          method: "tool.started",
+          params: expect.objectContaining({
+            toolCallId: expect.stringMatching(/^compact-/),
+            toolName: "contextCompaction",
+            inputSummary: "compacting..."
+          })
+        }),
+        expect.objectContaining({
+          method: "tool.completed",
+          params: expect.objectContaining({
+            toolCallId: expect.stringMatching(/^compact-/),
+            outputSummary: "compaction finished"
           })
         })
       ])

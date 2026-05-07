@@ -310,7 +310,9 @@ const emitFileChangePath = ({ threadId, turnId }) => {
 
 const emitProcessPath = ({ threadId, turnId }) => {
   const reasoningId = `reason-${turnId}`;
+  const emptyReasoningId = `reason-empty-${turnId}`;
   const webSearchId = `web-${turnId}`;
+  const compactionId = `compact-${turnId}`;
   const messageId = `msg-${turnId}`;
 
   send({
@@ -391,6 +393,32 @@ const emitProcessPath = ({ threadId, turnId }) => {
     }
   });
   send({
+    method: "item/started",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "reasoning",
+        id: emptyReasoningId,
+        summary: [],
+        content: []
+      }
+    }
+  });
+  send({
+    method: "item/completed",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "reasoning",
+        id: emptyReasoningId,
+        summary: [],
+        content: []
+      }
+    }
+  });
+  send({
     method: "rawResponseItem/completed",
     params: {
       threadId,
@@ -436,6 +464,28 @@ const emitProcessPath = ({ threadId, turnId }) => {
           query: "mini PC low power CPUs",
           queries: ["Intel N150 official specs"]
         }
+      }
+    }
+  });
+  send({
+    method: "item/started",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "contextCompaction",
+        id: compactionId
+      }
+    }
+  });
+  send({
+    method: "item/completed",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "contextCompaction",
+        id: compactionId
       }
     }
   });

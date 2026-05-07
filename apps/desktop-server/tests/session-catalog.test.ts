@@ -162,6 +162,19 @@ describe("SessionCatalogService", () => {
           updatedAt: "2026-04-18T00:00:10Z"
         }
       ],
+      turns: [
+        {
+          turnId: "turn-root-completed",
+          sessionId: "session-root",
+          status: "completed",
+          startedAt: "2026-04-18T00:00:09Z",
+          completedAt: "2026-04-18T00:00:13Z",
+          messageIds: [],
+          toolCallIds: [],
+          terminalIds: [],
+          approvalRequestIds: []
+        }
+      ],
       sessionRelations: [
         {
           relationId: "relation-1",
@@ -206,7 +219,8 @@ describe("SessionCatalogService", () => {
       statusDot: "unread_completed",
       isExpanded: true,
       isActive: false,
-      isArchived: false
+      isArchived: false,
+      lastCompletedTurnAt: "2026-04-18T00:00:13Z"
     });
     expect(rootNode?.children).toHaveLength(1);
     expect(rootNode?.children[0]).toMatchObject({
@@ -394,6 +408,12 @@ describe("SessionCatalogService", () => {
       "session-new",
       "session-old"
     ]);
+    expect(tree[0]?.sessions[0]?.lastCompletedTurnAt).toBe(
+      "2026-04-18T00:15:00Z"
+    );
+    expect(tree[0]?.sessions[1]?.lastCompletedTurnAt).toBe(
+      "2026-04-18T00:05:00Z"
+    );
   });
 
   it("does not expose an unread dot for the active session", async () => {

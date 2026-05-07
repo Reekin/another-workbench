@@ -14,6 +14,8 @@ vi.mock("xterm", () => ({
 
 import {
   ChatShellApp,
+  formatRelativeCompletedTurnAge,
+  getWorkspaceSessionPage,
   truncateSessionHeading
 } from "../src/ui/chat-shell/ChatShellApp.js";
 
@@ -24,6 +26,35 @@ describe("ChatShellApp header and transcript labels", () => {
     );
     expect(truncateSessionHeading("short title")).toBe("short title");
     expect(truncateSessionHeading("   ")).toBe("Thread");
+  });
+
+  it("formats sidebar completed-turn age using minute, hour, and day units", () => {
+    const now = new Date("2026-05-04T12:00:00.000Z").getTime();
+
+    expect(formatRelativeCompletedTurnAge("2026-05-04T11:55:00.000Z", now)).toBe("5m");
+    expect(formatRelativeCompletedTurnAge("2026-05-04T09:30:00.000Z", now)).toBe("2h");
+    expect(formatRelativeCompletedTurnAge("2026-05-01T08:00:00.000Z", now)).toBe("3d");
+    expect(formatRelativeCompletedTurnAge(undefined, now)).toBeUndefined();
+    expect(formatRelativeCompletedTurnAge("not-a-date", now)).toBeUndefined();
+  });
+
+  it("limits workspace session pages to ten root sessions", () => {
+    const sessions = Array.from({ length: 23 }, (_, index) => `session-${index + 1}`);
+
+    expect(getWorkspaceSessionPage(sessions, 0)).toEqual({
+      pageIndex: 0,
+      totalPages: 3,
+      sessions: sessions.slice(0, 10)
+    });
+    expect(getWorkspaceSessionPage(sessions, 2)).toEqual({
+      pageIndex: 2,
+      totalPages: 3,
+      sessions: sessions.slice(20, 23)
+    });
+    expect(getWorkspaceSessionPage(sessions, 99)).toMatchObject({
+      pageIndex: 2,
+      totalPages: 3
+    });
   });
 
   it("shows only the final assistant timestamp for multiple assistant blocks in one turn", () => {
@@ -85,7 +116,7 @@ describe("ChatShellApp header and transcript labels", () => {
             turnId: "turn-1",
             role: "assistant",
             kind: "markdown",
-            text: "second line",
+            text: "second line\n\n```mermaid\ngraph TD\n  A --> B\n```",
             actor: {
               participantId: "participant-1",
               engineId: "agent-codex"

@@ -466,6 +466,7 @@ button {
   min-width: 0;
   display: grid;
   gap: 2px;
+  flex: 1 1 auto;
 }
 
 .awb-tree__labels strong {
@@ -478,12 +479,55 @@ button {
   color: var(--awb-ink);
 }
 
-.awb-tree__labels span {
+.awb-tree__labels span,
+.awb-tree__labels time {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.71rem;
   color: var(--awb-ink-muted);
+}
+
+.awb-tree__session-meta {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.awb-tree__session-meta time {
+  color: var(--awb-ink-faint);
+}
+
+.awb-workspace__pagination {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px 8px;
+  color: var(--awb-ink-muted);
+  font-size: 0.71rem;
+}
+
+.awb-workspace__pagination button {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--awb-rule);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--awb-ink-muted);
+  cursor: pointer;
+}
+
+.awb-workspace__pagination button:hover:not(:disabled) {
+  color: var(--awb-ink);
+  border-color: rgba(140, 143, 141, 0.42);
+}
+
+.awb-workspace__pagination button:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .awb-transcript {
@@ -570,9 +614,15 @@ button {
 
 .awb-chat-entry {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 33.333%) minmax(0, 1fr);
   gap: 6px;
-  padding: 10px 33.333% 12px;
+  padding: 10px 0 12px;
   border-bottom: 1px solid var(--awb-rule);
+}
+
+.awb-chat-entry > * {
+  grid-column: 2;
+  min-width: 0;
 }
 
 .awb-chat-entry.is-followed-by-same-turn {
@@ -595,6 +645,7 @@ button {
 
 .awb-chat-entry__messages {
   display: grid;
+  grid-column: 1 / -1;
   gap: 6px;
 }
 
@@ -633,7 +684,14 @@ button {
 }
 
 .awb-message__content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 33.333%) minmax(0, 1fr);
   color: var(--awb-ink);
+}
+
+.awb-message__content > * {
+  grid-column: 2;
+  min-width: 0;
 }
 
 .awb-message__content > *:first-child {
@@ -730,6 +788,20 @@ button {
   margin-bottom: 4px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--awb-rule);
+}
+
+.awb-chat-entry > .awb-turn__process--history {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 33.333%) minmax(0, 1fr);
+}
+
+.awb-turn__process--history > * {
+  grid-column: 2;
+  min-width: 0;
+}
+
+.awb-turn-process__history .awb-message__content {
+  display: block;
 }
 
 .awb-turn__process--inline {
@@ -2045,26 +2117,20 @@ button {
 
 .awb-mermaid {
   display: grid;
+  grid-column: 1 / -1;
   justify-items: center;
   width: 100%;
   margin: 0 0 0.72rem;
 }
 
-.awb-chat-entry .awb-message--contains-mermaid .awb-mermaid {
-  width: 300%;
-  margin-left: -100%;
-  margin-right: -100%;
-}
-
 .awb-mermaid__surface {
+  width: 100%;
   max-width: 100%;
   overflow-x: auto;
 }
 
 .awb-mermaid__surface svg {
   display: block;
-  max-width: none;
-  width: auto;
   height: auto;
   margin: 0 auto;
 }

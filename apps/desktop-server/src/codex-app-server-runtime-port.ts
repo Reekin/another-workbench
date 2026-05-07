@@ -46,6 +46,7 @@ import {
 } from "./engine-extensions/codex/turn-changes-store.js";
 import {
   codexRawResponseToolCallId,
+  isCodexContextCompactionThreadItem,
   isCodexReasoningThreadItem,
   isCodexWebSearchThreadItem,
   mapCodexResponseItemStatus,
@@ -1147,20 +1148,6 @@ export class CodexAppServerRuntimePort
         return;
       }
       case "item/reasoning/summaryPartAdded": {
-        const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
-        const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
-        const toolCallId = typeof params.itemId === "string" ? params.itemId : undefined;
-        if (!sessionId || !turnId || !toolCallId) {
-          return;
-        }
-        this.emitEvent("tool.started", {
-          sessionId,
-          turnId,
-          toolCallId,
-          toolName: "reasoning",
-          inputSummary: "Reasoning summary",
-          engineId: this.engineId
-        });
         return;
       }
       case "item/reasoning/summaryTextDelta":
@@ -1350,18 +1337,21 @@ export class CodexAppServerRuntimePort
 
     if (isCodexReasoningThreadItem(item)) {
       if (method === "item/started") {
-        this.emitEvent("tool.started", {
-          sessionId,
-          turnId,
-          toolCallId: item.id,
-          toolName: "reasoning",
-          inputSummary: "Reasoning",
-          engineId: this.engineId
-        });
         return;
       }
 
       const outputSummary = summarizeCodexReasoningThreadItem(item);
+      if (!outputSummary) {
+        return;
+      }
+      this.emitEvent("tool.started", {
+        sessionId,
+        turnId,
+        toolCallId: item.id,
+        toolName: "reasoning",
+        inputSummary: "Reasoning",
+        engineId: this.engineId
+      });
       this.rememberProcessActivitySummary(
         sessionId,
         turnId,
@@ -1382,6 +1372,9 @@ export class CodexAppServerRuntimePort
     if (isCodexWebSearchThreadItem(item)) {
       if (method === "item/started") {
         const inputSummary = summarizeCodexWebSearchAction(item.action, item.query);
+        if (!inputSummary) {
+          return;
+        }
         this.rememberProcessActivitySummary(
           sessionId,
           turnId,
@@ -1400,6 +1393,9 @@ export class CodexAppServerRuntimePort
       }
 
       const outputSummary = summarizeCodexWebSearchAction(item.action, item.query);
+      if (!outputSummary) {
+        return;
+      }
       this.rememberProcessActivitySummary(
         sessionId,
         turnId,
@@ -1411,7 +1407,30 @@ export class CodexAppServerRuntimePort
         turnId,
         toolCallId: item.id,
         status: "completed",
-        outputSummary,
+        engineId: this.engineId
+      });
+      return;
+    }
+
+    if (isCodexContextCompactionThreadItem(item)) {
+      if (method === "item/started") {
+        this.emitEvent("tool.started", {
+          sessionId,
+          turnId,
+          toolCallId: item.id,
+          toolName: "contextCompaction",
+          inputSummary: "compacting...",
+          engineId: this.engineId
+        });
+        return;
+      }
+
+      this.emitEvent("tool.completed", {
+        sessionId,
+        turnId,
+        toolCallId: item.id,
+        status: "completed",
+        outputSummary: "compaction finished",
         engineId: this.engineId
       });
       return;
@@ -1463,6 +1482,9 @@ export class CodexAppServerRuntimePort
   ): void {
     if (item.type === "reasoning") {
       const outputSummary = summarizeCodexRawReasoningItem(item);
+      if (!outputSummary) {
+        return;
+      }
       if (
         this.hasProcessActivitySummary(sessionId, turnId, "reasoning", outputSummary)
       ) {
@@ -1497,6 +1519,9 @@ export class CodexAppServerRuntimePort
     if (item.type === "web_search_call") {
       const toolCallId = codexRawResponseToolCallId(turnId, item, "webSearch");
       const summary = summarizeCodexWebSearchAction(item.action);
+      if (!summary) {
+        return;
+      }
       if (this.hasProcessActivitySummary(sessionId, turnId, "webSearch", summary)) {
         return;
       }
@@ -1514,7 +1539,6 @@ export class CodexAppServerRuntimePort
         turnId,
         toolCallId,
         status: mapCodexResponseItemStatus(item.status),
-        outputSummary: summary,
         engineId: this.engineId
       });
     }

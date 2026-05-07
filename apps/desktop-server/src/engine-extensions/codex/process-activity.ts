@@ -14,6 +14,11 @@ export const isCodexWebSearchThreadItem = (
 ): item is Extract<ThreadItem, { type: "webSearch" }> =>
   isRecord(item) && item.type === "webSearch" && typeof item.id === "string";
 
+export const isCodexContextCompactionThreadItem = (
+  item: ThreadItem | Record<string, unknown>
+): item is Extract<ThreadItem, { type: "contextCompaction" }> =>
+  isRecord(item) && item.type === "contextCompaction" && typeof item.id === "string";
+
 export const summarizeCodexReasoningThreadItem = (
   item: Extract<ThreadItem, { type: "reasoning" }>
 ): string | undefined => {

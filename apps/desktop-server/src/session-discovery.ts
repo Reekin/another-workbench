@@ -41,11 +41,17 @@ import {
   recordCodexTurnChangesFromFileUpdate
 } from "./engine-extensions/codex/turn-changes-store.js";
 import {
+  isCodexContextCompactionThreadItem,
   isCodexReasoningThreadItem,
   isCodexWebSearchThreadItem,
   summarizeCodexReasoningThreadItem,
   summarizeCodexWebSearchAction
 } from "./engine-extensions/codex/process-activity.js";
+import {
+  consumeCodexRolloutTimestamp,
+  readCodexRolloutTimestampGroups,
+  resolveCodexThreadItemTimestamp
+} from "./engine-extensions/codex/rollout-timestamps.js";
 import { SessionIdentityRegistry } from "./session-identity-registry.js";
 
 const codexProviderKind = "codex-thread";
@@ -108,6 +114,16 @@ const buildDeterministicTurnTimestamp = (
 
 const buildRelationId = (parentSessionId: string, childSessionId: string): string =>
   `relation-discovered:${parentSessionId}:${childSessionId}:subagent`;
+
+const lastTimestamp = (timestamps: string[]): string | undefined => {
+  let latest: string | undefined;
+  for (const timestamp of timestamps) {
+    if (!latest || timestamp > latest) {
+      latest = timestamp;
+    }
+  }
+  return latest;
+};
 
 const resolveThreadLastCompletedTurnAt = (thread: Thread): string | undefined => {
   for (let turnIndex = thread.turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
@@ -410,27 +426,47 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
     const messageBlocks: MessageBlock[] = [];
     const toolCalls: ToolCall[] = [];
     const terminalStreams: TerminalStream[] = [];
+    const rolloutTimestampGroups = await readCodexRolloutTimestampGroups(thread.path);
+    const rolloutTimestampGroupsByTurnId = new Map(
+      rolloutTimestampGroups.map((group) => [group.turnId, group.items] as const)
+    );
 
     for (const [turnIndex, turn] of thread.turns.entries()) {
       if (input.isCancelled?.()) {
         return undefined;
       }
-      const startedAt = buildDeterministicTurnTimestamp(thread, turnIndex);
+      const rolloutTimestamps = [
+        ...(rolloutTimestampGroupsByTurnId.get(turn.id) ??
+          rolloutTimestampGroups[turnIndex]?.items ??
+          [])
+      ];
+      const hydratedItems = turn.items;
+      const itemStartedAts = hydratedItems.map(
+        (item, itemIndex) =>
+          resolveCodexThreadItemTimestamp(item) ??
+          consumeCodexRolloutTimestamp(rolloutTimestamps, item.type) ??
+          buildDeterministicTurnTimestamp(thread, turnIndex, itemIndex)
+      );
+      const startedAt =
+        itemStartedAts[0] ?? buildDeterministicTurnTimestamp(thread, turnIndex);
       const completedAt =
         turn.status === "inProgress"
           ? undefined
-          : buildDeterministicTurnTimestamp(thread, turnIndex, turn.items.length + 1);
+          : lastTimestamp(itemStartedAts) ??
+            buildDeterministicTurnTimestamp(thread, turnIndex, hydratedItems.length + 1);
       const messageIds: string[] = [];
       const toolCallIds: string[] = [];
       const terminalIds: string[] = [];
       const fileChanges: FileUpdateChange[] = [];
       let finalMessageId: string | undefined;
 
-      for (const [itemIndex, item] of turn.items.entries()) {
+      for (const [itemIndex, item] of hydratedItems.entries()) {
         if (input.isCancelled?.()) {
           return undefined;
         }
-        const itemStartedAt = buildDeterministicTurnTimestamp(thread, turnIndex, itemIndex);
+        const itemStartedAt =
+          itemStartedAts[itemIndex] ??
+          buildDeterministicTurnTimestamp(thread, turnIndex, itemIndex);
         const itemEntityId = hydratedItemId(entry.sessionId, item.id);
         if (isUserMessageItem(item)) {
           messageIds.push(itemEntityId);
@@ -519,6 +555,10 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
         }
 
         if (isCodexReasoningThreadItem(item)) {
+          const outputSummary = summarizeCodexReasoningThreadItem(item);
+          if (!outputSummary) {
+            continue;
+          }
           toolCallIds.push(itemEntityId);
           toolCalls.push(
             parseToolCall({
@@ -527,7 +567,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
               turnId: turn.id,
               toolName: "reasoning",
               inputSummary: "Reasoning",
-              outputSummary: summarizeCodexReasoningThreadItem(item),
+              outputSummary,
               status: "completed",
               startedAt: itemStartedAt,
               completedAt: itemStartedAt
@@ -537,6 +577,10 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
         }
 
         if (isCodexWebSearchThreadItem(item)) {
+          const inputSummary = summarizeCodexWebSearchAction(item.action, item.query);
+          if (!inputSummary) {
+            continue;
+          }
           toolCallIds.push(itemEntityId);
           toolCalls.push(
             parseToolCall({
@@ -544,8 +588,25 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
               sessionId: entry.sessionId,
               turnId: turn.id,
               toolName: "webSearch",
-              inputSummary: summarizeCodexWebSearchAction(item.action, item.query),
-              outputSummary: summarizeCodexWebSearchAction(item.action, item.query),
+              inputSummary,
+              status: "completed",
+              startedAt: itemStartedAt,
+              completedAt: itemStartedAt
+            })
+          );
+          continue;
+        }
+
+        if (isCodexContextCompactionThreadItem(item)) {
+          toolCallIds.push(itemEntityId);
+          toolCalls.push(
+            parseToolCall({
+              toolCallId: itemEntityId,
+              sessionId: entry.sessionId,
+              turnId: turn.id,
+              toolName: "contextCompaction",
+              inputSummary: "compacting...",
+              outputSummary: "compaction finished",
               status: "completed",
               startedAt: itemStartedAt,
               completedAt: itemStartedAt

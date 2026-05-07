@@ -63,16 +63,28 @@ const displayToolName = (toolName: string): string => {
   switch (toolName) {
     case "commandExecution":
       return "Shell";
+    case "contextCompaction":
+      return "Compaction";
+    case "reasoning":
+      return "Reasoning";
+    case "webSearch":
+      return "Web search";
     default:
       return toolName;
   }
 };
 
 const buildToolSummary = (toolCall: ToolCall): string => {
+  if (toolCall.toolName === "contextCompaction") {
+    return toolCall.status === "completed"
+      ? (toolCall.outputSummary ?? "compaction finished")
+      : (toolCall.inputSummary ?? "compacting...");
+  }
   const input = firstUsefulLine(toolCall.inputSummary);
-  return input
-    ? `${displayToolName(toolCall.toolName)} ${input}`
-    : displayToolName(toolCall.toolName);
+  const label = displayToolName(toolCall.toolName);
+  return input && input.toLocaleLowerCase() !== label.toLocaleLowerCase()
+    ? `${label} ${input}`
+    : label;
 };
 
 const buildTerminalSummary = (stream: TerminalStream): string => {
@@ -159,8 +171,9 @@ export const ProcessActivityItemView = ({
 }: {
   entry: ProcessActivityEntry;
 }): ReactElement => {
-  const outputText = entry.outputText?.trim();
+  const rawOutputText = entry.outputText?.trim();
   const inputText = entry.inputText?.trim();
+  const outputText = rawOutputText && rawOutputText !== inputText ? rawOutputText : undefined;
   return (
     <details
       key={entry.id}
@@ -180,9 +193,11 @@ export const ProcessActivityItemView = ({
           <span>{entry.label}</span>
           {inputText ? <code>{inputText}</code> : <code>(no parameters)</code>}
         </div>
-        <pre className="awb-process-activity__output">
-          {outputText || "(no output yet)"}
-        </pre>
+        {outputText || entry.status === "running" ? (
+          <pre className="awb-process-activity__output">
+            {outputText || "(no output yet)"}
+          </pre>
+        ) : null}
       </div>
     </details>
   );

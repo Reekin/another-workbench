@@ -189,6 +189,7 @@ const formatTimestamp = (iso: string | undefined): string => {
 };
 
 const maxSessionHeadingLength = 20;
+const workspaceSessionPageSize = 10;
 
 export const truncateSessionHeading = (value: string | undefined): string => {
   const normalized = value?.trim();
@@ -199,6 +200,49 @@ export const truncateSessionHeading = (value: string | undefined): string => {
     return normalized;
   }
   return `${normalized.slice(0, maxSessionHeadingLength)}…`;
+};
+
+export const formatRelativeCompletedTurnAge = (
+  iso: string | undefined,
+  nowMs = Date.now()
+): string | undefined => {
+  if (!iso) {
+    return undefined;
+  }
+  const timestamp = new Date(iso).getTime();
+  if (Number.isNaN(timestamp)) {
+    return undefined;
+  }
+  const elapsedMinutes = Math.max(0, Math.floor((nowMs - timestamp) / 60_000));
+  if (elapsedMinutes < 60) {
+    return `${elapsedMinutes}m`;
+  }
+  const elapsedHours = Math.floor(elapsedMinutes / 60);
+  if (elapsedHours < 24) {
+    return `${elapsedHours}h`;
+  }
+  return `${Math.floor(elapsedHours / 24)}d`;
+};
+
+export const getWorkspaceSessionPage = <Session,>(
+  sessions: readonly Session[],
+  pageIndex: number
+): {
+  pageIndex: number;
+  totalPages: number;
+  sessions: Session[];
+} => {
+  const totalPages = Math.max(1, Math.ceil(sessions.length / workspaceSessionPageSize));
+  const normalizedPageIndex = Math.min(
+    Math.max(0, pageIndex),
+    totalPages - 1
+  );
+  const startIndex = normalizedPageIndex * workspaceSessionPageSize;
+  return {
+    pageIndex: normalizedPageIndex,
+    totalPages,
+    sessions: sessions.slice(startIndex, startIndex + workspaceSessionPageSize)
+  };
 };
 
 const buildWorkspaceEngineFallbacks = (
@@ -487,7 +531,11 @@ const TranscriptPane = memo(
               </header>
             )}
             {hasExpandableDetails && (
-              <div className="awb-turn__process">
+              <div
+                className={`awb-turn__process ${
+                  hasCollapsedContent ? "awb-turn__process--history" : ""
+                }`}
+              >
                 <button
                   type="button"
                   className={`awb-turn__process-toggle ${
@@ -761,6 +809,9 @@ export const ChatShellApp = ({
   const [lightboxImage, setLightboxImage] = useState<ImageLightboxState | undefined>();
   const [settingsHydrated, setSettingsHydrated] = useState(false);
   const [workspaceMenu, setWorkspaceMenu] = useState<WorkspaceMenuState | undefined>();
+  const [workspaceSessionPages, setWorkspaceSessionPages] = useState<
+    Record<string, number>
+  >({});
 
   const writeStatusNoticeLog = useCallback(
     (notice: ComposerStatusNotice): void => {
@@ -847,6 +898,34 @@ export const ChatShellApp = ({
   const activeSession = activeSessionId
     ? state.entities.sessions[activeSessionId]
     : undefined;
+
+  useEffect(() => {
+    setWorkspaceSessionPages((current) => {
+      const workspaceIds = new Set(workspaceTree.map((workspace) => workspace.workspaceId));
+      let changed = false;
+      const next: Record<string, number> = {};
+      for (const workspace of workspaceTree) {
+        const totalPages = getWorkspaceSessionPage(
+          workspace.sessions,
+          current[workspace.workspaceId] ?? 0
+        ).totalPages;
+        const currentPageIndex = current[workspace.workspaceId] ?? 0;
+        const clampedPageIndex = Math.min(currentPageIndex, totalPages - 1);
+        if (clampedPageIndex > 0) {
+          next[workspace.workspaceId] = clampedPageIndex;
+        }
+        if (currentPageIndex !== clampedPageIndex) {
+          changed = true;
+        }
+      }
+      for (const workspaceId of Object.keys(current)) {
+        if (!workspaceIds.has(workspaceId)) {
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [workspaceTree]);
   const displayedConversationId =
     displayedSession?.conversationId ?? displayedSessionNode?.conversationId;
   const highlightedSessionId = displayedSessionId;
@@ -1231,11 +1310,23 @@ export const ChatShellApp = ({
     [transport, setStatusNotice]
   );
 
+  const onSetWorkspaceSessionPage = useCallback(
+    (workspaceId: string, pageIndex: number): void => {
+      setWorkspaceSessionPages((current) => ({
+        ...current,
+        [workspaceId]: Math.max(0, pageIndex)
+      }));
+    },
+    []
+  );
+
   const renderSessionNode = (
     session: WorkspaceBrowserNodeRpc["sessions"][number],
     depth = 0
   ): ReactElement => {
     const statusDot = resolveStatusDotLabel(session.statusDot);
+    const lastCompletedTurnAt = session.lastCompletedTurnAt;
+    const completedAge = formatRelativeCompletedTurnAge(lastCompletedTurnAt);
     return (
       <li key={session.sessionId} className="awb-tree__item">
         <div
@@ -1266,7 +1357,14 @@ export const ChatShellApp = ({
             {statusDot ? <span className={`awb-tree__dot is-${statusDot}`} /> : <span className="awb-tree__dot-placeholder" />}
             <div className="awb-tree__labels">
               <strong>{session.title}</strong>
-              <span>{session.engineId}</span>
+              <span className="awb-tree__session-meta">
+                <span>{session.engineId}</span>
+                {completedAge && lastCompletedTurnAt ? (
+                  <time dateTime={lastCompletedTurnAt} title={formatTimestamp(lastCompletedTurnAt)}>
+                    {completedAge}
+                  </time>
+                ) : null}
+              </span>
             </div>
           </div>
         </div>
@@ -1373,9 +1471,56 @@ export const ChatShellApp = ({
                     </button>
                   </header>
                   {workspace.isExpanded && (
-                    <ul className="awb-tree__branch awb-tree__branch--workspace">
-                      {workspace.sessions.map((session) => renderSessionNode(session))}
-                    </ul>
+                    <>
+                      <ul className="awb-tree__branch awb-tree__branch--workspace">
+                        {getWorkspaceSessionPage(
+                          workspace.sessions,
+                          workspaceSessionPages[workspace.workspaceId] ?? 0
+                        ).sessions.map((session) => renderSessionNode(session))}
+                      </ul>
+                      {(() => {
+                        const page = getWorkspaceSessionPage(
+                          workspace.sessions,
+                          workspaceSessionPages[workspace.workspaceId] ?? 0
+                        );
+                        if (page.totalPages <= 1) {
+                          return null;
+                        }
+                        return (
+                          <div className="awb-workspace__pagination">
+                            <button
+                              type="button"
+                              disabled={page.pageIndex === 0}
+                              onClick={() =>
+                                onSetWorkspaceSessionPage(
+                                  workspace.workspaceId,
+                                  page.pageIndex - 1
+                                )
+                              }
+                              aria-label={`Previous sessions page for ${workspace.label}`}
+                            >
+                              ‹
+                            </button>
+                            <span>
+                              {page.pageIndex + 1}/{page.totalPages}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={page.pageIndex >= page.totalPages - 1}
+                              onClick={() =>
+                                onSetWorkspaceSessionPage(
+                                  workspace.workspaceId,
+                                  page.pageIndex + 1
+                                )
+                              }
+                              aria-label={`Next sessions page for ${workspace.label}`}
+                            >
+                              ›
+                            </button>
+                          </div>
+                        );
+                      })()}
+                    </>
                   )}
                 </section>
               ))}

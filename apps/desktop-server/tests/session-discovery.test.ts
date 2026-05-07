@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -529,6 +529,525 @@ describe("Session discovery and reconciliation", () => {
     );
   });
 
+  it("uses rollout timestamps when hydrating restored codex messages", async () => {
+    const baseDir = await createTempDir();
+    const rolloutPath = join(baseDir, "rollout.jsonl");
+    await writeFile(
+      rolloutPath,
+      [
+        {
+          timestamp: "2026-05-02T02:48:38.930Z",
+          type: "event_msg",
+          payload: {
+            type: "task_started"
+          }
+        },
+        {
+          timestamp: "2026-05-02T02:48:39.123Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "Please summarize."
+          }
+        },
+        {
+          timestamp: "2026-05-02T02:48:51.597Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "output_text",
+                text: "Done."
+              }
+            ]
+          }
+        }
+      ].map((entry) => JSON.stringify(entry)).join("\n"),
+      "utf8"
+    );
+
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        resumeThread: vi.fn().mockResolvedValue({
+          ...createThread({
+            id: "thread-rollout-time",
+            name: "Thread rollout time",
+            preview: "Preview rollout time"
+          }),
+          path: rolloutPath,
+          turns: [
+            {
+              id: "turn-rollout-time",
+              status: "completed",
+              error: null,
+              items: [
+                {
+                  type: "userMessage",
+                  id: "user-1",
+                  content: [
+                    {
+                      type: "text",
+                      text: "Please summarize.",
+                      text_elements: []
+                    }
+                  ]
+                },
+                {
+                  type: "agentMessage",
+                  id: "agent-1",
+                  text: "Done.",
+                  phase: "final_answer",
+                  memoryCitation: null
+                }
+              ]
+            }
+          ]
+        }),
+        attachThreadToSession: vi.fn()
+      } as never
+    });
+
+    const hydrated = await provider.hydrateSession({
+      workspaceId: "workspace-1",
+      sessionId: "codex-thread:thread-rollout-time",
+      conversationId: "conversation-rollout-time",
+      engineId: "codex",
+      providerKind: "codex-thread",
+      providerSessionId: "thread-rollout-time",
+      createdAt: "2026-05-01T01:20:36.847Z",
+      updatedAt: "2026-05-02T02:48:53.187Z"
+    });
+
+    expect(hydrated?.turns[0]).toMatchObject({
+      startedAt: "2026-05-02T02:48:39.123Z",
+      completedAt: "2026-05-02T02:48:51.597Z"
+    });
+    expect(hydrated?.messageBlocks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          messageId: "hydrated:codex-thread:thread-rollout-time:user-1",
+          startedAt: "2026-05-02T02:48:39.123Z"
+        }),
+        expect.objectContaining({
+          messageId: "hydrated:codex-thread:thread-rollout-time:agent-1",
+          startedAt: "2026-05-02T02:48:51.597Z",
+          completedAt: "2026-05-02T02:48:51.597Z"
+        })
+      ])
+    );
+  });
+
+  it("matches rollout timestamps by turn id without hydrating rollout-only messages", async () => {
+    const baseDir = await createTempDir();
+    const rolloutPath = join(baseDir, "rollout-repeated-prompt.jsonl");
+    await writeFile(
+      rolloutPath,
+      [
+        {
+          timestamp: "2026-05-03T17:25:32.164Z",
+          type: "event_msg",
+          payload: {
+            type: "task_started",
+            turn_id: "turn-old"
+          }
+        },
+        {
+          timestamp: "2026-05-03T17:25:32.165Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "build个exe" }]
+          }
+        },
+        {
+          timestamp: "2026-05-03T17:25:37.793Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "Old build answer." }],
+            phase: "final_answer"
+          }
+        },
+        {
+          timestamp: "2026-05-03T17:50:32.030Z",
+          type: "event_msg",
+          payload: {
+            type: "task_started",
+            turn_id: "turn-new"
+          }
+        },
+        {
+          timestamp: "2026-05-03T17:50:32.031Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "build个exe" }]
+          }
+        },
+        {
+          timestamp: "2026-05-03T17:53:20.979Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "New build answer." }],
+            phase: "final_answer"
+          }
+        }
+      ].map((entry) => JSON.stringify(entry)).join("\n"),
+      "utf8"
+    );
+
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        resumeThread: vi.fn().mockResolvedValue({
+          ...createThread({
+            id: "thread-repeated-prompt",
+            name: "Thread repeated prompt",
+            preview: "Preview repeated prompt"
+          }),
+          path: rolloutPath,
+          turns: [
+            {
+              id: "turn-new",
+              status: "completed",
+              error: null,
+              items: [
+                {
+                  type: "userMessage",
+                  id: "user-new",
+                  content: [
+                    {
+                      type: "text",
+                      text: "build个exe",
+                      text_elements: []
+                    }
+                  ]
+                },
+                {
+                  type: "agentMessage",
+                  id: "agent-new",
+                  text: "New build answer.",
+                  phase: "final_answer",
+                  memoryCitation: null
+                }
+              ]
+            }
+          ]
+        }),
+        attachThreadToSession: vi.fn()
+      } as never
+    });
+
+    const hydrated = await provider.hydrateSession({
+      workspaceId: "workspace-1",
+      sessionId: "codex-thread:thread-repeated-prompt",
+      conversationId: "conversation-repeated-prompt",
+      engineId: "codex",
+      providerKind: "codex-thread",
+      providerSessionId: "thread-repeated-prompt",
+      createdAt: "2026-05-01T01:20:36.847Z",
+      updatedAt: "2026-05-03T17:53:21.097Z"
+    });
+
+    expect(hydrated?.turns[0]).toMatchObject({
+      startedAt: "2026-05-03T17:50:32.031Z",
+      completedAt: "2026-05-03T17:53:20.979Z",
+      finalMessageId: "hydrated:codex-thread:thread-repeated-prompt:agent-new"
+    });
+    expect(hydrated?.messageBlocks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          messageId: "hydrated:codex-thread:thread-repeated-prompt:user-new",
+          startedAt: "2026-05-03T17:50:32.031Z",
+          text: "build个exe"
+        }),
+        expect.objectContaining({
+          messageId: "hydrated:codex-thread:thread-repeated-prompt:agent-new",
+          role: "assistant",
+          startedAt: "2026-05-03T17:53:20.979Z",
+          text: "New build answer."
+        })
+      ])
+    );
+    expect(hydrated?.messageBlocks).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          text: "Old build answer."
+        })
+      ])
+    );
+  });
+
+  it("does not hydrate codex injected user context as a user prompt", async () => {
+    const baseDir = await createTempDir();
+    const rolloutPath = join(baseDir, "rollout-injected-user-context.jsonl");
+    await writeFile(
+      rolloutPath,
+      [
+        {
+          timestamp: "2026-05-02T04:40:11.866Z",
+          type: "event_msg",
+          payload: {
+            type: "task_started",
+            turn_id: "turn-injected-context"
+          }
+        },
+        {
+          timestamp: "2026-05-02T04:40:11.866Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: "# AGENTS.md instructions for I:\\gpt-projects\\tqqq-tracker\n\n<INSTRUCTIONS>\n## Shell\nUse bash.\n</INSTRUCTIONS>"
+              },
+              {
+                type: "input_text",
+                text: "<environment_context>\n  <cwd>I:\\gpt-projects\\tqqq-tracker</cwd>\n</environment_context>"
+              }
+            ]
+          }
+        },
+        {
+          timestamp: "2026-05-02T04:40:11.866Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "review当前目录下的量化交易方案" }]
+          }
+        },
+        {
+          timestamp: "2026-05-02T04:40:11.866Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "review当前目录下的量化交易方案"
+          }
+        },
+        {
+          timestamp: "2026-05-02T04:40:18.672Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "我会先快速梳理项目结构。" }],
+            phase: "commentary"
+          }
+        }
+      ].map((entry) => JSON.stringify(entry)).join("\n"),
+      "utf8"
+    );
+
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        resumeThread: vi.fn().mockResolvedValue({
+          ...createThread({
+            id: "thread-injected-context",
+            name: "Thread injected context",
+            preview: "Preview injected context"
+          }),
+          path: rolloutPath,
+          turns: [
+            {
+              id: "turn-injected-context",
+              status: "completed",
+              error: null,
+              items: [
+                {
+                  type: "userMessage",
+                  id: "user-injected-context",
+                  content: [
+                    {
+                      type: "text",
+                      text: "review当前目录下的量化交易方案",
+                      text_elements: []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }),
+        attachThreadToSession: vi.fn()
+      } as never
+    });
+
+    const hydrated = await provider.hydrateSession({
+      workspaceId: "workspace-1",
+      sessionId: "codex-thread:thread-injected-context",
+      conversationId: "conversation-injected-context",
+      engineId: "codex",
+      providerKind: "codex-thread",
+      providerSessionId: "thread-injected-context",
+      createdAt: "2026-05-02T04:40:11.866Z",
+      updatedAt: "2026-05-02T04:40:18.672Z"
+    });
+
+    const userMessages = hydrated?.messageBlocks.filter((block) => block.role === "user");
+    expect(userMessages).toHaveLength(1);
+    expect(userMessages?.[0]).toMatchObject({
+      text: "review当前目录下的量化交易方案"
+    });
+    expect(hydrated?.messageBlocks).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          text: expect.stringContaining("AGENTS.md instructions")
+        }),
+        expect.objectContaining({
+          text: expect.stringContaining("<environment_context>")
+        })
+      ])
+    );
+    expect(hydrated?.messageBlocks).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "assistant",
+          text: "我会先快速梳理项目结构。"
+        })
+      ])
+    );
+  });
+
+  it("does not hydrate rollout-only assistant messages after compaction", async () => {
+    const baseDir = await createTempDir();
+    const rolloutPath = join(baseDir, "rollout-compacted-turn.jsonl");
+    await writeFile(
+      rolloutPath,
+      [
+        {
+          timestamp: "2026-05-03T18:28:10.013Z",
+          type: "event_msg",
+          payload: {
+            type: "task_started",
+            turn_id: "turn-compacted"
+          }
+        },
+        {
+          timestamp: "2026-05-03T18:28:10.013Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "我已关闭卡巴斯基，继续完成开发" }]
+          }
+        },
+        {
+          timestamp: "2026-05-03T18:28:14.963Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "恢复刚才被杀软中断后的验证状态。" }],
+            phase: "commentary"
+          }
+        },
+        {
+          timestamp: "2026-05-03T18:44:57.330Z",
+          type: "compacted",
+          payload: {
+            type: "compacted"
+          }
+        },
+        {
+          timestamp: "2026-05-03T18:44:57.330Z",
+          type: "event_msg",
+          payload: {
+            type: "context_compacted"
+          }
+        },
+        {
+          timestamp: "2026-05-03T18:45:03.557Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "继续定位当前 app-server 测试栈溢出的原因。",
+            phase: "commentary"
+          }
+        },
+        {
+          timestamp: "2026-05-04T04:01:02.174Z",
+          type: "event_msg",
+          payload: {
+            type: "task_complete",
+            turn_id: "turn-compacted",
+            last_agent_message: ""
+          }
+        }
+      ].map((entry) => JSON.stringify(entry)).join("\n"),
+      "utf8"
+    );
+
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        resumeThread: vi.fn().mockResolvedValue({
+          ...createThread({
+            id: "thread-compacted",
+            name: "Thread compacted",
+            preview: "Preview compacted"
+          }),
+          path: rolloutPath,
+          turns: [
+            {
+              id: "turn-compacted",
+              status: "completed",
+              error: null,
+              items: [
+                {
+                  type: "userMessage",
+                  id: "user-compacted",
+                  content: [
+                    {
+                      type: "text",
+                      text: "我已关闭卡巴斯基，继续完成开发",
+                      text_elements: []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }),
+        attachThreadToSession: vi.fn()
+      } as never
+    });
+
+    const hydrated = await provider.hydrateSession({
+      workspaceId: "workspace-1",
+      sessionId: "codex-thread:thread-compacted",
+      conversationId: "conversation-compacted",
+      engineId: "codex",
+      providerKind: "codex-thread",
+      providerSessionId: "thread-compacted",
+      createdAt: "2026-05-01T01:20:36.847Z",
+      updatedAt: "2026-05-04T04:01:02.174Z"
+    });
+
+    expect(hydrated?.turns[0]?.messageIds).toEqual([
+      "hydrated:codex-thread:thread-compacted:user-compacted"
+    ]);
+    expect(hydrated?.messageBlocks).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "assistant",
+          text: "恢复刚才被杀软中断后的验证状态。"
+        }),
+        expect.objectContaining({
+          role: "assistant",
+          text: "继续定位当前 app-server 测试栈溢出的原因。"
+        })
+      ])
+    );
+  });
+
   it("hydrates reasoning and web search items as generic tool calls", async () => {
     const provider = new CodexSessionDiscoveryProvider({
       codexRuntimePort: {
@@ -551,6 +1070,12 @@ describe("Session discovery and reconciliation", () => {
                   content: ["Compared low-power options"]
                 },
                 {
+                  type: "reasoning",
+                  id: "reason-empty",
+                  summary: [],
+                  content: []
+                },
+                {
                   type: "webSearch",
                   id: "search-1",
                   query: "Intel N150 official specs",
@@ -559,6 +1084,10 @@ describe("Session discovery and reconciliation", () => {
                     query: "Intel N150 official specs",
                     queries: ["Intel N150 Processor Base Power"]
                   }
+                },
+                {
+                  type: "contextCompaction",
+                  id: "compact-1"
                 },
                 {
                   type: "agentMessage",
@@ -588,23 +1117,35 @@ describe("Session discovery and reconciliation", () => {
 
     expect(hydrated?.turns[0]?.toolCallIds).toEqual([
       "hydrated:codex-thread:thread-process:reason-1",
-      "hydrated:codex-thread:thread-process:search-1"
+      "hydrated:codex-thread:thread-process:search-1",
+      "hydrated:codex-thread:thread-process:compact-1"
     ]);
-    expect(hydrated?.toolCalls).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          toolCallId: "hydrated:codex-thread:thread-process:reason-1",
-          toolName: "reasoning",
-          outputSummary: expect.stringContaining("Checked official CPU specs")
-        }),
-        expect.objectContaining({
-          toolCallId: "hydrated:codex-thread:thread-process:search-1",
-          toolName: "webSearch",
-          inputSummary: expect.stringContaining("Intel N150 official specs"),
-          outputSummary: expect.stringContaining("Intel N150 Processor Base Power")
-        })
-      ])
+    const reasoningTool = hydrated?.toolCalls.find(
+      (toolCall) =>
+        toolCall.toolCallId === "hydrated:codex-thread:thread-process:reason-1"
     );
+    const webSearchTool = hydrated?.toolCalls.find(
+      (toolCall) =>
+        toolCall.toolCallId === "hydrated:codex-thread:thread-process:search-1"
+    );
+    const compactionTool = hydrated?.toolCalls.find(
+      (toolCall) =>
+        toolCall.toolCallId === "hydrated:codex-thread:thread-process:compact-1"
+    );
+    expect(reasoningTool).toMatchObject({
+      toolName: "reasoning",
+      outputSummary: expect.stringContaining("Checked official CPU specs")
+    });
+    expect(webSearchTool).toMatchObject({
+      toolName: "webSearch",
+      inputSummary: expect.stringContaining("Intel N150 official specs")
+    });
+    expect(webSearchTool?.outputSummary).toBeUndefined();
+    expect(compactionTool).toMatchObject({
+      toolName: "contextCompaction",
+      inputSummary: "compacting...",
+      outputSummary: "compaction finished"
+    });
   });
 
   it("recovers turn.finalMessageId only when a hydrated agent message is marked final_answer", async () => {

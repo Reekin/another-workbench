@@ -165,7 +165,7 @@ describe("ChatShellApp inline process output", () => {
     expect(html).not.toContain("Show turn details");
     expect(html).not.toContain("1 earlier message");
     expect(html).not.toContain("<h4>Activity</h4>");
-    expect(html).toContain('class="awb-turn__process"');
+    expect(html).toContain('class="awb-turn__process awb-turn__process--history"');
     expect((html.match(/awb-chat-entry__timestamp/g) ?? []).length).toBe(2);
     expect(html).toContain("completed final");
     expect(html).toContain("Please summarize.");

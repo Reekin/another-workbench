@@ -34,6 +34,7 @@ export type SessionBrowserNode = {
   parentSessionId?: string;
   children: SessionBrowserNode[];
   updatedAt: string;
+  lastCompletedTurnAt?: string;
 };
 
 export type WorkspaceBrowserNode = {
@@ -338,7 +339,8 @@ export class SessionCatalogService {
       isArchived: Boolean(input.seed.archivedAt),
       parentSessionId: input.parentSessionId,
       children,
-      updatedAt: input.seed.updatedAt
+      updatedAt: input.seed.updatedAt,
+      lastCompletedTurnAt: input.seed.lastCompletedTurnAt
     };
   }
 }

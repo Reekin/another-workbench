@@ -130,7 +130,8 @@ const zSessionBrowserNodeSchema: z.ZodType = z.lazy(() =>
     isArchived: z.boolean(),
     parentSessionId: zSessionId.optional(),
     children: z.array(zSessionBrowserNodeSchema).default([]),
-    updatedAt: z.string().min(1)
+    updatedAt: z.string().min(1),
+    lastCompletedTurnAt: z.string().min(1).optional()
   })
 );
 

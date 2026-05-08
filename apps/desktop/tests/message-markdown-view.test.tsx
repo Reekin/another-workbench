@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { MessageMarkdownView } from "../src/ui/chat-shell/MessageMarkdownView.js";
+import {
+  MessageMarkdownView,
+  splitStreamingMarkdown
+} from "../src/ui/chat-shell/MessageMarkdownView.js";
 
 describe("MessageMarkdownView", () => {
   it("renders markdown content into semantic HTML", () => {
@@ -18,7 +21,8 @@ describe("MessageMarkdownView", () => {
             participantId: "participant-1",
             engineId: "agent-codex"
           },
-          startedAt: "2026-04-17T00:00:00.000Z"
+          startedAt: "2026-04-17T00:00:00.000Z",
+          completedAt: "2026-04-17T00:00:01.000Z"
         }}
       />
     );
@@ -26,6 +30,50 @@ describe("MessageMarkdownView", () => {
     expect(html).toContain("<h1>Heading</h1>");
     expect(html).toContain("<li>item</li>");
     expect(html).not.toContain("awb-participant-badge");
+  });
+
+  it("splits streaming markdown at a stable block boundary", () => {
+    expect(splitStreamingMarkdown("Stable paragraph\n\ncurrent tail")).toEqual({
+      stableMarkdown: "Stable paragraph\n\n",
+      tailText: "current tail"
+    });
+    expect(splitStreamingMarkdown("Stable paragraph\n\n```bash\necho hello")).toEqual({
+      stableMarkdown: "Stable paragraph\n\n",
+      tailText: "```bash\necho hello"
+    });
+    expect(splitStreamingMarkdown("Stable paragraph\n\n```bash\necho hello\n```\n")).toEqual({
+      stableMarkdown: "Stable paragraph\n\n```bash\necho hello\n```\n",
+      tailText: ""
+    });
+  });
+
+  it("renders streaming tail as plain text instead of reparsing unstable markdown", () => {
+    const html = renderToStaticMarkup(
+      <MessageMarkdownView
+        block={{
+          blockId: "message-streaming:md",
+          messageId: "message-streaming",
+          sessionId: "session-1",
+          turnId: "turn-1",
+          role: "assistant",
+          kind: "markdown",
+          text: "Stable paragraph\n\n```bash\necho hello\n- still plain",
+          actor: {
+            participantId: "participant-1",
+            engineId: "agent-codex"
+          },
+          startedAt: "2026-04-17T00:00:00.000Z"
+        }}
+      />
+    );
+
+    expect(html).toContain("<p>Stable paragraph</p>");
+    expect(html).toContain('class="awb-message__streaming-tail"');
+    expect(html).toContain("```bash");
+    expect(html).toContain("echo hello");
+    expect(html).toContain("- still plain");
+    expect(html).not.toContain("language-bash");
+    expect(html).not.toContain("<li>still plain</li>");
   });
 
   it("sanitizes unsafe html fragments in markdown source", () => {
@@ -43,7 +91,8 @@ describe("MessageMarkdownView", () => {
             participantId: "participant-1",
             engineId: "agent-codex"
           },
-          startedAt: "2026-04-17T00:00:00.000Z"
+          startedAt: "2026-04-17T00:00:00.000Z",
+          completedAt: "2026-04-17T00:00:01.000Z"
         }}
       />
     );
@@ -67,7 +116,8 @@ describe("MessageMarkdownView", () => {
             participantId: "participant-1",
             engineId: "agent-codex"
           },
-          startedAt: "2026-04-17T00:00:00.000Z"
+          startedAt: "2026-04-17T00:00:00.000Z",
+          completedAt: "2026-04-17T00:00:01.000Z"
         }}
       />
     );
@@ -92,7 +142,8 @@ describe("MessageMarkdownView", () => {
             participantId: "participant-1",
             engineId: "agent-codex"
           },
-          startedAt: "2026-04-17T00:00:00.000Z"
+          startedAt: "2026-04-17T00:00:00.000Z",
+          completedAt: "2026-04-17T00:00:01.000Z"
         }}
       />
     );
@@ -116,7 +167,8 @@ describe("MessageMarkdownView", () => {
             participantId: "participant-1",
             engineId: "agent-codex"
           },
-          startedAt: "2026-04-17T00:00:00.000Z"
+          startedAt: "2026-04-17T00:00:00.000Z",
+          completedAt: "2026-04-17T00:00:01.000Z"
         }}
       />
     );
@@ -142,7 +194,8 @@ describe("MessageMarkdownView", () => {
             participantId: "participant-1",
             engineId: "agent-codex"
           },
-          startedAt: "2026-04-17T00:00:00.000Z"
+          startedAt: "2026-04-17T00:00:00.000Z",
+          completedAt: "2026-04-17T00:00:01.000Z"
         }}
       />
     );
@@ -167,7 +220,8 @@ describe("MessageMarkdownView", () => {
             participantId: "participant-1",
             engineId: "agent-codex"
           },
-          startedAt: "2026-04-17T00:00:00.000Z"
+          startedAt: "2026-04-17T00:00:00.000Z",
+          completedAt: "2026-04-17T00:00:01.000Z"
         }}
       />
     );
@@ -191,7 +245,8 @@ describe("MessageMarkdownView", () => {
             participantId: "participant-1",
             engineId: "agent-codex"
           },
-          startedAt: "2026-04-17T00:00:00.000Z"
+          startedAt: "2026-04-17T00:00:00.000Z",
+          completedAt: "2026-04-17T00:00:01.000Z"
         }}
       />
     );
@@ -220,7 +275,8 @@ describe("MessageMarkdownView", () => {
             participantId: "participant-1",
             engineId: "agent-codex"
           },
-          startedAt: "2026-04-17T00:00:00.000Z"
+          startedAt: "2026-04-17T00:00:00.000Z",
+          completedAt: "2026-04-17T00:00:01.000Z"
         }}
       />
     );
@@ -245,7 +301,8 @@ describe("MessageMarkdownView", () => {
             participantId: "participant-1",
             engineId: "agent-codex"
           },
-          startedAt: "2026-04-17T00:00:00.000Z"
+          startedAt: "2026-04-17T00:00:00.000Z",
+          completedAt: "2026-04-17T00:00:01.000Z"
         }}
       />
     );
@@ -274,7 +331,8 @@ describe("MessageMarkdownView", () => {
             participantId: "participant-1",
             engineId: "agent-codex"
           },
-          startedAt: "2026-04-17T00:00:00.000Z"
+          startedAt: "2026-04-17T00:00:00.000Z",
+          completedAt: "2026-04-17T00:00:01.000Z"
         }}
       />
     );

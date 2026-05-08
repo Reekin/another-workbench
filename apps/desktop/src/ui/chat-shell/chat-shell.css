@@ -717,6 +717,15 @@ button {
   line-height: 1.58;
 }
 
+.awb-message__streaming-tail {
+  margin-bottom: 0.72rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.88rem;
+  line-height: 1.58;
+  color: var(--awb-ink);
+}
+
 .awb-message__content ul,
 .awb-message__content ol {
   padding-left: 1.12rem;

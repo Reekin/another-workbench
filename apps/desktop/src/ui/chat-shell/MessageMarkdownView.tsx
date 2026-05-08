@@ -77,6 +77,11 @@ type RenderableSegment =
       source: string;
     };
 
+type StreamingMarkdownParts = {
+  stableMarkdown: string;
+  tailText: string;
+};
+
 const codeCommentLinePattern = /^::code-comment\{(?<attributes>.*)\}$/;
 const directiveAttributeKeys = new Set<keyof CodeCommentDirective>([
   "title",
@@ -182,6 +187,77 @@ const parseCodeCommentDirective = (
 };
 
 const mermaidFencePattern = /^(`{3,}|~{3,})\s*mermaid\s*$/i;
+const markdownFenceStartPattern = /^(`{3,}|~{3,})/;
+
+const splitLinesWithEndings = (value: string): string[] => {
+  const lines = value.match(/[^\n]*(?:\n|$)/g) ?? [];
+  return lines.filter((line, index) => line.length > 0 || index < lines.length - 1);
+};
+
+const stripLineEnding = (line: string): string =>
+  line.endsWith("\n")
+    ? line.slice(0, line.endsWith("\r\n") ? -2 : -1)
+    : line;
+
+export const splitStreamingMarkdown = (sourceText: string): StreamingMarkdownParts => {
+  let offset = 0;
+  let lastStableBoundary = 0;
+  let openFence:
+    | {
+        startOffset: number;
+        marker: string;
+      }
+    | undefined;
+
+  for (const rawLine of splitLinesWithEndings(sourceText)) {
+    const lineStartOffset = offset;
+    offset += rawLine.length;
+    const line = stripLineEnding(rawLine);
+    const trimmedLine = line.trim();
+
+    if (openFence) {
+      const closingFencePattern = new RegExp(
+        `^${openFence.marker[0]}{${openFence.marker.length},}\\s*$`
+      );
+      if (closingFencePattern.test(trimmedLine)) {
+        openFence = undefined;
+        lastStableBoundary = offset;
+      }
+      continue;
+    }
+
+    const fenceMatch = trimmedLine.match(markdownFenceStartPattern);
+    if (fenceMatch) {
+      openFence = {
+        startOffset: lineStartOffset,
+        marker: fenceMatch[1]!
+      };
+      continue;
+    }
+
+    if (trimmedLine.length === 0) {
+      lastStableBoundary = offset;
+    }
+  }
+
+  const boundary = openFence?.startOffset ?? lastStableBoundary;
+  if (boundary <= 0) {
+    return {
+      stableMarkdown: "",
+      tailText: sourceText
+    };
+  }
+
+  return {
+    stableMarkdown: sourceText.slice(0, boundary),
+    tailText: sourceText.slice(boundary)
+  };
+};
+
+const resolveRenderableMarkdownText = (block: MessageBlock, text: string): StreamingMarkdownParts =>
+  block.role === "assistant" && !block.completedAt
+    ? splitStreamingMarkdown(text)
+    : { stableMarkdown: text, tailText: "" };
 
 const buildRenderableSegments = (sourceText: string): RenderableSegment[] => {
   const lines = sourceText.split(/\r?\n/);
@@ -429,6 +505,10 @@ const MermaidBlock = ({ source, renderId }: MermaidBlockProps): ReactElement => 
   );
 };
 
+const StreamingPlainTextTail = ({ text }: { text: string }): ReactElement => (
+  <div className="awb-message__streaming-tail">{text}</div>
+);
+
 export const MessageMarkdownView = memo(({
   block,
   onActivateResourceLink,
@@ -436,10 +516,14 @@ export const MessageMarkdownView = memo(({
 }: MessageMarkdownViewProps): ReactElement => {
   const sourceText = block.text ?? "";
   const deferredText = useDeferredValue(sourceText);
+  const { stableMarkdown, tailText } = useMemo(
+    () => resolveRenderableMarkdownText(block, deferredText),
+    [block, deferredText]
+  );
   const isEmpty = deferredText.trim().length === 0;
   const renderableSegments = useMemo(
-    () => buildRenderableSegments(deferredText),
-    [deferredText]
+    () => buildRenderableSegments(stableMarkdown),
+    [stableMarkdown]
   );
   const hasMermaidSegment = renderableSegments.some((segment) => segment.kind === "mermaid");
   const roleClass =
@@ -530,6 +614,7 @@ export const MessageMarkdownView = memo(({
                 </section>
               );
             })}
+            {tailText ? <StreamingPlainTextTail text={tailText} /> : null}
           </>
         )}
       </div>

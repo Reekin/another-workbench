@@ -228,6 +228,7 @@ export type DesktopTransport = {
     loadOlder: (input: {
       sessionId: string;
       beforeTurnId?: string;
+      cursor?: string;
       limit?: number;
     }) => Promise<{ page: SessionWindowRpc }>;
     getActions: (
@@ -252,6 +253,7 @@ export type DesktopTransport = {
     jump: (input: {
       sessionId: string;
       nodeId: string;
+      expectedRevision?: number;
     }) => Promise<{ jumped: boolean }>;
   };
   delegation: {
@@ -631,7 +633,7 @@ export const createDesktopTransport = (
         });
         return result.chatTree;
       },
-      jump: (input: { sessionId: string; nodeId: string }) =>
+      jump: (input: { sessionId: string; nodeId: string; expectedRevision?: number }) =>
         rpc.request("chatTree.jump", input)
     },
     delegation: {

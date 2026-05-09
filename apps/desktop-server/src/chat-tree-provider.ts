@@ -62,7 +62,11 @@ export class ChatTreeProvider {
     return this.capabilities.getConversationGraph(sessionId);
   }
 
-  public async jump(sessionId: string, nodeId: string): Promise<{ jumped: boolean }> {
-    return this.capabilities.jumpConversationGraph(sessionId, nodeId);
+  public async jump(
+    sessionId: string,
+    nodeId: string,
+    expectedRevision?: number
+  ): Promise<{ jumped: boolean }> {
+    return this.capabilities.jumpConversationGraph(sessionId, nodeId, expectedRevision);
   }
 }

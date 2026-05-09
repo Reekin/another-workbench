@@ -73,7 +73,8 @@ export const useChatTreeController = (input: {
       try {
         await input.transport.chatTree.jump({
           sessionId: input.displayedSessionId,
-          nodeId
+          nodeId,
+          expectedRevision: chatTree?.revision
         });
         const nextTree = await input.transport.chatTree.get(input.displayedSessionId);
         setChatTree(nextTree);

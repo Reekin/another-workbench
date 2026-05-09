@@ -40,13 +40,18 @@ export type ConversationGraphNodeSnapshot = {
   turnId?: string;
   order: number;
   isCurrent: boolean;
+  status?: "pending" | "completed" | "interrupted" | "replaced" | "reviewEnded";
 };
 
 export type ConversationGraphSnapshot = {
   sessionId: string;
   engineId: string;
   supportsJump: boolean;
+  version?: number;
+  revision?: number;
   currentNodeId?: string;
+  visibleNodeIds?: string[];
+  visibleTurnIds?: string[];
   nodes: ConversationGraphNodeSnapshot[];
   fetchedAt: string;
 };
@@ -161,7 +166,8 @@ export type ConversationGraphCapability = {
   get: (input: SessionCapabilityContext) => Promise<ConversationGraphSnapshot>;
   jump?: (
     input: SessionCapabilityContext,
-    nodeId: string
+    nodeId: string,
+    expectedRevision?: number
   ) => Promise<boolean>;
 };
 
@@ -462,7 +468,8 @@ export class CapabilityRegistry {
 
   public async jumpConversationGraph(
     sessionId: string,
-    nodeId: string
+    nodeId: string,
+    expectedRevision?: number
   ): Promise<{ jumped: boolean }> {
     const context = this.resolveContext(sessionId);
     if (!context.engineId) {
@@ -475,7 +482,7 @@ export class CapabilityRegistry {
       };
     }
     return {
-      jumped: await capability.jump(context, nodeId)
+      jumped: await capability.jump(context, nodeId, expectedRevision)
     };
   }
 

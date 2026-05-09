@@ -50,6 +50,53 @@ const createThread = (input: {
   turns: []
 });
 
+const buildHydratedWindow = (sessionId = "session-1") => ({
+  workspaceId: "workspace-1",
+  conversation: {
+    conversationId: "conversation-1",
+    workspaceId: "workspace-1",
+    participantEngineIds: ["codex"],
+    activeSessionId: sessionId,
+    sessionIds: [sessionId],
+    createdAt: "2026-04-19T00:00:00.000Z",
+    updatedAt: "2026-04-19T00:00:00.000Z"
+  },
+  session: {
+    sessionId,
+    conversationId: "conversation-1",
+    engineId: "codex",
+    status: "idle",
+    title: "Session",
+    createdAt: "2026-04-19T00:00:00.000Z",
+    updatedAt: "2026-04-19T00:00:00.000Z"
+  },
+  turns: [
+    {
+      turnId: "turn-1",
+      sessionId,
+      status: "completed",
+      finishReason: "completed",
+      startedAt: "2026-04-19T00:00:00.000Z",
+      completedAt: "2026-04-19T00:00:01.000Z",
+      messageIds: [],
+      toolCallIds: [],
+      terminalIds: [],
+      approvalRequestIds: []
+    }
+  ],
+  messageBlocks: [],
+  toolCalls: [],
+  terminalStreams: [],
+  sessionRelations: [],
+  hasOlder: true,
+  hasNewer: false,
+  olderCursor: "older-cursor",
+  runtimeBinding: {
+    providerKind: "codex-thread",
+    providerSessionId: "thread-1"
+  }
+});
+
 afterEach(async () => {
   clearCodexTurnChangesStore();
   while (tempDirs.length > 0) {
@@ -157,6 +204,182 @@ describe("Session discovery and reconciliation", () => {
       sessionId: "codex-thread:thread-recent",
       lastCompletedTurnAt: "2026-05-08T10:05:00.000Z"
     });
+  });
+
+  it("hydrates cold session windows from paged codex turns without resuming", async () => {
+    const readThread = vi.fn().mockResolvedValue(createThread({ id: "thread-page" }));
+    const listThreadTurns = vi.fn().mockResolvedValue({
+      data: [
+        {
+          id: "turn-page",
+          status: "completed",
+          error: null,
+          items: [
+            {
+              type: "userMessage",
+              id: "msg-user-page",
+              content: [
+                {
+                  type: "text",
+                  text: "Open just this page.",
+                  text_elements: []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      nextCursor: "older-cursor",
+      backwardsCursor: "newer-cursor"
+    });
+    const resumeThread = vi.fn();
+    const attachThreadToSession = vi.fn();
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        readThread,
+        listThreadTurns,
+        resumeThread,
+        attachThreadToSession
+      } as never
+    });
+
+    const hydrated = await provider.hydrateSessionWindow?.(
+      {
+        sessionId: "codex-thread:thread-page",
+        workspaceId: "workspace-1",
+        conversationId: "conversation-1",
+        engineId: "codex",
+        providerKind: "codex-thread",
+        providerSessionId: "thread-page",
+        title: "Thread page",
+        createdAt: "2026-04-19T00:00:00.000Z",
+        updatedAt: "2026-04-19T00:01:00.000Z",
+        unreadState: "read",
+        source: "reconciled"
+      },
+      {
+        limit: 1,
+        cursor: "cursor-1"
+      }
+    );
+
+    expect(hydrated).toEqual(
+      expect.objectContaining({
+        hasOlder: true,
+        hasNewer: true,
+        olderCursor: "older-cursor",
+        newerCursor: "newer-cursor",
+        turns: [
+          expect.objectContaining({
+            turnId: "turn-page",
+            sessionId: "codex-thread:thread-page"
+          })
+        ]
+      })
+    );
+    expect(readThread).toHaveBeenCalledWith("thread-page", false);
+    expect(listThreadTurns).toHaveBeenCalledWith({
+      threadId: "thread-page",
+      cursor: "cursor-1",
+      limit: 1,
+      sortDirection: "desc"
+    });
+    expect(resumeThread).not.toHaveBeenCalled();
+    expect(attachThreadToSession).toHaveBeenCalledWith(
+      "codex-thread:thread-page",
+      "thread-page"
+    );
+  });
+
+  it("shares window hydration without letting a cancelled caller cancel an active caller", async () => {
+    const baseDir = await createTempDir();
+    const workspaceRegistry = new WorkspaceRegistryService({
+      baseDir
+    });
+    const sessionIndexStore = new SessionIndexStore({
+      baseDir
+    });
+    const runtimeService = new WorkbenchRuntimeService({
+      engines: [
+        {
+          engineId: "codex",
+          displayName: "Codex",
+          capabilities: ["chat"]
+        }
+      ]
+    });
+    await workspaceRegistry.registerWorkspace({
+      workspaceId: "workspace-1",
+      absolutePath: "I:/workspace-alpha",
+      label: "Alpha"
+    });
+    await sessionIndexStore.upsertSession({
+      workspaceId: "workspace-1",
+      session: {
+        sessionId: "session-1",
+        conversationId: "conversation-1",
+        engineId: "codex",
+        title: "Session",
+        createdAt: "2026-04-19T00:00:00.000Z",
+        updatedAt: "2026-04-19T00:00:00.000Z"
+      },
+      providerKind: "codex-thread",
+      providerSessionId: "thread-1"
+    });
+
+    let sharedIsCancelled: (() => boolean) | undefined;
+    let resolveHydration:
+      | ((value: ReturnType<typeof buildHydratedWindow>) => void)
+      | undefined;
+    const hydrateSessionWindow = vi.fn((_entry, input) => {
+      sharedIsCancelled = input.isCancelled;
+      return new Promise<ReturnType<typeof buildHydratedWindow>>((resolve) => {
+        resolveHydration = resolve;
+      });
+    });
+    const reconciliation = new SessionReconciliationService({
+      workspaceRegistry,
+      sessionIndexStore,
+      runtimeService,
+      providers: [
+        {
+          engineId: "codex",
+          discoverWorkspace: vi.fn(),
+          hydrateSession: vi.fn(),
+          hydrateSessionWindow
+        }
+      ] as never
+    });
+
+    const cancelledOpen = reconciliation.hydrateSessionWindow("session-1", {
+      limit: 2,
+      isCancelled: () => true
+    });
+    await vi.waitFor(() => {
+      expect(hydrateSessionWindow).toHaveBeenCalledTimes(1);
+    });
+    const activeOpen = reconciliation.hydrateSessionWindow("session-1", {
+      limit: 2,
+      isCancelled: () => false
+    });
+
+    expect(hydrateSessionWindow).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(sharedIsCancelled?.()).toBe(false);
+    });
+    resolveHydration?.(buildHydratedWindow());
+
+    await expect(cancelledOpen).resolves.toBeUndefined();
+    await expect(activeOpen).resolves.toEqual(
+      expect.objectContaining({
+        olderCursor: "older-cursor"
+      })
+    );
+    expect(runtimeService.listSessions({ includeArchived: true })).toEqual([
+      expect.objectContaining({
+        sessionId: "session-1"
+      })
+    ]);
   });
 
   it("discovers codex threads, derives subagent relations, and hydrates discovered sessions", async () => {

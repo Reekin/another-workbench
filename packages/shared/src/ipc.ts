@@ -185,7 +185,8 @@ const zChatTreeNodeSchema = z.object({
   label: z.string().min(1),
   turnId: zTurnId.optional(),
   order: z.number().int(),
-  isCurrent: z.boolean()
+  isCurrent: z.boolean(),
+  status: z.enum(["pending", "completed", "interrupted", "replaced", "reviewEnded"]).optional()
 });
 
 const zConversationGraphNodeSchema = zChatTreeNodeSchema.extend({
@@ -197,7 +198,11 @@ const zConversationGraphSnapshotSchema = z.object({
   sessionId: zSessionId,
   engineId: zEngineId,
   supportsJump: z.boolean(),
+  version: z.number().int().nonnegative().optional(),
+  revision: z.number().int().nonnegative().optional(),
   currentNodeId: z.string().min(1).optional(),
+  visibleNodeIds: z.array(z.string().min(1)).optional(),
+  visibleTurnIds: z.array(zTurnId).optional(),
   nodes: z.array(zConversationGraphNodeSchema).default([]),
   fetchedAt: z.string().min(1)
 });
@@ -206,7 +211,11 @@ const zChatTreeSnapshotSchema = z.object({
   sessionId: zSessionId,
   engineId: zEngineId,
   supportsJump: z.boolean(),
+  version: z.number().int().nonnegative().optional(),
+  revision: z.number().int().nonnegative().optional(),
   currentNodeId: z.string().min(1).optional(),
+  visibleNodeIds: z.array(z.string().min(1)).optional(),
+  visibleTurnIds: z.array(zTurnId).optional(),
   nodes: z.array(zChatTreeNodeSchema).default([]),
   fetchedAt: z.string().min(1)
 });
@@ -305,6 +314,8 @@ const zSessionWindowSchema = z.object({
   snapshot: zDomainSnapshotSchema,
   windowStartTurnId: zTurnId.optional(),
   windowEndTurnId: zTurnId.optional(),
+  olderCursor: z.string().min(1).optional(),
+  newerCursor: z.string().min(1).optional(),
   hasOlder: z.boolean(),
   hasNewer: z.boolean()
 });
@@ -551,6 +562,7 @@ const zSessionBrowserLoadOlderRequestSchema = z.object({
   params: z.object({
     sessionId: zSessionId,
     beforeTurnId: zTurnId.optional(),
+    cursor: z.string().min(1).optional(),
     limit: z.number().int().positive().max(50).optional()
   })
 });
@@ -602,7 +614,8 @@ const zChatTreeJumpRequestSchema = z.object({
   method: z.literal("chatTree.jump"),
   params: z.object({
     sessionId: zSessionId,
-    nodeId: z.string().min(1)
+    nodeId: z.string().min(1),
+    expectedRevision: z.number().int().nonnegative().optional()
   })
 });
 

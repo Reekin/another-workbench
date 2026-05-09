@@ -36,6 +36,7 @@ export const eventTypes = [
   "terminal.completed",
   "approval.requested",
   "approval.resolved",
+  "conversationGraph.updated",
   "participant.updated",
   "runtime.error"
 ] as const;
@@ -230,6 +231,16 @@ const zParticipantUpdatedEvent = z.object({
   capabilities: z.array(z.string().min(1)).default([])
 });
 
+const zConversationGraphUpdatedEvent = z.object({
+  type: z.literal("conversationGraph.updated"),
+  sessionId: zSessionId,
+  engineId: zEngineId.optional(),
+  currentNodeId: z.string().min(1).optional(),
+  revision: z.union([z.number().int().nonnegative(), z.string().min(1)]).optional(),
+  visibleNodeIds: z.array(z.string().min(1)).default([]),
+  visibleTurnIds: z.array(zTurnId).default([])
+});
+
 const zRuntimeErrorEvent = z.object({
   type: z.literal("runtime.error"),
   sessionId: zSessionId.optional(),
@@ -272,6 +283,7 @@ export const zEventSchema = z
     zTerminalCompletedEvent,
     zApprovalRequestedEvent,
     zApprovalResolvedEvent,
+    zConversationGraphUpdatedEvent,
     zParticipantUpdatedEvent,
     zRuntimeErrorEvent
   ])

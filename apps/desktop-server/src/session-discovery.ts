@@ -370,6 +370,13 @@ export type HydratedSessionSnapshot = {
   };
 };
 
+export type HydratedSessionWindowSnapshot = HydratedSessionSnapshot & {
+  hasOlder: boolean;
+  hasNewer: boolean;
+  olderCursor?: string;
+  newerCursor?: string;
+};
+
 export type SessionDiscoveryProvider = {
   readonly engineId: string;
   discoverWorkspace: (workspace: WorkspaceRecord) => Promise<DiscoveredWorkspaceResult>;
@@ -379,6 +386,37 @@ export type SessionDiscoveryProvider = {
       isCancelled?: () => boolean;
     }
   ) => Promise<HydratedSessionSnapshot | undefined>;
+  hydrateSessionWindow?: (
+    entry: SessionIndexEntry,
+    input: {
+      limit: number;
+      cursor?: string;
+      isCancelled?: () => boolean;
+    }
+  ) => Promise<HydratedSessionWindowSnapshot | undefined>;
+};
+
+type HydrationConsumer = {
+  isCancelled?: () => boolean;
+};
+
+type SharedHydrationTask<T> = {
+  consumers: Set<HydrationConsumer>;
+  promise: Promise<T>;
+};
+
+const areAllHydrationConsumersCancelled = (
+  consumers: ReadonlySet<HydrationConsumer>
+): boolean => {
+  if (consumers.size === 0) {
+    return false;
+  }
+  for (const consumer of consumers) {
+    if (!consumer.isCancelled?.()) {
+      return false;
+    }
+  }
+  return true;
 };
 
 const resolveHydratedLastCompletedTurnAt = (
@@ -394,6 +432,302 @@ const resolveHydratedLastCompletedTurnAt = (
     }
   }
   return latestCompletedAt;
+};
+
+const latestIso = (
+  left: string | undefined,
+  right: string | undefined
+): string | undefined => {
+  if (!left) {
+    return right;
+  }
+  if (!right) {
+    return left;
+  }
+  return left > right ? left : right;
+};
+
+type HydratedCodexTurnEntities = {
+  turns: HydratedTurn[];
+  messageBlocks: MessageBlock[];
+  toolCalls: ToolCall[];
+  terminalStreams: TerminalStream[];
+};
+
+const hydrateCodexTurnEntities = async (input: {
+  entry: SessionIndexEntry;
+  thread: Thread;
+  turnChangesStore?: CodexTurnChangesStore;
+  isCancelled?: () => boolean;
+}): Promise<HydratedCodexTurnEntities | undefined> => {
+  const { entry, thread, turnChangesStore, isCancelled } = input;
+  const turns: HydratedTurn[] = [];
+  const messageBlocks: MessageBlock[] = [];
+  const toolCalls: ToolCall[] = [];
+  const terminalStreams: TerminalStream[] = [];
+  const rolloutTimestampGroups = await readCodexRolloutTimestampGroups(thread.path);
+
+  for (const [turnIndex, turn] of thread.turns.entries()) {
+    if (isCancelled?.()) {
+      return undefined;
+    }
+    const hydratedItems = turn.items;
+    const itemStartedAts = resolveThreadTurnItemStartedAts(
+      thread,
+      turnIndex,
+      rolloutTimestampGroups
+    );
+    const startedAt = resolveThreadTurnStartedAt(thread, turnIndex, itemStartedAts);
+    const completedAt = resolveThreadTurnCompletedAt(
+      thread,
+      turnIndex,
+      itemStartedAts
+    );
+    const messageIds: string[] = [];
+    const toolCallIds: string[] = [];
+    const terminalIds: string[] = [];
+    const fileChanges: FileUpdateChange[] = [];
+    let finalMessageId: string | undefined;
+
+    for (const [itemIndex, item] of hydratedItems.entries()) {
+      if (isCancelled?.()) {
+        return undefined;
+      }
+      const itemStartedAt =
+        itemStartedAts[itemIndex] ??
+        buildDeterministicTurnTimestamp(thread, turnIndex, itemIndex);
+      const itemEntityId = hydratedItemId(entry.sessionId, item.id);
+      if (isUserMessageItem(item)) {
+        messageIds.push(itemEntityId);
+        messageBlocks.push(
+          parseMessageBlock({
+            blockId: `${itemEntityId}:md`,
+            messageId: itemEntityId,
+            sessionId: entry.sessionId,
+            turnId: turn.id,
+            role: "user",
+            kind: "markdown",
+            text: summarizeUserMessage(item.content),
+            startedAt: itemStartedAt,
+            completedAt: itemStartedAt
+          })
+        );
+        continue;
+      }
+      if (isAgentMessageItem(item)) {
+        messageIds.push(itemEntityId);
+        if (isFinalAnswerMessageItem(item)) {
+          finalMessageId = itemEntityId;
+        }
+        messageBlocks.push(
+          parseMessageBlock({
+            blockId: `${itemEntityId}:md`,
+            messageId: itemEntityId,
+            sessionId: entry.sessionId,
+            turnId: turn.id,
+            role: "assistant",
+            kind: "markdown",
+            text: item.text,
+            startedAt: itemStartedAt,
+            completedAt: itemStartedAt
+          })
+        );
+        continue;
+      }
+      if (isCommandExecutionItem(item)) {
+        toolCallIds.push(itemEntityId);
+        terminalIds.push(itemEntityId);
+        toolCalls.push(
+          parseToolCall({
+            toolCallId: itemEntityId,
+            sessionId: entry.sessionId,
+            turnId: turn.id,
+            toolName: "commandExecution",
+            inputSummary: item.command,
+            outputSummary: item.aggregatedOutput ?? undefined,
+            status:
+              item.status === "failed"
+                ? "failed"
+                : item.status === "completed"
+                  ? "completed"
+                  : "running",
+            startedAt: itemStartedAt,
+            completedAt:
+              item.status === "inProgress" ? undefined : itemStartedAt
+          })
+        );
+        terminalStreams.push(
+          parseTerminalStream({
+            terminalId: itemEntityId,
+            sessionId: entry.sessionId,
+            turnId: turn.id,
+            toolCallId: itemEntityId,
+            status:
+              item.status === "failed"
+                ? "failed"
+                : item.status === "completed"
+                  ? "completed"
+                  : "running",
+            outputText: item.aggregatedOutput ?? "",
+            exitCode: item.exitCode ?? undefined,
+            startedAt: itemStartedAt,
+            completedAt:
+              item.status === "inProgress" ? undefined : itemStartedAt
+          })
+        );
+        continue;
+      }
+
+      if (isFileChangeItem(item)) {
+        fileChanges.push(...item.changes);
+        continue;
+      }
+
+      if (isCodexReasoningThreadItem(item)) {
+        const outputSummary = summarizeCodexReasoningThreadItem(item);
+        if (!outputSummary) {
+          continue;
+        }
+        toolCallIds.push(itemEntityId);
+        toolCalls.push(
+          parseToolCall({
+            toolCallId: itemEntityId,
+            sessionId: entry.sessionId,
+            turnId: turn.id,
+            toolName: "reasoning",
+            inputSummary: "Reasoning",
+            outputSummary,
+            status: "completed",
+            startedAt: itemStartedAt,
+            completedAt: itemStartedAt
+          })
+        );
+        continue;
+      }
+
+      if (isCodexWebSearchThreadItem(item)) {
+        const inputSummary = summarizeCodexWebSearchAction(item.action, item.query);
+        if (!inputSummary) {
+          continue;
+        }
+        toolCallIds.push(itemEntityId);
+        toolCalls.push(
+          parseToolCall({
+            toolCallId: itemEntityId,
+            sessionId: entry.sessionId,
+            turnId: turn.id,
+            toolName: "webSearch",
+            inputSummary,
+            status: "completed",
+            startedAt: itemStartedAt,
+            completedAt: itemStartedAt
+          })
+        );
+        continue;
+      }
+
+      if (isCodexContextCompactionThreadItem(item)) {
+        toolCallIds.push(itemEntityId);
+        toolCalls.push(
+          parseToolCall({
+            toolCallId: itemEntityId,
+            sessionId: entry.sessionId,
+            turnId: turn.id,
+            toolName: "contextCompaction",
+            inputSummary: "compacting...",
+            outputSummary: "compaction finished",
+            status: "completed",
+            startedAt: itemStartedAt,
+            completedAt: itemStartedAt
+          })
+        );
+        continue;
+      }
+
+      if (isCollabAgentToolCallItem(item)) {
+        toolCallIds.push(itemEntityId);
+        toolCalls.push(
+          parseToolCall({
+            toolCallId: itemEntityId,
+            sessionId: entry.sessionId,
+            turnId: turn.id,
+            toolName: mapCollabToolLabel(item.tool),
+            inputSummary: summarizeCollabInput(item),
+            outputSummary: summarizeCollabOutput(item),
+            status:
+              item.status === "failed"
+                ? "failed"
+                : item.status === "completed"
+                  ? "completed"
+                  : "running",
+            startedAt: itemStartedAt,
+            completedAt:
+              item.status === "inProgress" ? undefined : itemStartedAt
+          })
+        );
+      }
+    }
+
+    if (turn.error) {
+      const errorMessageId = `runtime-error:${turn.id}`;
+      messageIds.push(errorMessageId);
+      messageBlocks.push(
+        parseMessageBlock({
+          blockId: `${errorMessageId}:md`,
+          messageId: errorMessageId,
+          sessionId: entry.sessionId,
+          turnId: turn.id,
+          role: "system",
+          kind: "markdown",
+          text: formatTurnErrorText(turn.error),
+          startedAt: completedAt ?? startedAt,
+          completedAt: completedAt ?? startedAt
+        })
+      );
+    }
+
+    recordCodexTurnChangesFromFileUpdate({
+      sessionId: entry.sessionId,
+      turnId: turn.id,
+      changes: fileChanges
+    });
+    const turnChanges = getRecordedCodexTurnChanges(entry.sessionId, turn.id);
+    if (turnChanges) {
+      turnChangesStore?.record(turnChanges);
+    }
+
+    const hydratedTurn = parseTurn({
+      turnId: turn.id,
+      sessionId: entry.sessionId,
+      status: turn.status === "inProgress" ? "streaming" : "completed",
+      finishReason:
+        turn.status === "failed"
+          ? "failed"
+          : turn.status === "interrupted"
+            ? "interrupted"
+            : turn.status === "completed"
+              ? "completed"
+              : undefined,
+      startedAt,
+      completedAt,
+      messageIds,
+      toolCallIds,
+      terminalIds,
+      approvalRequestIds: []
+    });
+
+    turns.push({
+      ...hydratedTurn,
+      ...(finalMessageId ? { finalMessageId } : {})
+    });
+  }
+
+  return {
+    turns,
+    messageBlocks,
+    toolCalls,
+    terminalStreams
+  };
 };
 
 export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
@@ -493,266 +827,16 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
       }
     });
 
-    const turns: HydratedTurn[] = [];
-    const messageBlocks: MessageBlock[] = [];
-    const toolCalls: ToolCall[] = [];
-    const terminalStreams: TerminalStream[] = [];
-    const rolloutTimestampGroups = await readCodexRolloutTimestampGroups(thread.path);
-
-    for (const [turnIndex, turn] of thread.turns.entries()) {
-      if (input.isCancelled?.()) {
-        return undefined;
-      }
-      const hydratedItems = turn.items;
-      const itemStartedAts = resolveThreadTurnItemStartedAts(
-        thread,
-        turnIndex,
-        rolloutTimestampGroups
-      );
-      const startedAt = resolveThreadTurnStartedAt(thread, turnIndex, itemStartedAts);
-      const completedAt = resolveThreadTurnCompletedAt(
-        thread,
-        turnIndex,
-        itemStartedAts
-      );
-      const messageIds: string[] = [];
-      const toolCallIds: string[] = [];
-      const terminalIds: string[] = [];
-      const fileChanges: FileUpdateChange[] = [];
-      let finalMessageId: string | undefined;
-
-      for (const [itemIndex, item] of hydratedItems.entries()) {
-        if (input.isCancelled?.()) {
-          return undefined;
-        }
-        const itemStartedAt =
-          itemStartedAts[itemIndex] ??
-          buildDeterministicTurnTimestamp(thread, turnIndex, itemIndex);
-        const itemEntityId = hydratedItemId(entry.sessionId, item.id);
-        if (isUserMessageItem(item)) {
-          messageIds.push(itemEntityId);
-          messageBlocks.push(
-            parseMessageBlock({
-              blockId: `${itemEntityId}:md`,
-              messageId: itemEntityId,
-              sessionId: entry.sessionId,
-              turnId: turn.id,
-              role: "user",
-              kind: "markdown",
-              text: summarizeUserMessage(item.content),
-              startedAt: itemStartedAt,
-              completedAt: itemStartedAt
-            })
-          );
-          continue;
-        }
-        if (isAgentMessageItem(item)) {
-          messageIds.push(itemEntityId);
-          if (isFinalAnswerMessageItem(item)) {
-            finalMessageId = itemEntityId;
-          }
-          messageBlocks.push(
-            parseMessageBlock({
-              blockId: `${itemEntityId}:md`,
-              messageId: itemEntityId,
-              sessionId: entry.sessionId,
-              turnId: turn.id,
-              role: "assistant",
-              kind: "markdown",
-              text: item.text,
-              startedAt: itemStartedAt,
-              completedAt: itemStartedAt
-            })
-          );
-          continue;
-        }
-        if (isCommandExecutionItem(item)) {
-          toolCallIds.push(itemEntityId);
-          terminalIds.push(itemEntityId);
-          toolCalls.push(
-            parseToolCall({
-              toolCallId: itemEntityId,
-              sessionId: entry.sessionId,
-              turnId: turn.id,
-              toolName: "commandExecution",
-              inputSummary: item.command,
-              outputSummary: item.aggregatedOutput ?? undefined,
-              status:
-                item.status === "failed"
-                  ? "failed"
-                  : item.status === "completed"
-                    ? "completed"
-                    : "running",
-              startedAt: itemStartedAt,
-              completedAt:
-                item.status === "inProgress" ? undefined : itemStartedAt
-            })
-          );
-          terminalStreams.push(
-            parseTerminalStream({
-              terminalId: itemEntityId,
-              sessionId: entry.sessionId,
-              turnId: turn.id,
-              toolCallId: itemEntityId,
-              status:
-                item.status === "failed"
-                  ? "failed"
-                  : item.status === "completed"
-                    ? "completed"
-                    : "running",
-              outputText: item.aggregatedOutput ?? "",
-              exitCode: item.exitCode ?? undefined,
-              startedAt: itemStartedAt,
-              completedAt:
-                item.status === "inProgress" ? undefined : itemStartedAt
-            })
-          );
-          continue;
-        }
-
-        if (isFileChangeItem(item)) {
-          fileChanges.push(...item.changes);
-          continue;
-        }
-
-        if (isCodexReasoningThreadItem(item)) {
-          const outputSummary = summarizeCodexReasoningThreadItem(item);
-          if (!outputSummary) {
-            continue;
-          }
-          toolCallIds.push(itemEntityId);
-          toolCalls.push(
-            parseToolCall({
-              toolCallId: itemEntityId,
-              sessionId: entry.sessionId,
-              turnId: turn.id,
-              toolName: "reasoning",
-              inputSummary: "Reasoning",
-              outputSummary,
-              status: "completed",
-              startedAt: itemStartedAt,
-              completedAt: itemStartedAt
-            })
-          );
-          continue;
-        }
-
-        if (isCodexWebSearchThreadItem(item)) {
-          const inputSummary = summarizeCodexWebSearchAction(item.action, item.query);
-          if (!inputSummary) {
-            continue;
-          }
-          toolCallIds.push(itemEntityId);
-          toolCalls.push(
-            parseToolCall({
-              toolCallId: itemEntityId,
-              sessionId: entry.sessionId,
-              turnId: turn.id,
-              toolName: "webSearch",
-              inputSummary,
-              status: "completed",
-              startedAt: itemStartedAt,
-              completedAt: itemStartedAt
-            })
-          );
-          continue;
-        }
-
-        if (isCodexContextCompactionThreadItem(item)) {
-          toolCallIds.push(itemEntityId);
-          toolCalls.push(
-            parseToolCall({
-              toolCallId: itemEntityId,
-              sessionId: entry.sessionId,
-              turnId: turn.id,
-              toolName: "contextCompaction",
-              inputSummary: "compacting...",
-              outputSummary: "compaction finished",
-              status: "completed",
-              startedAt: itemStartedAt,
-              completedAt: itemStartedAt
-            })
-          );
-          continue;
-        }
-
-        if (isCollabAgentToolCallItem(item)) {
-          toolCallIds.push(itemEntityId);
-          toolCalls.push(
-            parseToolCall({
-              toolCallId: itemEntityId,
-              sessionId: entry.sessionId,
-              turnId: turn.id,
-              toolName: mapCollabToolLabel(item.tool),
-              inputSummary: summarizeCollabInput(item),
-              outputSummary: summarizeCollabOutput(item),
-              status:
-                item.status === "failed"
-                  ? "failed"
-                  : item.status === "completed"
-                    ? "completed"
-                    : "running",
-              startedAt: itemStartedAt,
-              completedAt:
-                item.status === "inProgress" ? undefined : itemStartedAt
-            })
-          );
-        }
-      }
-
-      if (turn.error) {
-        const errorMessageId = `runtime-error:${turn.id}`;
-        messageIds.push(errorMessageId);
-        messageBlocks.push(
-          parseMessageBlock({
-            blockId: `${errorMessageId}:md`,
-            messageId: errorMessageId,
-            sessionId: entry.sessionId,
-            turnId: turn.id,
-            role: "system",
-            kind: "markdown",
-            text: formatTurnErrorText(turn.error),
-            startedAt: completedAt ?? startedAt,
-            completedAt: completedAt ?? startedAt
-          })
-        );
-      }
-
-      recordCodexTurnChangesFromFileUpdate({
-        sessionId: entry.sessionId,
-        turnId: turn.id,
-        changes: fileChanges
-      });
-      const turnChanges = getRecordedCodexTurnChanges(entry.sessionId, turn.id);
-      if (turnChanges) {
-        this.turnChangesStore?.record(turnChanges);
-      }
-
-      const hydratedTurn = parseTurn({
-        turnId: turn.id,
-        sessionId: entry.sessionId,
-        status: turn.status === "inProgress" ? "streaming" : "completed",
-        finishReason:
-          turn.status === "failed"
-            ? "failed"
-            : turn.status === "interrupted"
-              ? "interrupted"
-              : turn.status === "completed"
-                ? "completed"
-                : undefined,
-        startedAt,
-        completedAt,
-        messageIds,
-        toolCallIds,
-        terminalIds,
-        approvalRequestIds: []
-      });
-
-      turns.push({
-        ...hydratedTurn,
-        ...(finalMessageId ? { finalMessageId } : {})
-      });
+    const hydratedTurns = await hydrateCodexTurnEntities({
+      entry,
+      thread,
+      turnChangesStore: this.turnChangesStore,
+      isCancelled: input.isCancelled
+    });
+    if (!hydratedTurns) {
+      return undefined;
     }
+    const { turns, messageBlocks, toolCalls, terminalStreams } = hydratedTurns;
 
     const sessionRelations = this.buildHydratedRelations(thread);
 
@@ -765,6 +849,94 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
       toolCalls,
       terminalStreams,
       sessionRelations,
+      runtimeBinding: {
+        providerKind: codexProviderKind,
+        providerSessionId: thread.id
+      }
+    };
+  }
+
+  public async hydrateSessionWindow(
+    entry: SessionIndexEntry,
+    input: {
+      limit: number;
+      cursor?: string;
+      isCancelled?: () => boolean;
+    }
+  ): Promise<HydratedSessionWindowSnapshot | undefined> {
+    const threadId = entry.providerSessionId;
+    if (!threadId) {
+      return undefined;
+    }
+    const [thread, turnsPage] = await Promise.all([
+      this.codexRuntimePort.readThread(threadId, false),
+      this.codexRuntimePort.listThreadTurns({
+        threadId,
+        cursor: input.cursor ?? null,
+        limit: input.limit,
+        sortDirection: "desc"
+      })
+    ]);
+    if (input.isCancelled?.()) {
+      return undefined;
+    }
+    const pageThread: Thread = {
+      ...thread,
+      turns: turnsPage.data
+    };
+    this.codexRuntimePort.attachThreadToSession(entry.sessionId, thread.id);
+    const workspaceId = entry.workspaceId;
+    const conversation = parseConversation({
+      conversationId: entry.conversationId,
+      workspaceId,
+      participantEngineIds: [codexAgentId],
+      activeSessionId: entry.sessionId,
+      sessionIds: [entry.sessionId],
+      createdAt: isoFromUnixSeconds(thread.createdAt),
+      updatedAt: isoFromUnixSeconds(thread.updatedAt)
+    });
+    const session = parseChatSession({
+      sessionId: entry.sessionId,
+      conversationId: entry.conversationId,
+      engineId: codexAgentId,
+      status: mapThreadStatus(thread),
+      title: entry.title ?? titleForThread(thread),
+      createdAt: isoFromUnixSeconds(thread.createdAt),
+      updatedAt: isoFromUnixSeconds(thread.updatedAt),
+      archivedAt: entry.archivedAt,
+      lastTurnId: entry.lastTurnId ?? turnsPage.data[0]?.id,
+      metadata: {
+        ...(entry.metadata ?? {}),
+        providerKind: codexProviderKind,
+        providerSessionId: thread.id,
+        rolloutPath: thread.path ?? undefined,
+        cwd: thread.cwd
+      }
+    });
+    const hydratedTurns = await hydrateCodexTurnEntities({
+      entry,
+      thread: pageThread,
+      turnChangesStore: this.turnChangesStore,
+      isCancelled: input.isCancelled
+    });
+    if (!hydratedTurns) {
+      return undefined;
+    }
+    const { turns, messageBlocks, toolCalls, terminalStreams } = hydratedTurns;
+
+    return {
+      workspaceId,
+      conversation,
+      session,
+      turns,
+      messageBlocks,
+      toolCalls,
+      terminalStreams,
+      sessionRelations: this.buildHydratedRelations(thread),
+      hasOlder: Boolean(turnsPage.nextCursor),
+      hasNewer: Boolean(input.cursor),
+      olderCursor: turnsPage.nextCursor ?? undefined,
+      newerCursor: turnsPage.backwardsCursor ?? undefined,
       runtimeBinding: {
         providerKind: codexProviderKind,
         providerSessionId: thread.id
@@ -844,6 +1016,14 @@ export class SessionReconciliationService {
   private readonly runtimeService: WorkbenchRuntimeService;
   private readonly providersByEngineId: Map<string, SessionDiscoveryProvider>;
   private readonly sessionIdentity: SessionIdentityRegistry;
+  private readonly hydrationBySessionId = new Map<
+    string,
+    SharedHydrationTask<boolean>
+  >();
+  private readonly windowHydrationByKey = new Map<
+    string,
+    SharedHydrationTask<HydratedSessionWindowSnapshot | undefined>
+  >();
 
   public constructor(options: {
     workspaceRegistry: WorkspaceRegistryService;
@@ -993,12 +1173,13 @@ export class SessionReconciliationService {
     sessionId: string,
     input: {
       isCancelled?: () => boolean;
+      force?: boolean;
     } = {}
   ): Promise<boolean> {
     const loaded = this.runtimeService
       .listSessions({ includeArchived: true })
       .some((session) => session.sessionId === sessionId);
-    if (loaded) {
+    if (loaded && !input.force) {
       return true;
     }
 
@@ -1011,8 +1192,106 @@ export class SessionReconciliationService {
     if (!provider) {
       return false;
     }
-    const hydrated = await provider.hydrateSession(entry, input);
-    if (!hydrated) {
+    const consumer: HydrationConsumer = {
+      isCancelled: input.isCancelled
+    };
+    const existingHydration = this.hydrationBySessionId.get(sessionId);
+    if (existingHydration) {
+      existingHydration.consumers.add(consumer);
+      const loadedByExisting = await existingHydration.promise;
+      return input.isCancelled?.() ? false : loadedByExisting;
+    }
+    const consumers = new Set<HydrationConsumer>([consumer]);
+    const hydration: SharedHydrationTask<boolean> = {
+      consumers,
+      promise: this.hydrateSessionEntry(entry, provider, {
+        isCancelled: () => areAllHydrationConsumersCancelled(consumers)
+      }).finally(() => {
+        this.hydrationBySessionId.delete(sessionId);
+      })
+    };
+    this.hydrationBySessionId.set(sessionId, hydration);
+    const loadedByHydration = await hydration.promise;
+    return input.isCancelled?.() ? false : loadedByHydration;
+  }
+
+  public async hydrateSessionWindow(
+    sessionId: string,
+    input: {
+      limit: number;
+      cursor?: string;
+      isCancelled?: () => boolean;
+    }
+  ): Promise<HydratedSessionWindowSnapshot | undefined> {
+    await this.sessionIndexStore.ready();
+    const entry = this.sessionIndexStore.getEntry(sessionId);
+    if (!entry) {
+      return undefined;
+    }
+    const provider = this.providersByEngineId.get(entry.engineId);
+    if (!provider?.hydrateSessionWindow) {
+      return undefined;
+    }
+    const hydrationKey = `${sessionId}\u0000${input.cursor ?? ""}\u0000${input.limit}`;
+    const consumer: HydrationConsumer = {
+      isCancelled: input.isCancelled
+    };
+    const existingHydration = this.windowHydrationByKey.get(hydrationKey);
+    if (existingHydration) {
+      existingHydration.consumers.add(consumer);
+      const hydrated = await existingHydration.promise;
+      return input.isCancelled?.() ? undefined : hydrated;
+    }
+    const consumers = new Set<HydrationConsumer>([consumer]);
+    const hydration: SharedHydrationTask<
+      HydratedSessionWindowSnapshot | undefined
+    > = {
+      consumers,
+      promise: provider
+        .hydrateSessionWindow(entry, {
+          limit: input.limit,
+          cursor: input.cursor,
+          isCancelled: () => areAllHydrationConsumersCancelled(consumers)
+        })
+        .then(async (hydrated) => {
+          if (!hydrated || areAllHydrationConsumersCancelled(consumers)) {
+            return undefined;
+          }
+          this.runtimeService.hydrateDiscoveredSession(hydrated, {
+            relatedIndexRelations: this.sessionIndexStore
+              .listRelations(entry.workspaceId)
+              .filter(
+                (relation) =>
+                  relation.parentSessionId === sessionId ||
+                  relation.childSessionId === sessionId
+              )
+          });
+          await this.upsertHydratedSession(entry, hydrated, {
+            partial: true
+          });
+          return hydrated;
+        })
+        .finally(() => this.windowHydrationByKey.delete(hydrationKey))
+    };
+    this.windowHydrationByKey.set(hydrationKey, hydration);
+    const hydrated = await hydration.promise;
+    if (!hydrated || input.isCancelled?.()) {
+      return undefined;
+    }
+    return hydrated;
+  }
+
+  private async hydrateSessionEntry(
+    entry: SessionIndexEntry,
+    provider: SessionDiscoveryProvider,
+    input: {
+      isCancelled?: () => boolean;
+    } = {}
+  ): Promise<boolean> {
+    const hydrated = await provider.hydrateSession(entry, {
+      isCancelled: input.isCancelled
+    });
+    if (!hydrated || input.isCancelled?.()) {
       return false;
     }
     this.runtimeService.hydrateDiscoveredSession(hydrated, {
@@ -1020,9 +1299,22 @@ export class SessionReconciliationService {
         .listRelations(entry.workspaceId)
         .filter(
           (relation) =>
-            relation.parentSessionId === sessionId || relation.childSessionId === sessionId
+            relation.parentSessionId === entry.sessionId ||
+            relation.childSessionId === entry.sessionId
         )
     });
+    await this.upsertHydratedSession(entry, hydrated);
+    return true;
+  }
+
+  private async upsertHydratedSession(
+    entry: SessionIndexEntry,
+    hydrated: HydratedSessionSnapshot,
+    input: {
+      partial?: boolean;
+    } = {}
+  ): Promise<void> {
+    const hydratedLastCompletedTurnAt = resolveHydratedLastCompletedTurnAt(hydrated.turns);
     await this.sessionIndexStore.upsertSession({
       workspaceId: hydrated.workspaceId,
       session: hydrated.session,
@@ -1030,11 +1322,12 @@ export class SessionReconciliationService {
       providerSessionId:
         hydrated.runtimeBinding?.providerSessionId ?? entry.providerSessionId,
       summaryText: entry.summaryText,
-      lastCompletedTurnAt: resolveHydratedLastCompletedTurnAt(hydrated.turns),
+      lastCompletedTurnAt: input.partial
+        ? latestIso(entry.lastCompletedTurnAt, hydratedLastCompletedTurnAt)
+        : hydratedLastCompletedTurnAt,
       unreadState: entry.unreadState,
       source: entry.source
     });
-    return true;
   }
 }
 

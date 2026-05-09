@@ -73,15 +73,6 @@ export const useSessionOpenController = (input: {
     if (!sessionId) {
       return;
     }
-    input.store.disposeSession(sessionId);
-    input.setSessionWindows((current) => {
-      if (!current[sessionId]) {
-        return current;
-      }
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
     input.viewport.clearPendingViewportState();
     input.onReleasedSession?.(sessionId);
   };
@@ -102,6 +93,8 @@ export const useSessionOpenController = (input: {
           [page.sessionId]: {
             ...existing,
             windowStartTurnId: page.windowStartTurnId ?? existing.windowStartTurnId,
+            olderCursor: page.olderCursor,
+            newerCursor: existing.newerCursor ?? page.newerCursor,
             hasOlder: page.hasOlder,
             snapshot: existing.snapshot,
             hasNewer: existing.hasNewer
@@ -184,6 +177,7 @@ export const useSessionOpenController = (input: {
         const result = await input.transport.sessionBrowser.loadOlder({
           sessionId: input.displayedSessionId,
           beforeTurnId: input.activeSessionWindow.windowStartTurnId,
+          cursor: input.activeSessionWindow.olderCursor,
           limit: 8
         });
         if (input.viewport.displayedSessionIdRef.current !== input.displayedSessionId) {
@@ -270,6 +264,16 @@ export const useSessionOpenController = (input: {
       input.setBrowserSelectedSessionId(sessionId);
       input.setOpeningSessionId(sessionId);
       const requestId = ++openSessionRequestIdRef.current;
+      const cachedWindow = input.sessionWindows[sessionId];
+      if (cachedWindow && activateLoadedSession(sessionId)) {
+        input.setOpeningSessionId(undefined);
+        input.onStatusNotice(undefined);
+        void input.refreshSessionBrowser({
+          mode: "workspace",
+          workspaceId: findSessionNode(input.workspaceTree, sessionId)?.workspaceId
+        });
+        return;
+      }
       input.onStatusNotice({
         message: "Opening session…",
         persistent: true,

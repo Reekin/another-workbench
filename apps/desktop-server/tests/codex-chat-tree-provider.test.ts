@@ -10,21 +10,27 @@ describe("CodexChatTreeAgentProvider", () => {
         readChatTree: vi.fn().mockResolvedValue({
           threadId: "thread-1",
           chatTree: {
+            version: 1,
+            revision: 7,
             currentNodeId: "node-2",
+            visibleNodeIds: ["node-1", "node-2"],
+            visibleTurnIds: ["turn-1", "turn-2"],
             nodes: [
               {
                 nodeId: "node-1",
                 parentNodeId: null,
-                summary: "Start plan",
                 turnId: "turn-1",
-                order: 1
+                order: 1,
+                status: "completed",
+                summary: "Start plan"
               },
               {
                 nodeId: "node-2",
                 parentNodeId: "node-1",
-                summary: null,
                 turnId: "turn-2",
-                order: 2
+                order: 2,
+                status: "pending",
+                summary: null
               }
             ]
           }
@@ -44,15 +50,21 @@ describe("CodexChatTreeAgentProvider", () => {
       sessionId: "session-codex",
       engineId: "codex",
       supportsJump: true,
+      version: 1,
+      revision: 7,
       currentNodeId: "node-2",
+      visibleNodeIds: ["node-1", "node-2"],
+      visibleTurnIds: ["turn-1", "turn-2"],
       nodes: [
         {
           nodeId: "node-1",
           parentNodeId: undefined,
           label: "Start plan",
+          summary: "Start plan",
           turnId: "turn-1",
           order: 1,
-          isCurrent: false
+          isCurrent: false,
+          status: "completed"
         },
         {
           nodeId: "node-2",
@@ -60,7 +72,8 @@ describe("CodexChatTreeAgentProvider", () => {
           label: "node-2",
           turnId: "turn-2",
           order: 2,
-          isCurrent: true
+          isCurrent: true,
+          status: "pending"
         }
       ],
       fetchedAt: "2026-04-18T00:10:01Z"
@@ -129,19 +142,22 @@ describe("CodexChatTreeAgentProvider", () => {
             providerSessionId: "thread-indexed"
           } as never
         },
-        "node-2"
+        "node-2",
+        7
       )
     ).resolves.toBe(true);
 
     expect(setCurrentChatTreeNode).toHaveBeenNthCalledWith(
       1,
       "thread-live",
-      "node-1"
+      "node-1",
+      undefined
     );
     expect(setCurrentChatTreeNode).toHaveBeenNthCalledWith(
       2,
       "thread-indexed",
-      "node-2"
+      "node-2",
+      7
     );
   });
 });

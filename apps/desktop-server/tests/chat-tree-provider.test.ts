@@ -125,7 +125,8 @@ describe("ChatTreeProvider", () => {
         sessionId: "session-custom",
         engineId: "custom"
       }),
-      "node-2"
+      "node-2",
+      undefined
     );
   });
 });

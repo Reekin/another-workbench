@@ -4,7 +4,15 @@ import type { TurnTranscriptRow } from "./transcript-view-model.js";
 const resolveVisibleTurnIds = (
   chatTree: ChatTreeSnapshotRpc | undefined
 ): Set<string> | undefined => {
-  if (!chatTree?.supportsJump || !chatTree.currentNodeId || chatTree.nodes.length === 0) {
+  if (!chatTree?.supportsJump) {
+    return undefined;
+  }
+
+  if (chatTree.visibleTurnIds && chatTree.visibleTurnIds.length > 0) {
+    return new Set(chatTree.visibleTurnIds);
+  }
+
+  if (!chatTree.currentNodeId || chatTree.nodes.length === 0) {
     return undefined;
   }
 

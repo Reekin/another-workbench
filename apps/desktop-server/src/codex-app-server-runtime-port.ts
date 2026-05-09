@@ -22,15 +22,18 @@ import type { ServiceTier } from "./codex-app-server-generated/ServiceTier.js";
 import type { ThreadStartResponse } from "./codex-app-server-generated/v2/ThreadStartResponse.js";
 import type { Thread } from "./codex-app-server-generated/v2/Thread.js";
 import type { ThreadArchiveParams } from "./codex-app-server-generated/v2/ThreadArchiveParams.js";
-import type { ThreadChatTreeReadParams } from "./codex-app-server-generated/v2/ThreadChatTreeReadParams.js";
-import type { ThreadChatTreeReadResponse } from "./codex-app-server-generated/v2/ThreadChatTreeReadResponse.js";
-import type { ThreadChatTreeSetCurrentParams } from "./codex-app-server-generated/v2/ThreadChatTreeSetCurrentParams.js";
+import type { ChatTreeReadParams } from "./codex-app-server-generated/v2/ChatTreeReadParams.js";
+import type { ChatTreeReadResponse } from "./codex-app-server-generated/v2/ChatTreeReadResponse.js";
+import type { ChatTreeSetCurrentParams } from "./codex-app-server-generated/v2/ChatTreeSetCurrentParams.js";
+import type { ChatTreeSetCurrentResponse } from "./codex-app-server-generated/v2/ChatTreeSetCurrentResponse.js";
 import type { ThreadListParams } from "./codex-app-server-generated/v2/ThreadListParams.js";
 import type { ThreadListResponse } from "./codex-app-server-generated/v2/ThreadListResponse.js";
 import type { ThreadReadParams } from "./codex-app-server-generated/v2/ThreadReadParams.js";
 import type { ThreadReadResponse } from "./codex-app-server-generated/v2/ThreadReadResponse.js";
 import type { ThreadResumeParams } from "./codex-app-server-generated/v2/ThreadResumeParams.js";
 import type { ThreadResumeResponse } from "./codex-app-server-generated/v2/ThreadResumeResponse.js";
+import type { ThreadTurnsListParams } from "./codex-app-server-generated/v2/ThreadTurnsListParams.js";
+import type { ThreadTurnsListResponse } from "./codex-app-server-generated/v2/ThreadTurnsListResponse.js";
 import type { TurnSteerParams } from "./codex-app-server-generated/v2/TurnSteerParams.js";
 import type { TurnStartResponse } from "./codex-app-server-generated/v2/TurnStartResponse.js";
 import type { ThreadItem } from "./codex-app-server-generated/v2/ThreadItem.js";
@@ -107,6 +110,8 @@ type CodexSelectedConfig = {
   reasoningEffort?: ReasoningEffort;
   serviceTier?: ServiceTier;
 };
+
+type CodexRevisionInput = number | string | bigint | null | undefined;
 
 export type CodexOpenAiCompatibleAuth = {
   apiKey?: string;
@@ -223,6 +228,25 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const optionalString = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+
+const normalizeCodexRevision = (
+  value: CodexRevisionInput
+): number | null | undefined => {
+  if (value === null) {
+    return null;
+  }
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return Number.isFinite(value) ? value : undefined;
+};
 
 const resolveCodexConfigBaseUrl = (config: Config): string | undefined => {
   const activeProfileName = optionalString(config.profile);
@@ -623,6 +647,21 @@ export class CodexAppServerRuntimePort
     return result.thread;
   }
 
+  public async listThreadTurns(input: {
+    threadId: string;
+    cursor?: string | null;
+    limit?: number | null;
+    sortDirection?: "asc" | "desc" | null;
+  }): Promise<ThreadTurnsListResponse> {
+    await this.start(this.startConfig);
+    return (await this.rpc("thread/turns/list", {
+      threadId: input.threadId,
+      cursor: input.cursor ?? null,
+      limit: input.limit ?? null,
+      sortDirection: input.sortDirection ?? null
+    } satisfies ThreadTurnsListParams)) as ThreadTurnsListResponse;
+  }
+
   public async resumeThread(threadId: string): Promise<Thread> {
     await this.start(this.startConfig);
     const selected = this.resolveSelectedConfig();
@@ -639,16 +678,16 @@ export class CodexAppServerRuntimePort
     return result.thread;
   }
 
-  public async readChatTree(threadId: string): Promise<ThreadChatTreeReadResponse> {
+  public async readChatTree(threadId: string): Promise<ChatTreeReadResponse> {
     await this.start(this.startConfig);
-    return (await this.rpc("thread/chatTree/read", {
+    return (await this.rpc("chatTree/read", {
       threadId
-    } satisfies ThreadChatTreeReadParams)) as ThreadChatTreeReadResponse;
+    } satisfies ChatTreeReadParams)) as ChatTreeReadResponse;
   }
 
   public async readChatTreeForSession(
     sessionId: string
-  ): Promise<ThreadChatTreeReadResponse | undefined> {
+  ): Promise<ChatTreeReadResponse | undefined> {
     const threadId = this.threadIdBySessionId.get(sessionId);
     if (!threadId) {
       return undefined;
@@ -658,24 +697,31 @@ export class CodexAppServerRuntimePort
 
   public async setCurrentChatTreeNode(
     threadId: string,
-    nodeId: string
-  ): Promise<void> {
+    nodeId: string,
+    expectedRevision?: CodexRevisionInput
+  ): Promise<ChatTreeSetCurrentResponse> {
     await this.start(this.startConfig);
-    await this.rpc("thread/chatTree/current/set", {
+    const payload = {
       threadId,
-      nodeId
-    } satisfies ThreadChatTreeSetCurrentParams);
+      nodeId,
+      expectedRevision: normalizeCodexRevision(expectedRevision) ?? null
+    };
+    return (await this.rpc(
+      "chatTree/setCurrent",
+      payload as unknown as ChatTreeSetCurrentParams
+    )) as ChatTreeSetCurrentResponse;
   }
 
   public async setCurrentChatTreeNodeForSession(
     sessionId: string,
-    nodeId: string
+    nodeId: string,
+    expectedRevision?: CodexRevisionInput
   ): Promise<boolean> {
     const threadId = this.threadIdBySessionId.get(sessionId);
     if (!threadId) {
       return false;
     }
-    await this.setCurrentChatTreeNode(threadId, nodeId);
+    await this.setCurrentChatTreeNode(threadId, nodeId, expectedRevision);
     return true;
   }
 
@@ -1058,6 +1104,38 @@ export class CodexAppServerRuntimePort
         this.emitEvent("session.context.updated", {
           sessionId,
           contextUsage
+        });
+        return;
+      }
+      case "chatTree/updated": {
+        const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
+        const chatTree = isRecord(params.chatTree) ? params.chatTree : undefined;
+        if (!sessionId || !chatTree) {
+          return;
+        }
+        this.emitEvent("conversationGraph.updated", {
+          sessionId,
+          engineId: this.engineId,
+          currentNodeId:
+            typeof chatTree.currentNodeId === "string"
+              ? chatTree.currentNodeId
+              : undefined,
+          revision:
+            typeof chatTree.revision === "number" || typeof chatTree.revision === "string"
+              ? chatTree.revision
+              : typeof chatTree.revision === "bigint"
+                ? chatTree.revision.toString()
+                : undefined,
+          visibleNodeIds: Array.isArray(chatTree.visibleNodeIds)
+            ? chatTree.visibleNodeIds.filter(
+                (value): value is string => typeof value === "string"
+              )
+            : [],
+          visibleTurnIds: Array.isArray(chatTree.visibleTurnIds)
+            ? chatTree.visibleTurnIds.filter(
+                (value): value is string => typeof value === "string"
+              )
+            : []
         });
         return;
       }

@@ -13,6 +13,8 @@ const resolveThreadId = (
   input.providerHandle?.providerSessionId ??
   input.indexEntry?.providerSessionId;
 
+const toSafeNumber = (value: number | bigint): number => Number(value);
+
 export class CodexCheckpointProvider implements CheckpointCapability {
   private readonly codexRuntimePort: CodexAppServerRuntimePort;
   private readonly now: () => string;
@@ -51,7 +53,7 @@ export class CodexCheckpointProvider implements CheckpointCapability {
         label: node.summary ?? node.nodeId,
         summary: node.summary ?? undefined,
         turnId: node.turnId ?? undefined,
-        order: node.order,
+        order: toSafeNumber(node.order),
         isCurrent: chatTree.chatTree.currentNodeId === node.nodeId
       })),
       fetchedAt: this.now()

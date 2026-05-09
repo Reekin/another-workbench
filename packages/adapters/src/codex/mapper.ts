@@ -49,6 +49,7 @@ const codexEventTypeByMethod: Record<string, RuntimeEvent["type"]> = {
   "terminal.completed": "terminal.completed",
   "approval.requested": "approval.requested",
   "approval.resolved": "approval.resolved",
+  "conversationGraph.updated": "conversationGraph.updated",
   "participant.updated": "participant.updated",
   "runtime.error": "runtime.error"
 };

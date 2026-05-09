@@ -1014,6 +1014,9 @@ const applyRuntimeEvent = (
         timestamp
       );
     }
+    case "conversationGraph.updated": {
+      return withEventType(state, event.type);
+    }
     case "runtime.error": {
       const withError = {
         ...withEventType(state, event.type),

@@ -25,12 +25,18 @@ type ApprovalContinuation<TEvent> = {
   continueWith: (action: "approve" | "deny" | "defer") => TEvent[];
 };
 
+type DemoRuntimeEventType = Exclude<EventType, "conversationGraph.updated">;
+
 type DemoRuntimePortOptions<TRequest, TResponse, TEvent> = {
   engineId: string;
   kind: "codex" | "acp";
   responseFlavor: string;
   okResponse: (id: string) => TResponse;
-  createEvent: (name: EventType, payload: Record<string, unknown>, sequence: string) => TEvent;
+  createEvent: (
+    name: DemoRuntimeEventType,
+    payload: Record<string, unknown>,
+    sequence: string
+  ) => TEvent;
   parseRequest: (request: TRequest) => {
     id: string;
     method: string;
@@ -54,7 +60,7 @@ class DemoRuntimePort<TRequest, TResponse, TEvent>
   private readonly responseFlavor: string;
   private readonly okResponseFactory: (id: string) => TResponse;
   private readonly createEventFactory: (
-    name: EventType,
+    name: DemoRuntimeEventType,
     payload: Record<string, unknown>,
     sequence: string
   ) => TEvent;

@@ -41,6 +41,7 @@ import { WorkspaceSelectionService } from "./workspace-selection-service.js";
 import { EngineRegistryService } from "./engine-control/engine-registry.js";
 import { EngineCapabilitySurfaceService } from "./engine-control/capability-surface.js";
 import {
+  buildSessionWindowSnapshotFromPage,
   buildSessionWindowSnapshot,
   type SessionWindowSnapshot
 } from "./session-window.js";
@@ -171,6 +172,7 @@ export class WorkbenchShellService {
   private readonly turnChangeService: TurnChangeService;
   private readonly codexTurnChangesService: CodexTurnChangesService;
   private openSessionGeneration = 0;
+  private readonly partiallyHydratedSessionIds = new Set<string>();
 
   public constructor(options: WorkbenchShellServiceOptions) {
     this.runtimeService = options.runtimeService;
@@ -479,22 +481,56 @@ export class WorkbenchShellService {
   public async openSession(sessionId: string): Promise<{ page: SessionWindowSnapshot }> {
     const generation = ++this.openSessionGeneration;
     const isCancelled = () => generation !== this.openSessionGeneration;
-    await this.sessionReconciliation?.ensureSessionLoaded(sessionId, {
-      isCancelled
-    });
+    const alreadyLoaded = this.runtimeService
+      .listSessions({ includeArchived: true })
+      .some((session) => session.sessionId === sessionId);
+    const alreadyFullyLoaded =
+      alreadyLoaded && !this.partiallyHydratedSessionIds.has(sessionId);
+    if (!alreadyFullyLoaded) {
+      const hydratedPage = await this.hydrateSessionWindow(sessionId, {
+        limit: defaultSessionWindowLimit,
+        isCancelled
+      });
+      if (isCancelled()) {
+        throw new Error("Open session cancelled.");
+      }
+      if (hydratedPage) {
+        await this.activateOpenedSession(sessionId, { isCancelled });
+        return {
+          page: hydratedPage
+        };
+      }
+    }
+    if (!alreadyFullyLoaded) {
+      const loadedByFullHydration =
+        (await this.sessionReconciliation?.ensureSessionLoaded(sessionId, {
+          isCancelled,
+          force: alreadyLoaded
+        })) ?? false;
+      if (isCancelled()) {
+        throw new Error("Open session cancelled.");
+      }
+      if (alreadyLoaded && !loadedByFullHydration) {
+        throw new Error("This session could not be fully loaded.");
+      }
+      if (loadedByFullHydration) {
+        this.partiallyHydratedSessionIds.delete(sessionId);
+      }
+    }
     const context = this.sessionIdentity.resolveContext(sessionId);
     if (!context.session && !context.providerHandle) {
       throw new Error(
         "This session does not expose a loadable provider session id. It was likely created by an older build and can no longer be reopened."
       );
     }
-    const workspaceId = context.indexEntry?.workspaceId;
-    await this.createWorkspaceSelectionService().activateSelection({
-      workspaceId,
-      sessionId
-    });
-    await this.sessionCatalog.markSessionRead(sessionId);
+    if (isCancelled()) {
+      throw new Error("Open session cancelled.");
+    }
+    await this.activateOpenedSession(sessionId, { isCancelled });
     const anchorTurnId = await this.resolveProviderAnchorTurnId(sessionId);
+    if (isCancelled()) {
+      throw new Error("Open session cancelled.");
+    }
     return {
       page: this.buildSessionWindow(sessionId, {
         limit: defaultSessionWindowLimit,
@@ -506,9 +542,31 @@ export class WorkbenchShellService {
   public async loadOlderSessionTurns(input: {
     sessionId: string;
     beforeTurnId?: string;
+    cursor?: string;
     limit?: number;
   }): Promise<{ page: SessionWindowSnapshot }> {
-    await this.sessionReconciliation?.ensureSessionLoaded(input.sessionId);
+    if (input.cursor) {
+      const hydratedPage = await this.hydrateSessionWindow(input.sessionId, {
+        limit: input.limit ?? defaultSessionWindowLimit,
+        cursor: input.cursor
+      });
+      if (hydratedPage) {
+        return {
+          page: hydratedPage
+        };
+      }
+    }
+    const forceFullHydration = this.partiallyHydratedSessionIds.has(input.sessionId);
+    const loadedByFullHydration =
+      (await this.sessionReconciliation?.ensureSessionLoaded(input.sessionId, {
+        force: forceFullHydration
+      })) ?? false;
+    if (forceFullHydration && !loadedByFullHydration) {
+      throw new Error("This session could not be fully loaded.");
+    }
+    if (loadedByFullHydration) {
+      this.partiallyHydratedSessionIds.delete(input.sessionId);
+    }
     return {
       page: this.buildSessionWindow(input.sessionId, {
         limit: input.limit ?? defaultSessionWindowLimit,
@@ -549,10 +607,19 @@ export class WorkbenchShellService {
   public async jumpChatTree(input: {
     sessionId: string;
     nodeId: string;
+    expectedRevision?: number;
   }): Promise<{ jumped: boolean }> {
     return this.capabilities
-      ? this.capabilities.jumpConversationGraph(input.sessionId, input.nodeId)
-      : this.requireChatTreeProvider().jump(input.sessionId, input.nodeId);
+      ? this.capabilities.jumpConversationGraph(
+          input.sessionId,
+          input.nodeId,
+          input.expectedRevision
+        )
+      : this.requireChatTreeProvider().jump(
+          input.sessionId,
+          input.nodeId,
+          input.expectedRevision
+        );
   }
 
   public async getDelegation(sessionId: string): Promise<DelegationSnapshot> {
@@ -725,6 +792,74 @@ export class WorkbenchShellService {
     return this.chatTreeProvider;
   }
 
+  private async activateOpenedSession(
+    sessionId: string,
+    input: {
+      isCancelled?: () => boolean;
+    } = {}
+  ): Promise<void> {
+    const context = this.sessionIdentity.resolveContext(sessionId);
+    if (input.isCancelled?.()) {
+      throw new Error("Open session cancelled.");
+    }
+    await this.createWorkspaceSelectionService().activateSelection({
+      workspaceId: context.indexEntry?.workspaceId,
+      sessionId
+    });
+    if (input.isCancelled?.()) {
+      throw new Error("Open session cancelled.");
+    }
+    await this.sessionCatalog.markSessionRead(sessionId);
+    if (input.isCancelled?.()) {
+      throw new Error("Open session cancelled.");
+    }
+  }
+
+  private async hydrateSessionWindow(
+    sessionId: string,
+    input: {
+      limit: number;
+      cursor?: string;
+      isCancelled?: () => boolean;
+    }
+  ): Promise<SessionWindowSnapshot | undefined> {
+    const hydration = this.sessionReconciliation?.hydrateSessionWindow?.(
+      sessionId,
+      input
+    );
+    const hydrated = await hydration?.catch(() => undefined);
+    if (!hydrated || input.isCancelled?.()) {
+      return undefined;
+    }
+    this.partiallyHydratedSessionIds.add(sessionId);
+    const snapshot = this.runtimeService.getSnapshot();
+    const participants = snapshot.participants.filter(
+      (participant) => participant.conversationId === hydrated.conversation.conversationId
+    );
+    const sessionRelations = snapshot.sessionRelations.filter(
+      (relation) =>
+        relation.parentSessionId === sessionId || relation.childSessionId === sessionId
+    );
+    return buildSessionWindowSnapshotFromPage({
+      sessionId,
+      conversation: hydrated.conversation,
+      session: hydrated.session,
+      turns: hydrated.turns,
+      messageBlocks: hydrated.messageBlocks,
+      toolCalls: hydrated.toolCalls,
+      terminalStreams: hydrated.terminalStreams,
+      approvalRequests: snapshot.approvalRequests.filter(
+        (approval) => approval.sessionId === sessionId
+      ),
+      participants,
+      sessionRelations,
+      hasOlder: hydrated.hasOlder,
+      hasNewer: hydrated.hasNewer,
+      olderCursor: hydrated.olderCursor,
+      newerCursor: hydrated.newerCursor
+    });
+  }
+
   private async resolveTurnChangeWorkingDirectoryBySessionId(
     sessionId: string
   ): Promise<string> {
@@ -771,6 +906,10 @@ export class WorkbenchShellService {
       const chatTree = this.capabilities
         ? await this.capabilities.getConversationGraph(sessionId)
         : await this.requireChatTreeProvider().get(sessionId);
+      const visibleAnchorTurnId = chatTree.visibleTurnIds?.at(-1);
+      if (visibleAnchorTurnId) {
+        return visibleAnchorTurnId;
+      }
       if (!chatTree.currentNodeId) {
         return undefined;
       }

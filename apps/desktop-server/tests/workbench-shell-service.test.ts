@@ -395,18 +395,168 @@ describe("WorkbenchShellService", () => {
         hasNewer: false
       })
     });
-    expect(ensureSessionLoaded).toHaveBeenCalledWith(
-      "session-1",
-      expect.objectContaining({
-        isCancelled: expect.any(Function)
-      })
-    );
+    expect(ensureSessionLoaded).not.toHaveBeenCalled();
     expect(setLastActiveSelection).toHaveBeenCalledWith({
       workspaceId: "workspace-1",
       sessionId: "session-1"
     });
     expect(markSessionRead).toHaveBeenCalledWith("session-1");
     expect(getChatTree).toHaveBeenCalledWith("session-1");
+  });
+
+  it("opens cold indexed sessions through lightweight window hydration", async () => {
+    const setLastActiveSelection = vi.fn().mockResolvedValue(undefined);
+    const markSessionRead = vi.fn().mockResolvedValue(undefined);
+    const ensureSessionLoaded = vi.fn().mockResolvedValue(true);
+    const hydrateSessionWindow = vi.fn().mockResolvedValue({
+      workspaceId: "workspace-1",
+      conversation: buildSessionSnapshot().conversations[0],
+      session: buildSessionSnapshot().sessions[0],
+      turns: [buildSessionSnapshot().turns[1]],
+      messageBlocks: [],
+      toolCalls: [],
+      terminalStreams: [],
+      sessionRelations: [],
+      hasOlder: true,
+      hasNewer: false,
+      olderCursor: "older-cursor",
+      runtimeBinding: {
+        providerKind: "codex-thread",
+        providerSessionId: "thread-1"
+      }
+    });
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        listSessions: () => [],
+        getSnapshot: () => buildSessionSnapshot(),
+        getWorkspaceRegistry: () => ({
+          setLastActiveSelection
+        }),
+        getSessionIndexStore: () => ({
+          getEntry: () => ({
+            sessionId: "session-1",
+            workspaceId: "workspace-1"
+          })
+        })
+      } as never,
+      sessionCatalog: {
+        markSessionRead
+      } as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never,
+      sessionReconciliation: {
+        ensureSessionLoaded,
+        hydrateSessionWindow
+      } as never
+    });
+
+    await expect(service.openSession("session-1")).resolves.toEqual({
+      page: expect.objectContaining({
+        sessionId: "session-1",
+        windowStartTurnId: "turn-2",
+        windowEndTurnId: "turn-2",
+        hasOlder: true,
+        hasNewer: false,
+        olderCursor: "older-cursor"
+      })
+    });
+    expect(hydrateSessionWindow).toHaveBeenCalledWith(
+      "session-1",
+      expect.objectContaining({
+        limit: expect.any(Number),
+        isCancelled: expect.any(Function)
+      })
+    );
+    expect(ensureSessionLoaded).not.toHaveBeenCalled();
+    expect(setLastActiveSelection).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      sessionId: "session-1"
+    });
+    expect(markSessionRead).toHaveBeenCalledWith("session-1");
+  });
+
+  it("does not activate a stale lightweight open after a newer open cancels it", async () => {
+    const setLastActiveSelection = vi.fn().mockResolvedValue(undefined);
+    const markSessionRead = vi.fn().mockResolvedValue(undefined);
+    type LightweightHydration = {
+      workspaceId: string;
+      conversation: ReturnType<typeof buildSessionSnapshot>["conversations"][number];
+      session: ReturnType<typeof buildSessionSnapshot>["sessions"][number];
+      turns: ReturnType<typeof buildSessionSnapshot>["turns"];
+      messageBlocks: [];
+      toolCalls: [];
+      terminalStreams: [];
+      sessionRelations: [];
+      hasOlder: boolean;
+      hasNewer: boolean;
+    };
+    let resolveHydration: ((value: LightweightHydration) => void) | undefined;
+    const hydrateSessionWindow = vi.fn(
+      () =>
+        new Promise<LightweightHydration>((resolve) => {
+          resolveHydration = resolve;
+        })
+    );
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        listSessions: () => [
+          {
+            sessionId: "session-2"
+          }
+        ],
+        getSnapshot: () => buildSessionSnapshot("session-2"),
+        getWorkspaceRegistry: () => ({
+          setLastActiveSelection
+        }),
+        getSessionIndexStore: () => ({
+          getEntry: (sessionId: string) => ({
+            sessionId,
+            workspaceId: "workspace-1"
+          })
+        })
+      } as never,
+      sessionCatalog: {
+        markSessionRead
+      } as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never,
+      sessionReconciliation: {
+        hydrateSessionWindow
+      } as never
+    });
+
+    const staleOpen = service.openSession("session-1");
+    await vi.waitFor(() => {
+      expect(hydrateSessionWindow).toHaveBeenCalledTimes(1);
+    });
+    const activeOpen = service.openSession("session-2");
+    const sessionOneSnapshot = buildSessionSnapshot("session-1");
+    resolveHydration?.({
+      workspaceId: "workspace-1",
+      conversation: sessionOneSnapshot.conversations[0],
+      session: sessionOneSnapshot.sessions[0],
+      turns: [sessionOneSnapshot.turns[0]],
+      messageBlocks: [],
+      toolCalls: [],
+      terminalStreams: [],
+      sessionRelations: [],
+      hasOlder: false,
+      hasNewer: false
+    });
+
+    await expect(staleOpen).rejects.toThrow("Open session cancelled.");
+    await expect(activeOpen).resolves.toEqual({
+      page: expect.objectContaining({
+        sessionId: "session-2"
+      })
+    });
+    expect(setLastActiveSelection).toHaveBeenCalledTimes(1);
+    expect(setLastActiveSelection).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      sessionId: "session-2"
+    });
+    expect(markSessionRead).toHaveBeenCalledTimes(1);
+    expect(markSessionRead).toHaveBeenCalledWith("session-2");
   });
 
   it("passes sessionProfile through when creating a browser session", async () => {
@@ -603,7 +753,68 @@ describe("WorkbenchShellService", () => {
         hasNewer: true
       })
     });
-    expect(ensureSessionLoaded).toHaveBeenCalledWith("session-1");
+    expect(ensureSessionLoaded).toHaveBeenCalledWith("session-1", {
+      force: false
+    });
+  });
+
+  it("loads older turns through provider cursors when available", async () => {
+    const ensureSessionLoaded = vi.fn().mockResolvedValue(true);
+    const hydrateSessionWindow = vi.fn().mockResolvedValue({
+      workspaceId: "workspace-1",
+      conversation: buildSessionSnapshot().conversations[0],
+      session: buildSessionSnapshot().sessions[0],
+      turns: [buildSessionSnapshot().turns[0]],
+      messageBlocks: [],
+      toolCalls: [],
+      terminalStreams: [],
+      sessionRelations: [],
+      hasOlder: false,
+      hasNewer: true,
+      newerCursor: "newer-cursor",
+      runtimeBinding: {
+        providerKind: "codex-thread",
+        providerSessionId: "thread-1"
+      }
+    });
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        getSnapshot: () => buildSessionSnapshot(),
+        getWorkspaceRegistry: () => ({
+          ready: vi.fn(),
+          getState: vi.fn().mockReturnValue({})
+        })
+      } as never,
+      sessionCatalog: {} as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never,
+      sessionReconciliation: {
+        ensureSessionLoaded,
+        hydrateSessionWindow
+      } as never
+    });
+
+    await expect(
+      service.loadOlderSessionTurns({
+        sessionId: "session-1",
+        cursor: "older-cursor",
+        limit: 1
+      })
+    ).resolves.toEqual({
+      page: expect.objectContaining({
+        sessionId: "session-1",
+        windowStartTurnId: "turn-1",
+        windowEndTurnId: "turn-1",
+        hasOlder: false,
+        hasNewer: true,
+        newerCursor: "newer-cursor"
+      })
+    });
+    expect(hydrateSessionWindow).toHaveBeenCalledWith("session-1", {
+      limit: 1,
+      cursor: "older-cursor"
+    });
+    expect(ensureSessionLoaded).not.toHaveBeenCalled();
   });
 
   it("creates browser sessions through the runtime service and returns the concrete session id", async () => {

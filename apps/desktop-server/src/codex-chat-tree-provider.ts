@@ -13,6 +13,8 @@ const resolveThreadId = (
   input.providerHandle?.providerSessionId ??
   input.indexEntry?.providerSessionId;
 
+const toSafeNumber = (value: number | bigint): number => Number(value);
+
 export class CodexChatTreeAgentProvider implements ChatTreeAgentProvider {
   public readonly engineId = "codex";
 
@@ -46,14 +48,20 @@ export class CodexChatTreeAgentProvider implements ChatTreeAgentProvider {
       sessionId: input.sessionId,
       engineId: this.engineId,
       supportsJump: true,
+      version: chatTree.chatTree.version,
+      revision: toSafeNumber(chatTree.chatTree.revision),
       currentNodeId: chatTree.chatTree.currentNodeId ?? undefined,
+      visibleNodeIds: [...chatTree.chatTree.visibleNodeIds],
+      visibleTurnIds: [...chatTree.chatTree.visibleTurnIds],
       nodes: chatTree.chatTree.nodes.map((node) => ({
         nodeId: node.nodeId,
         parentNodeId: node.parentNodeId ?? undefined,
         label: node.summary ?? node.nodeId,
+        summary: node.summary ?? undefined,
         turnId: node.turnId ?? undefined,
-        order: node.order,
-        isCurrent: chatTree.chatTree.currentNodeId === node.nodeId
+        order: toSafeNumber(node.order),
+        isCurrent: chatTree.chatTree.currentNodeId === node.nodeId,
+        status: node.status
       })),
       fetchedAt: this.now()
     };
@@ -61,13 +69,18 @@ export class CodexChatTreeAgentProvider implements ChatTreeAgentProvider {
 
   public async jump(
     input: ChatTreeProviderContext,
-    nodeId: string
+    nodeId: string,
+    expectedRevision?: number
   ): Promise<boolean> {
     const threadId = resolveThreadId(input, this.codexRuntimePort);
     if (!threadId) {
       return false;
     }
-    await this.codexRuntimePort.setCurrentChatTreeNode(threadId, nodeId);
+    await this.codexRuntimePort.setCurrentChatTreeNode(
+      threadId,
+      nodeId,
+      expectedRevision
+    );
     return true;
   }
 }

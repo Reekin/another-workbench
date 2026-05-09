@@ -16,6 +16,8 @@ export type SessionWindowSnapshot = {
   sessionId: string;
   windowStartTurnId?: string;
   windowEndTurnId?: string;
+  olderCursor?: string;
+  newerCursor?: string;
   hasOlder: boolean;
   hasNewer: boolean;
 };
@@ -34,6 +36,16 @@ type BuildSessionWindowInput = {
   limit: number;
   beforeTurnId?: string;
   anchorTurnId?: string;
+};
+
+type BuildSessionWindowPageInput = Omit<
+  BuildSessionWindowInput,
+  "limit" | "beforeTurnId" | "anchorTurnId"
+> & {
+  hasOlder: boolean;
+  hasNewer: boolean;
+  olderCursor?: string;
+  newerCursor?: string;
 };
 
 const compareIsoAsc = (left?: string, right?: string): number => {
@@ -125,6 +137,50 @@ export const buildSessionWindowSnapshot = (
     windowEndTurnId: windowTurns.at(-1)?.turnId,
     hasOlder: startIndex > 0,
     hasNewer: endIndex < sortedTurns.length - 1,
+    snapshot: {
+      conversations: [input.conversation],
+      sessions: [input.session],
+      turns: windowTurns,
+      messageBlocks: input.messageBlocks.filter(
+        (block) => turnIds.has(block.turnId) || messageIds.has(block.messageId)
+      ),
+      toolCalls: input.toolCalls.filter(
+        (toolCall) => turnIds.has(toolCall.turnId) || toolCallIds.has(toolCall.toolCallId)
+      ),
+      terminalStreams: input.terminalStreams.filter(
+        (terminal) =>
+          turnIds.has(terminal.turnId) || terminalIds.has(terminal.terminalId)
+      ),
+      approvalRequests: input.approvalRequests.filter(
+        (approval) =>
+          turnIds.has(approval.turnId) || approvalRequestIds.has(approval.requestId)
+      ),
+      participants: input.participants,
+      sessionRelations: input.sessionRelations
+    }
+  };
+};
+
+export const buildSessionWindowSnapshotFromPage = (
+  input: BuildSessionWindowPageInput
+): SessionWindowSnapshot => {
+  const windowTurns = sortTurnsAsc(input.turns);
+  const turnIds = new Set(windowTurns.map((turn) => turn.turnId));
+  const messageIds = new Set(windowTurns.flatMap((turn) => turn.messageIds));
+  const toolCallIds = new Set(windowTurns.flatMap((turn) => turn.toolCallIds));
+  const terminalIds = new Set(windowTurns.flatMap((turn) => turn.terminalIds));
+  const approvalRequestIds = new Set(
+    windowTurns.flatMap((turn) => turn.approvalRequestIds)
+  );
+
+  return {
+    sessionId: input.sessionId,
+    windowStartTurnId: windowTurns[0]?.turnId,
+    windowEndTurnId: windowTurns.at(-1)?.turnId,
+    olderCursor: input.olderCursor,
+    newerCursor: input.newerCursor,
+    hasOlder: input.hasOlder,
+    hasNewer: input.hasNewer,
     snapshot: {
       conversations: [input.conversation],
       sessions: [input.session],

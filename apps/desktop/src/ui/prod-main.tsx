@@ -7,6 +7,7 @@ import {
 } from "../transport/desktop-transport.js";
 import { resolveWorkbenchClientApi } from "../transport/workbench-client-bootstrap.js";
 import { ChatShellApp } from "./chat-shell/ChatShellApp.js";
+import { RendererErrorBoundary } from "./RendererErrorBoundary.js";
 
 const root = document.getElementById("root");
 if (!root) {
@@ -79,11 +80,13 @@ if (transport) {
   const store = createRendererStore();
   ReactDOM.createRoot(root).render(
     <React.StrictMode>
-      <ChatShellApp
-        store={store}
-        transport={transport}
-        title={`Another Workbench (${selectionLabel})`}
-      />
+      <RendererErrorBoundary transport={transport}>
+        <ChatShellApp
+          store={store}
+          transport={transport}
+          title={`Another Workbench (${selectionLabel})`}
+        />
+      </RendererErrorBoundary>
     </React.StrictMode>
   );
 }

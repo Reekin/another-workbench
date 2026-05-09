@@ -99,6 +99,66 @@ describe("Session discovery and reconciliation", () => {
     });
   });
 
+  it("discovers last completed turn time by reading full codex threads", async () => {
+    const listedThread = createThread({
+      id: "thread-recent",
+      cwd: "I:/workspace-alpha"
+    });
+    const readThread = vi.fn().mockResolvedValue({
+      ...listedThread,
+      turns: [
+        {
+          id: "turn-recent",
+          status: "completed",
+          error: null,
+          items: [
+            {
+              type: "userMessage",
+              id: "user-1",
+              timestamp: "2026-05-08T10:00:00Z",
+              content: [
+                {
+                  type: "text",
+                  text: "Build it.",
+                  text_elements: []
+                }
+              ]
+            },
+            {
+              type: "agentMessage",
+              id: "agent-1",
+              timestamp: "2026-05-08T10:05:00Z",
+              text: "Done.",
+              phase: "final_answer",
+              memoryCitation: null
+            }
+          ]
+        }
+      ]
+    } as Thread);
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        listThreads: vi.fn().mockResolvedValue({
+          data: [listedThread],
+          nextCursor: null
+        }),
+        readThread
+      } as never
+    });
+
+    const discovered = await provider.discoverWorkspace({
+      workspaceId: "workspace-1",
+      absolutePath: "I:/workspace-alpha",
+      label: "Alpha"
+    });
+
+    expect(readThread).toHaveBeenCalledWith("thread-recent", true);
+    expect(discovered.sessions[0]).toMatchObject({
+      sessionId: "codex-thread:thread-recent",
+      lastCompletedTurnAt: "2026-05-08T10:05:00.000Z"
+    });
+  });
+
   it("discovers codex threads, derives subagent relations, and hydrates discovered sessions", async () => {
     const baseDir = await createTempDir();
     const workspaceRegistry = new WorkspaceRegistryService({
@@ -277,6 +337,9 @@ describe("Session discovery and reconciliation", () => {
         conversationId: "conversation-discovered:codex-thread:thread-root"
       })
     ]);
+    expect(sessionIndexStore.getEntry("codex-thread:thread-root")).toMatchObject({
+      lastCompletedTurnAt: "2026-04-17T10:01:01.000Z"
+    });
     expect(runtimeService.getSnapshot().messageBlocks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

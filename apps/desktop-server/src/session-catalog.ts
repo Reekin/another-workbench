@@ -73,8 +73,8 @@ const compareSeedLastCompletedTurnAtDesc = (
   left: SessionCatalogSeed,
   right: SessionCatalogSeed
 ): number => {
-  const leftSortAt = left.lastCompletedTurnAt ?? left.createdAt;
-  const rightSortAt = right.lastCompletedTurnAt ?? right.createdAt;
+  const leftSortAt = left.lastCompletedTurnAt ?? left.updatedAt ?? left.createdAt;
+  const rightSortAt = right.lastCompletedTurnAt ?? right.updatedAt ?? right.createdAt;
   const bySortAt = rightSortAt.localeCompare(leftSortAt);
   if (bySortAt !== 0) {
     return bySortAt;

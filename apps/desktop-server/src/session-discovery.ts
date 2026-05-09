@@ -49,6 +49,7 @@ import {
 } from "./engine-extensions/codex/process-activity.js";
 import {
   consumeCodexRolloutTimestamp,
+  type CodexRolloutTimestampGroup,
   readCodexRolloutTimestampGroups,
   resolveCodexThreadItemTimestamp
 } from "./engine-extensions/codex/rollout-timestamps.js";
@@ -125,11 +126,61 @@ const lastTimestamp = (timestamps: string[]): string | undefined => {
   return latest;
 };
 
-const resolveThreadLastCompletedTurnAt = (thread: Thread): string | undefined => {
+const resolveThreadTurnItemStartedAts = (
+  thread: Thread,
+  turnIndex: number,
+  rolloutTimestampGroups: readonly CodexRolloutTimestampGroup[] = []
+): string[] => {
+  const turn = thread.turns[turnIndex];
+  if (!turn) {
+    return [];
+  }
+  const rolloutTimestamps = [
+    ...(rolloutTimestampGroups.find((group) => group.turnId === turn.id)?.items ??
+      rolloutTimestampGroups[turnIndex]?.items ??
+      [])
+  ];
+  return turn.items.map(
+    (item, itemIndex) =>
+      resolveCodexThreadItemTimestamp(item) ??
+      consumeCodexRolloutTimestamp(rolloutTimestamps, item.type) ??
+      buildDeterministicTurnTimestamp(thread, turnIndex, itemIndex)
+  );
+};
+
+const resolveThreadTurnStartedAt = (
+  thread: Thread,
+  turnIndex: number,
+  itemStartedAts: readonly string[]
+): string => itemStartedAts[0] ?? buildDeterministicTurnTimestamp(thread, turnIndex);
+
+const resolveThreadTurnCompletedAt = (
+  thread: Thread,
+  turnIndex: number,
+  itemStartedAts: readonly string[]
+): string | undefined => {
+  const turn = thread.turns[turnIndex];
+  if (!turn || turn.status === "inProgress") {
+    return undefined;
+  }
+  return (
+    lastTimestamp([...itemStartedAts]) ??
+    buildDeterministicTurnTimestamp(thread, turnIndex, turn.items.length + 1)
+  );
+};
+
+const resolveThreadLastCompletedTurnAt = (
+  thread: Thread,
+  rolloutTimestampGroups: readonly CodexRolloutTimestampGroup[] = []
+): string | undefined => {
   for (let turnIndex = thread.turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
     const turn = thread.turns[turnIndex];
     if (turn?.status !== "inProgress") {
-      return buildDeterministicTurnTimestamp(thread, turnIndex, turn.items.length + 1);
+      return resolveThreadTurnCompletedAt(
+        thread,
+        turnIndex,
+        resolveThreadTurnItemStartedAts(thread, turnIndex, rolloutTimestampGroups)
+      );
     }
   }
   return undefined;
@@ -330,6 +381,21 @@ export type SessionDiscoveryProvider = {
   ) => Promise<HydratedSessionSnapshot | undefined>;
 };
 
+const resolveHydratedLastCompletedTurnAt = (
+  turns: readonly HydratedTurn[]
+): string | undefined => {
+  let latestCompletedAt: string | undefined;
+  for (const turn of turns) {
+    if (turn.status !== "completed" || !turn.completedAt) {
+      continue;
+    }
+    if (!latestCompletedAt || turn.completedAt > latestCompletedAt) {
+      latestCompletedAt = turn.completedAt;
+    }
+  }
+  return latestCompletedAt;
+};
+
 export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
   public readonly engineId = codexAgentId;
 
@@ -350,9 +416,14 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
     const threads = (await this.listAllThreads()).filter((thread) =>
       isPathInsideWorkspace(thread.cwd, workspace.absolutePath)
     );
-    const sessions = threads.map((thread) =>
-      this.toDiscoveredSessionRecord(thread)
-    );
+    const sessions: DiscoveredSessionRecord[] = [];
+    for (const thread of threads) {
+      sessions.push(
+        await this.toDiscoveredSessionRecord(
+          await this.readThreadWithTurnsForDiscovery(thread)
+        )
+      );
+    }
     const relations = threads
       .flatMap((thread) => {
         const parentThreadId = toSubagentParentThreadId(thread.source);
@@ -427,33 +498,23 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
     const toolCalls: ToolCall[] = [];
     const terminalStreams: TerminalStream[] = [];
     const rolloutTimestampGroups = await readCodexRolloutTimestampGroups(thread.path);
-    const rolloutTimestampGroupsByTurnId = new Map(
-      rolloutTimestampGroups.map((group) => [group.turnId, group.items] as const)
-    );
 
     for (const [turnIndex, turn] of thread.turns.entries()) {
       if (input.isCancelled?.()) {
         return undefined;
       }
-      const rolloutTimestamps = [
-        ...(rolloutTimestampGroupsByTurnId.get(turn.id) ??
-          rolloutTimestampGroups[turnIndex]?.items ??
-          [])
-      ];
       const hydratedItems = turn.items;
-      const itemStartedAts = hydratedItems.map(
-        (item, itemIndex) =>
-          resolveCodexThreadItemTimestamp(item) ??
-          consumeCodexRolloutTimestamp(rolloutTimestamps, item.type) ??
-          buildDeterministicTurnTimestamp(thread, turnIndex, itemIndex)
+      const itemStartedAts = resolveThreadTurnItemStartedAts(
+        thread,
+        turnIndex,
+        rolloutTimestampGroups
       );
-      const startedAt =
-        itemStartedAts[0] ?? buildDeterministicTurnTimestamp(thread, turnIndex);
-      const completedAt =
-        turn.status === "inProgress"
-          ? undefined
-          : lastTimestamp(itemStartedAts) ??
-            buildDeterministicTurnTimestamp(thread, turnIndex, hydratedItems.length + 1);
+      const startedAt = resolveThreadTurnStartedAt(thread, turnIndex, itemStartedAts);
+      const completedAt = resolveThreadTurnCompletedAt(
+        thread,
+        turnIndex,
+        itemStartedAts
+      );
       const messageIds: string[] = [];
       const toolCallIds: string[] = [];
       const terminalIds: string[] = [];
@@ -725,7 +786,19 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
     return threads;
   }
 
-  private toDiscoveredSessionRecord(thread: Thread): DiscoveredSessionRecord {
+  private async readThreadWithTurnsForDiscovery(thread: Thread): Promise<Thread> {
+    if (thread.turns.length > 0) {
+      return thread;
+    }
+    try {
+      return await this.codexRuntimePort.readThread(thread.id, true);
+    } catch {
+      return thread;
+    }
+  }
+
+  private async toDiscoveredSessionRecord(thread: Thread): Promise<DiscoveredSessionRecord> {
+    const rolloutTimestampGroups = await readCodexRolloutTimestampGroups(thread.path);
     return {
       sessionId: discoveredCodexSessionId(thread.id),
       engineId: codexAgentId,
@@ -735,7 +808,10 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
       summaryText: summarizeThread(thread),
       createdAt: isoFromUnixSeconds(thread.createdAt),
       updatedAt: isoFromUnixSeconds(thread.updatedAt),
-      lastCompletedTurnAt: resolveThreadLastCompletedTurnAt(thread),
+      lastCompletedTurnAt: resolveThreadLastCompletedTurnAt(
+        thread,
+        rolloutTimestampGroups
+      ),
       metadata: {
         rolloutPath: thread.path ?? undefined,
         cwd: thread.cwd
@@ -946,6 +1022,17 @@ export class SessionReconciliationService {
           (relation) =>
             relation.parentSessionId === sessionId || relation.childSessionId === sessionId
         )
+    });
+    await this.sessionIndexStore.upsertSession({
+      workspaceId: hydrated.workspaceId,
+      session: hydrated.session,
+      providerKind: hydrated.runtimeBinding?.providerKind ?? entry.providerKind,
+      providerSessionId:
+        hydrated.runtimeBinding?.providerSessionId ?? entry.providerSessionId,
+      summaryText: entry.summaryText,
+      lastCompletedTurnAt: resolveHydratedLastCompletedTurnAt(hydrated.turns),
+      unreadState: entry.unreadState,
+      source: entry.source
     });
     return true;
   }

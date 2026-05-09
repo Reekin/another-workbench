@@ -52,6 +52,7 @@ export const workbenchRpcMethods = [
   "worktree.get",
   "checkpoint.get",
   "diagnostics.get",
+  "diagnostics.write",
   "backgroundRun.get",
   "errorLog.write",
   "file.searchWorkspace",
@@ -651,6 +652,38 @@ const zDiagnosticsGetRequestSchema = z.object({
   })
 });
 
+const zDiagnosticSeveritySchema = z.enum(["info", "warning", "error"]);
+const zDiagnosticLogKindSchema = z.enum([
+  "renderer-heartbeat",
+  "renderer-stall",
+  "renderer-long-task",
+  "renderer-memory",
+  "ipc-request",
+  "event-push-batch",
+  "ui-input-delay",
+  "diagnostic-buffer",
+  "manual"
+]);
+
+const zDiagnosticsWriteRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("diagnostics.write"),
+  params: z.object({
+    kind: zDiagnosticLogKindSchema,
+    severity: zDiagnosticSeveritySchema.default("info"),
+    source: z.string().min(1).optional(),
+    message: z.string().min(1).optional(),
+    occurredAt: zIsoDateTime.optional(),
+    diagnosticId: z.string().min(1).optional(),
+    sessionId: zSessionId.optional(),
+    workspaceId: z.string().min(1).optional(),
+    cursor: zCursor.optional(),
+    requestId: zRequestId.optional(),
+    metrics: zJsonRecord.optional(),
+    context: zJsonRecord.optional()
+  })
+});
+
 const zBackgroundRunGetRequestSchema = z.object({
   id: zRequestId,
   method: z.literal("backgroundRun.get"),
@@ -783,6 +816,7 @@ export const zWorkbenchRpcRequestSchema = z.discriminatedUnion("method", [
   zWorktreeGetRequestSchema,
   zCheckpointGetRequestSchema,
   zDiagnosticsGetRequestSchema,
+  zDiagnosticsWriteRequestSchema,
   zBackgroundRunGetRequestSchema,
   zErrorLogWriteRequestSchema,
   zFileSearchWorkspaceRequestSchema,
@@ -1071,6 +1105,17 @@ const zBackgroundRunGetResponseSchema = z.object({
   })
 });
 
+const zDiagnosticsWriteResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("diagnostics.write"),
+  ok: z.literal(true),
+  result: z.object({
+    logged: z.literal(true),
+    entryId: z.string().min(1),
+    logPath: z.string().min(1)
+  })
+});
+
 const zErrorLogWriteResponseSchema = z.object({
   id: zRequestId,
   method: z.literal("errorLog.write"),
@@ -1219,6 +1264,7 @@ export const zWorkbenchRpcResponseSchema = z.union([
   zWorktreeGetResponseSchema,
   zCheckpointGetResponseSchema,
   zDiagnosticsGetResponseSchema,
+  zDiagnosticsWriteResponseSchema,
   zBackgroundRunGetResponseSchema,
   zErrorLogWriteResponseSchema,
   zFileSearchWorkspaceResponseSchema,
@@ -1268,6 +1314,13 @@ export type DelegationSnapshotRpc = z.infer<typeof zDelegationSnapshotSchema>;
 export type WorktreeSnapshotRpc = z.infer<typeof zWorktreeSnapshotSchema>;
 export type CheckpointSnapshotRpc = z.infer<typeof zCheckpointSnapshotSchema>;
 export type DiagnosticsSnapshotRpc = z.infer<typeof zDiagnosticsSnapshotSchema>;
+export type DiagnosticLogKindRpc = z.infer<typeof zDiagnosticLogKindSchema>;
+export type DiagnosticsWriteInputRpc = z.infer<
+  typeof zDiagnosticsWriteRequestSchema
+>["params"];
+export type DiagnosticsWriteResultRpc = z.infer<
+  typeof zDiagnosticsWriteResponseSchema
+>["result"];
 export type BackgroundRunSnapshotRpc = z.infer<typeof zBackgroundRunSnapshotSchema>;
 export type ErrorLogWriteInputRpc = z.infer<
   typeof zErrorLogWriteRequestSchema

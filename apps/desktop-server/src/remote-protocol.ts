@@ -472,6 +472,20 @@ export const createRemoteRpcHandler = (
                 diagnostics: await shellService.getDiagnostics(request.params.sessionId)
               }
             });
+          case "diagnostics.write":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "DIAGNOSTIC_LOG_UNAVAILABLE",
+                "Diagnostic log APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: await shellService.writeDiagnosticLog(request.params)
+            });
           case "backgroundRun.get":
             if (!shellService) {
               return toErrorResponse(

@@ -7,6 +7,8 @@ import type {
   ChatInteractionCapabilitiesRpc,
   Command,
   DelegationSnapshotRpc,
+  DiagnosticsWriteInputRpc,
+  DiagnosticsWriteResultRpc,
   DiagnosticsSnapshotRpc,
   DomainSnapshot,
   EngineDefinitionRpc,
@@ -267,6 +269,7 @@ export type DesktopTransport = {
   };
   diagnostics: {
     get: (sessionId: string) => Promise<DiagnosticsSnapshotRpc>;
+    write: (input: DiagnosticsWriteInputRpc) => Promise<DiagnosticsWriteResultRpc>;
   };
   backgroundRun: {
     get: (sessionId: string) => Promise<BackgroundRunSnapshotRpc>;
@@ -333,10 +336,94 @@ export const createDesktopTransport = (
 ): DesktopTransport => {
   const createId = options.createId ?? createOpaqueId;
   const now = options.now ?? (() => new Date().toISOString());
+  const writeDiagnosticDirect = async (
+    input: DiagnosticsWriteInputRpc
+  ): Promise<DiagnosticsWriteResultRpc | undefined> => {
+    const response = await preloadApi.request({
+      id: createId(),
+      method: "diagnostics.write",
+      params: input
+    });
+    if (response.method === "diagnostics.write" && response.ok) {
+      return response.result;
+    }
+    return undefined;
+  };
+  const writeDiagnosticBestEffort = (input: DiagnosticsWriteInputRpc): void => {
+    void writeDiagnosticDirect(input).catch(() => undefined);
+  };
+  const eventPushStats = {
+    count: 0,
+    firstAt: "",
+    lastAt: "",
+    lastCursor: undefined as string | undefined,
+    byType: {} as Record<string, number>
+  };
+  const flushEventPushStats = (reason: "interval" | "threshold" | "unsubscribe"): void => {
+    if (eventPushStats.count === 0) {
+      return;
+    }
+    const count = eventPushStats.count;
+    const firstAt = eventPushStats.firstAt;
+    const lastAt = eventPushStats.lastAt;
+    const lastCursor = eventPushStats.lastCursor;
+    const byType = eventPushStats.byType;
+    eventPushStats.count = 0;
+    eventPushStats.firstAt = "";
+    eventPushStats.lastAt = "";
+    eventPushStats.lastCursor = undefined;
+    eventPushStats.byType = {};
+    writeDiagnosticBestEffort({
+      kind: "event-push-batch",
+      severity: count >= 100 ? "warning" : "info",
+      source: "desktop-transport",
+      message: "Workbench event push batch.",
+      occurredAt: lastAt || now(),
+      cursor: lastCursor,
+      metrics: {
+        count,
+        typeCount: Object.keys(byType).length
+      },
+      context: {
+        reason,
+        firstAt,
+        lastAt,
+        byType
+      }
+    });
+  };
   const rpc = createTransportRpcHelper(
     preloadApi,
     createId,
-    (input) => new DesktopTransportError(input)
+    (input) => new DesktopTransportError(input),
+    {
+      now,
+      onRequestSettled: (timing) => {
+        if (timing.ok && timing.durationMs < 250) {
+          return;
+        }
+        writeDiagnosticBestEffort({
+          kind: "ipc-request",
+          severity: timing.ok ? (timing.durationMs >= 1_000 ? "warning" : "info") : "error",
+          source: "desktop-transport",
+          message: `Workbench RPC ${timing.ok ? "completed" : "failed"}: ${timing.method}`,
+          occurredAt: timing.completedAt,
+          requestId: timing.requestId,
+          metrics: {
+            durationMs: timing.durationMs,
+            paramsBytes: timing.paramsBytes,
+            responseBytes: timing.responseBytes
+          },
+          context: {
+            method: timing.method,
+            startedAt: timing.startedAt,
+            completedAt: timing.completedAt,
+            ok: timing.ok,
+            code: timing.code
+          }
+        });
+      }
+    }
   );
 
   const requestEngineList = async (): Promise<EngineDefinitionRpc[]> => {
@@ -666,6 +753,17 @@ export const createDesktopTransport = (
           sessionId
         });
         return result.diagnostics;
+      },
+      write: async (input: DiagnosticsWriteInputRpc) => {
+        const result = await writeDiagnosticDirect(input);
+        if (!result) {
+          throw new DesktopTransportError({
+            method: "diagnostics.write",
+            code: "DIAGNOSTIC_LOG_FAILED",
+            requestId: input.requestId ?? createId()
+          });
+        }
+        return result;
       }
     },
     backgroundRun: {
@@ -715,18 +813,41 @@ export const createDesktopTransport = (
         })
     },
     events: {
-      subscribe: async (input: EventSubscribeInput) =>
-        preloadApi.subscribe(
+      subscribe: async (input: EventSubscribeInput) => {
+        const flushIntervalId = globalThis.setInterval(
+          () => flushEventPushStats("interval"),
+          5_000
+        );
+        const subscription = await preloadApi.subscribe(
           {
             subscriptionId: input.subscriptionId,
             fromCursor: input.fromCursor,
             filter: input.filter
           },
           (push) => {
+            const receivedAt = now();
+            eventPushStats.count += 1;
+            eventPushStats.firstAt = eventPushStats.firstAt || receivedAt;
+            eventPushStats.lastAt = receivedAt;
+            eventPushStats.lastCursor = push.envelope.cursor ?? eventPushStats.lastCursor;
+            const eventType = push.envelope.event.type;
+            eventPushStats.byType[eventType] = (eventPushStats.byType[eventType] ?? 0) + 1;
+            if (eventPushStats.count >= 100) {
+              flushEventPushStats("threshold");
+            }
             input.onPush?.(push);
             input.onEnvelope(push.envelope);
           }
-        ),
+        );
+        return {
+          subscriptionId: subscription.subscriptionId,
+          unsubscribe: async () => {
+            globalThis.clearInterval(flushIntervalId);
+            flushEventPushStats("unsubscribe");
+            await subscription.unsubscribe();
+          }
+        };
+      },
       replay: async (input: EventReplayInput) => {
         const result = await rpc.request("events.replay", {
           fromCursor: input.fromCursor,

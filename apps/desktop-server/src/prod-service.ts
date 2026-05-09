@@ -26,6 +26,7 @@ import { EngineCapabilitySurfaceService } from "./engine-control/capability-surf
 import { CodexTurnChangesStore } from "./engine-extensions/codex/turn-changes-store.js";
 import { FileActionService } from "./file-action-service.js";
 import { ErrorLogService } from "./error-log-service.js";
+import { DiagnosticLogService } from "./diagnostic-log-service.js";
 import {
   createOpenAiSessionTitleGenerator,
   type SessionTitleGenerator
@@ -277,6 +278,10 @@ export const createWorkbenchRuntimeService = (
       revealPath: options.revealFilePath
     }),
     errorLogService: new ErrorLogService({
+      baseDir: options.persistenceBaseDir,
+      now: options.now
+    }),
+    diagnosticLogService: new DiagnosticLogService({
       baseDir: options.persistenceBaseDir,
       now: options.now
     })

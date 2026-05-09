@@ -55,6 +55,49 @@ const describeError = (error: unknown): Record<string, unknown> => {
   };
 };
 
+const collectElectronMetricsSnapshot = async (
+  window?: BrowserWindow
+): Promise<Record<string, unknown>> => {
+  const appMetrics = app.getAppMetrics().map((metric) => ({
+    pid: metric.pid,
+    type: metric.type,
+    cpu: {
+      percentCPUUsage: metric.cpu.percentCPUUsage,
+      idleWakeupsPerSecond: metric.cpu.idleWakeupsPerSecond
+    },
+    memory: {
+      workingSetSize: metric.memory.workingSetSize,
+      peakWorkingSetSize: metric.memory.peakWorkingSetSize,
+      privateBytes: metric.memory.privateBytes
+    }
+  }));
+  const memoryReader = window?.webContents as
+    | {
+        getProcessMemoryInfo?: () => Promise<Record<string, unknown>>;
+      }
+    | undefined;
+  const renderer = window?.isDestroyed()
+    ? undefined
+    : {
+        osProcessId: window?.webContents.isDestroyed()
+          ? undefined
+          : window?.webContents.getOSProcessId(),
+        url: window?.webContents.isDestroyed() ? undefined : window?.webContents.getURL(),
+        memory:
+          memoryReader?.getProcessMemoryInfo && !window?.webContents.isDestroyed()
+            ? await memoryReader.getProcessMemoryInfo().catch((error: unknown) => ({
+                unavailable: true,
+                ...describeError(error)
+              }))
+            : undefined
+      };
+
+  return {
+    appMetrics,
+    renderer
+  };
+};
+
 const reloadWindowOnce = (
   window: BrowserWindow,
   cause: string,
@@ -227,11 +270,16 @@ const installWindowDiagnostics = (
 
   webContents.on("render-process-gone", (_event, details) => {
     const record = { ...details };
-    logger.log({
-      severity: "error",
-      source: "renderer-process",
-      message: "Renderer process gone.",
-      details: record
+    void collectElectronMetricsSnapshot(window).then((snapshot) => {
+      logger.log({
+        severity: "error",
+        source: "renderer-process",
+        message: "Renderer process gone.",
+        details: {
+          ...record,
+          snapshot
+        }
+      });
     });
     if (shouldReloadForRenderProcessGone(details)) {
       reloadWindowOnce(window, "render-process-gone", record);
@@ -239,23 +287,29 @@ const installWindowDiagnostics = (
   });
 
   webContents.on("unresponsive", () => {
-    logger.log({
-      severity: "warning",
-      source: "renderer-process",
-      message: "Renderer became unresponsive.",
-      details: {
-        url: webContents.getURL()
-      }
+    void collectElectronMetricsSnapshot(window).then((snapshot) => {
+      logger.log({
+        severity: "warning",
+        source: "renderer-process",
+        message: "Renderer became unresponsive.",
+        details: {
+          url: webContents.getURL(),
+          snapshot
+        }
+      });
     });
   });
 
   webContents.on("responsive", () => {
-    logger.log({
-      source: "renderer-process",
-      message: "Renderer became responsive again.",
-      details: {
-        url: webContents.getURL()
-      }
+    void collectElectronMetricsSnapshot(window).then((snapshot) => {
+      logger.log({
+        source: "renderer-process",
+        message: "Renderer became responsive again.",
+        details: {
+          url: webContents.getURL(),
+          snapshot
+        }
+      });
     });
   });
 
@@ -310,11 +364,16 @@ const installAppDiagnostics = (logger: ElectronDiagnosticsLogger): void => {
 
   app.on("child-process-gone", (_event, details) => {
     const record = { ...details };
-    logger.log({
-      severity: "error",
-      source: "electron-child-process",
-      message: "Electron child process gone.",
-      details: record
+    void collectElectronMetricsSnapshot().then((snapshot) => {
+      logger.log({
+        severity: "error",
+        source: "electron-child-process",
+        message: "Electron child process gone.",
+        details: {
+          ...record,
+          snapshot
+        }
+      });
     });
     if (!shouldReloadForChildProcessGone(details)) {
       return;

@@ -6,6 +6,8 @@ import type {
   CodexTurnChangesUndoResultRpc,
   CommandEnvelope,
   DomainSnapshot,
+  DiagnosticsWriteInputRpc,
+  DiagnosticsWriteResultRpc,
   EngineDefinitionRpc,
   EngineSharedCapabilityRpc,
   EngineSurfaceRpc,
@@ -51,6 +53,7 @@ import { WorkspaceFileSearchService } from "./workspace-file-search-service.js";
 import { TurnChangeService } from "./turn-change-service.js";
 import { CodexTurnChangesService } from "./engine-extensions/codex/turn-changes-service.js";
 import { ErrorLogService } from "./error-log-service.js";
+import { DiagnosticLogService } from "./diagnostic-log-service.js";
 
 const defaultSessionWindowLimit = 8;
 
@@ -145,6 +148,7 @@ export type WorkbenchShellServiceOptions = {
   filePreviewService?: FilePreviewService;
   fileActionService?: FileActionService;
   errorLogService?: ErrorLogService;
+  diagnosticLogService?: DiagnosticLogService;
   turnChangeService?: TurnChangeService;
   codexTurnChangesService?: CodexTurnChangesService;
 };
@@ -169,6 +173,7 @@ export class WorkbenchShellService {
   private readonly filePreviewService: FilePreviewService;
   private readonly fileActionService: FileActionService;
   private readonly errorLogService: ErrorLogService;
+  private readonly diagnosticLogService: DiagnosticLogService;
   private readonly turnChangeService: TurnChangeService;
   private readonly codexTurnChangesService: CodexTurnChangesService;
   private openSessionGeneration = 0;
@@ -205,6 +210,8 @@ export class WorkbenchShellService {
       options.fileActionService ?? new FileActionService();
     this.errorLogService =
       options.errorLogService ?? new ErrorLogService();
+    this.diagnosticLogService =
+      options.diagnosticLogService ?? new DiagnosticLogService();
     this.turnChangeService =
       options.turnChangeService ?? new TurnChangeService();
     this.codexTurnChangesService =
@@ -713,6 +720,12 @@ export class WorkbenchShellService {
     input: ErrorLogWriteInputRpc
   ): Promise<ErrorLogWriteResultRpc> {
     return this.errorLogService.write(input);
+  }
+
+  public async writeDiagnosticLog(
+    input: DiagnosticsWriteInputRpc
+  ): Promise<DiagnosticsWriteResultRpc> {
+    return this.diagnosticLogService.write(input);
   }
 
   public async searchWorkspaceFiles(input: {

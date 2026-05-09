@@ -61,6 +61,7 @@ import {
   workspaceDirectoryActionLabel
 } from "./workspace-actions.js";
 import { useChatTreeController } from "./use-chat-tree-controller.js";
+import { useRendererDiagnostics } from "./use-renderer-diagnostics.js";
 import { buildEngineInspectorViewModel } from "./engine-summary.js";
 import { ComposerContainer } from "./composer/ComposerContainer.js";
 import "./chat-shell.css";
@@ -898,6 +899,13 @@ export const ChatShellApp = ({
   const activeSession = activeSessionId
     ? state.entities.sessions[activeSessionId]
     : undefined;
+
+  useRendererDiagnostics({
+    transport,
+    activeSessionId,
+    activeWorkspaceId: activeWorkspace?.workspaceId,
+    eventCursor: state.eventStream.lastCursor
+  });
 
   useEffect(() => {
     setWorkspaceSessionPages((current) => {

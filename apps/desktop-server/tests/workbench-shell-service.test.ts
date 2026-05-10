@@ -576,6 +576,76 @@ describe("WorkbenchShellService", () => {
     expect(markSessionRead).toHaveBeenCalledWith("session-1");
   });
 
+  it("applies capability operation guards before jumping a lightweight chat tree", async () => {
+    const setLastActiveSelection = vi.fn().mockResolvedValue(undefined);
+    const markSessionRead = vi.fn().mockResolvedValue(undefined);
+    const ensureSessionLoaded = vi.fn().mockResolvedValue(true);
+    const jumpConversationGraph = vi.fn().mockResolvedValue({
+      jumped: true
+    });
+    const hydrateSessionWindow = vi.fn().mockResolvedValue({
+      workspaceId: "workspace-1",
+      conversation: buildSessionSnapshot().conversations[0],
+      session: buildSessionSnapshot().sessions[0],
+      turns: [buildSessionSnapshot().turns[1]],
+      messageBlocks: [],
+      toolCalls: [],
+      terminalStreams: [],
+      sessionRelations: [],
+      hasOlder: true,
+      hasNewer: false
+    });
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        listSessions: () => [],
+        getSession: (sessionId: string) =>
+          buildSessionSnapshot().sessions.find((session) => session.sessionId === sessionId),
+        getSnapshot: () => buildSessionSnapshot(),
+        getWorkspaceRegistry: () => ({
+          setLastActiveSelection
+        }),
+        getSessionIndexStore: () => ({
+          getEntry: () => ({
+            sessionId: "session-1",
+            workspaceId: "workspace-1"
+          })
+        })
+      } as never,
+      sessionCatalog: {
+        markSessionRead
+      } as never,
+      capabilities: {
+        getOperationGuards: vi.fn().mockReturnValue(["interactive-session"]),
+        jumpConversationGraph
+      } as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never,
+      sessionReconciliation: {
+        ensureSessionLoaded,
+        hydrateSessionWindow
+      } as never
+    });
+
+    await service.openSession("session-1");
+    await expect(
+      service.jumpChatTree({
+        sessionId: "session-1",
+        nodeId: "node-2",
+        expectedRevision: 4
+      })
+    ).resolves.toEqual({
+      jumped: true
+    });
+
+    expect(ensureSessionLoaded).toHaveBeenCalledWith("session-1", {
+      force: true
+    });
+    expect(jumpConversationGraph).toHaveBeenCalledWith("session-1", "node-2", 4);
+    expect(ensureSessionLoaded.mock.invocationCallOrder[0]).toBeLessThan(
+      jumpConversationGraph.mock.invocationCallOrder[0]
+    );
+  });
+
   it("does not activate a stale lightweight open after a newer open cancels it", async () => {
     const setLastActiveSelection = vi.fn().mockResolvedValue(undefined);
     const markSessionRead = vi.fn().mockResolvedValue(undefined);

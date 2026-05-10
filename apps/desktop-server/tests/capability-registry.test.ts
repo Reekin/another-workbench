@@ -154,6 +154,9 @@ describe("CapabilityRegistry", () => {
       capabilities: [
         {
           engineId: "codex",
+          operationGuards: {
+            "conversationGraph.jump": ["interactive-session"]
+          },
           sessionActions: {
             resolveDisplayedSessionId: () => "thread-1",
             listAdditionalActions: async () => [
@@ -257,6 +260,9 @@ describe("CapabilityRegistry", () => {
       ],
       fetchedAt: "2026-04-20T00:10:00.000Z"
     });
+    expect(
+      registry.getOperationGuards("session-codex", "conversationGraph.jump")
+    ).toEqual(["interactive-session"]);
     await expect(
       registry.jumpConversationGraph("session-codex", "node-2")
     ).resolves.toEqual({

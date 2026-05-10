@@ -145,6 +145,14 @@ export type BackgroundRunSnapshot = {
   fetchedAt: string;
 };
 
+export type CapabilityOperation = "conversationGraph.jump";
+
+export type CapabilityOperationGuard = "interactive-session";
+
+export type CapabilityOperationGuards = Partial<
+  Record<CapabilityOperation, readonly CapabilityOperationGuard[]>
+>;
+
 export type SessionCapabilityContext = ResolvedSessionContext & {
   runtimeService: WorkbenchRuntimeService;
   sessionIndexStore: SessionIndexStore;
@@ -193,6 +201,7 @@ export type BackgroundRunCapability = {
 
 export type AgentWorkbenchCapabilities = {
   readonly engineId: string;
+  readonly operationGuards?: CapabilityOperationGuards;
   readonly sessionActions?: SessionActionsCapability;
   readonly conversationGraph?: ConversationGraphCapability;
   readonly delegation?: DelegationCapability;
@@ -321,6 +330,17 @@ export class CapabilityRegistry {
     engineId: string | undefined
   ): SessionDiscoveryProvider | undefined {
     return this.getEngineCapabilities(engineId)?.sessionDiscovery;
+  }
+
+  public getOperationGuards(
+    sessionId: string,
+    operation: CapabilityOperation
+  ): readonly CapabilityOperationGuard[] {
+    const context = this.resolveContext(sessionId);
+    if (!context.engineId) {
+      throw new Error(`Unknown session: ${sessionId}`);
+    }
+    return this.getEngineCapabilities(context.engineId)?.operationGuards?.[operation] ?? [];
   }
 
   public listSessionDiscoveryProviders(): SessionDiscoveryProvider[] {

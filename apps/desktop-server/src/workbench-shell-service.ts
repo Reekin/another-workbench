@@ -20,6 +20,7 @@ import type { RuntimeEventFilter, RuntimeEventReplayInput } from "@another-workb
 import {
   type BackgroundRunSnapshot,
   CapabilityRegistry,
+  type CapabilityOperationGuard,
   type CheckpointSnapshot,
   type ConversationGraphSnapshot as ChatTreeSnapshot,
   type DelegationSnapshot,
@@ -621,6 +622,11 @@ export class WorkbenchShellService {
     nodeId: string;
     expectedRevision?: number;
   }): Promise<{ jumped: boolean }> {
+    await this.applyCapabilityOperationGuards(
+      input.sessionId,
+      this.capabilities?.getOperationGuards(input.sessionId, "conversationGraph.jump") ??
+        []
+    );
     return this.capabilities
       ? this.capabilities.jumpConversationGraph(
           input.sessionId,
@@ -844,6 +850,15 @@ export class WorkbenchShellService {
     await this.ensureInteractiveSessionLoaded(command.sessionId, {
       requiresFullHydration
     });
+  }
+
+  private async applyCapabilityOperationGuards(
+    sessionId: string,
+    guards: readonly CapabilityOperationGuard[]
+  ): Promise<void> {
+    if (guards.includes("interactive-session")) {
+      await this.ensureInteractiveSessionLoaded(sessionId);
+    }
   }
 
   private async ensureInteractiveSessionLoaded(

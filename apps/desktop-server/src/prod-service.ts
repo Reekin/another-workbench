@@ -206,6 +206,9 @@ export const createWorkbenchRuntimeService = (
     capabilities: [
       {
         engineId: codexAgentId,
+        operationGuards: {
+          "conversationGraph.jump": ["interactive-session"]
+        },
         sessionDiscovery: new CodexSessionDiscoveryProvider({
           codexRuntimePort,
           turnChangesStore: codexTurnChangesStore

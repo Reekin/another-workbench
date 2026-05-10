@@ -41,7 +41,7 @@ const createRuntimeService = () =>
       let index = 0;
       return () => `event-${++index}`;
     })(),
-    agents: [
+    engines: [
       {
         engineId: "codex",
         displayName: "Codex",

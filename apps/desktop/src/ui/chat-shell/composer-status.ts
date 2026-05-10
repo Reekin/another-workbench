@@ -20,7 +20,8 @@ export type ComposerStatusNotice = {
     | "chat-tree"
     | "delegation"
     | "files"
-    | "settings";
+    | "settings"
+    | "takeover";
 };
 
 export const statusNoticeErrorDetails = (

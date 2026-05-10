@@ -27,7 +27,7 @@ const run = async (): Promise<void> => {
       commandId: "smoke-pi-create-session",
       command: {
         type: "createSession",
-        agentId: "pi-acp",
+        engineId: "pi-acp",
         conversationId
       }
     });

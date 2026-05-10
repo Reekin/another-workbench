@@ -11,7 +11,8 @@ import type {
   Conversation,
   DomainSnapshot,
   RuntimeEvent,
-  SessionRelation
+  SessionRelation,
+  SessionRelationType
 } from "@another-workbench/shared";
 import {
   parseAgentParticipant,
@@ -316,6 +317,57 @@ export class DomainService {
     });
     this.publishConversationUpdated({
       conversationId: childSession.conversationId,
+      activeSessionId: childSession.sessionId
+    });
+
+    return {
+      parentSession,
+      childSession,
+      relation
+    };
+  }
+
+  public createRelatedSession(input: {
+    parentSessionId: string;
+    engineId: string;
+    relationType: SessionRelationType;
+    sourceTurnId?: string;
+    metadata?: Record<string, unknown>;
+    workspaceId?: string;
+  }): {
+    parentSession: ChatSession;
+    childSession: ChatSession;
+    relation: SessionRelation;
+  } {
+    const parentSession = this.requireSession(input.parentSessionId);
+    const timestamp = this.now();
+    const childSession = this.sessionManager.createSession({
+      conversationId: parentSession.conversationId,
+      engineId: input.engineId,
+      metadata: input.metadata
+    });
+    const relation = parseSessionRelation({
+      relationId: this.createRelationId(),
+      parentSessionId: parentSession.sessionId,
+      childSessionId: childSession.sessionId,
+      relationType: input.relationType,
+      sourceTurnId: input.sourceTurnId,
+      createdAt: timestamp
+    });
+
+    this.primeConversationForSession(childSession, input.workspaceId);
+    this.ensureParticipantForSession(childSession);
+    this.commitRuntimeEvent({
+      type: "session.created",
+      conversationId: childSession.conversationId,
+      sessionId: childSession.sessionId,
+      engineId: childSession.engineId,
+      status: childSession.status,
+      relation
+    });
+    this.publishConversationUpdated({
+      conversationId: childSession.conversationId,
+      workspaceId: input.workspaceId,
       activeSessionId: childSession.sessionId
     });
 

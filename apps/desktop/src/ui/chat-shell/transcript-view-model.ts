@@ -346,6 +346,7 @@ export type TurnTranscriptRow = {
   turnIdentity: ParticipantIdentity;
   messageRole: MessageRole;
   isFinalResponseRow: boolean;
+  canDisplayAsFinalResponse: boolean;
   blocks: MessageBlock[];
   toolCalls: ToolCall[];
   terminalStreams: TerminalStream[];
@@ -404,6 +405,7 @@ const buildRunningTurnRows = (
         ),
         messageRole: "assistant",
         isFinalResponseRow: false,
+        canDisplayAsFinalResponse: false,
         blocks,
         toolCalls,
         terminalStreams,
@@ -433,6 +435,7 @@ const buildRunningTurnRows = (
         ),
         messageRole: entry.group.role,
         isFinalResponseRow: false,
+        canDisplayAsFinalResponse: false,
         blocks: entry.group.blocks,
         toolCalls: [],
         terminalStreams: [],
@@ -467,6 +470,7 @@ const buildRunningTurnRows = (
       ),
       messageRole: "assistant" as const,
       isFinalResponseRow: false,
+      canDisplayAsFinalResponse: false,
       blocks: processBlocks,
       toolCalls: processToolCalls,
       terminalStreams: processTerminalStreams,
@@ -523,6 +527,7 @@ export const buildTurnTranscriptRows = (
           ),
           messageRole: "assistant" as const,
           isFinalResponseRow: false,
+          canDisplayAsFinalResponse: false,
           blocks,
           toolCalls,
           terminalStreams,
@@ -533,15 +538,26 @@ export const buildTurnTranscriptRows = (
       ];
     }
 
-    return blockGroups.map((group, index) => {
+    const hasPhaseAwareAssistantBlocks = blocks.some(
+      (block) => block.role === "assistant" && block.phase
+    );
+    const rows: TurnTranscriptRow[] = blockGroups.map((group, index) => {
       const isAssistantLike = group.role !== "user";
       const isFinalResponseRow =
         group.role === "assistant" &&
         typeof turn.finalMessageId === "string" &&
         group.blocks.some((block) => block.messageId === turn.finalMessageId);
+      const canDisplayAsFinalResponse =
+        isFinalResponseRow ||
+        (group.role === "assistant" &&
+          group.blocks.some(
+            (block) =>
+              block.phase === "final_answer" ||
+              (!hasPhaseAwareAssistantBlocks && !block.phase)
+          ));
       return {
         rowId: `${turn.turnId}:${group.role}:${index}`,
-        rowKind: "message",
+        rowKind: "message" as const,
         startedAt: group.blocks[0]?.startedAt ?? turn.startedAt,
         turn,
         turnIdentity: resolveTurnIdentity(
@@ -555,6 +571,7 @@ export const buildTurnTranscriptRows = (
         ),
         messageRole: group.role,
         isFinalResponseRow,
+        canDisplayAsFinalResponse,
         blocks: group.blocks,
         toolCalls: isAssistantLike ? toolCalls : [],
         terminalStreams: isAssistantLike ? terminalStreams : [],
@@ -563,5 +580,40 @@ export const buildTurnTranscriptRows = (
         defaultProcessExpanded: isAssistantLike && turn.status !== "completed"
       };
     });
+
+    if (
+      rows.some((row) => row.canDisplayAsFinalResponse) ||
+      !hasPhaseAwareAssistantBlocks
+    ) {
+      return rows;
+    }
+
+    return [
+      ...rows,
+      {
+        rowId: `${turn.turnId}:assistant:pending-final`,
+        rowKind: "message" as const,
+        startedAt: turn.completedAt ?? turn.startedAt,
+        turn,
+        turnIdentity: resolveTurnIdentity(
+          participantDirectory,
+          "assistant",
+          turn,
+          [],
+          toolCalls,
+          terminalStreams,
+          approvals
+        ),
+        messageRole: "assistant" as const,
+        isFinalResponseRow: false,
+        canDisplayAsFinalResponse: true,
+        blocks: [],
+        toolCalls,
+        terminalStreams,
+        approvals,
+        hasProcessDetails,
+        defaultProcessExpanded: false
+      }
+    ];
   });
 };

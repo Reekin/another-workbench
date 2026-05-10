@@ -160,7 +160,11 @@ const selectFinalAssistantMessageId = (
     const assistantBlocks = Object.values(state.entities.messageBlocks).filter(
       (block) => block.messageId === candidateMessageId && block.role === "assistant"
     );
-    if (assistantBlocks.length > 0) {
+    const hasPhaseAwareBlocks = assistantBlocks.some((block) => block.phase);
+    const hasFallbackEligibleBlocks = assistantBlocks.some(
+      (block) => block.phase === "final_answer" || (!hasPhaseAwareBlocks && !block.phase)
+    );
+    if (hasFallbackEligibleBlocks) {
       return candidateMessageId;
     }
   }
@@ -674,6 +678,7 @@ const applyRuntimeEvent = (
           sessionId: event.sessionId,
           turnId: event.turnId,
           role: current?.role ?? event.role,
+          phase: event.phase ?? current?.phase,
           kind: "markdown",
           text: current?.text ?? "",
           actor: current?.actor ?? buildActorRef(event),
@@ -697,6 +702,7 @@ const applyRuntimeEvent = (
         withEventType(state, event.type),
         {
           ...base,
+          phase: event.phase ?? base.phase,
           text: `${base.text ?? ""}${event.delta}`
         }
       );
@@ -719,6 +725,7 @@ const applyRuntimeEvent = (
           sessionId: event.sessionId,
           turnId: event.turnId,
           role: "assistant",
+          phase: event.phase,
           kind: "markdown",
           text: "",
           actor: buildActorRef(event),
@@ -728,6 +735,7 @@ const applyRuntimeEvent = (
         withEventType(state, event.type),
         {
           ...base,
+          phase: event.phase ?? base.phase,
           text: event.finalText ?? base.text ?? "",
           actor: base.actor ?? buildActorRef(event),
           completedAt: timestamp

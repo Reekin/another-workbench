@@ -28,6 +28,8 @@ export type SessionBrowserNode = {
   title: string;
   summaryText?: string;
   statusDot: SessionStatusDot;
+  takeoverStatus?: "managed" | "agent";
+  takeoverPresetId?: string;
   isExpanded: boolean;
   isActive: boolean;
   isArchived: boolean;
@@ -50,6 +52,9 @@ type SessionCatalogServiceOptions = {
   runtimeService: WorkbenchRuntimeService;
   workspaceRegistry: WorkspaceRegistryService;
   sessionIndexStore: SessionIndexStore;
+  resolveTakeoverMarker?: (
+    sessionId: string
+  ) => { takeoverStatus?: "managed" | "agent"; takeoverPresetId?: string };
 };
 
 type SessionCatalogSeed = {
@@ -67,6 +72,7 @@ type SessionCatalogSeed = {
   archivedAt?: string;
   runtimeStatus?: ChatSession["status"];
   unreadState?: SessionIndexEntry["unreadState"];
+  metadata?: Record<string, unknown>;
 };
 
 const compareSeedLastCompletedTurnAtDesc = (
@@ -125,7 +131,8 @@ const toSeedFromRuntime = (
     updatedAt: session.updatedAt,
     lastCompletedTurnAt: lastCompletedTurnAtBySessionId.get(session.sessionId),
     archivedAt: session.archivedAt,
-    runtimeStatus: session.status
+    runtimeStatus: session.status,
+    metadata: session.metadata
   };
 };
 
@@ -140,11 +147,15 @@ export class SessionCatalogService {
   private readonly runtimeService: WorkbenchRuntimeService;
   private readonly workspaceRegistry: WorkspaceRegistryService;
   private readonly sessionIndexStore: SessionIndexStore;
+  private readonly resolveTakeoverMarker:
+    | SessionCatalogServiceOptions["resolveTakeoverMarker"]
+    | undefined;
 
   public constructor(options: SessionCatalogServiceOptions) {
     this.runtimeService = options.runtimeService;
     this.workspaceRegistry = options.workspaceRegistry;
     this.sessionIndexStore = options.sessionIndexStore;
+    this.resolveTakeoverMarker = options.resolveTakeoverMarker;
   }
 
   public async listWorkspaceTree(workspaceId?: string): Promise<WorkspaceBrowserNode[]> {
@@ -176,7 +187,8 @@ export class SessionCatalogService {
         updatedAt: entry.updatedAt,
         lastCompletedTurnAt: entry.lastCompletedTurnAt,
         archivedAt: entry.archivedAt,
-        unreadState: entry.unreadState
+        unreadState: entry.unreadState,
+        metadata: entry.metadata
       });
     }
     for (const runtimeSeed of runtimeSeeds) {
@@ -187,7 +199,8 @@ export class SessionCatalogService {
         lastCompletedTurnAt:
           runtimeSeed.lastCompletedTurnAt ?? existing?.lastCompletedTurnAt,
         summaryText: existing?.summaryText,
-        unreadState: existing?.unreadState
+        unreadState: existing?.unreadState,
+        metadata: runtimeSeed.metadata ?? existing?.metadata
       });
     }
 
@@ -309,6 +322,9 @@ export class SessionCatalogService {
         })
       );
 
+    const marker =
+      this.resolveTakeoverMarker?.(input.seed.sessionId) ??
+      this.resolveMetadataTakeoverMarker(input.seed.metadata);
     return {
       sessionId: input.seed.sessionId,
       displaySessionId: input.seed.providerSessionId ?? input.seed.sessionId,
@@ -334,6 +350,8 @@ export class SessionCatalogService {
           : input.seed.unreadState === "unread_completed"
             ? "unread_completed"
             : "none",
+      takeoverStatus: marker.takeoverStatus,
+      takeoverPresetId: marker.takeoverPresetId,
       isExpanded: input.expandedSessionIds.includes(input.seed.sessionId),
       isActive: input.activeSessionId === input.seed.sessionId,
       isArchived: Boolean(input.seed.archivedAt),
@@ -341,6 +359,24 @@ export class SessionCatalogService {
       children,
       updatedAt: input.seed.updatedAt,
       lastCompletedTurnAt: input.seed.lastCompletedTurnAt
+    };
+  }
+
+  private resolveMetadataTakeoverMarker(
+    metadata: Record<string, unknown> | undefined
+  ): { takeoverStatus?: "managed" | "agent"; takeoverPresetId?: string } {
+    const takeover = metadata?.takeover;
+    if (!takeover || typeof takeover !== "object" || Array.isArray(takeover)) {
+      return {};
+    }
+    const record = takeover as Record<string, unknown>;
+    if (record.role !== "takeover-agent") {
+      return {};
+    }
+    return {
+      takeoverStatus: "agent",
+      takeoverPresetId:
+        typeof record.presetId === "string" ? record.presetId : undefined
     };
   }
 }

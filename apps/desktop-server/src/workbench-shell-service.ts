@@ -14,7 +14,10 @@ import type {
   EventEnvelope,
   ErrorLogWriteInputRpc,
   ErrorLogWriteResultRpc,
-  SkillDescriptorRpc
+  SkillDescriptorRpc,
+  TakeoverPresetDocumentRpc,
+  TakeoverPresetSummaryRpc,
+  TakeoverSessionStateRpc
 } from "@another-workbench/shared";
 import type { RuntimeEventFilter, RuntimeEventReplayInput } from "@another-workbench/core";
 import {
@@ -55,6 +58,8 @@ import { TurnChangeService } from "./turn-change-service.js";
 import { CodexTurnChangesService } from "./engine-extensions/codex/turn-changes-service.js";
 import { ErrorLogService } from "./error-log-service.js";
 import { DiagnosticLogService } from "./diagnostic-log-service.js";
+import { TakeoverPresetStore } from "./takeover-preset-store.js";
+import type { SmartTakeoverService } from "./smart-takeover-service.js";
 
 const defaultSessionWindowLimit = 8;
 
@@ -152,6 +157,8 @@ export type WorkbenchShellServiceOptions = {
   diagnosticLogService?: DiagnosticLogService;
   turnChangeService?: TurnChangeService;
   codexTurnChangesService?: CodexTurnChangesService;
+  takeoverPresetStore?: TakeoverPresetStore;
+  smartTakeoverService?: SmartTakeoverService;
 };
 
 export class WorkbenchShellService {
@@ -177,6 +184,8 @@ export class WorkbenchShellService {
   private readonly diagnosticLogService: DiagnosticLogService;
   private readonly turnChangeService: TurnChangeService;
   private readonly codexTurnChangesService: CodexTurnChangesService;
+  private readonly takeoverPresetStore: TakeoverPresetStore;
+  private readonly smartTakeoverService: SmartTakeoverService | undefined;
   private openSessionGeneration = 0;
   private readonly partiallyHydratedSessionIds = new Set<string>();
 
@@ -213,6 +222,9 @@ export class WorkbenchShellService {
       options.errorLogService ?? new ErrorLogService();
     this.diagnosticLogService =
       options.diagnosticLogService ?? new DiagnosticLogService();
+    this.takeoverPresetStore =
+      options.takeoverPresetStore ?? new TakeoverPresetStore();
+    this.smartTakeoverService = options.smartTakeoverService;
     this.turnChangeService =
       options.turnChangeService ?? new TurnChangeService();
     this.codexTurnChangesService =
@@ -272,6 +284,59 @@ export class WorkbenchShellService {
       });
     }
     return this.getSettings();
+  }
+
+  public async listTakeoverPresets(): Promise<{
+    rootPath: string;
+    presets: TakeoverPresetSummaryRpc[];
+  }> {
+    return this.takeoverPresetStore.list();
+  }
+
+  public async readTakeoverPreset(input: {
+    presetId: string;
+  }): Promise<TakeoverPresetDocumentRpc> {
+    return this.takeoverPresetStore.read(input.presetId);
+  }
+
+  public async upsertTakeoverPreset(input: {
+    presetId: string;
+    prompt: string;
+    displayName?: string;
+  }): Promise<TakeoverPresetDocumentRpc> {
+    return this.takeoverPresetStore.upsert(input);
+  }
+
+  public async deleteTakeoverPreset(input: {
+    presetId: string;
+  }): Promise<{ presetId: string; deleted: boolean }> {
+    return this.takeoverPresetStore.delete(input.presetId);
+  }
+
+  public getTakeoverState(input: {
+    sessionId: string;
+  }): TakeoverSessionStateRpc {
+    return (
+      this.smartTakeoverService?.getSessionState(input.sessionId) ?? {
+        sessionId: input.sessionId,
+        role: "none",
+        active: false
+      }
+    );
+  }
+
+  public async setManualTakeover(input: {
+    sessionId: string;
+    presetId?: string;
+  }): Promise<TakeoverSessionStateRpc> {
+    if (!this.smartTakeoverService) {
+      return {
+        sessionId: input.sessionId,
+        role: "none",
+        active: false
+      };
+    }
+    return this.smartTakeoverService.setManualTakeover(input);
   }
 
   public async executeCommand(input: CommandEnvelope) {

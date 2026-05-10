@@ -6,6 +6,7 @@ import type { ServiceTier } from "../ServiceTier";
 import type { JsonValue } from "../serde_json/JsonValue";
 import type { ApprovalsReviewer } from "./ApprovalsReviewer";
 import type { AskForApproval } from "./AskForApproval";
+import type { DynamicToolSpec } from "./DynamicToolSpec";
 import type { SandboxMode } from "./SandboxMode";
 
 export type ThreadStartParams = {model?: string | null, modelProvider?: string | null, serviceTier?: ServiceTier | null | null, cwd?: string | null, approvalPolicy?: AskForApproval | null, /**
@@ -13,6 +14,9 @@ export type ThreadStartParams = {model?: string | null, modelProvider?: string |
  * and subsequent turns.
  */
 approvalsReviewer?: ApprovalsReviewer | null, sandbox?: SandboxMode | null, config?: { [key in string]?: JsonValue } | null, serviceName?: string | null, baseInstructions?: string | null, developerInstructions?: string | null, personality?: Personality | null, ephemeral?: boolean | null, /**
+ * Register experimental dynamic tools for this thread.
+ */
+dynamicTools?: Array<DynamicToolSpec> | null, /**
  * If true, opt into emitting raw Responses API items on the event stream.
  * This is for internal use only (e.g. Codex Cloud).
  */

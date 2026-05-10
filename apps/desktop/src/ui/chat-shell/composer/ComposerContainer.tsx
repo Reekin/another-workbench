@@ -2,6 +2,8 @@ import type { ReactElement } from "react";
 import type {
   ApprovalRequest,
   ChatSession,
+  TakeoverPresetSummaryRpc,
+  TakeoverSessionStateRpc,
   Turn
 } from "@another-workbench/shared";
 import type { DesktopTransport } from "../../../transport/desktop-transport.js";
@@ -21,12 +23,17 @@ export type ComposerContainerProps = {
   activeWorkspaceRootPath?: string;
   turns: Turn[];
   approvals: ApprovalRequest[];
+  takeoverPresets: TakeoverPresetSummaryRpc[];
+  takeoverState?: TakeoverSessionStateRpc;
+  isTakeoverMenuOpen: boolean;
   isOpeningSelectedSession: boolean;
   statusNotice?: ComposerStatusNotice;
   onStatusNotice: (notice: ComposerStatusNotice | undefined) => void;
   onPreviewImage?: (input: ImageLightboxState) => void;
   onCreateSession?: (workspaceId: string, engineId: string) => Promise<void>;
   onOpenSession?: (sessionId: string) => Promise<void>;
+  onToggleTakeoverMenu: () => void;
+  onSelectTakeoverPreset: (presetId?: string) => Promise<void>;
   onRespondApproval?: (input: ApprovalResponseInput) => Promise<void>;
 };
 
@@ -40,12 +47,17 @@ export const ComposerContainer = ({
   activeWorkspaceRootPath,
   turns,
   approvals,
+  takeoverPresets,
+  takeoverState,
+  isTakeoverMenuOpen,
   isOpeningSelectedSession,
   statusNotice,
   onStatusNotice,
   onPreviewImage,
   onCreateSession,
   onOpenSession,
+  onToggleTakeoverMenu,
+  onSelectTakeoverPreset,
   onRespondApproval
 }: ComposerContainerProps): ReactElement => {
   const composer = useComposerController({
@@ -58,6 +70,7 @@ export const ComposerContainer = ({
     activeWorkspaceRootPath,
     turns,
     approvals,
+    isTakeoverManaged: takeoverState?.role === "managed",
     isOpeningSelectedSession,
     statusNotice,
     onStatusNotice,
@@ -78,6 +91,9 @@ export const ComposerContainer = ({
       status={composer.status}
       pendingApprovals={approvals.filter((approval) => approval.status === "pending")}
       contextUsage={activeSession?.contextUsage}
+      takeoverPresets={takeoverPresets}
+      takeoverState={takeoverState}
+      isTakeoverMenuOpen={isTakeoverMenuOpen}
       intent={composer.intent}
       supportsSteer={composer.capabilities.supportsSteer}
       supportsAttachments={composer.capabilities.supportsAttachments}
@@ -98,6 +114,8 @@ export const ComposerContainer = ({
       onRemoveAttachment={composer.onRemoveAttachment}
       onPreviewAttachment={onPreviewImage}
       onPickAttachments={composer.onPickAttachments}
+      onToggleTakeoverMenu={onToggleTakeoverMenu}
+      onSelectTakeoverPreset={onSelectTakeoverPreset}
       onPrimaryAction={composer.onPrimaryAction}
       onQueueCurrent={composer.onQueueCurrent}
       onStop={composer.onStop}

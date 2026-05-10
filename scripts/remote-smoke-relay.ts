@@ -328,7 +328,7 @@ const run = async (): Promise<void> => {
             commandId: "relay-smoke-command-1",
             command: {
               type: "createSession",
-              agentId: "codex",
+              engineId: "codex",
               conversationId: "relay-smoke-conversation"
             }
           }
@@ -377,7 +377,7 @@ const run = async (): Promise<void> => {
                 commandId: "relay-smoke-command-2",
                 command: {
                   type: "createSession",
-                  agentId: "codex",
+                  engineId: "codex",
                   conversationId: "relay-smoke-conversation"
                 }
               }

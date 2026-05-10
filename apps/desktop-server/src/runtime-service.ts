@@ -5,8 +5,10 @@ import type {
   CommandEnvelope,
   DomainSnapshot,
   EventEnvelope,
-  ProviderSessionHandle
+  ProviderSessionHandle,
+  SessionRelationType
 } from "@another-workbench/shared";
+import type { SessionExecutionProfileInput } from "@another-workbench/shared";
 import type {
   SessionIndexStore,
   SessionRelationIndex
@@ -155,6 +157,18 @@ export class WorkbenchRuntimeService {
     command: Extract<Command, { type: "createSession" }>
   ): Promise<ChatSession> {
     return this.runtimeOrchestrator.createSession(command);
+  }
+
+  public async createRelatedSession(command: {
+    parentSessionId: string;
+    engineId: string;
+    relationType: SessionRelationType;
+    sourceTurnId?: string;
+    sessionProfile?: SessionExecutionProfileInput;
+    metadata?: Record<string, unknown>;
+    workspaceId?: string;
+  }): Promise<ChatSession> {
+    return this.runtimeOrchestrator.createRelatedSession(command);
   }
 
   public resolveConversationIdForSession(

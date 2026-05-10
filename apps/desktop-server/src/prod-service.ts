@@ -27,6 +27,9 @@ import { CodexTurnChangesStore } from "./engine-extensions/codex/turn-changes-st
 import { FileActionService } from "./file-action-service.js";
 import { ErrorLogService } from "./error-log-service.js";
 import { DiagnosticLogService } from "./diagnostic-log-service.js";
+import { HostToolRegistry } from "./host-tools.js";
+import { SmartTakeoverService } from "./smart-takeover-service.js";
+import { TakeoverPresetStore } from "./takeover-preset-store.js";
 import {
   createOpenAiSessionTitleGenerator,
   type SessionTitleGenerator
@@ -67,6 +70,11 @@ export const createWorkbenchRuntimeService = (
   const codexTurnChangesStore = new CodexTurnChangesStore({
     now: options.now
   });
+  const takeoverPresetStore = new TakeoverPresetStore({
+    baseDir: options.persistenceBaseDir,
+    now: options.now
+  });
+  const hostTools = new HostToolRegistry();
   const codexRuntimePort = createCodexAppServerRuntimePort({
     engineId: codexAgentId,
     commandPath: options.codexCommandPath,
@@ -74,6 +82,7 @@ export const createWorkbenchRuntimeService = (
     resolveConversationIdBySessionId: (sessionId: string) =>
       service?.resolveConversationIdForSession(sessionId),
     recordTurnChanges: (input) => codexTurnChangesStore.record(input),
+    hostTools,
     now: options.now
   });
   const piRuntimePort = createPiAcpRuntimePort({
@@ -190,10 +199,20 @@ export const createWorkbenchRuntimeService = (
   });
 
   service = runtimeService;
+  const smartTakeoverService = new SmartTakeoverService({
+    runtimeService,
+    presetStore: takeoverPresetStore,
+    now: options.now
+  });
+  for (const tool of smartTakeoverService.createHostTools()) {
+    hostTools.register(tool);
+  }
   const sessionCatalog = new SessionCatalogService({
     runtimeService,
     workspaceRegistry,
-    sessionIndexStore
+    sessionIndexStore,
+    resolveTakeoverMarker: (sessionId) =>
+      smartTakeoverService.getSessionMarker(sessionId)
   });
   const sessionIdentity = new SessionIdentityRegistry({
     runtimeService,
@@ -287,7 +306,9 @@ export const createWorkbenchRuntimeService = (
     diagnosticLogService: new DiagnosticLogService({
       baseDir: options.persistenceBaseDir,
       now: options.now
-    })
+    }),
+    takeoverPresetStore,
+    smartTakeoverService
   });
 };
 

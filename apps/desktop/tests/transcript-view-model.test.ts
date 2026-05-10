@@ -749,12 +749,107 @@ describe("transcript view model", () => {
     expect(rows[2]).toMatchObject({
       messageRole: "assistant",
       isFinalResponseRow: true,
+      canDisplayAsFinalResponse: true,
       blocks: [
         expect.objectContaining({
           blockId: "message-assistant-2:md",
           text: "Final answer."
         })
       ]
+    });
+  });
+
+  it("keeps phase-aware commentary out of the final response candidate", () => {
+    const store = createRendererStore();
+    store.hydrateSnapshot(
+      parseDomainSnapshot({
+        conversations: [
+          {
+            conversationId: "conv-1",
+            participantEngineIds: ["agent-1"],
+            activeSessionId: "session-1",
+            sessionIds: ["session-1"],
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-1",
+            conversationId: "conv-1",
+            engineId: "agent-1",
+            status: "running",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        turns: [
+          {
+            turnId: "turn-1",
+            sessionId: "session-1",
+            status: "completed",
+            finishReason: "completed",
+            startedAt: "2026-04-17T00:00:01.000Z",
+            completedAt: "2026-04-17T00:00:03.000Z",
+            messageIds: ["message-user", "message-commentary"],
+            toolCallIds: [],
+            terminalIds: [],
+            approvalRequestIds: []
+          }
+        ],
+        messageBlocks: [
+          {
+            blockId: "message-user:md",
+            messageId: "message-user",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "user",
+            kind: "markdown",
+            text: "Please do the work.",
+            startedAt: "2026-04-17T00:00:01.000Z"
+          },
+          {
+            blockId: "message-commentary:md",
+            messageId: "message-commentary",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "assistant",
+            phase: "commentary",
+            kind: "markdown",
+            text: "I will inspect the code first.",
+            startedAt: "2026-04-17T00:00:02.000Z"
+          }
+        ],
+        toolCalls: [],
+        terminalStreams: [],
+        approvalRequests: [],
+        participants: [],
+        sessionRelations: []
+      })
+    );
+
+    const rows = buildTurnTranscriptRows(
+      store.getState(),
+      selectTurnsForSession(store.getState(), "session-1"),
+      buildParticipantDirectory([])
+    );
+
+    expect(rows).toHaveLength(3);
+    expect(rows[1]).toMatchObject({
+      messageRole: "assistant",
+      canDisplayAsFinalResponse: false,
+      blocks: [
+        expect.objectContaining({
+          phase: "commentary",
+          text: "I will inspect the code first."
+        })
+      ]
+    });
+    expect(rows[2]).toMatchObject({
+      rowId: "turn-1:assistant:pending-final",
+      messageRole: "assistant",
+      canDisplayAsFinalResponse: true,
+      blocks: []
     });
   });
 });

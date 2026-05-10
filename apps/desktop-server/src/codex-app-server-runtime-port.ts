@@ -40,6 +40,7 @@ import type { ThreadItem } from "./codex-app-server-generated/v2/ThreadItem.js";
 import type { ResponseItem } from "./codex-app-server-generated/ResponseItem.js";
 import type { SkillsListParams } from "./codex-app-server-generated/v2/SkillsListParams.js";
 import type { SkillsListResponse } from "./codex-app-server-generated/v2/SkillsListResponse.js";
+import type { JsonValue } from "./codex-app-server-generated/serde_json/JsonValue.js";
 import { buildCodexTurnInput } from "./attachment-inputs.js";
 import {
   type RecordedCodexTurnChanges,
@@ -57,6 +58,11 @@ import {
   summarizeCodexReasoningThreadItem,
   summarizeCodexWebSearchAction
 } from "./engine-extensions/codex/process-activity.js";
+import type {
+  HostToolContentItem,
+  HostToolRegistry,
+  HostToolResult
+} from "./host-tools.js";
 
 type RuntimeListener = (event: CodexRuntimeEvent) => void;
 
@@ -124,6 +130,7 @@ export type CodexAppServerRuntimePortOptions = {
   commandArgs?: string[];
   resolveConversationIdBySessionId?: (sessionId: string) => string | undefined;
   recordTurnChanges?: (input: RecordedCodexTurnChanges) => void;
+  hostTools?: HostToolRegistry;
   now?: () => string;
 };
 
@@ -294,6 +301,11 @@ const isCollabAgentToolCallThreadItem = (
 ): item is Extract<ThreadItem, { type: "collabAgentToolCall" }> =>
   isRecord(item) && item.type === "collabAgentToolCall" && typeof item.id === "string";
 
+const isDynamicToolCallThreadItem = (
+  item: ThreadItem | Record<string, unknown>
+): item is Extract<ThreadItem, { type: "dynamicToolCall" }> =>
+  isRecord(item) && item.type === "dynamicToolCall" && typeof item.id === "string";
+
 const discoveredCodexSessionId = (threadId: string): string => `codex-thread:${threadId}`;
 
 const mapCollabToolLabel = (
@@ -361,6 +373,48 @@ const summarizeCollabOutput = (
       : `${threadId}: ${state.status}`;
   });
   return lines.length > 0 ? lines.join("\n") : undefined;
+};
+
+const dynamicToolLabel = (
+  item: Pick<Extract<ThreadItem, { type: "dynamicToolCall" }>, "tool"> & {
+    namespace?: string | null;
+  }
+): string => (item.namespace ? `${item.namespace}.${item.tool}` : item.tool);
+
+const summarizeDynamicToolInput = (
+  item: Extract<ThreadItem, { type: "dynamicToolCall" }> & {
+    namespace?: string | null;
+  }
+): string | undefined => {
+  const label = dynamicToolLabel(item);
+  if (item.arguments === undefined || item.arguments === null) {
+    return label;
+  }
+  try {
+    return `${label} ${JSON.stringify(item.arguments)}`;
+  } catch {
+    return label;
+  }
+};
+
+const summarizeDynamicToolOutput = (
+  item: Extract<ThreadItem, { type: "dynamicToolCall" }>
+): string | undefined => {
+  if (!Array.isArray(item.contentItems) || item.contentItems.length === 0) {
+    return undefined;
+  }
+  return item.contentItems
+    .map((contentItem) => {
+      if (contentItem.type === "inputText") {
+        return contentItem.text;
+      }
+      if (contentItem.type === "inputImage") {
+        return contentItem.imageUrl;
+      }
+      return undefined;
+    })
+    .filter((value): value is string => Boolean(value && value.trim().length > 0))
+    .join("\n");
 };
 
 const readNonNegativeInteger = (
@@ -436,6 +490,7 @@ export class CodexAppServerRuntimePort
   private readonly resolveConversationIdBySessionId:
     | ((sessionId: string) => string | undefined)
     | undefined;
+  private readonly hostTools: HostToolRegistry | undefined;
   private readonly now: () => string;
   private readonly listeners = new Set<RuntimeListener>();
   private readonly pendingRpcById = new Map<string, PendingRpc>();
@@ -464,6 +519,7 @@ export class CodexAppServerRuntimePort
     this.resolveConversationIdBySessionId =
       options.resolveConversationIdBySessionId;
     this.recordTurnChanges = options.recordTurnChanges;
+    this.hostTools = options.hostTools;
     this.now = options.now ?? (() => new Date().toISOString());
   }
 
@@ -899,6 +955,19 @@ export class CodexAppServerRuntimePort
       experimentalRawEvents: false,
       persistExtendedHistory: true
     };
+    const dynamicTools = this.hostTools?.listDefinitions({
+      engineId: this.engineId,
+      sessionId
+    });
+    if (dynamicTools && dynamicTools.length > 0) {
+      threadStartParams.dynamicTools = dynamicTools.map((tool) => ({
+        namespace: tool.namespace,
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        deferLoading: tool.deferLoading ?? false
+      }));
+    }
 
     const resolvedCwd = cwd ?? selected.cwd ?? this.startConfig.cwd;
     if (resolvedCwd) {
@@ -1060,6 +1129,23 @@ export class CodexAppServerRuntimePort
         });
         return;
       }
+      case "item/tool/call":
+        void this.handleDynamicToolCallRequest(rawRequestId, params).catch((error) => {
+          const message =
+            error instanceof Error
+              ? error.message
+              : "Unknown dynamic tool call failure.";
+          this.writeDynamicToolCallResponse(rawRequestId, {
+            contentItems: [
+              {
+                type: "inputText",
+                text: `Dynamic tool failed: ${message}`
+              }
+            ],
+            success: false
+          });
+        });
+        return;
       default:
         this.write({
           id: rawRequestId,
@@ -1075,6 +1161,107 @@ export class CodexAppServerRuntimePort
           recoverable: true
         });
     }
+  }
+
+  private async handleDynamicToolCallRequest(
+    rawRequestId: string | number,
+    params: Record<string, unknown>
+  ): Promise<void> {
+    const threadId = optionalString(params.threadId);
+    const turnId = optionalString(params.turnId);
+    const callId = optionalString(params.callId);
+    const namespace = optionalString(params.namespace);
+    const toolName = optionalString(params.tool);
+    if (!threadId || !toolName) {
+      this.writeDynamicToolCallResponse(rawRequestId, {
+        contentItems: [
+          {
+            type: "inputText",
+            text: "Dynamic tool failed: missing threadId or tool name."
+          }
+        ],
+        success: false
+      });
+      return;
+    }
+
+    const sessionId = this.sessionIdByThreadId.get(threadId);
+    if (!sessionId) {
+      this.writeDynamicToolCallResponse(rawRequestId, {
+        contentItems: [
+          {
+            type: "inputText",
+            text: "Dynamic tool failed: calling session is unknown."
+          }
+        ],
+        success: false
+      });
+      return;
+    }
+
+    const tool = this.hostTools?.resolve({
+      namespace,
+      name: toolName,
+      context: {
+        engineId: this.engineId,
+        sessionId
+      }
+    });
+    if (!tool) {
+      this.writeDynamicToolCallResponse(rawRequestId, {
+        contentItems: [
+          {
+            type: "inputText",
+            text: `Unsupported dynamic tool: ${namespace ? `${namespace}.` : ""}${toolName}`
+          }
+        ],
+        success: false
+      });
+      return;
+    }
+
+    const result = await tool.handle({
+      definition: tool,
+      arguments: (params.arguments ?? null) as JsonValue,
+      context: {
+        engineId: this.engineId,
+        sessionId,
+        providerSessionId: threadId,
+        providerTurnId: turnId,
+        providerToolCallId: callId
+      }
+    });
+    this.writeDynamicToolCallResponse(rawRequestId, result);
+  }
+
+  private writeDynamicToolCallResponse(
+    rawRequestId: string | number,
+    result: HostToolResult
+  ): void {
+    this.write({
+      id: rawRequestId,
+      result: {
+        contentItems: result.contentItems.map((contentItem) =>
+          this.serializeHostToolContentItem(contentItem)
+        ),
+        success: result.success
+      }
+    });
+  }
+
+  private serializeHostToolContentItem(
+    contentItem: HostToolContentItem
+  ): Record<string, string> {
+    if (contentItem.type === "inputImage") {
+      return {
+        type: "inputImage",
+        imageUrl: contentItem.imageUrl
+      };
+    }
+    return {
+      type: "inputText",
+      text: contentItem.text
+    };
   }
 
   private handleNotification(method: string, params: Record<string, unknown>): void {
@@ -1357,6 +1544,7 @@ export class CodexAppServerRuntimePort
         turnId,
         messageId: item.id,
         role: "assistant",
+        phase: item.phase ?? undefined,
         ...(method === "item/completed" ? { finalText: item.text } : {}),
         ...(method === "item/completed" && isFinalAnswerMessageItem(item)
           ? { isFinalForTurn: true }
@@ -1524,6 +1712,36 @@ export class CodexAppServerRuntimePort
       if (record) {
         this.recordTurnChanges?.(record);
       }
+      return;
+    }
+
+    if (isDynamicToolCallThreadItem(item)) {
+      const dynamicItem = item as Extract<ThreadItem, { type: "dynamicToolCall" }> & {
+        namespace?: string | null;
+      };
+      if (method === "item/started") {
+        this.emitEvent("tool.started", {
+          sessionId,
+          turnId,
+          toolCallId: dynamicItem.id,
+          toolName: dynamicToolLabel(dynamicItem),
+          inputSummary: summarizeDynamicToolInput(dynamicItem),
+          engineId: this.engineId
+        });
+        return;
+      }
+
+      this.emitEvent("tool.completed", {
+        sessionId,
+        turnId,
+        toolCallId: dynamicItem.id,
+        status:
+          dynamicItem.status === "failed" || dynamicItem.success === false
+            ? "failed"
+            : "completed",
+        outputSummary: summarizeDynamicToolOutput(dynamicItem),
+        engineId: this.engineId
+      });
       return;
     }
 

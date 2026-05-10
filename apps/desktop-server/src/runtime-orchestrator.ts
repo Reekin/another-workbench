@@ -2,7 +2,8 @@ import type {
   ProviderSessionHandle,
   Command,
   SessionExecutionProfile,
-  SessionExecutionProfileInput
+  SessionExecutionProfileInput,
+  SessionRelationType
 } from "@another-workbench/shared";
 import { parseCommandEnvelope } from "@another-workbench/shared";
 import type { CommandEnvelope, EventEnvelope } from "@another-workbench/shared";
@@ -258,6 +259,47 @@ export class RuntimeOrchestrator {
       sessionId: session.sessionId
     });
     return session;
+  }
+
+  public async createRelatedSession(command: {
+    parentSessionId: string;
+    engineId: string;
+    relationType: SessionRelationType;
+    sourceTurnId?: string;
+    sessionProfile?: SessionExecutionProfileInput;
+    metadata?: Record<string, unknown>;
+    workspaceId?: string;
+  }) {
+    const sessionProfile: SessionExecutionProfile = {
+      engineId: command.engineId,
+      ...command.sessionProfile
+    };
+    this.assertEngineRegistered(sessionProfile.engineId);
+    const { parentSession, childSession, relation } =
+      this.domainService.createRelatedSession({
+        parentSessionId: command.parentSessionId,
+        engineId: sessionProfile.engineId,
+        relationType: command.relationType,
+        sourceTurnId: command.sourceTurnId,
+        metadata: writeSessionExecutionProfile(command.metadata, sessionProfile),
+        workspaceId: command.workspaceId
+      });
+    this.bindRuntime(childSession.sessionId);
+    const conversation = this.domainService.requireConversation(
+      childSession.conversationId
+    );
+    await this.sessionIndexSyncService.syncSession(childSession.sessionId);
+    if (conversation.workspaceId) {
+      await this.sessionIndexSyncService.syncRelation({
+        workspaceId: conversation.workspaceId,
+        parentSessionId: parentSession.sessionId,
+        childSessionId: childSession.sessionId,
+        relationType: relation.relationType,
+        sourceTurnId: relation.sourceTurnId,
+        createdAt: relation.createdAt
+      });
+    }
+    return childSession;
   }
 
   public async resumeSession(sessionId: string) {

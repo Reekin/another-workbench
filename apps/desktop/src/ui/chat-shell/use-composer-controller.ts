@@ -163,6 +163,7 @@ type UseComposerControllerInput = {
   activeWorkspaceRootPath?: string;
   turns: Turn[];
   approvals: ApprovalRequest[];
+  isTakeoverManaged?: boolean;
   isOpeningSelectedSession: boolean;
   statusNotice?: ComposerStatusNotice;
   onStatusNotice: (notice: ComposerStatusNotice | undefined) => void;
@@ -268,10 +269,12 @@ export const useComposerController = (
       selectedSkills.length > 0 ||
       attachments.length > 0) &&
     Boolean(input.transport && input.activeSessionId) &&
+    !input.isTakeoverManaged &&
     !input.isOpeningSelectedSession &&
     !isDispatching;
   const canQueue =
     Boolean(input.activeSessionId) &&
+    !input.isTakeoverManaged &&
     !input.isOpeningSelectedSession &&
     !isDispatching &&
     (draft.trim().length > 0 ||

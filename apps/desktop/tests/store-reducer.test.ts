@@ -606,6 +606,51 @@ describe("desktop store reducer", () => {
     });
   });
 
+  it("does not fall back to commentary messages as final answers", () => {
+    let state = createInitialRendererStoreState();
+
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-turn-started-commentary", "1", {
+          type: "turn.started",
+          sessionId: "session-a",
+          turnId: "turn-a"
+        })
+      )
+    );
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-commentary-message", "2", {
+          type: "message.completed",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          messageId: "message-commentary",
+          finalText: "I will inspect the code first.",
+          phase: "commentary",
+          engineId: "agent-a"
+        })
+      )
+    );
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-turn-completed-commentary", "3", {
+          type: "turn.completed",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          finishReason: "completed"
+        })
+      )
+    );
+
+    expect(state.entities.turns["turn-a"]?.finalMessageId).toBeUndefined();
+    expect(state.entities.messageBlocks["message-commentary:md"]).toMatchObject({
+      phase: "commentary"
+    });
+  });
+
   it("persists session relations from live session.created events", () => {
     let state = createInitialRendererStoreState();
 

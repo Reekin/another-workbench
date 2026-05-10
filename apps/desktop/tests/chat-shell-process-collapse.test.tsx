@@ -201,6 +201,7 @@ describe("ChatShellApp inline process output", () => {
       },
       messageRole: "assistant" as const,
       isFinalResponseRow: true,
+      canDisplayAsFinalResponse: true,
       blocks: [],
       toolCalls: [
         {
@@ -237,6 +238,7 @@ describe("ChatShellApp inline process output", () => {
         rowId: "turn-1:assistant:draft",
         startedAt: "2026-04-18T00:01:01.000Z",
         isFinalResponseRow: false,
+        canDisplayAsFinalResponse: false,
         blocks: [
           {
             blockId: "draft:md",
@@ -257,6 +259,7 @@ describe("ChatShellApp inline process output", () => {
         rowId: "turn-1:assistant:note",
         startedAt: "2026-04-18T00:01:04.000Z",
         isFinalResponseRow: false,
+        canDisplayAsFinalResponse: false,
         blocks: [
           {
             blockId: "note:md",

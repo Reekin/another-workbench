@@ -89,7 +89,11 @@ const selectFinalAssistantMessageId = (
     const assistantBlocks = store
       .listMessageBlocks({ messageId: candidateMessageId })
       .filter((block) => block.role === "assistant");
-    if (assistantBlocks.length > 0) {
+    const hasPhaseAwareBlocks = assistantBlocks.some((block) => block.phase);
+    const hasFallbackEligibleBlocks = assistantBlocks.some(
+      (block) => block.phase === "final_answer" || (!hasPhaseAwareBlocks && !block.phase)
+    );
+    if (hasFallbackEligibleBlocks) {
       return candidateMessageId;
     }
   }
@@ -376,6 +380,7 @@ export class DomainProjector {
             sessionId: event.sessionId,
             turnId: event.turnId,
             role: existing?.role ?? event.role,
+            phase: event.phase ?? existing?.phase,
             kind: "markdown",
             text: existing?.text ?? "",
             actor: existing?.actor ?? actor,
@@ -398,6 +403,7 @@ export class DomainProjector {
             sessionId: event.sessionId,
             turnId: event.turnId,
             role: existing?.role ?? "assistant",
+            phase: event.phase ?? existing?.phase,
             kind: "markdown",
             text: `${existing?.text ?? ""}${event.delta}`,
             actor: existing?.actor ?? actor,
@@ -420,6 +426,7 @@ export class DomainProjector {
             sessionId: event.sessionId,
             turnId: event.turnId,
             role: existing?.role ?? "assistant",
+            phase: event.phase ?? existing?.phase,
             kind: "markdown",
             text: event.finalText ?? existing?.text ?? "",
             actor: existing?.actor ?? actor,

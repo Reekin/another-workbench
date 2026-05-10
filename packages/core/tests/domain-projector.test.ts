@@ -364,6 +364,55 @@ describe("DomainProjector", () => {
     });
   });
 
+  it("does not fall back to commentary messages as final answers", () => {
+    const projector = new DomainProjector();
+
+    projector.apply(
+      {
+        type: "session.created",
+        conversationId: "conversation-a",
+        sessionId: "session-1",
+        engineId: "agent-a",
+        status: "running"
+      },
+      "2026-04-18T00:05:00.000Z"
+    );
+    projector.apply(
+      {
+        type: "turn.started",
+        sessionId: "session-1",
+        turnId: "turn-1"
+      },
+      "2026-04-18T00:05:01.000Z"
+    );
+    projector.apply(
+      {
+        type: "message.completed",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        messageId: "message-commentary",
+        finalText: "I will inspect the code first.",
+        phase: "commentary",
+        engineId: "agent-a"
+      },
+      "2026-04-18T00:05:02.000Z"
+    );
+    projector.apply(
+      {
+        type: "turn.completed",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        finishReason: "completed"
+      },
+      "2026-04-18T00:05:03.000Z"
+    );
+
+    expect(projector.store.getTurn("turn-1")?.finalMessageId).toBeUndefined();
+    expect(projector.store.getMessageBlock("message-commentary:md")).toMatchObject({
+      phase: "commentary"
+    });
+  });
+
   it("keeps awaiting_approval until another runtime event changes session status", () => {
     const projector = new DomainProjector();
 

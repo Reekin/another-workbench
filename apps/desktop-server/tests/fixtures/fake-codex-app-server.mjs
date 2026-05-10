@@ -3,8 +3,11 @@ import readline from "node:readline";
 let nextThreadNumber = 1;
 let nextTurnNumber = 1;
 let nextApprovalRequestId = 0;
+let nextDynamicToolRequestId = 1000;
 const pendingApprovalByRequestId = new Map();
+const pendingDynamicToolByRequestId = new Map();
 let lastThreadStartParams = null;
+const threadStartParamsByThreadId = new Map();
 
 const send = (payload) => {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
@@ -686,6 +689,176 @@ const emitApprovalResolution = ({ threadId, turnId, requestId, action }) => {
   });
 };
 
+const emitSmartTakeoverRequest = ({ threadId, turnId, start = false }) => {
+  const toolCallId = `smart-takeover-${turnId}`;
+  const requestId = nextDynamicToolRequestId++;
+  const threadStartParams = threadStartParamsByThreadId.get(threadId);
+  const dynamicTool = (threadStartParams?.dynamicTools ?? []).find(
+    (tool) =>
+      tool?.namespace === "another_workbench" && tool?.name === "SmartTakeover"
+  );
+  const args = start
+    ? {
+        action: "start",
+        presetId: "review",
+        brief: "Review the current test takeover flow.",
+        successCriteria: ["Submit a complete verdict."]
+      }
+    : {
+        objective: "Confirm caller identity"
+      };
+
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "active" }
+    }
+  });
+  send({
+    method: "turn/started",
+    params: {
+      threadId,
+      turn: { id: turnId }
+    }
+  });
+  send({
+    method: "item/started",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "dynamicToolCall",
+        id: toolCallId,
+        namespace: dynamicTool?.namespace ?? "another_workbench",
+        tool: dynamicTool?.name ?? "SmartTakeover",
+        arguments: args,
+        status: "inProgress",
+        contentItems: null,
+        success: null,
+        durationMs: null
+      }
+    }
+  });
+  pendingDynamicToolByRequestId.set(requestId, {
+    threadId,
+    turnId,
+    toolCallId,
+    namespace: dynamicTool?.namespace ?? "another_workbench",
+    tool: dynamicTool?.name ?? "SmartTakeover",
+    arguments: args
+  });
+  send({
+    id: requestId,
+    method: "item/tool/call",
+    params: {
+      threadId,
+      turnId,
+      callId: toolCallId,
+      namespace: dynamicTool?.namespace ?? "another_workbench",
+      tool: dynamicTool?.name ?? "SmartTakeover",
+      arguments: args
+    }
+  });
+};
+
+const emitTakeoverVerdictRequest = ({ threadId, turnId, prompt }) => {
+  const toolCallId = `takeover-verdict-${turnId}`;
+  const requestId = nextDynamicToolRequestId++;
+  const threadStartParams = threadStartParamsByThreadId.get(threadId);
+  const dynamicTool = (threadStartParams?.dynamicTools ?? []).find(
+    (tool) =>
+      tool?.namespace === "another_workbench" &&
+      tool?.name === "SubmitTakeoverVerdict"
+  );
+  if (!dynamicTool) {
+    emitHappyPath({
+      threadId,
+      turnId,
+      prompt: "SubmitTakeoverVerdict dynamic tool missing"
+    });
+    return;
+  }
+  const args = {
+    verdict: "complete",
+    response: "Fake reviewer completed the takeover flow. No issues found."
+  };
+
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "active" }
+    }
+  });
+  send({
+    method: "turn/started",
+    params: {
+      threadId,
+      turn: { id: turnId }
+    }
+  });
+  pendingDynamicToolByRequestId.set(requestId, {
+    threadId,
+    turnId,
+    toolCallId,
+    namespace: dynamicTool?.namespace ?? "another_workbench",
+    tool: dynamicTool?.name ?? "SubmitTakeoverVerdict",
+    arguments: args
+  });
+  send({
+    id: requestId,
+    method: "item/tool/call",
+    params: {
+      threadId,
+      turnId,
+      callId: toolCallId,
+      namespace: dynamicTool?.namespace ?? "another_workbench",
+      tool: dynamicTool?.name ?? "SubmitTakeoverVerdict",
+      arguments: args
+    }
+  });
+};
+
+const emitDynamicToolResolution = ({ dynamicTool, response }) => {
+  const success = response?.success !== false;
+  send({
+    method: "item/completed",
+    params: {
+      threadId: dynamicTool.threadId,
+      turnId: dynamicTool.turnId,
+      item: {
+        type: "dynamicToolCall",
+        id: dynamicTool.toolCallId,
+        namespace: dynamicTool.namespace,
+        tool: dynamicTool.tool,
+        arguments: dynamicTool.arguments,
+        status: success ? "completed" : "failed",
+        contentItems: response?.contentItems ?? [],
+        success,
+        durationMs: 2
+      }
+    }
+  });
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId: dynamicTool.threadId,
+      status: { type: "idle" }
+    }
+  });
+  send({
+    method: "turn/completed",
+    params: {
+      threadId: dynamicTool.threadId,
+      turn: {
+        id: dynamicTool.turnId,
+        status: success ? "completed" : "failed"
+      }
+    }
+  });
+};
+
 const handleRequest = (payload) => {
   if (payload.method === "initialized") {
     return;
@@ -704,6 +877,7 @@ const handleRequest = (payload) => {
       case "thread/start": {
         lastThreadStartParams = payload.params ?? null;
         const threadId = `thread-${nextThreadNumber++}`;
+        threadStartParamsByThreadId.set(threadId, payload.params ?? null);
         send({
           id: payload.id,
           result: {
@@ -761,6 +935,21 @@ const handleRequest = (payload) => {
             return;
           }
 
+          if (prompt.includes("TAKEOVER_TASK")) {
+            emitTakeoverVerdictRequest({ threadId, turnId, prompt });
+            return;
+          }
+
+          if (prompt.includes("smart-takeover-start")) {
+            emitSmartTakeoverRequest({ threadId, turnId, start: true });
+            return;
+          }
+
+          if (prompt.includes("smart-takeover")) {
+            emitSmartTakeoverRequest({ threadId, turnId });
+            return;
+          }
+
           if (prompt.includes("subagent")) {
             emitCollabPath({ threadId, turnId });
             return;
@@ -785,7 +974,11 @@ const handleRequest = (payload) => {
             threadId,
             turnId,
             prompt,
-            messagePhase: prompt.includes("final-answer") ? "final_answer" : null
+            messagePhase: prompt.includes("commentary")
+              ? "commentary"
+              : prompt.includes("final-answer")
+                ? "final_answer"
+                : null
           });
         });
         return;
@@ -841,6 +1034,18 @@ const handleRequest = (payload) => {
   }
 
   if (payload.id !== undefined && payload.result) {
+    const dynamicTool = pendingDynamicToolByRequestId.get(payload.id);
+    if (dynamicTool) {
+      pendingDynamicToolByRequestId.delete(payload.id);
+      queueMicrotask(() => {
+        emitDynamicToolResolution({
+          dynamicTool,
+          response: payload.result
+        });
+      });
+      return;
+    }
+
     const approval = pendingApprovalByRequestId.get(payload.id);
     if (!approval) {
       return;

@@ -527,6 +527,7 @@ const hydrateCodexTurnEntities = async (input: {
             sessionId: entry.sessionId,
             turnId: turn.id,
             role: "assistant",
+            phase: item.phase ?? undefined,
             kind: "markdown",
             text: item.text,
             startedAt: itemStartedAt,

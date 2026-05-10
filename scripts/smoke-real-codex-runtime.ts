@@ -98,7 +98,7 @@ const run = async (): Promise<void> => {
     commandId: "smoke-create-session",
     command: {
       type: "createSession",
-      agentId: "codex",
+      engineId: "codex",
       conversationId
     }
   });

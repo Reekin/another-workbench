@@ -32,6 +32,8 @@ export const zTurnFinishReason = z.enum([
 
 export const zMessageRole = z.enum(["assistant", "user", "system"]);
 
+export const zMessagePhase = z.enum(["commentary", "final_answer"]);
+
 export const zMessageBlockKind = z.enum([
   "markdown",
   "plain_text",
@@ -118,6 +120,7 @@ export const zMessageBlockSchema = z.object({
   sessionId: zSessionId,
   turnId: zTurnId,
   role: zMessageRole,
+  phase: zMessagePhase.optional(),
   kind: zMessageBlockKind,
   text: z.string().optional(),
   toolCallId: zToolCallId.optional(),

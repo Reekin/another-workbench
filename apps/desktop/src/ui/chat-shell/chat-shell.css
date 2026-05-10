@@ -210,6 +210,8 @@ button {
 }
 
 .awb-field select,
+.awb-field input,
+.awb-field textarea,
 .awb-inline-form input,
 .awb-composer textarea {
   width: 100%;
@@ -225,6 +227,8 @@ button {
 }
 
 .awb-field select:focus,
+.awb-field input:focus,
+.awb-field textarea:focus,
 .awb-inline-form input:focus,
 .awb-composer textarea:focus {
   outline: none;
@@ -477,6 +481,17 @@ button {
   font-weight: 500;
   line-height: 1.2;
   color: var(--awb-ink);
+}
+
+.awb-tree__takeover-badge {
+  display: inline;
+  margin-right: 5px;
+  color: #d9a441;
+  font-weight: 600;
+}
+
+.awb-tree__takeover-badge.is-agent {
+  color: #6bb6d8;
 }
 
 .awb-tree__labels span,
@@ -1386,11 +1401,68 @@ button {
 }
 
 .awb-composer__buttons {
+  position: relative;
   display: flex;
   gap: 8px;
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
+}
+
+.awb-composer-takeover {
+  position: relative;
+  margin-right: 14px;
+}
+
+.awb-composer-takeover__button.is-active {
+  border-color: rgba(217, 164, 65, 0.36);
+  background: rgba(217, 164, 65, 0.14);
+  color: var(--awb-ink-strong);
+}
+
+.awb-composer-takeover__menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 5;
+  width: 220px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--awb-rule-strong);
+  border-radius: var(--awb-radius-soft);
+  background: var(--awb-panel);
+  box-shadow: var(--awb-shadow);
+}
+
+.awb-composer-takeover__menu button {
+  width: 100%;
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  border-color: transparent;
+  background: transparent;
+  padding: 7px 8px;
+}
+
+.awb-composer-takeover__menu button:hover,
+.awb-composer-takeover__menu button.is-active {
+  background: var(--awb-input-soft);
+  border-color: var(--awb-rule);
+}
+
+.awb-composer-takeover__menu strong {
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.awb-composer-takeover__menu span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--awb-ink-muted);
+  font-size: 0.68rem;
 }
 
 .awb-composer__actions button {
@@ -2028,7 +2100,7 @@ button {
 }
 
 .awb-modal {
-  width: min(420px, calc(100vw - 32px));
+  width: min(760px, calc(100vw - 32px));
   border: 1px solid var(--awb-rule-strong);
   border-radius: 8px;
   background: var(--awb-panel-alt);
@@ -2056,6 +2128,136 @@ button {
 
 .awb-modal__body {
   padding: 14px;
+}
+
+.awb-settings {
+  display: grid;
+  gap: 12px;
+}
+
+.awb-settings__tabs {
+  display: flex;
+  gap: 6px;
+  border-bottom: 1px solid var(--awb-rule);
+}
+
+.awb-settings__tabs button {
+  appearance: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--awb-ink-muted);
+  padding: 7px 8px 9px;
+  font-size: 0.78rem;
+}
+
+.awb-settings__tabs button.is-active {
+  border-bottom-color: var(--awb-ink-muted);
+  color: var(--awb-ink-strong);
+}
+
+.awb-settings__panel {
+  min-height: 260px;
+}
+
+.awb-takeover-presets {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 12px;
+  min-height: 320px;
+}
+
+.awb-takeover-presets__list,
+.awb-takeover-presets__editor {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.awb-takeover-presets__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.awb-takeover-presets__bar span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--awb-ink-muted);
+  font-family: var(--awb-font-mono);
+  font-size: 0.68rem;
+}
+
+.awb-takeover-presets__items {
+  display: grid;
+  gap: 6px;
+  max-height: 284px;
+  overflow: auto;
+}
+
+.awb-takeover-presets__items button {
+  appearance: none;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  text-align: left;
+  border: 1px solid var(--awb-rule);
+  border-radius: var(--awb-radius-soft);
+  background: var(--awb-input-soft);
+  color: var(--awb-ink);
+  padding: 8px;
+}
+
+.awb-takeover-presets__items button.is-active {
+  border-color: rgba(182, 185, 183, 0.3);
+  background: var(--awb-panel-soft);
+}
+
+.awb-takeover-presets__items strong,
+.awb-takeover-presets__items span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.awb-takeover-presets__items strong {
+  color: var(--awb-ink-strong);
+  font-size: 0.78rem;
+}
+
+.awb-takeover-presets__items span,
+.awb-takeover-presets__empty {
+  color: var(--awb-ink-muted);
+  font-family: var(--awb-font-mono);
+  font-size: 0.68rem;
+}
+
+.awb-takeover-presets__editor textarea {
+  min-height: 220px;
+  resize: vertical;
+  font-family: var(--awb-font-mono);
+  line-height: 1.45;
+}
+
+.awb-takeover-presets__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 720px) {
+  .awb-takeover-presets {
+    grid-template-columns: 1fr;
+  }
+
+  .awb-takeover-presets__items {
+    max-height: 150px;
+  }
 }
 
 .awb-modal__footer {

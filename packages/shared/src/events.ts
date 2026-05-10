@@ -14,7 +14,11 @@ import {
   zToolCallId,
   zTurnId
 } from "./common.js";
-import { zContextUsageSchema, zSessionRelationSchema } from "./domain.js";
+import {
+  zContextUsageSchema,
+  zMessagePhase,
+  zSessionRelationSchema
+} from "./domain.js";
 
 export const eventTypes = [
   "conversation.updated",
@@ -114,6 +118,7 @@ const zMessageStartedEvent = z
     turnId: zTurnId,
     messageId: zMessageId,
     role: z.enum(["assistant", "user", "system"]),
+    phase: zMessagePhase.optional(),
     ...zActorFields
   });
 
@@ -124,6 +129,7 @@ const zMessageDeltaEvent = z
     turnId: zTurnId,
     messageId: zMessageId,
     delta: z.string(),
+    phase: zMessagePhase.optional(),
     ...zActorFields
   });
 
@@ -135,6 +141,7 @@ const zMessageCompletedEvent = z
     messageId: zMessageId,
     finalText: z.string().optional(),
     isFinalForTurn: z.boolean().optional(),
+    phase: zMessagePhase.optional(),
     ...zActorFields
   });
 

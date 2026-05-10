@@ -7,7 +7,12 @@ import type {
   ReactElement,
   RefObject
 } from "react";
-import type { ApprovalRequest, ContextUsage } from "@another-workbench/shared";
+import type {
+  ApprovalRequest,
+  ContextUsage,
+  TakeoverPresetSummaryRpc,
+  TakeoverSessionStateRpc
+} from "@another-workbench/shared";
 import type { ComposerAttachment } from "../composer-attachments.js";
 import type { ImageLightboxState } from "../ImageLightbox.js";
 import {
@@ -77,6 +82,9 @@ export const ComposerPanel = ({
   status,
   pendingApprovals = [],
   contextUsage,
+  takeoverPresets = [],
+  takeoverState,
+  isTakeoverMenuOpen = false,
   intent,
   supportsSteer,
   supportsAttachments,
@@ -97,6 +105,8 @@ export const ComposerPanel = ({
   onRemoveAttachment,
   onPreviewAttachment,
   onPickAttachments,
+  onToggleTakeoverMenu = () => undefined,
+  onSelectTakeoverPreset = async () => undefined,
   onPrimaryAction,
   onQueueCurrent,
   onStop,
@@ -119,6 +129,9 @@ export const ComposerPanel = ({
   status: ComposerStatusModel;
   pendingApprovals?: ApprovalRequest[];
   contextUsage?: ContextUsage;
+  takeoverPresets?: TakeoverPresetSummaryRpc[];
+  takeoverState?: TakeoverSessionStateRpc;
+  isTakeoverMenuOpen?: boolean;
   intent: ComposerIntent;
   supportsSteer: boolean;
   supportsAttachments: boolean;
@@ -141,6 +154,8 @@ export const ComposerPanel = ({
   onRemoveAttachment: (attachmentId: string) => void;
   onPreviewAttachment?: (input: ImageLightboxState) => void;
   onPickAttachments: () => void;
+  onToggleTakeoverMenu?: () => void;
+  onSelectTakeoverPreset?: (presetId?: string) => Promise<void>;
   onPrimaryAction: () => Promise<void>;
   onQueueCurrent: () => void;
   onStop: () => Promise<void>;
@@ -151,7 +166,20 @@ export const ComposerPanel = ({
   onSendQueuedMessageNow: (messageId: string) => Promise<void>;
   onSteerQueuedMessageNow: (messageId: string) => Promise<void>;
   onRespondApproval?: (input: ApprovalResponseInput) => Promise<void>;
-}): ReactElement => (
+}): ReactElement => {
+  const activeManualPresetId = takeoverState?.manualPresetId;
+  const selectedTakeoverLabel =
+    takeoverPresets.find((preset) => preset.presetId === activeManualPresetId)
+      ?.displayName ?? activeManualPresetId ?? "No takeover";
+  const takeoverTooltip =
+    takeoverState?.role === "managed"
+      ? `Current session is in takeover mode${takeoverState.presetId ? ` (${takeoverState.presetId})` : ""}.`
+      : "Select a takeover preset for this session.";
+  const submitTitle =
+    takeoverState?.role === "managed"
+      ? `Current session is in takeover mode${takeoverState.presetId ? ` (${takeoverState.presetId})` : ""}.`
+      : undefined;
+  return (
   <footer
     className={`awb-composer awb-composer-panel${
       isDropTarget ? " is-drop-target" : ""
@@ -294,6 +322,48 @@ export const ComposerPanel = ({
         ) : null}
       </div>
       <div className="awb-composer__buttons">
+        <div className="awb-composer-takeover">
+          <button
+            type="button"
+            className={`awb-ghost-button awb-composer-takeover__button${
+              activeManualPresetId ? " is-active" : ""
+            }`}
+            onClick={onToggleTakeoverMenu}
+            title={takeoverTooltip}
+            aria-haspopup="menu"
+            aria-expanded={isTakeoverMenuOpen}
+          >
+            Takeover: {selectedTakeoverLabel}
+          </button>
+          {isTakeoverMenuOpen ? (
+            <div className="awb-composer-takeover__menu" role="menu">
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={!activeManualPresetId}
+                className={!activeManualPresetId ? "is-active" : undefined}
+                onClick={() => void onSelectTakeoverPreset(undefined)}
+              >
+                No takeover
+              </button>
+              {takeoverPresets.map((preset) => (
+                <button
+                  type="button"
+                  key={preset.presetId}
+                  role="menuitemradio"
+                  aria-checked={activeManualPresetId === preset.presetId}
+                  className={
+                    activeManualPresetId === preset.presetId ? "is-active" : undefined
+                  }
+                  onClick={() => void onSelectTakeoverPreset(preset.presetId)}
+                >
+                  <strong>{preset.displayName}</strong>
+                  <span>{preset.presetId}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
         {canQueue ? (
           <button
             type="button"
@@ -314,14 +384,17 @@ export const ComposerPanel = ({
             Stop
           </button>
         ) : null}
-        <button
-          type="button"
-          onClick={() => void onPrimaryAction()}
-          disabled={!canSubmit}
-        >
-          {primaryLabel(intent)}
-        </button>
+        <span title={submitTitle}>
+          <button
+            type="button"
+            onClick={() => void onPrimaryAction()}
+            disabled={!canSubmit}
+          >
+            {primaryLabel(intent)}
+          </button>
+        </span>
       </div>
     </div>
   </footer>
-);
+  );
+};

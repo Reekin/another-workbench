@@ -187,6 +187,7 @@ export class WorkbenchShellService {
   private readonly takeoverPresetStore: TakeoverPresetStore;
   private readonly smartTakeoverService: SmartTakeoverService | undefined;
   private openSessionGeneration = 0;
+  private activationQueue: Promise<void> = Promise.resolve();
   private readonly partiallyHydratedSessionIds = new Set<string>();
 
   public constructor(options: WorkbenchShellServiceOptions) {
@@ -617,6 +618,19 @@ export class WorkbenchShellService {
     };
   }
 
+  public async activateSession(sessionId: string): Promise<{ sessionId: string }> {
+    const generation = ++this.openSessionGeneration;
+    const isCancelled = () => generation !== this.openSessionGeneration;
+    const context = this.sessionIdentity.resolveContext(sessionId);
+    if (!context.session && !context.indexEntry && !context.providerHandle) {
+      throw new Error(`Session not found: ${sessionId}`);
+    }
+    await this.activateOpenedSession(sessionId, { isCancelled });
+    return {
+      sessionId
+    };
+  }
+
   public async loadOlderSessionTurns(input: {
     sessionId: string;
     beforeTurnId?: string;
@@ -887,21 +901,27 @@ export class WorkbenchShellService {
       isCancelled?: () => boolean;
     } = {}
   ): Promise<void> {
-    const context = this.sessionIdentity.resolveContext(sessionId);
-    if (input.isCancelled?.()) {
-      throw new Error("Open session cancelled.");
-    }
-    await this.createWorkspaceSelectionService().activateSelection({
-      workspaceId: context.indexEntry?.workspaceId,
-      sessionId
-    });
-    if (input.isCancelled?.()) {
-      throw new Error("Open session cancelled.");
-    }
-    await this.sessionCatalog.markSessionRead(sessionId);
-    if (input.isCancelled?.()) {
-      throw new Error("Open session cancelled.");
-    }
+    const run = this.activationQueue
+      .catch(() => undefined)
+      .then(async () => {
+        const context = this.sessionIdentity.resolveContext(sessionId);
+        if (input.isCancelled?.()) {
+          throw new Error("Open session cancelled.");
+        }
+        await this.createWorkspaceSelectionService().activateSelection({
+          workspaceId: context.indexEntry?.workspaceId,
+          sessionId
+        });
+        if (input.isCancelled?.()) {
+          throw new Error("Open session cancelled.");
+        }
+        await this.sessionCatalog.markSessionRead(sessionId);
+        if (input.isCancelled?.()) {
+          throw new Error("Open session cancelled.");
+        }
+      });
+    this.activationQueue = run.catch(() => undefined);
+    await run;
   }
 
   private async ensureSessionReadyForCommand(

@@ -505,6 +505,112 @@ describe("WorkbenchShellService", () => {
     expect(getChatTree).toHaveBeenCalledWith("session-1");
   });
 
+  it("marks a cached browser session as active and read without reopening its window", async () => {
+    const setLastActiveSelection = vi.fn().mockResolvedValue(undefined);
+    const markSessionRead = vi.fn().mockResolvedValue(undefined);
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        listSessions: () => [
+          {
+            sessionId: "session-1",
+            conversationId: "conversation-1",
+            engineId: "codex"
+          }
+        ],
+        getWorkspaceRegistry: () => ({
+          setLastActiveSelection
+        }),
+        getSessionIndexStore: () => ({
+          getEntry: () => ({
+            sessionId: "session-1",
+            workspaceId: "workspace-1",
+            engineId: "codex"
+          }),
+          listEntries: () => []
+        })
+      } as never,
+      sessionCatalog: {
+        markSessionRead
+      } as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never
+    });
+
+    await expect(service.activateSession("session-1")).resolves.toEqual({
+      sessionId: "session-1"
+    });
+    expect(setLastActiveSelection).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      sessionId: "session-1"
+    });
+    expect(markSessionRead).toHaveBeenCalledWith("session-1");
+  });
+
+  it("keeps the newest cached session activation authoritative when activations overlap", async () => {
+    let resolveFirstActivation: (() => void) | undefined;
+    const setLastActiveSelection = vi.fn(
+      (input: { sessionId?: string }) =>
+        input.sessionId === "session-1"
+          ? new Promise<void>((resolve) => {
+              resolveFirstActivation = resolve;
+            })
+          : Promise.resolve()
+    );
+    const markSessionRead = vi.fn().mockResolvedValue(undefined);
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        listSessions: () => [
+          {
+            sessionId: "session-1",
+            conversationId: "conversation-1",
+            engineId: "codex"
+          },
+          {
+            sessionId: "session-2",
+            conversationId: "conversation-1",
+            engineId: "codex"
+          }
+        ],
+        getWorkspaceRegistry: () => ({
+          setLastActiveSelection
+        }),
+        getSessionIndexStore: () => ({
+          getEntry: (sessionId: string) => ({
+            sessionId,
+            workspaceId: "workspace-1",
+            engineId: "codex"
+          }),
+          listEntries: () => []
+        })
+      } as never,
+      sessionCatalog: {
+        markSessionRead
+      } as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never
+    });
+
+    const staleActivation = service.activateSession("session-1");
+    await vi.waitFor(() => {
+      expect(setLastActiveSelection).toHaveBeenCalledTimes(1);
+    });
+    const activeActivation = service.activateSession("session-2");
+
+    expect(setLastActiveSelection).toHaveBeenCalledTimes(1);
+    resolveFirstActivation?.();
+
+    await expect(staleActivation).rejects.toThrow("Open session cancelled.");
+    await expect(activeActivation).resolves.toEqual({
+      sessionId: "session-2"
+    });
+    expect(setLastActiveSelection).toHaveBeenLastCalledWith({
+      workspaceId: "workspace-1",
+      sessionId: "session-2"
+    });
+    expect(markSessionRead).toHaveBeenCalledTimes(1);
+    expect(markSessionRead).toHaveBeenCalledWith("session-2");
+  });
+
   it("opens cold indexed sessions through lightweight window hydration", async () => {
     const setLastActiveSelection = vi.fn().mockResolvedValue(undefined);
     const markSessionRead = vi.fn().mockResolvedValue(undefined);

@@ -2006,6 +2006,7 @@ export const ChatShellApp = ({
             onPreviewImage={onPreviewImage}
             onCreateSession={onCreateSession}
             onOpenSession={onOpenSession}
+            onRequestTranscriptBottom={viewport.scrollToBottom}
             onToggleTakeoverMenu={onToggleTakeoverMenu}
             onSelectTakeoverPreset={onSelectTakeoverPreset}
             onRespondApproval={transport ? onRespondApproval : undefined}

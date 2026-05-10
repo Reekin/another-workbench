@@ -394,6 +394,20 @@ export const createRemoteRpcHandler = (
               ok: true,
               result: await shellService.openSession(request.params.sessionId)
             });
+          case "sessionBrowser.activate":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "SESSION_BROWSER_UNAVAILABLE",
+                "Session browser APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: await shellService.activateSession(request.params.sessionId)
+            });
           case "sessionBrowser.loadOlder":
             if (!shellService) {
               return toErrorResponse(

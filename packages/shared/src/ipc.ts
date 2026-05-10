@@ -47,6 +47,7 @@ export const workbenchRpcMethods = [
   "sessionBrowser.toggleExpanded",
   "sessionBrowser.create",
   "sessionBrowser.open",
+  "sessionBrowser.activate",
   "sessionBrowser.loadOlder",
   "sessionBrowser.getActions",
   "sessionBrowser.runAction",
@@ -646,6 +647,14 @@ const zSessionBrowserOpenRequestSchema = z.object({
   })
 });
 
+const zSessionBrowserActivateRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.activate"),
+  params: z.object({
+    sessionId: zSessionId
+  })
+});
+
 const zSessionBrowserLoadOlderRequestSchema = z.object({
   id: zRequestId,
   method: z.literal("sessionBrowser.loadOlder"),
@@ -900,6 +909,7 @@ export const zWorkbenchRpcRequestSchema = z.discriminatedUnion("method", [
   zSessionBrowserToggleExpandedRequestSchema,
   zSessionBrowserCreateRequestSchema,
   zSessionBrowserOpenRequestSchema,
+  zSessionBrowserActivateRequestSchema,
   zSessionBrowserLoadOlderRequestSchema,
   zSessionBrowserGetActionsRequestSchema,
   zSessionBrowserRunActionRequestSchema,
@@ -1147,6 +1157,15 @@ const zSessionBrowserOpenResponseSchema = z.object({
   ok: z.literal(true),
   result: z.object({
     page: zSessionWindowSchema
+  })
+});
+
+const zSessionBrowserActivateResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.activate"),
+  ok: z.literal(true),
+  result: z.object({
+    sessionId: zSessionId
   })
 });
 
@@ -1410,6 +1429,7 @@ export const zWorkbenchRpcResponseSchema = z.union([
   zSessionBrowserToggleExpandedResponseSchema,
   zSessionBrowserCreateResponseSchema,
   zSessionBrowserOpenResponseSchema,
+  zSessionBrowserActivateResponseSchema,
   zSessionBrowserLoadOlderResponseSchema,
   zSessionBrowserGetActionsResponseSchema,
   zSessionBrowserRunActionResponseSchema,

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { isTranscriptNearBottom } from "../src/ui/chat-shell/use-transcript-viewport-controller.js";
+import {
+  createTranscriptBottomTarget,
+  isTranscriptNearBottom,
+  resolveTranscriptBottomRequest
+} from "../src/ui/chat-shell/use-transcript-viewport-controller.js";
 
 describe("transcript viewport controller", () => {
   it("treats the transcript as sticky while it is close to the bottom", () => {
@@ -20,5 +24,45 @@ describe("transcript viewport controller", () => {
         clientHeight: 250
       })
     ).toBe(false);
+  });
+
+  it("creates an explicit bottom target for user-initiated transcript jumps", () => {
+    expect(createTranscriptBottomTarget("session-1")).toEqual({
+      sessionId: "session-1",
+      type: "bottom"
+    });
+    expect(createTranscriptBottomTarget(undefined)).toBeUndefined();
+  });
+
+  it("resolves bottom requests without letting stale inactive sessions block sticky scrolling", () => {
+    expect(
+      resolveTranscriptBottomRequest({
+        sessionId: "session-1",
+        displayedSessionId: "session-1"
+      })
+    ).toEqual({
+      immediate: {
+        sessionId: "session-1",
+        type: "bottom"
+      }
+    });
+    expect(
+      resolveTranscriptBottomRequest({
+        sessionId: "session-old",
+        displayedSessionId: "session-current"
+      })
+    ).toEqual({});
+    expect(
+      resolveTranscriptBottomRequest({
+        sessionId: "session-next",
+        displayedSessionId: "session-current",
+        allowPendingForInactive: true
+      })
+    ).toEqual({
+      pending: {
+        sessionId: "session-next",
+        type: "bottom"
+      }
+    });
   });
 });

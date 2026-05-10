@@ -32,6 +32,7 @@ export type ComposerContainerProps = {
   onPreviewImage?: (input: ImageLightboxState) => void;
   onCreateSession?: (workspaceId: string, engineId: string) => Promise<void>;
   onOpenSession?: (sessionId: string) => Promise<void>;
+  onRequestTranscriptBottom?: (sessionId: string) => void;
   onToggleTakeoverMenu: () => void;
   onSelectTakeoverPreset: (presetId?: string) => Promise<void>;
   onRespondApproval?: (input: ApprovalResponseInput) => Promise<void>;
@@ -56,6 +57,7 @@ export const ComposerContainer = ({
   onPreviewImage,
   onCreateSession,
   onOpenSession,
+  onRequestTranscriptBottom,
   onToggleTakeoverMenu,
   onSelectTakeoverPreset,
   onRespondApproval
@@ -75,7 +77,8 @@ export const ComposerContainer = ({
     statusNotice,
     onStatusNotice,
     onCreateSession,
-    onOpenSession
+    onOpenSession,
+    onRequestTranscriptBottom
   });
 
   return (

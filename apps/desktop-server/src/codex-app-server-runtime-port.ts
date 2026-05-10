@@ -1476,6 +1476,7 @@ export class CodexAppServerRuntimePort
         const error = isRecord(params.error) ? params.error : undefined;
         const codexErrorInfo = error?.codexErrorInfo;
         const additionalDetails = error?.additionalDetails;
+        const willRetry = params.willRetry === true;
         this.emitEvent("runtime.error", {
           sessionId,
           turnId: typeof params.turnId === "string" ? params.turnId : undefined,
@@ -1491,7 +1492,7 @@ export class CodexAppServerRuntimePort
               : typeof params.message === "string"
                 ? params.message
               : "Unknown codex app-server error",
-          recoverable: false,
+          recoverable: willRetry,
           details:
             typeof additionalDetails === "string" && additionalDetails
               ? { additionalDetails }

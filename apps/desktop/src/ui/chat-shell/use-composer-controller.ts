@@ -169,6 +169,7 @@ type UseComposerControllerInput = {
   onStatusNotice: (notice: ComposerStatusNotice | undefined) => void;
   onCreateSession?: (workspaceId: string, engineId: string) => Promise<void>;
   onOpenSession?: (sessionId: string) => Promise<void>;
+  onRequestTranscriptBottom?: (sessionId: string) => void;
 };
 
 export type UseComposerControllerResult = ComposerViewModel & {
@@ -640,6 +641,7 @@ export const useComposerController = (
         message: payload.mode === "steer" ? "Steer sent." : "Message sent.",
         source: "send"
       });
+      input.onRequestTranscriptBottom?.(input.activeSessionId);
       return true;
     } catch (error) {
       input.onStatusNotice({

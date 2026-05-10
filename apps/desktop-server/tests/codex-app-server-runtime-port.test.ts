@@ -346,6 +346,48 @@ describe("Codex app-server runtime port", () => {
     ]);
   });
 
+  it("marks app-server retrying error notifications as recoverable", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const runtimeErrors: Array<Record<string, unknown>> = [];
+    const completedTurns: Array<Record<string, unknown>> = [];
+    port.subscribe((event) => {
+      if (event.method === "runtime.error") {
+        runtimeErrors.push(event.params);
+      }
+      if (event.method === "turn.completed") {
+        completedTurns.push(event.params);
+      }
+    });
+
+    await port.start();
+    await port.request({
+      id: "turn-recoverable-runtime-error",
+      method: "turn/start",
+      params: {
+        sessionId: "session-1",
+        content: "please trigger recoverable-runtime-error"
+      }
+    });
+
+    await waitFor(() => runtimeErrors.length > 0);
+
+    expect(runtimeErrors).toEqual([
+      expect.objectContaining({
+        sessionId: "session-1",
+        code: "CODEX_APP_SERVER_ERROR",
+        message: "Reconnecting... 1/5",
+        recoverable: true
+      })
+    ]);
+    expect(completedTurns).toEqual([]);
+  });
+
   it("round-trips approval requests and resumes the turn after server confirmation", async () => {
     const port = createCodexAppServerRuntimePort({
       commandPath: process.execPath,

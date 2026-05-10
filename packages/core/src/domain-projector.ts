@@ -623,6 +623,9 @@ export class DomainProjector {
         return;
       }
       case "runtime.error": {
+        if (event.recoverable) {
+          return;
+        }
         if (event.sessionId && event.turnId) {
           const existingTurn = this.store.getTurn(event.turnId);
           const messageId =

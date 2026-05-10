@@ -40,6 +40,15 @@ type TakeoverRun = {
   source: "tool" | "manual";
 };
 
+type TakeoverConfig = {
+  presetId: string;
+  args: TakeoverToolArgs;
+  requestedBy?: SmartTakeoverRequest["requestedBy"];
+  sourceTurnId?: string;
+  sourceToolCallId?: string;
+  source: TakeoverRun["source"];
+};
+
 export type TakeoverSessionState = {
   sessionId: string;
   role: "none" | "managed" | "takeover-agent";
@@ -159,7 +168,11 @@ export class SmartTakeoverService {
   private readonly runsById = new Map<string, TakeoverRun>();
   private readonly runIdByTakeoverSessionId = new Map<string, string>();
   private readonly runIdByParentSessionId = new Map<string, string>();
-  private readonly manualPresetByParentSessionId = new Map<string, string>();
+  private readonly takeoverConfigByParentSessionId = new Map<string, TakeoverConfig>();
+  private readonly pendingLaunchUnsubscribesByParentSessionId = new Map<
+    string,
+    () => void
+  >();
   private readonly pendingVerdictResolvers = new Map<
     string,
     (verdict: TakeoverVerdictPayload) => void
@@ -207,6 +220,10 @@ export class SmartTakeoverService {
     return Boolean(runId && this.pendingVerdictResolvers.has(runId));
   }
 
+  public isTakeoverEnabled(sessionId: string): boolean {
+    return this.takeoverConfigByParentSessionId.has(sessionId);
+  }
+
   public getSessionState(sessionId: string): TakeoverSessionState {
     const takeoverRunId = this.runIdByTakeoverSessionId.get(sessionId);
     const takeoverRun = takeoverRunId ? this.runsById.get(takeoverRunId) : undefined;
@@ -222,14 +239,14 @@ export class SmartTakeoverService {
 
     const parentRunId = this.runIdByParentSessionId.get(sessionId);
     const parentRun = parentRunId ? this.runsById.get(parentRunId) : undefined;
-    const manualPresetId = this.manualPresetByParentSessionId.get(sessionId);
-    if (parentRun || manualPresetId) {
+    const config = this.takeoverConfigByParentSessionId.get(sessionId);
+    if (parentRun || config) {
       return {
         sessionId,
         role: "managed",
         active: Boolean(parentRunId && this.pendingVerdictResolvers.has(parentRunId)),
-        manualPresetId,
-        presetId: parentRun?.presetId ?? manualPresetId,
+        manualPresetId: config?.presetId,
+        presetId: parentRun?.presetId ?? config?.presetId,
         takeoverSessionId: parentRun?.takeoverSessionId
       };
     }
@@ -246,7 +263,8 @@ export class SmartTakeoverService {
     presetId?: string;
   }): Promise<TakeoverSessionState> {
     if (!input.presetId) {
-      this.manualPresetByParentSessionId.delete(input.sessionId);
+      this.takeoverConfigByParentSessionId.delete(input.sessionId);
+      this.cancelPendingLaunch(input.sessionId);
       const activeRunId = this.runIdByParentSessionId.get(input.sessionId);
       if (activeRunId) {
         this.cancelRun(activeRunId, "Manual takeover was disabled.");
@@ -254,22 +272,16 @@ export class SmartTakeoverService {
       return this.getSessionState(input.sessionId);
     }
 
-    await this.presetStore.read(input.presetId);
-    const existingRunId = this.runIdByParentSessionId.get(input.sessionId);
-    const existingRun = existingRunId ? this.runsById.get(existingRunId) : undefined;
-    if (
-      existingRunId &&
-      existingRun?.presetId === input.presetId &&
-      this.pendingVerdictResolvers.has(existingRunId)
-    ) {
-      this.manualPresetByParentSessionId.set(input.sessionId, input.presetId);
-      return this.getSessionState(input.sessionId);
-    }
-    this.manualPresetByParentSessionId.set(input.sessionId, input.presetId);
-    if (existingRunId && this.pendingVerdictResolvers.has(existingRunId)) {
-      this.cancelRun(existingRunId, "Manual takeover preset changed.");
-    }
-    void this.startManualRun(input.sessionId, input.presetId);
+    await this.enableTakeover({
+      parentSessionId: input.sessionId,
+      args: {
+        action: "start",
+        presetId: input.presetId,
+        brief:
+          "Manual takeover was enabled from Another Workbench. Inspect the current session and reply as the delegated virtual user."
+      },
+      source: "manual"
+    });
     return this.getSessionState(input.sessionId);
   }
 
@@ -360,7 +372,27 @@ export class SmartTakeoverService {
       return textResult(await this.buildHelp(args.helpTopic));
     }
     try {
-      return textResult(await this.startTakeover(request, args));
+      const existingConfig = this.takeoverConfigByParentSessionId.get(
+        request.parentSessionId
+      );
+      if (existingConfig) {
+        return textResult(
+          `SmartTakeover is already enabled for session ${request.parentSessionId}. It will run after the current response is complete.`
+        );
+      }
+      return textResult(
+        await this.enableTakeover({
+          parentSessionId: request.parentSessionId,
+          args: {
+            ...args,
+            action: "start"
+          },
+          requestedBy: request.requestedBy,
+          sourceTurnId: request.sourceTurnId,
+          sourceToolCallId: request.sourceToolCallId,
+          source: "tool"
+        })
+      );
     } catch (error) {
       return textResult(
         `SmartTakeover failed: ${(error as Error).message}`,
@@ -400,23 +432,53 @@ export class SmartTakeoverService {
     );
   }
 
-  private async startTakeover(
-    request: SmartTakeoverRequest,
-    args: TakeoverToolArgs
-  ): Promise<string> {
-    const launch = await this.launchTakeover(request, args, "tool");
-    const verdict = await launch.verdictPromise;
-    return this.renderParentToolResult({
-      runId: launch.runId,
-      takeoverSession: launch.takeoverSession,
-      verdict
+  private async enableTakeover(input: {
+    parentSessionId: string;
+    args: TakeoverToolArgs;
+    requestedBy?: SmartTakeoverRequest["requestedBy"];
+    sourceTurnId?: string;
+    sourceToolCallId?: string;
+    source: TakeoverRun["source"];
+  }): Promise<string> {
+    const parentSession = this.runtimeService.getSession(input.parentSessionId);
+    if (!parentSession) {
+      throw new Error(`Parent session not found: ${input.parentSessionId}`);
+    }
+    const presetId = input.args.presetId ?? "review";
+    await this.presetStore.read(presetId);
+
+    const existingRunId = this.runIdByParentSessionId.get(parentSession.sessionId);
+    const existingRun = existingRunId ? this.runsById.get(existingRunId) : undefined;
+    this.takeoverConfigByParentSessionId.set(parentSession.sessionId, {
+      presetId,
+      args: {
+        ...input.args,
+        action: "start",
+        presetId
+      },
+      requestedBy: input.requestedBy,
+      sourceTurnId: input.sourceTurnId,
+      sourceToolCallId: input.sourceToolCallId,
+      source: input.source
     });
+    this.cancelPendingLaunch(parentSession.sessionId);
+    if (existingRunId && this.pendingVerdictResolvers.has(existingRunId)) {
+      this.cancelRun(
+        existingRunId,
+        existingRun?.presetId === presetId
+          ? "Takeover was reconfigured."
+          : "Takeover preset changed."
+      );
+    }
+    this.startOrScheduleConfiguredRun(parentSession.sessionId);
+    return `SmartTakeover enabled for session ${parentSession.sessionId}. It will run after the current response is complete.`;
   }
 
   private async launchTakeover(
     request: SmartTakeoverRequest,
     args: TakeoverToolArgs,
-    source: TakeoverRun["source"]
+    source: TakeoverRun["source"],
+    shouldContinue: () => boolean = () => true
   ): Promise<{
     runId: string;
     run: TakeoverRun;
@@ -429,6 +491,9 @@ export class SmartTakeoverService {
     }
     const presetId = args.presetId ?? "review";
     const preset = await this.presetStore.read(presetId);
+    if (!shouldContinue()) {
+      throw new Error("Takeover launch cancelled.");
+    }
     const snapshot = this.runtimeService.getSnapshot();
     const conversation = snapshot.conversations.find(
       (item) => item.conversationId === parentSession.conversationId
@@ -440,6 +505,9 @@ export class SmartTakeoverService {
           ?.getState()
           .workspaces.find((item) => item.workspaceId === conversation.workspaceId)
       : undefined;
+    if (!shouldContinue()) {
+      throw new Error("Takeover launch cancelled.");
+    }
     const workspacePath =
       workspace?.absolutePath ??
       (typeof parentSession.metadata?.cwd === "string"
@@ -485,6 +553,9 @@ export class SmartTakeoverService {
       });
       run.takeoverSessionId = takeoverSession.sessionId;
       this.runIdByTakeoverSessionId.set(takeoverSession.sessionId, runId);
+      if (!shouldContinue()) {
+        throw new Error("Takeover launch cancelled.");
+      }
 
       const cursor = this.runtimeService.getSnapshotResult().cursor;
       const timeoutMs = args.timeoutMs ?? this.defaultTimeoutMs;
@@ -494,6 +565,9 @@ export class SmartTakeoverService {
         fromCursor: cursor,
         timeoutMs
       });
+      if (!shouldContinue()) {
+        throw new Error("Takeover launch cancelled.");
+      }
       const receipt = await this.withTimeout(
         this.runtimeService.executeCommand({
           commandId: this.createId(),
@@ -538,60 +612,83 @@ export class SmartTakeoverService {
     }
   }
 
-  private async startManualRun(
-    parentSessionId: string,
-    presetId: string
-  ): Promise<void> {
+  private startOrScheduleConfiguredRun(parentSessionId: string): void {
     const parentSession = this.runtimeService.getSession(parentSessionId);
     if (!parentSession) {
-      this.manualPresetByParentSessionId.delete(parentSessionId);
+      this.takeoverConfigByParentSessionId.delete(parentSessionId);
+      this.cancelPendingLaunch(parentSessionId);
       return;
     }
-    const providerHandle =
-      this.runtimeService.resolveProviderSessionHandle(parentSessionId);
+    if (this.runIdByParentSessionId.has(parentSessionId)) {
+      return;
+    }
+    if (parentSession.status === "running" || parentSession.status === "awaiting_approval") {
+      this.scheduleConfiguredRunAfterParentTurn(
+        parentSessionId,
+        this.runtimeService.getSnapshotResult().cursor
+      );
+      return;
+    }
+    void this.startConfiguredRun(parentSessionId);
+  }
+
+  private startConfiguredRun(parentSessionId: string): void {
+    void this.runConfiguredTakeover(parentSessionId);
+  }
+
+  private async runConfiguredTakeover(parentSessionId: string): Promise<void> {
+    const config = this.takeoverConfigByParentSessionId.get(parentSessionId);
+    const parentSession = this.runtimeService.getSession(parentSessionId);
+    if (!config || !parentSession || this.runIdByParentSessionId.has(parentSessionId)) {
+      return;
+    }
+    const isCurrentConfig = (): boolean =>
+      this.takeoverConfigByParentSessionId.get(parentSessionId) === config;
+    const providerHandle = this.runtimeService.resolveProviderSessionHandle(parentSessionId);
     try {
+      if (!isCurrentConfig()) {
+        return;
+      }
       const launch = await this.launchTakeover(
         {
           parentSessionId,
-          requestedBy: {
+          requestedBy: config.requestedBy ?? {
             engineId: parentSession.engineId,
-            providerSessionId:
-              providerHandle?.providerSessionId ?? parentSessionId
+            providerSessionId: providerHandle?.providerSessionId ?? parentSessionId
           },
-          arguments: {
-            action: "start",
-            presetId,
-            brief:
-              "Manual takeover was enabled from Another Workbench. Inspect the current session and reply as the delegated virtual user."
-          }
+          sourceTurnId: config.sourceTurnId,
+          sourceToolCallId: config.sourceToolCallId,
+          arguments: config.args
         },
-        {
-          action: "start",
-          presetId,
-          brief:
-            "Manual takeover was enabled from Another Workbench. Inspect the current session and reply as the delegated virtual user."
-        },
-        "manual"
+        config.args,
+        config.source,
+        isCurrentConfig
       );
+      if (!isCurrentConfig()) {
+        return;
+      }
       const verdict = await launch.verdictPromise;
-      await this.forwardManualVerdictToParent(launch.run, verdict);
+      await this.forwardTakeoverVerdictToParent(launch.run, verdict);
     } catch {
-      if (this.manualPresetByParentSessionId.get(parentSessionId) === presetId) {
-        this.manualPresetByParentSessionId.delete(parentSessionId);
+      if (this.takeoverConfigByParentSessionId.get(parentSessionId) === config) {
+        this.takeoverConfigByParentSessionId.delete(parentSessionId);
+        this.cancelPendingLaunch(parentSessionId);
       }
     }
   }
 
-  private async forwardManualVerdictToParent(
+  private async forwardTakeoverVerdictToParent(
     run: TakeoverRun,
     verdict: TakeoverVerdictPayload
   ): Promise<void> {
-    if (this.manualPresetByParentSessionId.get(run.parentSessionId) !== run.presetId) {
+    const config = this.takeoverConfigByParentSessionId.get(run.parentSessionId);
+    if (config?.presetId !== run.presetId) {
       return;
     }
     const parentSession = this.runtimeService.getSession(run.parentSessionId);
     if (!parentSession) {
-      this.manualPresetByParentSessionId.delete(run.parentSessionId);
+      this.takeoverConfigByParentSessionId.delete(run.parentSessionId);
+      this.cancelPendingLaunch(run.parentSessionId);
       return;
     }
     const cursor = this.runtimeService.getSnapshotResult().cursor;
@@ -607,57 +704,57 @@ export class SmartTakeoverService {
       }
     });
     if (!receipt.accepted) {
-      this.manualPresetByParentSessionId.delete(run.parentSessionId);
+      this.takeoverConfigByParentSessionId.delete(run.parentSessionId);
+      this.cancelPendingLaunch(run.parentSessionId);
       return;
     }
     if (verdict.verdict === "complete") {
-      this.manualPresetByParentSessionId.delete(run.parentSessionId);
+      this.takeoverConfigByParentSessionId.delete(run.parentSessionId);
+      this.cancelPendingLaunch(run.parentSessionId);
       return;
     }
     if (verdict.verdict === "incomplete") {
-      void this.restartManualRunAfterParentTurn(run.parentSessionId, run.presetId, cursor);
+      this.scheduleConfiguredRunAfterParentTurn(run.parentSessionId, cursor);
     }
   }
 
-  private async restartManualRunAfterParentTurn(
+  private scheduleConfiguredRunAfterParentTurn(
     parentSessionId: string,
-    presetId: string,
     fromCursor: string | undefined
-  ): Promise<void> {
-    await new Promise<void>((resolve) => {
-      let unsubscribe: (() => void) | undefined;
-      const timeout = setTimeout(() => {
-        unsubscribe?.();
-        resolve();
-      }, this.defaultTimeoutMs);
-      unsubscribe = this.runtimeService.subscribeFromCursor(
-        (envelope) => {
-          const event = envelope.event;
-          if (
-            event.type === "turn.completed" &&
-            event.sessionId === parentSessionId &&
-            !event.turnId.startsWith("user-turn-")
-          ) {
-            clearTimeout(timeout);
-            unsubscribe?.();
-            resolve();
-          }
-        },
-        {
-          fromCursor,
-          filter: {
-            sessionId: parentSessionId,
-            eventTypes: ["turn.completed"]
-          }
-        }
-      );
-    });
-    if (
-      this.manualPresetByParentSessionId.get(parentSessionId) === presetId &&
-      !this.runIdByParentSessionId.has(parentSessionId)
-    ) {
-      void this.startManualRun(parentSessionId, presetId);
+  ): void {
+    if (this.pendingLaunchUnsubscribesByParentSessionId.has(parentSessionId)) {
+      return;
     }
+    const unsubscribe = this.runtimeService.subscribeFromCursor(
+      (envelope) => {
+        const event = envelope.event;
+        if (
+          event.type === "turn.completed" &&
+          event.sessionId === parentSessionId &&
+          !event.turnId.startsWith("user-turn-")
+        ) {
+          this.cancelPendingLaunch(parentSessionId);
+          this.startOrScheduleConfiguredRun(parentSessionId);
+        }
+      },
+      {
+        fromCursor,
+        filter: {
+          sessionId: parentSessionId,
+          eventTypes: ["turn.completed"]
+        }
+      }
+    );
+    this.pendingLaunchUnsubscribesByParentSessionId.set(parentSessionId, unsubscribe);
+  }
+
+  private cancelPendingLaunch(parentSessionId: string): void {
+    const unsubscribe = this.pendingLaunchUnsubscribesByParentSessionId.get(parentSessionId);
+    if (!unsubscribe) {
+      return;
+    }
+    this.pendingLaunchUnsubscribesByParentSessionId.delete(parentSessionId);
+    unsubscribe();
   }
 
   private async buildHelp(
@@ -666,7 +763,7 @@ export class SmartTakeoverService {
     const { rootPath, presets } = await this.presetStore.list();
     const presetLines = this.renderPresetLines(presets);
     const sections: Record<string, string> = {
-      overview: `SmartTakeover starts a takeover agent session in the same workspace. The takeover agent acts as the user's delegated reviewer or progress manager and reports back through SubmitTakeoverVerdict.
+      overview: `SmartTakeover enables takeover mode for this session. After the parent agent finishes its current response, Another Workbench starts a takeover agent in the same workspace. The takeover agent acts as the user's delegated reviewer or progress manager and reports back through SubmitTakeoverVerdict.
 
 Use action="start" when you need a virtual user to inspect a checkpoint, review your changes, or decide whether a long-running task should continue.`,
       presets: `Preset prompts are read from ${rootPath}. Each preset can be a directory containing prompt.md or another .md file, or a direct .md file.
@@ -676,7 +773,7 @@ ${presetLines}`,
       brief: `brief should be short, concrete, and situation-specific. Include what you just did, what you want checked, known risks, and what kind of feedback would help you continue.
 
 Use customPrompt only when no preset captures the situation. customPrompt is appended after the preset prompt.`,
-      loop: `For review loops, use presetId="review" and pass focusFiles plus successCriteria. If the verdict is incomplete, do the requested work from response and call SmartTakeover again.
+      loop: `For review loops, use presetId="review" and pass focusFiles plus successCriteria. If the verdict is incomplete, do the requested work from response; takeover mode will review again after the next completed response while it remains enabled.
 
 For roadmap/progress loops, use presetId="progress" and include the roadmap excerpt or acceptance criteria in brief/successCriteria.`,
       result: `The takeover agent must call SubmitTakeoverVerdict once. verdict="complete" means the takeover passes. verdict="incomplete" means the parent agent should continue working from response. response is the complete virtual-user reply to return to the parent agent.`
@@ -811,7 +908,7 @@ TAKEOVER_VERDICT: complete|incomplete`;
             }
             return;
           }
-          if (event.type === "runtime.error") {
+          if (event.type === "runtime.error" && !event.recoverable) {
             fail(new Error(event.message));
           }
         },
@@ -824,19 +921,5 @@ TAKEOVER_VERDICT: complete|incomplete`;
         }
       );
     });
-  }
-
-  private renderParentToolResult(input: {
-    runId: string;
-    takeoverSession: ChatSession;
-    verdict: TakeoverVerdictPayload;
-  }): string {
-    return `SmartTakeover ${input.verdict.verdict}.
-
-Run id: ${input.runId}
-Takeover session id: ${input.takeoverSession.sessionId}
-Verdict: ${input.verdict.verdict}
-Response:
-${input.verdict.response}`;
   }
 }

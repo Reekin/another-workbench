@@ -48,6 +48,7 @@ const createManualTakeoverHarness = async () => {
   const presetStore = new TakeoverPresetStore({ baseDir });
   const sessions = new Map<string, Record<string, unknown>>();
   const commands: Array<Record<string, unknown>> = [];
+  const subscribers = new Set<(envelope: EventEnvelope) => void>();
   let childIndex = 0;
   let idIndex = 0;
   let cursorIndex = 0;
@@ -123,7 +124,12 @@ const createManualTakeoverHarness = async () => {
         accepted: true
       };
     },
-    subscribeFromCursor: () => () => undefined
+    subscribeFromCursor: (handler: (envelope: EventEnvelope) => void) => {
+      subscribers.add(handler);
+      return () => {
+        subscribers.delete(handler);
+      };
+    }
   } as never;
 
   const service = new SmartTakeoverService({
@@ -159,7 +165,12 @@ const createManualTakeoverHarness = async () => {
     service,
     commands,
     sessions,
-    submitVerdict
+    submitVerdict,
+    emit: (envelope: EventEnvelope) => {
+      for (const subscriber of subscribers) {
+        subscriber(envelope);
+      }
+    }
   };
 };
 
@@ -322,6 +333,263 @@ describe("SmartTakeoverService", () => {
     ).resolves.toMatchObject({ success: false });
   });
 
+  it("keeps waiting for a takeover verdict after recoverable runtime errors", async () => {
+    const baseDir = await createTempDir();
+    let onEnvelope: ((envelope: EventEnvelope) => void) | undefined;
+    const service = new SmartTakeoverService({
+      runtimeService: {
+        getSession: () => undefined,
+        subscribeFromCursor: (handler: (envelope: EventEnvelope) => void) => {
+          onEnvelope = handler;
+          return () => undefined;
+        }
+      } as never,
+      presetStore: new TakeoverPresetStore({ baseDir })
+    });
+    const internals = service as unknown as {
+      waitForVerdict: (input: {
+        runId: string;
+        takeoverSessionId: string;
+        timeoutMs: number;
+      }) => Promise<{ verdict: "complete" | "incomplete"; response: string }>;
+    };
+
+    const verdict = internals.waitForVerdict({
+      runId: "run-1",
+      takeoverSessionId: "session-takeover",
+      timeoutMs: 1_000
+    });
+    await waitFor(() => Boolean(onEnvelope));
+
+    onEnvelope?.({
+      eventId: "event-recoverable",
+      cursor: "cursor-recoverable",
+      occurredAt: "2026-05-10T00:00:00Z",
+      event: {
+        type: "runtime.error",
+        sessionId: "session-takeover",
+        message: "Reconnecting... 1/5",
+        recoverable: true
+      }
+    } as EventEnvelope);
+    onEnvelope?.({
+      eventId: "event-message",
+      cursor: "cursor-message",
+      occurredAt: "2026-05-10T00:00:01Z",
+      event: {
+        type: "message.completed",
+        sessionId: "session-takeover",
+        turnId: "turn-1",
+        messageId: "message-1",
+        finalText: "Looks good.\nTAKEOVER_VERDICT: complete"
+      }
+    } as EventEnvelope);
+    onEnvelope?.({
+      eventId: "event-turn",
+      cursor: "cursor-turn",
+      occurredAt: "2026-05-10T00:00:02Z",
+      event: {
+        type: "turn.completed",
+        sessionId: "session-takeover",
+        turnId: "turn-1",
+        finishReason: "completed"
+      }
+    } as EventEnvelope);
+
+    await expect(verdict).resolves.toMatchObject({
+      verdict: "complete",
+      response: expect.stringContaining("Looks good.")
+    });
+  });
+
+  it("enables manual takeover without starting the takeover agent until the parent turn completes", async () => {
+    const harness = await createManualTakeoverHarness();
+    const parent = harness.sessions.get("session-parent");
+    if (parent) {
+      parent.status = "running";
+    }
+
+    await harness.service.setManualTakeover({
+      sessionId: "session-parent",
+      presetId: "review"
+    });
+
+    expect(harness.service.getSessionState("session-parent")).toMatchObject({
+      role: "managed",
+      active: false,
+      manualPresetId: "review",
+      presetId: "review"
+    });
+    expect(harness.sessions.has("session-takeover-1")).toBe(false);
+    expect(harness.commands).toEqual([]);
+
+    if (parent) {
+      parent.status = "idle";
+    }
+    harness.emit({
+      eventId: "event-parent-completed",
+      cursor: "cursor-parent-completed",
+      occurredAt: "2026-05-10T00:00:00Z",
+      event: {
+        type: "turn.completed",
+        sessionId: "session-parent",
+        turnId: "turn-parent",
+        finishReason: "completed"
+      }
+    } as EventEnvelope);
+
+    await waitFor(() => harness.service.getSessionState("session-parent").active);
+    expect(harness.sessions.has("session-takeover-1")).toBe(true);
+    expect(harness.commands).toEqual([
+      expect.objectContaining({
+        type: "sendUserMessage",
+        sessionId: "session-takeover-1"
+      })
+    ]);
+  });
+
+  it("does not send the takeover prompt when disabled during launch", async () => {
+    const baseDir = await createTempDir();
+    const presetStore = new TakeoverPresetStore({ baseDir });
+    let resolveRelatedSession:
+      | ((session: {
+          sessionId: string;
+          conversationId: string;
+          engineId: string;
+          status: string;
+          createdAt: string;
+          updatedAt: string;
+          metadata?: Record<string, unknown>;
+        }) => void)
+      | undefined;
+    const commands: Array<Record<string, unknown>> = [];
+    const runtimeService = {
+      getSession: (sessionId: string) =>
+        sessionId === "session-parent"
+          ? {
+              sessionId: "session-parent",
+              conversationId: "conversation-1",
+              engineId: "codex",
+              status: "idle",
+              createdAt: "2026-05-10T00:00:00Z",
+              updatedAt: "2026-05-10T00:00:00Z",
+              metadata: {
+                cwd: "I:/workspace"
+              }
+            }
+          : undefined,
+      getSnapshot: () => ({
+        conversations: [
+          {
+            conversationId: "conversation-1",
+            workspaceId: "workspace-1",
+            participantEngineIds: ["codex"],
+            sessionIds: ["session-parent"],
+            createdAt: "2026-05-10T00:00:00Z",
+            updatedAt: "2026-05-10T00:00:00Z"
+          }
+        ],
+        sessions: [],
+        turns: [],
+        messageBlocks: [],
+        toolCalls: [],
+        terminalStreams: [],
+        approvalRequests: [],
+        participants: [],
+        sessionRelations: []
+      }),
+      getSnapshotResult: () => ({
+        snapshot: runtimeService.getSnapshot(),
+        cursor: "cursor-1"
+      }),
+      getWorkspaceRegistry: () => undefined,
+      resolveProviderSessionHandle: () => undefined,
+      createRelatedSession: (input: { metadata?: Record<string, unknown> }) =>
+        new Promise((resolve) => {
+          resolveRelatedSession = resolve;
+        }).then((session) => ({
+          ...session,
+          metadata: input.metadata
+        })),
+      executeCommand: async (input: { command: Record<string, unknown> }) => {
+        commands.push(input.command);
+        return {
+          commandId: "cmd",
+          commandType: input.command.type,
+          accepted: true
+        };
+      },
+      subscribeFromCursor: () => () => undefined
+    } as never;
+    const service = new SmartTakeoverService({
+      runtimeService,
+      presetStore,
+      defaultTimeoutMs: 1_000
+    });
+
+    await service.setManualTakeover({
+      sessionId: "session-parent",
+      presetId: "review"
+    });
+    await waitFor(() => Boolean(resolveRelatedSession));
+    await service.setManualTakeover({
+      sessionId: "session-parent"
+    });
+
+    resolveRelatedSession?.({
+      sessionId: "session-takeover",
+      conversationId: "conversation-1",
+      engineId: "codex",
+      status: "idle",
+      createdAt: "2026-05-10T00:00:00Z",
+      updatedAt: "2026-05-10T00:00:00Z"
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(commands).toEqual([]);
+    expect(service.getSessionState("session-parent")).toMatchObject({
+      role: "none",
+      active: false
+    });
+  });
+
+  it("returns an already enabled message when SmartTakeover is called again", async () => {
+    const harness = await createManualTakeoverHarness();
+    const parent = harness.sessions.get("session-parent");
+    if (parent) {
+      parent.status = "running";
+    }
+    await harness.service.setManualTakeover({
+      sessionId: "session-parent",
+      presetId: "review"
+    });
+    const smartTakeoverTool = harness.service
+      .createHostTools()
+      .find((tool) => tool.name === "SmartTakeover");
+
+    const result = await smartTakeoverTool?.handle({
+      definition: smartTakeoverTool,
+      arguments: {
+        action: "start",
+        presetId: "review"
+      },
+      context: {
+        engineId: "codex",
+        sessionId: "session-parent",
+        providerSessionId: "thread-session-parent"
+      }
+    } as never);
+
+    expect(result).toMatchObject({
+      success: true,
+      contentItems: [
+        expect.objectContaining({
+          text: expect.stringContaining("SmartTakeover is already enabled")
+        })
+      ]
+    });
+  });
+
   it("clears manual takeover after a complete verdict", async () => {
     const harness = await createManualTakeoverHarness();
 
@@ -409,7 +677,7 @@ describe("SmartTakeoverService", () => {
     });
   });
 
-  it("launches a takeover session and returns the submitted verdict to the parent tool call", async () => {
+  it("enables takeover from the parent tool call and forwards the submitted verdict after parent completion", async () => {
     const baseDir = await createTempDir();
     const workspaceRegistry = new WorkspaceRegistryService({
       baseDir,
@@ -524,10 +792,10 @@ describe("SmartTakeoverService", () => {
     await waitFor(() =>
       events.some(
         (event) =>
-          event.event.type === "tool.completed" &&
+          event.event.type === "message.completed" &&
           event.event.sessionId === "session-1" &&
-          "outputSummary" in event.event &&
-          event.event.outputSummary?.includes("Verdict: complete")
+          "finalText" in event.event &&
+          event.event.finalText?.includes("Fake reviewer completed the takeover flow")
       )
     );
 
@@ -567,7 +835,7 @@ describe("SmartTakeoverService", () => {
           event: expect.objectContaining({
             type: "tool.completed",
             sessionId: "session-1",
-            outputSummary: expect.stringContaining("Verdict: complete")
+            outputSummary: expect.stringContaining("SmartTakeover enabled")
           })
         })
       ])

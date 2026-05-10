@@ -266,12 +266,32 @@ export const useSessionOpenController = (input: {
       const requestId = ++openSessionRequestIdRef.current;
       const cachedWindow = input.sessionWindows[sessionId];
       if (cachedWindow && activateLoadedSession(sessionId)) {
-        input.setOpeningSessionId(undefined);
-        input.onStatusNotice(undefined);
-        void input.refreshSessionBrowser({
-          mode: "workspace",
-          workspaceId: findSessionNode(input.workspaceTree, sessionId)?.workspaceId
+        input.viewport.scrollToBottom(sessionId, {
+          allowPendingForInactive: true
         });
+        try {
+          await input.transport.sessionBrowser.activate(sessionId);
+          if (openSessionRequestIdRef.current !== requestId) {
+            return;
+          }
+          await input.refreshSessionBrowser({
+            mode: "workspace",
+            workspaceId: findSessionNode(input.workspaceTree, sessionId)?.workspaceId
+          });
+          input.setOpeningSessionId(undefined);
+          input.onStatusNotice(undefined);
+        } catch (error) {
+          if (openSessionRequestIdRef.current !== requestId) {
+            return;
+          }
+          input.setOpeningSessionId(undefined);
+          input.onStatusNotice({
+            message: `Open session failed: ${(error as Error).message}`,
+            persistent: true,
+            source: "session-browser",
+            ...statusNoticeErrorDetails(error)
+          });
+        }
         return;
       }
       input.onStatusNotice({

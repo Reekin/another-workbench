@@ -52,14 +52,14 @@ export const createSmartTakeoverHostTool = (
   namespace: smartTakeoverToolNamespace,
   name: smartTakeoverToolName,
   description:
-    "Start or inspect an Another Workbench takeover agent for this session.",
+    "Let another agent act as the user to supervise this session. It will automatically check your work after you finish responding and give feedback. Use near completion of complex feature work or long-running tasks with many work items that need repeated review and iteration.",
   inputSchema: {
     type: "object",
     properties: {
       action: {
         type: "string",
         enum: ["help", "start"],
-        description: "Use help for detailed usage, start to launch takeover."
+        description: "Use help for detailed usage, start to enable takeover."
       },
       helpTopic: {
         type: "string",

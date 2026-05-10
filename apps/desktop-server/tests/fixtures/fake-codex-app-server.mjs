@@ -594,6 +594,35 @@ const emitRuntimeErrorPath = ({ threadId, turnId }) => {
   });
 };
 
+const emitRecoverableRuntimeErrorPath = ({ threadId, turnId }) => {
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "active" }
+    }
+  });
+  send({
+    method: "turn/started",
+    params: {
+      threadId,
+      turn: { id: turnId }
+    }
+  });
+  send({
+    method: "error",
+    params: {
+      threadId,
+      turnId,
+      error: {
+        message: "Reconnecting... 1/5",
+        codexErrorInfo: "CODEX_APP_SERVER_ERROR"
+      },
+      willRetry: true
+    }
+  });
+};
+
 const emitApprovalResolution = ({ threadId, turnId, requestId, action }) => {
   const commandId = `cmd-${turnId}`;
 
@@ -957,6 +986,11 @@ const handleRequest = (payload) => {
 
           if (prompt.includes("file-change")) {
             emitFileChangePath({ threadId, turnId });
+            return;
+          }
+
+          if (prompt.includes("recoverable-runtime-error")) {
+            emitRecoverableRuntimeErrorPath({ threadId, turnId });
             return;
           }
 

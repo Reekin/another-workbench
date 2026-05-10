@@ -20,6 +20,10 @@ export type TranscriptViewportController = {
   setDisplayedSessionIdRef: (sessionId: string | undefined) => void;
   queuePrependScrollRestore: (input: PendingPrependScroll) => void;
   queueViewportTarget: (input: PendingViewportTarget | undefined) => void;
+  scrollToBottom: (
+    sessionId?: string,
+    options?: { allowPendingForInactive?: boolean }
+  ) => void;
   clearPendingViewportState: () => void;
 };
 
@@ -164,11 +168,71 @@ export const useTranscriptViewportController = (input: {
     queueViewportTarget: (next) => {
       pendingViewportTargetRef.current = next;
     },
+    scrollToBottom: (sessionId, options = {}) => {
+      const request = resolveTranscriptBottomRequest({
+        sessionId: sessionId ?? displayedSessionIdRef.current,
+        displayedSessionId: displayedSessionIdRef.current,
+        allowPendingForInactive: options.allowPendingForInactive
+      });
+      if (request.pending) {
+        pendingViewportTargetRef.current = request.pending;
+        return;
+      }
+      if (!request.immediate) {
+        return;
+      }
+      pendingViewportTargetRef.current = undefined;
+      isStickyToBottomRef.current = true;
+      const element = transcriptRef.current;
+      if (!element) {
+        return;
+      }
+      const target = request.immediate;
+      window.requestAnimationFrame(() => {
+        if (displayedSessionIdRef.current === target.sessionId) {
+          scrollTranscriptToBottom(element);
+        }
+      });
+    },
     clearPendingViewportState: () => {
       pendingPrependScrollRef.current = undefined;
       pendingViewportTargetRef.current = undefined;
     }
   };
+};
+
+export const createTranscriptBottomTarget = (
+  sessionId: string | undefined
+): PendingViewportTarget | undefined =>
+  sessionId
+    ? {
+        sessionId,
+        type: "bottom"
+      }
+    : undefined;
+
+export const resolveTranscriptBottomRequest = (input: {
+  sessionId: string | undefined;
+  displayedSessionId: string | undefined;
+  allowPendingForInactive?: boolean;
+}): {
+  immediate?: PendingViewportTarget;
+  pending?: PendingViewportTarget;
+} => {
+  const target = createTranscriptBottomTarget(input.sessionId);
+  if (!target) {
+    return {};
+  }
+  if (target.sessionId === input.displayedSessionId) {
+    return {
+      immediate: target
+    };
+  }
+  return input.allowPendingForInactive
+    ? {
+        pending: target
+      }
+    : {};
 };
 
 export const isTranscriptNearBottom = (element: {

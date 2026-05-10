@@ -668,4 +668,75 @@ describe("DomainProjector", () => {
       sessionIds: ["session-2"]
     });
   });
+
+  it("keeps active turns running for recoverable runtime errors", () => {
+    const projector = new DomainProjector();
+
+    projector.apply(
+      {
+        type: "session.created",
+        conversationId: "conversation-a",
+        sessionId: "session-1",
+        engineId: "agent-a",
+        status: "idle"
+      },
+      "2026-04-18T00:04:00.000Z"
+    );
+    projector.apply(
+      {
+        type: "turn.started",
+        sessionId: "session-1",
+        turnId: "turn-running"
+      },
+      "2026-04-18T00:04:01.000Z"
+    );
+    projector.apply(
+      {
+        type: "tool.started",
+        sessionId: "session-1",
+        turnId: "turn-running",
+        toolCallId: "tool-running",
+        toolName: "exec_command",
+        engineId: "agent-a"
+      },
+      "2026-04-18T00:04:02.000Z"
+    );
+    projector.apply(
+      {
+        type: "runtime.error",
+        sessionId: "session-1",
+        turnId: "turn-running",
+        code: "CODEX_APP_SERVER_ERROR",
+        message: "Reconnecting... 1/5",
+        recoverable: true
+      },
+      "2026-04-18T00:04:03.000Z"
+    );
+    projector.apply(
+      {
+        type: "message.completed",
+        sessionId: "session-1",
+        turnId: "turn-running",
+        messageId: "message-after-reconnect",
+        role: "assistant",
+        finalText: "Still running.",
+        phase: "commentary",
+        engineId: "agent-a"
+      },
+      "2026-04-18T00:04:04.000Z"
+    );
+
+    expect(projector.store.getTurn("turn-running")).toMatchObject({
+      status: "streaming",
+      finishReason: undefined
+    });
+    expect(projector.store.getSession("session-1")).toMatchObject({
+      status: "running",
+      lastTurnId: "turn-running"
+    });
+    expect(projector.store.getMessageBlock("runtime-error:turn-running:md")).toBeUndefined();
+    expect(projector.store.getMessageBlock("message-after-reconnect:md")).toMatchObject({
+      text: "Still running."
+    });
+  });
 });

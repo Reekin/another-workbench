@@ -821,6 +821,9 @@ describe("createRemoteRpcHandler", () => {
           hasNewer: false
         }
       }),
+      activateSession: vi.fn().mockResolvedValue({
+        sessionId: "session-1"
+      }),
       loadOlderSessionTurns: vi.fn().mockResolvedValue({
         page: {
           sessionId: "session-1",
@@ -919,6 +922,13 @@ describe("createRemoteRpcHandler", () => {
         sessionId: "session-1"
       }
     });
+    const activateSessionResponse = await handler.handleRequest({
+      id: "req-activate",
+      method: "sessionBrowser.activate",
+      params: {
+        sessionId: "session-1"
+      }
+    });
     const loadOlderResponse = await handler.handleRequest({
       id: "req-load-older",
       method: "sessionBrowser.loadOlder",
@@ -1010,6 +1020,14 @@ describe("createRemoteRpcHandler", () => {
           hasOlder: true,
           hasNewer: false
         }
+      }
+    });
+    expect(activateSessionResponse).toMatchObject({
+      id: "req-activate",
+      method: "sessionBrowser.activate",
+      ok: true,
+      result: {
+        sessionId: "session-1"
       }
     });
     expect(loadOlderResponse).toMatchObject({

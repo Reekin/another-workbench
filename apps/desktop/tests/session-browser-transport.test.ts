@@ -159,6 +159,15 @@ describe("session browser transport contracts", () => {
               }
             }
           } as const;
+        case "sessionBrowser.activate":
+          return {
+            id: request.id,
+            method: "sessionBrowser.activate",
+            ok: true,
+            result: {
+              sessionId: request.params.sessionId
+            }
+          } as const;
         case "sessionBrowser.loadOlder":
           return {
             id: request.id,
@@ -220,6 +229,7 @@ describe("session browser transport contracts", () => {
     const tree = await transport.sessionBrowser.listTree("workspace-1");
     const reconcile = await transport.sessionBrowser.reconcile("workspace-1");
     const openResult = await transport.sessionBrowser.open("session-child");
+    const activateResult = await transport.sessionBrowser.activate("session-child");
     const olderPage = await transport.sessionBrowser.loadOlder({
       sessionId: "session-child",
       beforeTurnId: "turn-2",
@@ -262,6 +272,9 @@ describe("session browser transport contracts", () => {
         hasNewer: false
       })
     });
+    expect(activateResult).toEqual({
+      sessionId: "session-child"
+    });
     expect(olderPage).toEqual({
       page: expect.objectContaining({
         sessionId: "session-child",
@@ -291,6 +304,7 @@ describe("session browser transport contracts", () => {
       "sessionBrowser.listTree",
       "sessionBrowser.reconcile",
       "sessionBrowser.open",
+      "sessionBrowser.activate",
       "sessionBrowser.loadOlder",
       "sessionBrowser.toggleExpanded",
       "sessionBrowser.create"

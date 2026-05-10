@@ -1074,6 +1074,90 @@ describe("desktop store reducer", () => {
     });
   });
 
+  it("keeps running turns open for recoverable runtime errors", () => {
+    let state = createInitialRendererStoreState();
+
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelopeAt("evt-session-created", "1", "2026-04-17T00:00:00.000Z", {
+          type: "session.created",
+          conversationId: "conversation-a",
+          sessionId: "session-a",
+          engineId: "codex",
+          status: "running"
+        })
+      )
+    );
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelopeAt("evt-turn-started", "2", "2026-04-17T00:00:01.000Z", {
+          type: "turn.started",
+          sessionId: "session-a",
+          turnId: "turn-running"
+        })
+      )
+    );
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelopeAt("evt-tool-started", "3", "2026-04-17T00:00:02.000Z", {
+          type: "tool.started",
+          sessionId: "session-a",
+          turnId: "turn-running",
+          toolCallId: "tool-running",
+          toolName: "commandExecution",
+          engineId: "codex"
+        })
+      )
+    );
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelopeAt("evt-reconnect", "4", "2026-04-17T00:00:03.000Z", {
+          type: "runtime.error",
+          sessionId: "session-a",
+          turnId: "turn-running",
+          code: "CODEX_APP_SERVER_ERROR",
+          message: "Reconnecting... 1/5",
+          recoverable: true
+        })
+      )
+    );
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelopeAt("evt-assistant-after-reconnect", "5", "2026-04-17T00:00:04.000Z", {
+          type: "message.completed",
+          sessionId: "session-a",
+          turnId: "turn-running",
+          messageId: "message-after-reconnect",
+          role: "assistant",
+          phase: "commentary",
+          finalText: "Still running.",
+          engineId: "codex"
+        })
+      )
+    );
+
+    expect(state.lastError).toMatchObject({
+      code: "CODEX_APP_SERVER_ERROR",
+      message: "Reconnecting... 1/5",
+      recoverable: true
+    });
+    expect(state.entities.sessions["session-a"]).toMatchObject({
+      status: "running",
+      lastTurnId: "turn-running"
+    });
+    expect(state.entities.turns["turn-running"]?.status).not.toBe("completed");
+    expect(state.entities.turns["turn-running"]?.finishReason).toBeUndefined();
+    expect(state.entities.messageBlocks["runtime-error:turn-running:md"]).toBeUndefined();
+    expect(state.entities.messageBlocks["message-after-reconnect:md"]).toMatchObject({
+      text: "Still running."
+    });
+  });
+
   it("disposes a session by pruning session-scoped entities and rebuilding indexes only", () => {
     let state = createInitialRendererStoreState();
 

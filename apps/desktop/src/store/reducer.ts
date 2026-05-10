@@ -1038,6 +1038,9 @@ const applyRuntimeEvent = (
           recoverable: event.recoverable
         }
       };
+      if (event.recoverable) {
+        return withError;
+      }
       if (!event.sessionId || !event.turnId) {
         return withError;
       }

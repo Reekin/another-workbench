@@ -343,6 +343,11 @@ export const useComposerController = (
       })
       .catch((error) => {
         if (!cancelled) {
+          setCapabilities({
+            supportsSteer: false,
+            supportsAttachments: false,
+            slashSuggestions: []
+          });
           input.onStatusNotice({
             message: `Capability lookup failed: ${(error as Error).message}`,
             source: "send",

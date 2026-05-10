@@ -153,7 +153,11 @@ export class DesktopTransportError extends Error {
   public readonly requestId: string;
 
   public constructor(input: DesktopTransportErrorLike) {
-    super(`[${input.method}] ${input.code}`);
+    const detailMessage =
+      typeof input.details?.message === "string" && input.details.message.length > 0
+        ? `: ${input.details.message}`
+        : "";
+    super(`[${input.method}] ${input.code}${detailMessage}`);
     this.name = "DesktopTransportError";
     this.method = input.method;
     this.code = input.code;

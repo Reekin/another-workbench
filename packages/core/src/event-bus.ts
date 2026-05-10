@@ -1,5 +1,9 @@
 import type { EventType, RuntimeEvent } from "@another-workbench/shared";
-import { parseRuntimeEvent } from "@another-workbench/shared";
+import {
+  appendLimitedStreamText,
+  limitSingleStreamChunk,
+  parseRuntimeEvent
+} from "@another-workbench/shared";
 
 export type RuntimeEventEnvelope = {
   eventId: string;
@@ -90,6 +94,31 @@ const shouldDeliver = (
   );
 };
 
+const limitRuntimeEventPayload = (event: RuntimeEvent): RuntimeEvent => {
+  switch (event.type) {
+    case "tool.delta":
+      return {
+        ...event,
+        delta: limitSingleStreamChunk(event.delta)
+      };
+    case "tool.completed":
+      return {
+        ...event,
+        outputSummary:
+          event.outputSummary != null
+            ? appendLimitedStreamText(undefined, event.outputSummary)
+            : undefined
+      };
+    case "terminal.output":
+      return {
+        ...event,
+        chunk: limitSingleStreamChunk(event.chunk)
+      };
+    default:
+      return event;
+  }
+};
+
 export class RuntimeEventBus {
   private readonly subscriptions = new Map<number, Subscription>();
   private readonly replayPort?: RuntimeEventReplayPort;
@@ -113,7 +142,7 @@ export class RuntimeEventBus {
   }
 
   public publish(event: RuntimeEvent | unknown): RuntimeEventEnvelope {
-    const parsedEvent = parseRuntimeEvent(event);
+    const parsedEvent = limitRuntimeEventPayload(parseRuntimeEvent(event));
     const envelope: RuntimeEventEnvelope = {
       eventId: this.createId(),
       cursor: String(++this.sequence),

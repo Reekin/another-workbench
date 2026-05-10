@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import {
+  MAX_ACCUMULATED_STREAM_TEXT_LENGTH,
+  MAX_STREAM_EVENT_CHUNK_LENGTH
+} from "@another-workbench/shared";
 import type { RuntimeEventEnvelope } from "../src/event-bus.js";
 import { RuntimeEventBus } from "../src/event-bus.js";
 
@@ -319,5 +323,76 @@ describe("RuntimeEventBus", () => {
       "3:turn.started"
     ]);
     expect(bus.getLatestCursor()).toBe("3");
+  });
+
+  it("bounds stream payloads before delivery and replay", () => {
+    const published: RuntimeEventEnvelope[] = [];
+    const bus = new RuntimeEventBus({
+      now: () => now,
+      createId: (() => {
+        let sequence = 0;
+        return () => `evt-limited-${++sequence}`;
+      })(),
+      replayPort: {
+        onEventPublished: (envelope) => {
+          published.push(envelope);
+        }
+      }
+    });
+    const received: RuntimeEventEnvelope[] = [];
+    bus.subscribe((envelope) => {
+      received.push(envelope);
+    });
+
+    bus.publish({
+      type: "tool.delta",
+      sessionId: "session-a",
+      turnId: "turn-a",
+      toolCallId: "tool-a",
+      delta: "x".repeat(MAX_STREAM_EVENT_CHUNK_LENGTH + 10),
+      engineId: "agent-a"
+    });
+    bus.publish({
+      type: "terminal.output",
+      sessionId: "session-a",
+      turnId: "turn-a",
+      terminalId: "terminal-a",
+      chunk: "y".repeat(MAX_STREAM_EVENT_CHUNK_LENGTH + 10),
+      engineId: "agent-a"
+    });
+    bus.publish({
+      type: "tool.completed",
+      sessionId: "session-a",
+      turnId: "turn-a",
+      toolCallId: "tool-a",
+      status: "completed",
+      outputSummary: "z".repeat(MAX_ACCUMULATED_STREAM_TEXT_LENGTH + 10),
+      engineId: "agent-a"
+    });
+
+    const replayed = bus.replay();
+    expect(received).toEqual(replayed);
+    expect(published).toEqual(replayed);
+    expect(replayed[0]?.event.type).toBe("tool.delta");
+    if (replayed[0]?.event.type === "tool.delta") {
+      expect(replayed[0].event.delta.length).toBeLessThanOrEqual(
+        MAX_STREAM_EVENT_CHUNK_LENGTH
+      );
+      expect(replayed[0].event.delta).toContain("truncated");
+    }
+    expect(replayed[1]?.event.type).toBe("terminal.output");
+    if (replayed[1]?.event.type === "terminal.output") {
+      expect(replayed[1].event.chunk.length).toBeLessThanOrEqual(
+        MAX_STREAM_EVENT_CHUNK_LENGTH
+      );
+      expect(replayed[1].event.chunk).toContain("truncated");
+    }
+    expect(replayed[2]?.event.type).toBe("tool.completed");
+    if (replayed[2]?.event.type === "tool.completed") {
+      expect(replayed[2].event.outputSummary?.length).toBeLessThanOrEqual(
+        MAX_ACCUMULATED_STREAM_TEXT_LENGTH
+      );
+      expect(replayed[2].event.outputSummary).toContain("truncated");
+    }
   });
 });

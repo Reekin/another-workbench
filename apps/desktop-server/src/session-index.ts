@@ -109,6 +109,8 @@ export class SessionIndexStore {
     relations: []
   };
   private loadPromise: Promise<void> | undefined;
+  private persistPromise: Promise<void> | undefined;
+  private persistRequested = false;
 
   public constructor(options: SessionIndexStoreOptions = {}) {
     const baseDir = options.baseDir ?? defaultBaseDir();
@@ -164,6 +166,12 @@ export class SessionIndexStore {
 
   public async upsertSession(input: UpsertSessionIndexInput): Promise<SessionIndexEntry> {
     await this.ready();
+    const normalized = this.upsertSessionInMemory(input);
+    await this.persist();
+    return normalized;
+  }
+
+  private upsertSessionInMemory(input: UpsertSessionIndexInput): SessionIndexEntry {
     const existing = this.getEntry(input.session.sessionId);
     const normalized = sessionIndexEntrySchema.parse({
       workspaceId: input.workspaceId,
@@ -196,7 +204,6 @@ export class SessionIndexStore {
           : [...this.document.entries, normalized]
       )
     };
-    await this.persist();
     return normalized;
   }
 
@@ -210,11 +217,12 @@ export class SessionIndexStore {
     await this.ready();
 
     for (const entry of input.entries) {
-      await this.upsertSession(entry);
+      this.upsertSessionInMemory(entry);
     }
     for (const relation of input.relations ?? []) {
-      await this.upsertRelation(relation);
+      this.upsertRelationInMemory(relation);
     }
+    await this.persist();
 
     return {
       workspaceId: input.workspaceId,
@@ -298,6 +306,9 @@ export class SessionIndexStore {
     if (!existing) {
       return undefined;
     }
+    if (existing.unreadState === "read") {
+      return existing;
+    }
     const updated = sessionIndexEntrySchema.parse({
       ...existing,
       unreadState: "read"
@@ -320,6 +331,9 @@ export class SessionIndexStore {
     if (!existing) {
       return undefined;
     }
+    if (existing.unreadState === "unread_completed") {
+      return existing;
+    }
     const updated = sessionIndexEntrySchema.parse({
       ...existing,
       unreadState: "unread_completed"
@@ -338,6 +352,14 @@ export class SessionIndexStore {
     input: UpsertSessionRelationInput
   ): Promise<SessionRelationIndex> {
     await this.ready();
+    const normalized = this.upsertRelationInMemory(input);
+    await this.persist();
+    return normalized;
+  }
+
+  private upsertRelationInMemory(
+    input: UpsertSessionRelationInput
+  ): SessionRelationIndex {
     const normalized = sessionRelationIndexSchema.parse({
       workspaceId: input.workspaceId,
       parentSessionId: input.parentSessionId,
@@ -361,7 +383,6 @@ export class SessionIndexStore {
             )
           : [...this.document.relations, normalized]
     };
-    await this.persist();
     return normalized;
   }
 
@@ -388,6 +409,24 @@ export class SessionIndexStore {
   }
 
   private async persist(): Promise<void> {
-    await saveJsonFile(this.filePath, this.document);
+    this.persistRequested = true;
+    if (!this.persistPromise) {
+      this.persistPromise = this.flushPersistRequests().finally(() => {
+        this.persistPromise = undefined;
+      });
+    }
+    await this.persistPromise;
+  }
+
+  private async flushPersistRequests(): Promise<void> {
+    while (this.persistRequested) {
+      this.persistRequested = false;
+      const snapshot: SessionIndexDocument = {
+        ...this.document,
+        entries: [...this.document.entries],
+        relations: [...this.document.relations]
+      };
+      await saveJsonFile(this.filePath, snapshot);
+    }
   }
 }

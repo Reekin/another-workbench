@@ -54,6 +54,9 @@ export const useWorkspaceBrowserController = (input: {
     if (workspaceState.lastActiveWorkspaceId) {
       visibleWorkspaceIds.add(workspaceState.lastActiveWorkspaceId);
     }
+    setWorkspaceTree((current) =>
+      mergeWorkspaceBrowserTree(current, workspaceState, new Map())
+    );
 
     const mode = refreshInput?.mode ?? "visible";
     const workspaceIdsToLoad =
@@ -63,11 +66,37 @@ export const useWorkspaceBrowserController = (input: {
           ? [refreshInput.workspaceId]
           : [...visibleWorkspaceIds];
 
-    const loadedWorkspaces = await Promise.all(
+    const loadedWorkspaceResults = await Promise.allSettled(
       workspaceIdsToLoad.map(async (workspaceId) => {
         const tree = await input.transport?.sessionBrowser.listTree(workspaceId);
-        return tree?.workspaces[0];
+        return {
+          workspaceId,
+          workspace: tree?.workspaces[0]
+        };
       })
+    );
+    const failedWorkspaceLoads = loadedWorkspaceResults.flatMap((result, index) =>
+      result.status === "rejected"
+        ? [
+            {
+              workspaceId: workspaceIdsToLoad[index],
+              error: result.reason
+            }
+          ]
+        : []
+    );
+    if (failedWorkspaceLoads.length > 0) {
+      const firstFailure = failedWorkspaceLoads[0];
+      input.onStatusNotice({
+        message: `Session tree load failed: ${(firstFailure.error as Error).message}`,
+        source: "session-browser",
+        ...statusNoticeErrorDetails(firstFailure.error)
+      });
+    }
+    const loadedWorkspaces = loadedWorkspaceResults.flatMap((result) =>
+      result.status === "fulfilled" && result.value.workspace
+        ? [result.value.workspace]
+        : []
     );
 
     setWorkspaceTree((current) =>

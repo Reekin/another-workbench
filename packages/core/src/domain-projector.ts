@@ -1,5 +1,6 @@
 import type { ContextUsage, RuntimeEvent } from "@another-workbench/shared";
 import {
+  appendLimitedStreamText,
   parseAgentParticipant,
   parseApprovalRequest,
   parseChatSession,
@@ -478,7 +479,7 @@ export class DomainProjector {
             toolName: existing?.toolName ?? unknownToolName,
             status: existing?.status ?? "running",
             inputSummary: existing?.inputSummary,
-            outputSummary: `${existing?.outputSummary ?? ""}${event.delta}`,
+            outputSummary: appendLimitedStreamText(existing?.outputSummary, event.delta),
             actor: existing?.actor ?? actor,
             startedAt: existing?.startedAt ?? timestamp,
             completedAt: existing?.completedAt
@@ -499,7 +500,10 @@ export class DomainProjector {
             toolName: existing?.toolName ?? unknownToolName,
             status: event.status,
             inputSummary: existing?.inputSummary,
-            outputSummary: event.outputSummary ?? existing?.outputSummary,
+            outputSummary:
+              event.outputSummary != null
+                ? appendLimitedStreamText(undefined, event.outputSummary)
+                : existing?.outputSummary,
             actor: existing?.actor ?? actor,
             startedAt: existing?.startedAt ?? timestamp,
             completedAt: timestamp
@@ -534,7 +538,7 @@ export class DomainProjector {
           turnId: event.turnId,
           toolCallId: existing?.toolCallId,
           status: existing?.status ?? "running",
-          outputText: `${existing?.outputText ?? ""}${event.chunk}`,
+          outputText: appendLimitedStreamText(existing?.outputText, event.chunk),
           exitCode: existing?.exitCode,
           actor: existing?.actor ?? actor,
           startedAt: existing?.startedAt ?? timestamp,

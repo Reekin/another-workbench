@@ -254,6 +254,107 @@ describe("WorkbenchShellService", () => {
     });
   });
 
+  it("allows plain send from a partially hydrated session when full hydration is unavailable", async () => {
+    const executeCommand = vi.fn().mockResolvedValue({
+      commandId: "cmd-send",
+      commandType: "sendUserMessage",
+      accepted: true
+    });
+    const ensureSessionLoaded = vi.fn().mockResolvedValue(false);
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        getSession: () => ({
+          sessionId: "session-1",
+          conversationId: "conversation-1",
+          engineId: "codex",
+          status: "idle",
+          createdAt: "2026-04-19T00:00:00.000Z",
+          updatedAt: "2026-04-19T00:00:00.000Z"
+        }),
+        executeCommand
+      } as never,
+      sessionCatalog: {} as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never,
+      sessionReconciliation: {
+        ensureSessionLoaded
+      } as never
+    });
+    (
+      service as unknown as {
+        partiallyHydratedSessionIds: Set<string>;
+      }
+    ).partiallyHydratedSessionIds.add("session-1");
+
+    await expect(
+      service.executeCommand({
+        commandId: "cmd-send",
+        command: {
+          type: "sendUserMessage",
+          sessionId: "session-1",
+          messageId: "message-1",
+          content: "continue",
+          attachments: []
+        }
+      })
+    ).resolves.toEqual({
+      commandId: "cmd-send",
+      commandType: "sendUserMessage",
+      accepted: true
+    });
+    expect(ensureSessionLoaded).toHaveBeenCalledWith("session-1", {
+      force: true
+    });
+    expect(executeCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks stateful non-send commands when a partial session cannot be fully hydrated", async () => {
+    const executeCommand = vi.fn();
+    const ensureSessionLoaded = vi.fn().mockResolvedValue(false);
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        getSession: () => ({
+          sessionId: "session-1",
+          conversationId: "conversation-1",
+          engineId: "codex",
+          status: "running",
+          createdAt: "2026-04-19T00:00:00.000Z",
+          updatedAt: "2026-04-19T00:00:00.000Z"
+        }),
+        executeCommand
+      } as never,
+      sessionCatalog: {} as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never,
+      sessionReconciliation: {
+        ensureSessionLoaded
+      } as never
+    });
+    (
+      service as unknown as {
+        partiallyHydratedSessionIds: Set<string>;
+      }
+    ).partiallyHydratedSessionIds.add("session-1");
+
+    await expect(
+      service.executeCommand({
+        commandId: "cmd-steer",
+        command: {
+          type: "steerTurn",
+          sessionId: "session-1",
+          turnId: "turn-1",
+          messageId: "message-1",
+          content: "adjust",
+          attachments: []
+        }
+      })
+    ).rejects.toThrow("Session could not be fully loaded: session-1");
+    expect(ensureSessionLoaded).toHaveBeenCalledWith("session-1", {
+      force: true
+    });
+    expect(executeCommand).not.toHaveBeenCalled();
+  });
+
   it("delegates workspace directory picking to the host callback when available", async () => {
     const pickWorkspaceDirectory = vi.fn().mockResolvedValue({
       canceled: false,

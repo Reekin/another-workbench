@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EventEnvelope, RuntimeEvent } from "@another-workbench/shared";
+import { MAX_ACCUMULATED_STREAM_TEXT_LENGTH } from "@another-workbench/shared";
 import { parseIngestEnvelopeAction } from "../src/store/intake.js";
 import { rendererStoreReducer } from "../src/store/reducer.js";
 import { selectEventStreamState, selectTurnsForSession } from "../src/store/selectors.js";
@@ -882,6 +883,96 @@ describe("desktop store reducer", () => {
     expect(state.eventStream.seenEventIds["evt-1"]).toBeUndefined();
     expect(state.eventStream.seenEventIds["evt-2"]).toBeUndefined();
     expect(state.eventStream.seenEventIds["evt-2050"]).toBe(true);
+  });
+
+  it("bounds accumulated tool and terminal output kept in renderer state", () => {
+    let state = createInitialRendererStoreState();
+    const largeChunk = "x".repeat(50_000);
+
+    for (let index = 1; index <= 8; index += 1) {
+      state = rendererStoreReducer(
+        state,
+        parseIngestEnvelopeAction(
+          toEnvelopeAt(
+            `evt-tool-${index}`,
+            String(index),
+            "2026-04-17T00:00:00.000Z",
+            {
+              type: "tool.delta",
+              sessionId: "session-a",
+              turnId: "turn-a",
+              toolCallId: "tool-a",
+              delta: largeChunk,
+              engineId: "agent-a"
+            }
+          )
+        )
+      );
+      state = rendererStoreReducer(
+        state,
+        parseIngestEnvelopeAction(
+          toEnvelopeAt(
+            `evt-terminal-${index}`,
+            String(index + 20),
+            "2026-04-17T00:00:00.000Z",
+            {
+              type: "terminal.output",
+              sessionId: "session-a",
+              turnId: "turn-a",
+              terminalId: "terminal-a",
+              chunk: largeChunk,
+              engineId: "agent-a"
+            }
+          )
+        )
+      );
+    }
+
+    expect(state.entities.toolCalls["tool-a"]?.outputSummary?.length).toBeLessThanOrEqual(
+      MAX_ACCUMULATED_STREAM_TEXT_LENGTH
+    );
+    expect(state.entities.toolCalls["tool-a"]?.outputSummary).toContain("truncated");
+    expect(state.entities.terminalStreams["terminal-a"]?.outputText.length).toBeLessThanOrEqual(
+      MAX_ACCUMULATED_STREAM_TEXT_LENGTH
+    );
+    expect(state.entities.terminalStreams["terminal-a"]?.outputText).toContain("truncated");
+  });
+
+  it("bounds completed tool output before replacing renderer state", () => {
+    let state = createInitialRendererStoreState();
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelopeAt("evt-tool-delta", "1", "2026-04-17T00:00:00.000Z", {
+          type: "tool.delta",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          toolCallId: "tool-a",
+          delta: "small output",
+          engineId: "agent-a"
+        })
+      )
+    );
+
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelopeAt("evt-tool-completed", "2", "2026-04-17T00:00:01.000Z", {
+          type: "tool.completed",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          toolCallId: "tool-a",
+          status: "completed",
+          outputSummary: "x".repeat(MAX_ACCUMULATED_STREAM_TEXT_LENGTH + 1_000),
+          engineId: "agent-a"
+        })
+      )
+    );
+
+    expect(state.entities.toolCalls["tool-a"]?.outputSummary?.length).toBeLessThanOrEqual(
+      MAX_ACCUMULATED_STREAM_TEXT_LENGTH
+    );
+    expect(state.entities.toolCalls["tool-a"]?.outputSummary).toContain("truncated");
   });
 
   it("renders runtime errors as failed turn content when no assistant message exists", () => {

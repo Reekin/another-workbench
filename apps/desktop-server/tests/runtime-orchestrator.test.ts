@@ -527,6 +527,7 @@ describe("RuntimeOrchestrator", () => {
         }
       }
     });
+    await flushAsyncWork();
 
     expect(syncSession).toHaveBeenCalledWith("session-child");
     expect(syncRelation).toHaveBeenCalledWith({
@@ -537,5 +538,114 @@ describe("RuntimeOrchestrator", () => {
       sourceTurnId: "turn-1",
       createdAt: "2026-04-20T00:04:10Z"
     });
+  });
+
+  it("does not sync the session index for high-volume output deltas", async () => {
+    const syncSession = vi.fn().mockResolvedValue(undefined);
+    const subscribe = vi.fn();
+    const adapter: AgentAdapter = {
+      id: "codex-adapter",
+      kind: "codex",
+      getLifecycleState: () => "idle",
+      initialize: vi.fn().mockResolvedValue(undefined),
+      executeCommand: vi.fn().mockResolvedValue({
+        commandId: "noop",
+        commandType: "initialize",
+        accepted: true
+      }),
+      subscribe,
+      dispose: vi.fn().mockResolvedValue(undefined)
+    };
+
+    let adapterListener:
+      | ((envelope: {
+          occurredAt: string;
+          event: RuntimeEvent;
+        }) => void | Promise<void>)
+      | undefined;
+    subscribe.mockImplementation((listener) => {
+      adapterListener = listener;
+      return () => {};
+    });
+
+    let orchestrator: RuntimeOrchestrator | undefined;
+    const domainService = new DomainService({
+      now: () => "2026-04-20T00:05:00Z",
+      createSessionId: () => "session-output",
+      assertEngineRegistered: (engineId) =>
+        orchestrator?.assertEngineRegistered(engineId),
+      resolveEngineCapabilities: (engineId) =>
+        orchestrator?.getEngineCapabilities(engineId) ?? [],
+      publishRuntimeEvent: () => {}
+    });
+
+    orchestrator = new RuntimeOrchestrator({
+      domainService,
+      sessionIndexSyncService: {
+        syncSession,
+        syncRelation: vi.fn().mockResolvedValue(undefined),
+        markSessionUnreadCompleted: vi.fn().mockResolvedValue(undefined)
+      } as never,
+      workspaceSelectionService: {
+        activateSelection: vi.fn().mockResolvedValue(undefined),
+        selectWorkspace: vi.fn().mockResolvedValue({
+          workspaceId: "workspace-1"
+        })
+      } as never,
+      publishRuntimeEvent: () => {},
+      createConversationId: () => "conversation-output",
+      agentBindings: [
+        {
+          descriptor: {
+            engineId: "codex",
+            displayName: "Codex",
+            capabilities: ["chat", "terminal"]
+          },
+          adapter
+        }
+      ]
+    });
+
+    await orchestrator.createSession({
+      engineId: "codex",
+      workspaceId: "workspace-1"
+    });
+    syncSession.mockClear();
+    await orchestrator.executeCommand({
+      commandId: "init-output",
+      command: {
+        type: "initialize"
+      }
+    });
+
+    expect(adapterListener).toBeTypeOf("function");
+    for (let index = 0; index < 20; index += 1) {
+      adapterListener?.({
+        occurredAt: "2026-04-20T00:05:01Z",
+        event: {
+          type: "terminal.output",
+          sessionId: "session-output",
+          turnId: "turn-output",
+          terminalId: "terminal-output",
+          chunk: "x".repeat(1024),
+          engineId: "codex"
+        }
+      });
+    }
+    adapterListener?.({
+      occurredAt: "2026-04-20T00:05:02Z",
+      event: {
+        type: "session.updated",
+        conversationId: "conversation-output",
+        sessionId: "session-output",
+        status: "idle"
+      }
+    });
+    await flushAsyncWork();
+    await orchestrator.dispose();
+
+    expect(domainService.getSession("session-output")?.status).toBe("idle");
+    expect(syncSession).toHaveBeenCalledTimes(1);
+    expect(syncSession).toHaveBeenCalledWith("session-output");
   });
 });

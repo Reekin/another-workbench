@@ -25,6 +25,7 @@ import { WorkspaceSelectionService } from "./workspace-selection-service.js";
 
 type Clock = () => string;
 type IdFactory = () => string;
+type SessionRelationSyncInput = Parameters<SessionIndexSyncService["syncRelation"]>[0];
 
 export type RuntimeOrchestratorOptions = {
   domainService: DomainService;
@@ -56,6 +57,12 @@ export class RuntimeOrchestrator {
   private readonly titleGenerationSessionIds = new Set<string>();
   private readonly now: Clock;
   private readonly createConversationId: IdFactory;
+  private readonly adapterEventQueue: EventEnvelope[] = [];
+  private readonly pendingSessionIndexSyncIds = new Set<string>();
+  private readonly pendingRelationSyncs = new Map<string, SessionRelationSyncInput>();
+  private adapterEventQueueReadIndex = 0;
+  private isDrainingAdapterEvents = false;
+  private indexSyncPump: Promise<void> | undefined;
   private selectedEngineId: string | undefined;
 
   public constructor(options: RuntimeOrchestratorOptions) {
@@ -309,6 +316,7 @@ export class RuntimeOrchestrator {
     for (const binding of this.bindings.values()) {
       await binding.adapter?.dispose();
     }
+    await this.drainBackgroundWork();
     this.readyEngineIds.clear();
   }
 
@@ -505,20 +513,63 @@ export class RuntimeOrchestrator {
     });
 
     const unsubscribe = binding.adapter.subscribe((envelope) => {
-      void this.ingestAdapterEvent(envelope);
+      this.enqueueAdapterEvent(envelope);
     });
     this.adapterUnsubscribeByEngineId.set(engineId, unsubscribe);
     this.readyEngineIds.add(engineId);
   }
 
-  private async ingestAdapterEvent(envelope: EventEnvelope): Promise<void> {
+  private enqueueAdapterEvent(envelope: EventEnvelope): void {
+    this.adapterEventQueue.push(envelope);
+    this.drainAdapterEvents();
+  }
+
+  private drainAdapterEvents(): void {
+    if (this.isDrainingAdapterEvents) {
+      return;
+    }
+    this.isDrainingAdapterEvents = true;
+    try {
+      while (this.adapterEventQueueReadIndex < this.adapterEventQueue.length) {
+        const envelope = this.adapterEventQueue[this.adapterEventQueueReadIndex++];
+        if (!envelope) {
+          continue;
+        }
+        try {
+          this.ingestAdapterEvent(envelope);
+        } catch (error) {
+          console.warn("[another-workbench] Failed to ingest adapter event", error);
+        }
+        if (
+          this.adapterEventQueueReadIndex > 1_024 &&
+          this.adapterEventQueueReadIndex * 2 >= this.adapterEventQueue.length
+        ) {
+          this.adapterEventQueue.splice(0, this.adapterEventQueueReadIndex);
+          this.adapterEventQueueReadIndex = 0;
+        }
+      }
+    } finally {
+      if (this.adapterEventQueueReadIndex >= this.adapterEventQueue.length) {
+        this.adapterEventQueue.length = 0;
+        this.adapterEventQueueReadIndex = 0;
+      }
+      this.isDrainingAdapterEvents = false;
+    }
+  }
+
+  private ingestAdapterEvent(envelope: EventEnvelope): void {
     this.domainService.ingestRuntimeEvent(envelope.event, envelope.occurredAt);
+    this.publishRuntimeEvent(envelope.event);
+    this.queueSessionIndexSync(envelope);
+  }
+
+  private queueSessionIndexSync(envelope: EventEnvelope): void {
     const sessionId =
       "sessionId" in envelope.event && typeof envelope.event.sessionId === "string"
         ? envelope.event.sessionId
         : undefined;
-    if (sessionId) {
-      await this.sessionIndexSyncService.syncSession(sessionId);
+    if (sessionId && this.shouldSyncSessionIndexForEvent(envelope.event.type)) {
+      this.pendingSessionIndexSyncIds.add(sessionId);
     }
     const relation =
       "relation" in envelope.event &&
@@ -532,17 +583,106 @@ export class RuntimeOrchestrator {
         this.resolveSessionIndexRecord(relation.parentSessionId)?.workspaceId ??
         this.resolveSessionIndexRecord(relation.childSessionId)?.workspaceId;
       if (workspaceId) {
-        await this.sessionIndexSyncService.syncRelation({
+        const syncInput = {
           workspaceId,
           parentSessionId: relation.parentSessionId,
           childSessionId: relation.childSessionId,
           relationType: relation.relationType,
           sourceTurnId: relation.sourceTurnId,
           createdAt: relation.createdAt
-        });
+        };
+        this.pendingRelationSyncs.set(
+          `${syncInput.parentSessionId}\u0000${syncInput.childSessionId}\u0000${syncInput.relationType}`,
+          syncInput
+        );
       }
     }
-    this.publishRuntimeEvent(envelope.event);
+    this.startIndexSyncPump();
+  }
+
+  private shouldSyncSessionIndexForEvent(eventType: EventEnvelope["event"]["type"]): boolean {
+    switch (eventType) {
+      case "session.updated":
+      case "session.created":
+      case "session.disposed":
+      case "turn.completed":
+      case "message.completed":
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private startIndexSyncPump(): void {
+    if (this.indexSyncPump) {
+      return;
+    }
+    this.indexSyncPump = this.drainIndexSyncs().finally(() => {
+      this.indexSyncPump = undefined;
+      if (
+        this.pendingSessionIndexSyncIds.size > 0 ||
+        this.pendingRelationSyncs.size > 0
+      ) {
+        this.startIndexSyncPump();
+      }
+    });
+  }
+
+  private async drainIndexSyncs(): Promise<void> {
+    while (
+      this.pendingSessionIndexSyncIds.size > 0 ||
+      this.pendingRelationSyncs.size > 0
+    ) {
+      const sessionIds = [...this.pendingSessionIndexSyncIds];
+      const relations = [...this.pendingRelationSyncs.values()];
+      this.pendingSessionIndexSyncIds.clear();
+      this.pendingRelationSyncs.clear();
+
+      for (const sessionId of sessionIds) {
+        try {
+          await this.sessionIndexSyncService.syncSession(sessionId);
+        } catch (error) {
+          console.warn("[another-workbench] Failed to sync session index entry", error);
+        }
+      }
+      for (const relation of relations) {
+        try {
+          await this.sessionIndexSyncService.syncRelation(relation);
+        } catch (error) {
+          console.warn("[another-workbench] Failed to sync session index relation", error);
+        }
+      }
+    }
+  }
+
+  private async drainBackgroundWork(): Promise<void> {
+    for (let guard = 0; guard < 1_000; guard += 1) {
+      if (
+        this.adapterEventQueue.length === 0 &&
+        !this.indexSyncPump &&
+        this.pendingSessionIndexSyncIds.size === 0 &&
+        this.pendingRelationSyncs.size === 0
+      ) {
+        return;
+      }
+      if (this.adapterEventQueue.length > 0) {
+        this.drainAdapterEvents();
+        continue;
+      }
+      if (
+        !this.indexSyncPump &&
+        (this.pendingSessionIndexSyncIds.size > 0 ||
+          this.pendingRelationSyncs.size > 0)
+      ) {
+        this.startIndexSyncPump();
+      }
+      const indexPump = this.indexSyncPump;
+      if (indexPump) {
+        await indexPump;
+        continue;
+      }
+    }
+    console.warn("[another-workbench] Timed out while draining runtime background work.");
   }
 
   private requireBinding(engineId: string): WorkbenchAgentBinding {

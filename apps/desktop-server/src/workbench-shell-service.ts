@@ -274,6 +274,9 @@ export class WorkbenchShellService {
   }
 
   public async executeCommand(input: CommandEnvelope) {
+    if ("sessionId" in input.command && typeof input.command.sessionId === "string") {
+      await this.ensureSessionReadyForCommand(input.command);
+    }
     return this.runtimeService.executeCommand(input);
   }
 
@@ -463,10 +466,12 @@ export class WorkbenchShellService {
     sessionId: string
   ): Promise<ChatInteractionCapabilitiesRpc> {
     const session = this.runtimeService.getSession(sessionId);
-    if (!session) {
+    const engineId =
+      session?.engineId ?? this.sessionIdentity.resolveContext(sessionId).indexEntry?.engineId;
+    if (!engineId) {
       throw new Error(`Session not found: ${sessionId}`);
     }
-    const sharedCapabilities = this.getEngineSurface(session.engineId).sharedCapabilities;
+    const sharedCapabilities = this.getEngineSurface(engineId).sharedCapabilities;
 
     return {
       supportsSteer: sharedCapabilities.includes("steer"),
@@ -825,6 +830,49 @@ export class WorkbenchShellService {
     await this.sessionCatalog.markSessionRead(sessionId);
     if (input.isCancelled?.()) {
       throw new Error("Open session cancelled.");
+    }
+  }
+
+  private async ensureSessionReadyForCommand(
+    command: Extract<CommandEnvelope["command"], { sessionId: string }>
+  ): Promise<void> {
+    const requiresFullHydration =
+      command.type === "forkSession" ||
+      command.type === "steerTurn" ||
+      command.type === "interruptTurn" ||
+      command.type === "respondApproval";
+    await this.ensureInteractiveSessionLoaded(command.sessionId, {
+      requiresFullHydration
+    });
+  }
+
+  private async ensureInteractiveSessionLoaded(
+    sessionId: string,
+    input: {
+      requiresFullHydration?: boolean;
+    } = {}
+  ): Promise<void> {
+    const current = this.runtimeService.getSession(sessionId);
+    const needsFullHydration =
+      !current || this.partiallyHydratedSessionIds.has(sessionId);
+    if (!needsFullHydration) {
+      return;
+    }
+    const loaded =
+      (await this.sessionReconciliation?.ensureSessionLoaded(sessionId, {
+        force: Boolean(current)
+      })) ?? false;
+    if (loaded) {
+      this.partiallyHydratedSessionIds.delete(sessionId);
+    }
+    if (!this.runtimeService.getSession(sessionId)) {
+      throw new Error(`Session not found: ${sessionId}`);
+    }
+    if (
+      input.requiresFullHydration &&
+      this.partiallyHydratedSessionIds.has(sessionId)
+    ) {
+      throw new Error(`Session could not be fully loaded: ${sessionId}`);
     }
   }
 

@@ -4,6 +4,7 @@ import type {
   MessageBlock,
   RuntimeEvent
 } from "@another-workbench/shared";
+import { appendLimitedStreamText } from "@another-workbench/shared";
 import type { RendererStoreAction, RendererStoreState } from "./types.js";
 import {
   createEmptyIndexes,
@@ -793,7 +794,7 @@ const applyRuntimeEvent = (
           toolName: current?.toolName ?? unknownToolName,
           status: current?.status ?? "running",
           inputSummary: current?.inputSummary,
-          outputSummary: `${current?.outputSummary ?? ""}${event.delta}`,
+          outputSummary: appendLimitedStreamText(current?.outputSummary, event.delta),
           actor:
             current?.actor ?? {
               participantId: event.participantId,
@@ -822,7 +823,10 @@ const applyRuntimeEvent = (
           turnId: event.turnId,
           toolName: current?.toolName ?? unknownToolName,
           status: event.status,
-          outputSummary: event.outputSummary ?? current?.outputSummary,
+          outputSummary:
+            event.outputSummary != null
+              ? appendLimitedStreamText(undefined, event.outputSummary)
+              : current?.outputSummary,
           inputSummary: current?.inputSummary,
           actor:
             current?.actor ?? {
@@ -882,7 +886,7 @@ const applyRuntimeEvent = (
           turnId: event.turnId,
           toolCallId: current?.toolCallId,
           status: current?.status ?? "running",
-          outputText: `${current?.outputText ?? ""}${event.chunk}`,
+          outputText: appendLimitedStreamText(current?.outputText, event.chunk),
           exitCode: current?.exitCode,
           actor:
             current?.actor ?? {

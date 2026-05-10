@@ -9,6 +9,7 @@ import type {
   Turn
 } from "@another-workbench/shared";
 import {
+  appendLimitedStreamText,
   parseChatSession,
   parseConversation,
   parseMessageBlock,
@@ -544,7 +545,9 @@ const hydrateCodexTurnEntities = async (input: {
             turnId: turn.id,
             toolName: "commandExecution",
             inputSummary: item.command,
-            outputSummary: item.aggregatedOutput ?? undefined,
+            outputSummary: item.aggregatedOutput != null
+              ? appendLimitedStreamText(undefined, item.aggregatedOutput)
+              : undefined,
             status:
               item.status === "failed"
                 ? "failed"
@@ -568,7 +571,10 @@ const hydrateCodexTurnEntities = async (input: {
                 : item.status === "completed"
                   ? "completed"
                   : "running",
-            outputText: item.aggregatedOutput ?? "",
+            outputText: appendLimitedStreamText(
+              undefined,
+              item.aggregatedOutput ?? undefined
+            ),
             exitCode: item.exitCode ?? undefined,
             startedAt: itemStartedAt,
             completedAt:

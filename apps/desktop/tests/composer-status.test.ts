@@ -89,17 +89,26 @@ describe("resolveComposerStatus", () => {
     ).toBe("Ready: In session-1");
   });
 
-  it("lets explicit notices override the derived baseline", () => {
+  it("keeps explicit notices separate from the derived baseline", () => {
     expect(
       resolveComposerStatus({
         transportAvailable: true,
         selectedEngineId: "codex",
+        activeSession: {
+          sessionId: "session-1",
+          conversationId: "conversation-1",
+          engineId: "codex",
+          status: "running",
+          createdAt: "2026-04-18T00:00:00.000Z",
+          updatedAt: "2026-04-18T00:00:00.000Z"
+        },
         notice: {
           message: "Message sent.",
           source: "send"
-        }
+        },
+        supportsSteer: true
       })
-    ).toBe("Message sent.");
+    ).toBe("Running: Steer supported");
   });
 
   it("surfaces queued follow-ups when the session is otherwise idle", () => {

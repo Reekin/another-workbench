@@ -22,7 +22,10 @@ import {
 import { ComposerQueue } from "./ComposerQueue.js";
 import { ComposerStatusBar } from "./ComposerStatusBar.js";
 import { ComposerSuggestions } from "./ComposerSuggestions.js";
-import type { ComposerStatusModel } from "../composer-status.js";
+import type {
+  ComposerStatusModel,
+  ComposerStatusNotice
+} from "../composer-status.js";
 import type {
   ComposerIntent,
   ComposerSkillReference,
@@ -80,6 +83,7 @@ export const ComposerPanel = ({
   queue,
   suggestions,
   status,
+  statusNotice,
   pendingApprovals = [],
   contextUsage,
   takeoverPresets = [],
@@ -127,6 +131,7 @@ export const ComposerPanel = ({
   queue: QueuedComposerMessage[];
   suggestions: ComposerSuggestionState | undefined;
   status: ComposerStatusModel;
+  statusNotice?: ComposerStatusNotice;
   pendingApprovals?: ApprovalRequest[];
   contextUsage?: ContextUsage;
   takeoverPresets?: TakeoverPresetSummaryRpc[];
@@ -300,7 +305,7 @@ export const ComposerPanel = ({
     </div>
     <div className="awb-composer__actions awb-composer-panel__actions">
       <div className="awb-composer__meta">
-        <ComposerStatusBar status={status} />
+        <ComposerStatusBar status={status} notice={statusNotice} />
         {contextUsage ? (
           <div
             className="awb-composer-context"
@@ -333,10 +338,19 @@ export const ComposerPanel = ({
             aria-haspopup="menu"
             aria-expanded={isTakeoverMenuOpen}
           >
-            Takeover: {selectedTakeoverLabel}
+            <span className="awb-composer-takeover__button-label">Takeover</span>
+            <strong>{selectedTakeoverLabel}</strong>
           </button>
           {isTakeoverMenuOpen ? (
-            <div className="awb-composer-takeover__menu" role="menu">
+            <div
+              className="awb-composer-takeover__menu"
+              role="menu"
+              aria-label="Takeover presets"
+            >
+              <div className="awb-composer-takeover__menu-header">
+                <strong>Takeover preset</strong>
+                <span>Manual supervision for this session</span>
+              </div>
               <button
                 type="button"
                 role="menuitemradio"
@@ -344,7 +358,11 @@ export const ComposerPanel = ({
                 className={!activeManualPresetId ? "is-active" : undefined}
                 onClick={() => void onSelectTakeoverPreset(undefined)}
               >
-                No takeover
+                <span className="awb-composer-takeover__radio" aria-hidden="true" />
+                <span className="awb-composer-takeover__menu-copy">
+                  <strong>No takeover</strong>
+                  <span>Keep direct control</span>
+                </span>
               </button>
               {takeoverPresets.map((preset) => (
                 <button
@@ -357,8 +375,11 @@ export const ComposerPanel = ({
                   }
                   onClick={() => void onSelectTakeoverPreset(preset.presetId)}
                 >
-                  <strong>{preset.displayName}</strong>
-                  <span>{preset.presetId}</span>
+                  <span className="awb-composer-takeover__radio" aria-hidden="true" />
+                  <span className="awb-composer-takeover__menu-copy">
+                    <strong>{preset.displayName}</strong>
+                    <span>{preset.presetId}</span>
+                  </span>
                 </button>
               ))}
             </div>

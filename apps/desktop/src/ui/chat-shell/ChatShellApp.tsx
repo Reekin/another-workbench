@@ -941,78 +941,86 @@ Use this takeover preset to describe the role, inspection scope, and verdict sta
           ) : (
             <div className="awb-settings__panel" role="tabpanel">
               <div className="awb-takeover-presets">
-                <div className="awb-takeover-presets__list">
-                  <div className="awb-takeover-presets__bar">
-                    <span>{takeoverRootPath || "Takeover presets"}</span>
-                    <button
-                      type="button"
-                      className="awb-secondary-button awb-secondary-button--small"
-                      onClick={onNewTakeoverPreset}
-                    >
-                      New
-                    </button>
-                  </div>
-                  <div className="awb-takeover-presets__items">
-                    {takeoverPresets.map((preset) => (
+                <div className="awb-takeover-presets__header">
+                  <span>Preset directory</span>
+                  <code title={takeoverRootPath || "Takeover presets"}>
+                    {takeoverRootPath || "Takeover presets"}
+                  </code>
+                </div>
+                <div className="awb-takeover-presets__content">
+                  <div className="awb-takeover-presets__list">
+                    <div className="awb-takeover-presets__bar">
+                      <span>Presets</span>
                       <button
                         type="button"
-                        key={preset.presetId}
-                        className={
-                          preset.presetId === selectedTakeoverPresetId
-                            ? "is-active"
-                            : undefined
-                        }
-                        onClick={() => void onSelectTakeoverPreset(preset.presetId)}
+                        className="awb-secondary-button awb-secondary-button--small"
+                        onClick={onNewTakeoverPreset}
                       >
-                        <strong>{preset.displayName}</strong>
-                        <span>{preset.presetId}</span>
+                        New
                       </button>
-                    ))}
-                    {takeoverPresets.length === 0 && (
-                      <span className="awb-takeover-presets__empty">
-                        {isLoadingTakeoverPresets ? "Loading..." : "No presets"}
-                      </span>
-                    )}
+                    </div>
+                    <div className="awb-takeover-presets__items">
+                      {takeoverPresets.map((preset) => (
+                        <button
+                          type="button"
+                          key={preset.presetId}
+                          className={
+                            preset.presetId === selectedTakeoverPresetId
+                              ? "is-active"
+                              : undefined
+                          }
+                          onClick={() => void onSelectTakeoverPreset(preset.presetId)}
+                        >
+                          <strong>{preset.displayName}</strong>
+                          <span>{preset.presetId}</span>
+                        </button>
+                      ))}
+                      {takeoverPresets.length === 0 && (
+                        <span className="awb-takeover-presets__empty">
+                          {isLoadingTakeoverPresets ? "Loading..." : "No presets"}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                </div>
-                <div className="awb-takeover-presets__editor">
-                  <label className="awb-field">
-                    <span>Preset name</span>
-                    <input
-                      value={draftTakeoverPresetId}
-                      onChange={(event) =>
-                        setDraftTakeoverPresetId(event.target.value)
-                      }
-                      spellCheck={false}
-                    />
-                  </label>
-                  <label className="awb-field">
-                    <span>Prompt</span>
-                    <textarea
-                      value={draftTakeoverPrompt}
-                      onChange={(event) =>
-                        setDraftTakeoverPrompt(event.target.value)
-                      }
-                      spellCheck={false}
-                    />
-                  </label>
-                  <div className="awb-takeover-presets__actions">
-                    <button
-                      type="button"
-                      className="awb-ghost-button"
-                      onClick={() => void onDeleteTakeoverPreset()}
-                      disabled={!selectedTakeoverPresetId || isSavingTakeoverPreset}
-                    >
-                      Delete
-                    </button>
-                    <button
-                      type="button"
-                      className="awb-secondary-button"
-                      onClick={() => void onSaveTakeoverPreset()}
-                      disabled={isSavingTakeoverPreset}
-                    >
-                      Save preset
-                    </button>
+                  <div className="awb-takeover-presets__editor">
+                    <label className="awb-field">
+                      <span>Preset name</span>
+                      <input
+                        value={draftTakeoverPresetId}
+                        onChange={(event) =>
+                          setDraftTakeoverPresetId(event.target.value)
+                        }
+                        spellCheck={false}
+                      />
+                    </label>
+                    <label className="awb-field awb-field--takeover-prompt">
+                      <span>Prompt</span>
+                      <textarea
+                        value={draftTakeoverPrompt}
+                        onChange={(event) =>
+                          setDraftTakeoverPrompt(event.target.value)
+                        }
+                        spellCheck={false}
+                      />
+                    </label>
+                    <div className="awb-takeover-presets__actions">
+                      <button
+                        type="button"
+                        className="awb-ghost-button"
+                        onClick={() => void onDeleteTakeoverPreset()}
+                        disabled={!selectedTakeoverPresetId || isSavingTakeoverPreset}
+                      >
+                        Delete
+                      </button>
+                      <button
+                        type="button"
+                        className="awb-secondary-button"
+                        onClick={() => void onSaveTakeoverPreset()}
+                        disabled={isSavingTakeoverPreset}
+                      >
+                        Save preset
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1746,10 +1754,17 @@ export const ChatShellApp = ({
           onContextMenu={(event) => void onOpenSessionMenu(event, session.sessionId)}
         >
           <div className="awb-tree__session-main">
+            {statusDot ? <span className={`awb-tree__dot is-${statusDot}`} /> : <span className="awb-tree__dot-placeholder" />}
             {session.children.length > 0 ? (
               <button
                 type="button"
                 className="awb-tree__disclosure"
+                aria-label={
+                  session.isExpanded
+                    ? `Collapse ${session.title}`
+                    : `Expand ${session.title}`
+                }
+                aria-expanded={session.isExpanded}
                 onClick={(event) => {
                   event.stopPropagation();
                   void onToggleSessionTree(session.sessionId);
@@ -1760,7 +1775,6 @@ export const ChatShellApp = ({
             ) : (
               <span className="awb-tree__indent" />
             )}
-            {statusDot ? <span className={`awb-tree__dot is-${statusDot}`} /> : <span className="awb-tree__dot-placeholder" />}
             <div className="awb-tree__labels">
               <strong>
                 {takeoverBadge ? (
@@ -1870,9 +1884,22 @@ export const ChatShellApp = ({
                     onContextMenu={(event) => onOpenWorkspaceMenu(event, workspace)}
                   >
                     <div className="awb-workspace__main">
-                      <span className="awb-workspace__disclosure" aria-hidden="true">
+                      <button
+                        type="button"
+                        className="awb-workspace__disclosure"
+                        aria-label={
+                          workspace.isExpanded
+                            ? `Collapse ${workspace.label}`
+                            : `Expand ${workspace.label}`
+                        }
+                        aria-expanded={workspace.isExpanded}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void onToggleWorkspace(workspace.workspaceId);
+                        }}
+                      >
                         {workspace.isExpanded ? "▾" : "▸"}
-                      </span>
+                      </button>
                       <div>
                         <strong>{workspace.label}</strong>
                         <span>{workspace.rootPath}</span>

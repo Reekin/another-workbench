@@ -92,6 +92,7 @@ export const ComposerContainer = ({
       queue={composer.queue}
       suggestions={composer.suggestions}
       status={composer.status}
+      statusNotice={statusNotice}
       pendingApprovals={approvals.filter((approval) => approval.status === "pending")}
       contextUsage={activeSession?.contextUsage}
       takeoverPresets={takeoverPresets}

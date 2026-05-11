@@ -204,6 +204,11 @@ button {
   gap: 6px;
 }
 
+.awb-field--takeover-prompt {
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
 .awb-field span {
   font-size: 0.74rem;
   color: var(--awb-ink-muted);
@@ -327,7 +332,7 @@ button {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 16px 8px;
+  padding: 10px 14px 8px 4px;
   border-bottom: 1px solid transparent;
   cursor: pointer;
   transition: background-color 160ms ease;
@@ -337,18 +342,38 @@ button {
   min-width: 0;
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 2px;
 }
 
 .awb-workspace__disclosure {
-  width: 14px;
-  height: 14px;
-  flex: 0 0 14px;
-  margin-top: 1px;
+  width: 24px;
+  height: 26px;
+  flex: 0 0 24px;
+  margin-top: -4px;
+  transform: translateX(-3px);
+  appearance: none;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
   color: var(--awb-ink-faint);
-  font-size: 0.74rem;
-  line-height: 14px;
+  font-size: 1rem;
+  line-height: 1;
   text-align: center;
+  display: grid;
+  place-items: center;
+  box-shadow: none;
+}
+
+.awb-workspace__disclosure:hover {
+  background: rgba(140, 143, 141, 0.08);
+  color: var(--awb-ink-strong);
+}
+
+.awb-workspace__disclosure:focus-visible,
+.awb-tree__disclosure:focus-visible {
+  outline: 1px solid rgba(182, 185, 183, 0.34);
+  outline-offset: -2px;
 }
 
 .awb-workspace__header:hover {
@@ -435,17 +460,28 @@ button {
 
 .awb-tree__disclosure,
 .awb-tree__indent {
-  width: 14px;
-  height: 14px;
-  flex: 0 0 14px;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
 }
 
 .awb-tree__disclosure {
-  border: none;
+  appearance: none;
+  border: 0;
+  border-radius: 3px;
   background: transparent;
   color: var(--awb-ink-faint);
   padding: 0;
-  font-size: 0.74rem;
+  font-size: 1rem;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  box-shadow: none;
+}
+
+.awb-tree__disclosure:hover {
+  background: rgba(140, 143, 141, 0.08);
+  color: var(--awb-ink-strong);
 }
 
 .awb-tree__dot,
@@ -1224,9 +1260,10 @@ button {
 
 .awb-composer-status {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .awb-composer-status__pill {
@@ -1259,6 +1296,27 @@ button {
 .awb-composer-status__detail {
   font-size: 0.74rem;
   color: var(--awb-ink-muted);
+}
+
+.awb-composer-status__notice {
+  min-width: 0;
+  max-width: min(42vw, 520px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-left: 8px;
+  border-left: 1px solid var(--awb-rule-strong);
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: var(--awb-ink-muted);
+}
+
+.awb-composer-status__notice.is-error {
+  color: #c99191;
+}
+
+.awb-composer-status__notice.is-warning {
+  color: #c2a16f;
 }
 
 .awb-composer-suggestions {
@@ -1414,6 +1472,27 @@ button {
   margin-right: 14px;
 }
 
+.awb-composer-takeover__button {
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 7px;
+  max-width: 240px;
+}
+
+.awb-composer-takeover__button-label {
+  color: var(--awb-ink-muted);
+}
+
+.awb-composer-takeover__button strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--awb-ink-strong);
+}
+
 .awb-composer-takeover__button.is-active {
   border-color: rgba(217, 164, 65, 0.36);
   background: rgba(217, 164, 65, 0.14);
@@ -1422,27 +1501,52 @@ button {
 
 .awb-composer-takeover__menu {
   position: absolute;
-  right: 0;
+  left: 0;
   bottom: calc(100% + 8px);
-  z-index: 5;
-  width: 220px;
+  z-index: 30;
+  width: min(320px, calc(100vw - 40px));
   max-height: 260px;
   overflow: auto;
-  padding: 6px;
+  overscroll-behavior: contain;
+  padding: 7px;
   border: 1px solid var(--awb-rule-strong);
-  border-radius: var(--awb-radius-soft);
-  background: var(--awb-panel);
-  box-shadow: var(--awb-shadow);
+  border-radius: 8px;
+  background: rgba(29, 29, 29, 0.98);
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.38),
+    0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+}
+
+.awb-composer-takeover__menu-header {
+  display: grid;
+  gap: 2px;
+  padding: 8px 9px 9px;
+  border-bottom: 1px solid var(--awb-rule);
+  margin-bottom: 5px;
+}
+
+.awb-composer-takeover__menu-header strong {
+  color: var(--awb-ink-strong);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.awb-composer-takeover__menu-header span {
+  color: var(--awb-ink-muted);
+  font-size: 0.7rem;
 }
 
 .awb-composer-takeover__menu button {
   width: 100%;
   display: grid;
-  gap: 2px;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
   text-align: left;
   border-color: transparent;
   background: transparent;
-  padding: 7px 8px;
+  padding: 8px 9px;
+  border-radius: 6px;
 }
 
 .awb-composer-takeover__menu button:hover,
@@ -1451,12 +1555,32 @@ button {
   border-color: var(--awb-rule);
 }
 
-.awb-composer-takeover__menu strong {
-  font-size: 0.76rem;
-  font-weight: 600;
+.awb-composer-takeover__radio {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(182, 185, 183, 0.42);
+  box-shadow: inset 0 0 0 2px var(--awb-panel-alt);
 }
 
-.awb-composer-takeover__menu span {
+.awb-composer-takeover__menu button.is-active .awb-composer-takeover__radio {
+  border-color: rgba(217, 164, 65, 0.72);
+  background: #d9a441;
+}
+
+.awb-composer-takeover__menu-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.awb-composer-takeover__menu-copy strong {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--awb-ink-strong);
+}
+
+.awb-composer-takeover__menu-copy span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2101,6 +2225,10 @@ button {
 
 .awb-modal {
   width: min(760px, calc(100vw - 32px));
+  max-height: min(720px, calc(100vh - 32px));
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   border: 1px solid var(--awb-rule-strong);
   border-radius: 8px;
   background: var(--awb-panel-alt);
@@ -2127,12 +2255,17 @@ button {
 }
 
 .awb-modal__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
   padding: 14px;
 }
 
 .awb-settings {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
+  min-height: 0;
 }
 
 .awb-settings__tabs {
@@ -2157,22 +2290,61 @@ button {
 }
 
 .awb-settings__panel {
-  min-height: 260px;
+  min-height: 0;
 }
 
 .awb-takeover-presets {
   display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
-  min-height: 320px;
+  min-height: 0;
+}
+
+.awb-takeover-presets__header {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--awb-rule);
+}
+
+.awb-takeover-presets__header span {
+  color: var(--awb-ink-muted);
+  font-size: 0.72rem;
+}
+
+.awb-takeover-presets__header code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--awb-ink);
+  font-family: var(--awb-font-mono);
+  font-size: 0.7rem;
+}
+
+.awb-takeover-presets__content {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  gap: 12px;
 }
 
 .awb-takeover-presets__list,
 .awb-takeover-presets__editor {
   min-width: 0;
+  min-height: 0;
   display: grid;
-  align-content: start;
+  align-content: stretch;
   gap: 10px;
+}
+
+.awb-takeover-presets__list {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.awb-takeover-presets__editor {
+  grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
 .awb-takeover-presets__bar {
@@ -2194,8 +2366,9 @@ button {
 
 .awb-takeover-presets__items {
   display: grid;
+  align-content: start;
   gap: 6px;
-  max-height: 284px;
+  min-height: 0;
   overflow: auto;
 }
 
@@ -2238,7 +2411,8 @@ button {
 }
 
 .awb-takeover-presets__editor textarea {
-  min-height: 220px;
+  min-height: 145px;
+  height: 145px;
   resize: vertical;
   font-family: var(--awb-font-mono);
   line-height: 1.45;
@@ -2251,7 +2425,7 @@ button {
 }
 
 @media (max-width: 720px) {
-  .awb-takeover-presets {
+  .awb-takeover-presets__content {
     grid-template-columns: 1fr;
   }
 

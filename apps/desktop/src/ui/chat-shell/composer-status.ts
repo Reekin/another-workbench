@@ -62,13 +62,6 @@ const firstPendingApproval = (
 export const resolveComposerStatusModel = (
   input: ResolveComposerStatusInput
 ): ComposerStatusModel => {
-  if (input.notice?.message) {
-    return {
-      kind: "notice",
-      label: input.notice.message
-    };
-  }
-
   if (!input.transportAvailable) {
     return {
       kind: "transport_unavailable",

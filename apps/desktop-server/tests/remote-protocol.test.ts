@@ -261,7 +261,11 @@ describe("createRemoteRpcHandler", () => {
       handler.handleRequest({
         id: "req-takeover-manual",
         method: "takeover.setManual",
-        params: { sessionId: "session-1", presetId: "review" }
+        params: {
+          sessionId: "session-1",
+          presetId: "review",
+          context: "Check focused files."
+        }
       })
     ).resolves.toMatchObject({
       method: "takeover.setManual",
@@ -279,7 +283,8 @@ describe("createRemoteRpcHandler", () => {
     });
     expect(shellService.setManualTakeover).toHaveBeenCalledWith({
       sessionId: "session-1",
-      presetId: "review"
+      presetId: "review",
+      context: "Check focused files."
     });
   });
 

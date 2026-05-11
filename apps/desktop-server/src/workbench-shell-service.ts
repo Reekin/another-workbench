@@ -329,6 +329,7 @@ export class WorkbenchShellService {
   public async setManualTakeover(input: {
     sessionId: string;
     presetId?: string;
+    context?: string;
   }): Promise<TakeoverSessionStateRpc> {
     if (!this.smartTakeoverService) {
       return {

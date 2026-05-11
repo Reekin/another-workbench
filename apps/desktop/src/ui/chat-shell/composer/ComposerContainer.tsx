@@ -35,6 +35,7 @@ export type ComposerContainerProps = {
   onRequestTranscriptBottom?: (sessionId: string) => void;
   onToggleTakeoverMenu: () => void;
   onSelectTakeoverPreset: (presetId?: string) => Promise<void>;
+  onOpenTakeoverContextEditor: () => void;
   onRespondApproval?: (input: ApprovalResponseInput) => Promise<void>;
 };
 
@@ -60,6 +61,7 @@ export const ComposerContainer = ({
   onRequestTranscriptBottom,
   onToggleTakeoverMenu,
   onSelectTakeoverPreset,
+  onOpenTakeoverContextEditor,
   onRespondApproval
 }: ComposerContainerProps): ReactElement => {
   const composer = useComposerController({
@@ -98,6 +100,7 @@ export const ComposerContainer = ({
       takeoverPresets={takeoverPresets}
       takeoverState={takeoverState}
       isTakeoverMenuOpen={isTakeoverMenuOpen}
+      onOpenTakeoverContextEditor={onOpenTakeoverContextEditor}
       intent={composer.intent}
       supportsSteer={composer.capabilities.supportsSteer}
       supportsAttachments={composer.capabilities.supportsAttachments}

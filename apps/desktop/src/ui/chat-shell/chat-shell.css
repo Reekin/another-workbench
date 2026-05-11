@@ -1223,6 +1223,64 @@ button {
   position: relative;
 }
 
+.awb-composer-panel__editor.is-takeover-responding textarea {
+  color: transparent;
+  cursor: not-allowed;
+  background: rgba(140, 143, 141, 0.12);
+  border-color: rgba(140, 143, 141, 0.18);
+}
+
+.awb-composer-takeover-responding {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  pointer-events: none;
+  color: var(--awb-ink-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.awb-composer-takeover-responding__dots {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.awb-composer-takeover-responding__dots i {
+  display: block;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.35;
+  animation: awb-takeover-dot 900ms ease-in-out infinite;
+}
+
+.awb-composer-takeover-responding__dots i:nth-child(2) {
+  animation-delay: 140ms;
+}
+
+.awb-composer-takeover-responding__dots i:nth-child(3) {
+  animation-delay: 280ms;
+}
+
+@keyframes awb-takeover-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
 .awb-composer-queue {
   display: grid;
   gap: 8px;
@@ -1469,7 +1527,16 @@ button {
 
 .awb-composer-takeover {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   margin-right: 14px;
+}
+
+.awb-composer-takeover__edit {
+  min-width: 0;
+  padding-inline: 9px;
+  font-size: 0.72rem;
 }
 
 .awb-composer-takeover__button {
@@ -1595,6 +1662,11 @@ button {
   border-color: rgba(140, 143, 141, 0.3);
   background: rgba(140, 143, 141, 0.16);
   color: var(--awb-ink-strong);
+}
+
+.awb-composer__actions .awb-composer-takeover__edit {
+  padding-inline: 9px;
+  font-size: 0.72rem;
 }
 
 .awb-composer__actions button:hover {
@@ -2422,6 +2494,39 @@ button {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.awb-takeover-context-modal {
+  width: min(620px, calc(100vw - 32px));
+}
+
+.awb-takeover-context {
+  display: grid;
+  gap: 10px;
+  min-height: 260px;
+}
+
+.awb-takeover-context__notice {
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(191, 140, 81, 0.28);
+  border-radius: var(--awb-radius-soft);
+  background: rgba(191, 140, 81, 0.1);
+  color: var(--awb-ink);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.awb-field--takeover-context {
+  min-height: 230px;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.awb-field--takeover-context textarea {
+  min-height: 190px;
+  resize: vertical;
+  font-family: var(--awb-font-mono);
+  line-height: 1.45;
 }
 
 @media (max-width: 720px) {

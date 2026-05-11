@@ -729,7 +729,8 @@ const emitSmartTakeoverRequest = ({ threadId, turnId, start = false }) => {
   const args = start
     ? {
         action: "start",
-        presetId: "review"
+        presetId: "review",
+        context: "Review the current test takeover flow."
       }
     : {
         objective: "Confirm caller identity"

@@ -22,7 +22,7 @@ const presetIdPattern = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 const defaultBaseDir = (): string => join(homedir(), ".another-workbench");
 
-const builtinPresets: Record<string, string> = {
+const legacyBuiltinPresets: Record<string, string> = {
   review: `# Review Takeover
 
 You are the takeover reviewer for the parent agent session.
@@ -50,6 +50,38 @@ Use the SubmitTakeoverVerdict tool exactly once:
 Keep the verdict grounded in observable workspace state and acceptance criteria.
 `
 };
+
+const builtinPresets: Record<string, string> = {
+  review: `# Review Takeover
+
+You are the user's delegated reviewer for this session.
+
+Inspect the current workspace and the latest agent output. If the work has correctness, regression, maintainability, security, or test coverage issues, request concrete changes as the user. If the work is ready, approve it.
+
+Use the SubmitTakeoverVerdict tool exactly once:
+- verdict: "incomplete" when the agent must continue working from your response
+- verdict: "complete" when the work is ready for the user
+- response: your complete user-facing reply to send back to the agent
+
+Your feedback should be specific enough for the agent to act without guessing.
+`,
+  progress: `# Progress Takeover
+
+You are the user's delegated progress manager for this session.
+
+Compare the current state against the stated roadmap, task context, and acceptance criteria. Identify what is complete, what is missing, and the next concrete work needed. If the task is not complete, send it back with a focused continuation request. If the task is complete, approve it.
+
+Use the SubmitTakeoverVerdict tool exactly once:
+- verdict: "incomplete" when the agent must keep developing from your response
+- verdict: "complete" when the stated goal is complete
+- response: your complete user-facing reply to send back to the agent
+
+Keep the verdict grounded in observable workspace state and acceptance criteria.
+`
+};
+
+const normalizePresetPrompt = (prompt: string): string =>
+  prompt.replace(/\r\n/g, "\n").trimEnd();
 
 const displayNameFor = (presetId: string): string =>
   presetId
@@ -182,6 +214,17 @@ export class TakeoverPresetStore {
       const promptPath = join(directoryPath, "prompt.md");
       try {
         await stat(promptPath);
+        const legacyPrompt = legacyBuiltinPresets[presetId];
+        if (!legacyPrompt) {
+          continue;
+        }
+        const existingPrompt = await readFile(promptPath, "utf8");
+        if (
+          normalizePresetPrompt(existingPrompt) ===
+          normalizePresetPrompt(legacyPrompt)
+        ) {
+          await writeFile(promptPath, prompt, "utf8");
+        }
       } catch {
         await mkdir(directoryPath, { recursive: true });
         await writeFile(promptPath, prompt, "utf8");

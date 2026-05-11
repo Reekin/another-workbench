@@ -1,5 +1,7 @@
 import type {
   ChatSession,
+  DomainSnapshot,
+  MessageBlock,
   TakeoverPresetSummaryRpc
 } from "@another-workbench/shared";
 import type { HostToolRegistration, HostToolResult } from "./host-tools.js";
@@ -16,9 +18,10 @@ type Clock = () => string;
 type IdFactory = () => string;
 
 type TakeoverToolArgs = {
-  action?: "help" | "start";
+  action?: "help" | "start" | "stop";
   helpTopic?: "overview" | "presets" | "loop" | "result";
   presetId?: string;
+  context?: string;
   timeoutMs?: number;
 };
 
@@ -32,6 +35,7 @@ type TakeoverRun = {
   parentSessionId: string;
   takeoverSessionId?: string;
   presetId: string;
+  args: TakeoverToolArgs;
   createdAt: string;
   source: "tool" | "manual";
 };
@@ -52,6 +56,7 @@ export type TakeoverSessionState = {
   manualPresetId?: string;
   presetId?: string;
   takeoverSessionId?: string;
+  context?: string;
 };
 
 export type SmartTakeoverServiceOptions = {
@@ -86,7 +91,9 @@ const parseTakeoverArgs = (value: unknown): TakeoverToolArgs => {
   }
   return {
     action:
-      value.action === "help" || value.action === "start"
+      value.action === "help" ||
+      value.action === "start" ||
+      value.action === "stop"
         ? value.action
         : undefined,
     helpTopic:
@@ -97,6 +104,7 @@ const parseTakeoverArgs = (value: unknown): TakeoverToolArgs => {
         ? value.helpTopic
         : undefined,
     presetId: typeof value.presetId === "string" ? value.presetId : undefined,
+    context: typeof value.context === "string" ? value.context : undefined,
     timeoutMs:
       typeof value.timeoutMs === "number" && Number.isFinite(value.timeoutMs)
         ? value.timeoutMs
@@ -140,6 +148,79 @@ const parseFallbackVerdict = (
     verdict,
     response: finalText.trim()
   };
+};
+
+const isTextMessageBlock = (
+  block: MessageBlock
+): block is MessageBlock & { text: string } =>
+  block.role === "assistant" &&
+  (block.kind === "markdown" || block.kind === "plain_text") &&
+  typeof block.text === "string" &&
+  block.text.trim().length > 0;
+
+const compareIsoDesc = (left?: string, right?: string): number =>
+  (right ?? "").localeCompare(left ?? "");
+
+const renderMessageText = (blocks: MessageBlock[]): string | undefined => {
+  const text = blocks
+    .filter(isTextMessageBlock)
+    .sort(
+      (left, right) =>
+        left.startedAt.localeCompare(right.startedAt) ||
+        left.blockId.localeCompare(right.blockId)
+    )
+    .map((block) => block.text.trim())
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+  return text.length > 0 ? text : undefined;
+};
+
+const resolveLatestAgentOutput = (
+  snapshot: DomainSnapshot,
+  sessionId: string
+): string | undefined => {
+  const turns = snapshot.turns
+    .filter(
+      (turn) =>
+        turn.sessionId === sessionId &&
+        turn.status === "completed" &&
+        turn.completedAt
+    )
+    .sort(
+      (left, right) =>
+        compareIsoDesc(left.completedAt, right.completedAt) ||
+        compareIsoDesc(left.startedAt, right.startedAt)
+    );
+
+  for (const turn of turns) {
+    if (turn.finalMessageId) {
+      const finalText = renderMessageText(
+        snapshot.messageBlocks.filter(
+          (block) =>
+            block.sessionId === sessionId &&
+            block.messageId === turn.finalMessageId
+        )
+      );
+      if (finalText) {
+        return finalText;
+      }
+    }
+
+    for (const messageId of [...turn.messageIds].reverse()) {
+      const fallbackText = renderMessageText(
+        snapshot.messageBlocks.filter(
+          (block) =>
+            block.sessionId === sessionId && block.messageId === messageId
+        )
+      );
+      if (fallbackText) {
+        return fallbackText;
+      }
+    }
+  }
+
+  return undefined;
 };
 
 export class SmartTakeoverService {
@@ -216,7 +297,8 @@ export class SmartTakeoverService {
         sessionId,
         role: "takeover-agent",
         active: Boolean(takeoverRunId && this.pendingVerdictResolvers.has(takeoverRunId)),
-        presetId: takeoverRun?.presetId ?? takeoverMetadata.presetId
+        presetId: takeoverRun?.presetId ?? takeoverMetadata.presetId,
+        context: takeoverRun?.args.context
       };
     }
 
@@ -230,7 +312,8 @@ export class SmartTakeoverService {
         active: Boolean(parentRunId && this.pendingVerdictResolvers.has(parentRunId)),
         manualPresetId: config?.presetId,
         presetId: parentRun?.presetId ?? config?.presetId,
-        takeoverSessionId: parentRun?.takeoverSessionId
+        takeoverSessionId: parentRun?.takeoverSessionId,
+        context: config?.args.context ?? parentRun?.args.context
       };
     }
 
@@ -244,14 +327,10 @@ export class SmartTakeoverService {
   public async setManualTakeover(input: {
     sessionId: string;
     presetId?: string;
+    context?: string;
   }): Promise<TakeoverSessionState> {
     if (!input.presetId) {
-      this.takeoverConfigByParentSessionId.delete(input.sessionId);
-      this.cancelPendingLaunch(input.sessionId);
-      const activeRunId = this.runIdByParentSessionId.get(input.sessionId);
-      if (activeRunId) {
-        this.cancelRun(activeRunId, "Manual takeover was disabled.");
-      }
+      this.disableTakeover(input.sessionId, "Manual takeover was disabled.");
       return this.getSessionState(input.sessionId);
     }
 
@@ -259,7 +338,8 @@ export class SmartTakeoverService {
       parentSessionId: input.sessionId,
       args: {
         action: "start",
-        presetId: input.presetId
+        presetId: input.presetId,
+        context: input.context
       },
       source: "manual"
     });
@@ -287,6 +367,60 @@ export class SmartTakeoverService {
 
   private resolveRunIdForTakeoverSession(sessionId: string): string | undefined {
     return this.runIdByTakeoverSessionId.get(sessionId);
+  }
+
+  private disableTakeover(sessionId: string, reason: string): boolean {
+    const hadConfig = this.takeoverConfigByParentSessionId.delete(sessionId);
+    this.cancelPendingLaunch(sessionId);
+    const activeRunId = this.runIdByParentSessionId.get(sessionId);
+    if (activeRunId) {
+      this.cancelRun(activeRunId, reason);
+    }
+    return hadConfig || Boolean(activeRunId);
+  }
+
+  private interruptTakeoverRun(runId: string, reason: string): void {
+    const run = this.runsById.get(runId);
+    if (!run?.takeoverSessionId) {
+      return;
+    }
+    const snapshot = this.runtimeService.getSnapshot();
+    const takeoverSession = this.runtimeService.getSession(run.takeoverSessionId);
+    const activeTurn =
+      (takeoverSession?.lastTurnId
+        ? snapshot.turns.find(
+            (turn) =>
+              turn.sessionId === run.takeoverSessionId &&
+              turn.turnId === takeoverSession.lastTurnId &&
+              turn.status !== "completed"
+          )
+        : undefined) ??
+      snapshot.turns
+        .filter(
+          (turn) =>
+            turn.sessionId === run.takeoverSessionId &&
+            turn.status !== "completed"
+        )
+        .sort(
+          (left, right) =>
+            compareIsoDesc(left.startedAt, right.startedAt) ||
+            right.turnId.localeCompare(left.turnId)
+        )[0];
+    if (!activeTurn) {
+      return;
+    }
+    void this.runtimeService
+      .executeCommand({
+        commandId: this.createId(),
+        issuedAt: this.now(),
+        command: {
+          type: "interruptTurn",
+          sessionId: run.takeoverSessionId,
+          turnId: activeTurn.turnId,
+          reason
+        }
+      })
+      .catch(() => undefined);
   }
 
   private resolveTakeoverMetadata(
@@ -321,6 +455,7 @@ export class SmartTakeoverService {
   }
 
   private cancelRun(runId: string, reason: string): void {
+    this.interruptTakeoverRun(runId, reason);
     const rejecter = this.pendingVerdictRejecters.get(runId);
     if (rejecter) {
       rejecter(new Error(reason));
@@ -353,10 +488,27 @@ export class SmartTakeoverService {
       return textResult(await this.buildHelp(args.helpTopic));
     }
     try {
+      if (args.action === "stop") {
+        const disabled = this.disableTakeover(
+          request.parentSessionId,
+          "SmartTakeover was disabled by the managed agent."
+        );
+        return textResult(
+          disabled
+            ? `SmartTakeover disabled for session ${request.parentSessionId}.`
+            : `SmartTakeover is not enabled for session ${request.parentSessionId}.`
+        );
+      }
+
       const existingConfig = this.takeoverConfigByParentSessionId.get(
         request.parentSessionId
       );
-      if (existingConfig) {
+      const presetId = args.presetId ?? "review";
+      if (
+        existingConfig &&
+        existingConfig.presetId === presetId &&
+        existingConfig.args.context === args.context
+      ) {
         return textResult(
           `SmartTakeover is already enabled for session ${request.parentSessionId}. It will run after the current response is complete.`
         );
@@ -476,6 +628,10 @@ export class SmartTakeoverService {
       throw new Error("Takeover launch cancelled.");
     }
     const snapshot = this.runtimeService.getSnapshot();
+    const latestAgentOutput = resolveLatestAgentOutput(
+      snapshot,
+      parentSession.sessionId
+    );
     const conversation = snapshot.conversations.find(
       (item) => item.conversationId === parentSession.conversationId
     );
@@ -497,7 +653,7 @@ export class SmartTakeoverService {
     const existingRunId = this.runIdByParentSessionId.get(parentSession.sessionId);
     if (existingRunId && this.pendingVerdictResolvers.has(existingRunId)) {
       throw new Error(
-        `Takeover is already active for parent session ${parentSession.sessionId}.`
+        `Takeover is already active for session ${parentSession.sessionId}.`
       );
     }
 
@@ -506,6 +662,7 @@ export class SmartTakeoverService {
       runId,
       parentSessionId: parentSession.sessionId,
       presetId,
+      args,
       createdAt: this.now(),
       source
     };
@@ -562,6 +719,7 @@ export class SmartTakeoverService {
               takeoverSession,
               workspacePath,
               presetPrompt: preset.prompt,
+              latestAgentOutput,
               args,
               request
             }),
@@ -744,9 +902,9 @@ export class SmartTakeoverService {
     const { rootPath, presets } = await this.presetStore.list();
     const presetLines = this.renderPresetLines(presets);
     const sections: Record<string, string> = {
-      overview: `SmartTakeover enables takeover mode for this session. After the parent agent finishes its current response, Another Workbench starts a takeover agent in the same workspace. The takeover agent acts as the user's delegated reviewer or progress manager and reports back through SubmitTakeoverVerdict.
+      overview: `SmartTakeover enables takeover mode for this session. After your current response finishes, Another Workbench starts a takeover agent in the same workspace. The takeover agent acts as the user's delegated reviewer or progress manager and reports back through SubmitTakeoverVerdict.
 
-Use action="start" when you need a virtual user to inspect a checkpoint, review your changes, or decide whether a long-running task should continue.`,
+Use action="start" when you need a virtual user to inspect a checkpoint, review your changes, or decide whether a long-running task should continue. Pass context when this review needs specific goals, focus files, known risks, or acceptance notes. Use action="stop" when you are the managed agent and repeated review feedback does not contain necessary iteration, or takeover is no longer useful for this task.`,
       presets: `Preset prompts are read from ${rootPath}. Each preset can be a directory containing prompt.md or another .md file, or a direct .md file.
 
 Available presets:
@@ -754,7 +912,7 @@ ${presetLines}`,
       loop: `For review loops, use presetId="review". If the verdict is incomplete, do the requested work from response; takeover mode will review again after the next completed response while it remains enabled.
 
 For roadmap/progress loops, use presetId="progress". Put scenario-specific review standards in the preset prompt.`,
-      result: `The takeover agent must call SubmitTakeoverVerdict once. verdict="complete" means the takeover passes. verdict="incomplete" means the parent agent should continue working from response. response is the complete virtual-user reply to return to the parent agent.`
+      result: `The takeover agent must call SubmitTakeoverVerdict once. verdict="complete" accepts the current state and ends takeover. verdict="incomplete" sends response back as the user's next reply so the agent continues. The managed agent may call SmartTakeover with action="stop" to disable takeover when further review loops are no longer useful.`
     };
     if (topic) {
       return `${sections[topic]}\n\n${sections.result}`;
@@ -785,16 +943,25 @@ ${sections.result}`;
     takeoverSession: ChatSession;
     workspacePath?: string;
     presetPrompt: string;
+    latestAgentOutput?: string;
     args: TakeoverToolArgs;
     request: SmartTakeoverRequest;
   }): string {
     const sections = [`Preset instructions:\n${input.presetPrompt.trim()}`];
 
+    if (input.args.context?.trim()) {
+      sections.push(`Task context:\n${input.args.context.trim()}`);
+    }
+
+    if (input.latestAgentOutput?.trim()) {
+      sections.push(`Latest agent output:\n${input.latestAgentOutput.trim()}`);
+    }
+
     sections.push(`Verdict contract:
 Call the SubmitTakeoverVerdict tool exactly once before your final message.
-- verdict "complete": the parent agent can stop this loop.
-- verdict "incomplete": the parent agent must continue from your response.
-- response: the complete virtual-user reply to return to the parent agent.
+- verdict "complete": accept the current state and end takeover.
+- verdict "incomplete": send your response as the user's next reply so the agent continues.
+- response: the complete user-facing reply to send back to the agent.
 
 If the verdict tool is unavailable, include a final line in this exact form:
 TAKEOVER_VERDICT: complete|incomplete`);

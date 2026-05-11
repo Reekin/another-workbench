@@ -119,7 +119,8 @@ const zTakeoverSessionStateSchema = z.object({
   active: z.boolean(),
   manualPresetId: zTakeoverPresetIdSchema.optional(),
   presetId: zTakeoverPresetIdSchema.optional(),
-  takeoverSessionId: zSessionId.optional()
+  takeoverSessionId: zSessionId.optional(),
+  context: z.string().optional()
 });
 
 const zComposerSlashSuggestionRpcSchema = z.object({
@@ -537,7 +538,8 @@ const zTakeoverSetManualRequestSchema = z.object({
   method: z.literal("takeover.setManual"),
   params: z.object({
     sessionId: zSessionId,
-    presetId: zTakeoverPresetIdSchema.optional()
+    presetId: zTakeoverPresetIdSchema.optional(),
+    context: z.string().optional()
   })
 });
 

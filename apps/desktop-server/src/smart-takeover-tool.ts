@@ -58,8 +58,9 @@ export const createSmartTakeoverHostTool = (
     properties: {
       action: {
         type: "string",
-        enum: ["help", "start"],
-        description: "Use help for detailed usage, start to enable takeover."
+        enum: ["help", "start", "stop"],
+        description:
+          "Use help for detailed usage, start to enable takeover, stop to disable takeover for this session."
       },
       helpTopic: {
         type: "string",
@@ -69,6 +70,11 @@ export const createSmartTakeoverHostTool = (
       presetId: {
         type: "string",
         description: "Preset prompt name from ~/.another-workbench/takeover."
+      },
+      context: {
+        type: "string",
+        description:
+          "Task context to pass to the takeover agent, such as goals, files, risks, or acceptance notes for this review."
       }
     },
     additionalProperties: false
@@ -117,12 +123,12 @@ export const createSubmitTakeoverVerdictHostTool = (
         type: "string",
         enum: ["complete", "incomplete"],
         description:
-          "complete passes the takeover check; incomplete returns work to the parent agent."
+          "complete accepts the current state and ends takeover; incomplete sends feedback as the user's next reply."
       },
       response: {
         type: "string",
         description:
-          "The complete virtual-user response to return to the parent agent."
+          "The complete user-facing response to send back to the agent."
       }
     },
     required: ["verdict", "response"],

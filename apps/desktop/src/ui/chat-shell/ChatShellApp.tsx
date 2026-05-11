@@ -1104,6 +1104,10 @@ export const ChatShellApp = ({
     TakeoverSessionStateRpc | undefined
   >();
   const [isTakeoverMenuOpen, setIsTakeoverMenuOpen] = useState(false);
+  const [isTakeoverContextEditorOpen, setIsTakeoverContextEditorOpen] =
+    useState(false);
+  const [draftTakeoverContext, setDraftTakeoverContext] = useState("");
+  const [isSavingTakeoverContext, setIsSavingTakeoverContext] = useState(false);
 
   const writeStatusNoticeLog = useCallback(
     (notice: ComposerStatusNotice): void => {
@@ -1193,6 +1197,7 @@ export const ChatShellApp = ({
 
   useEffect(() => {
     setIsTakeoverMenuOpen(false);
+    setIsTakeoverContextEditorOpen(false);
   }, [activeSessionId]);
 
   useEffect(() => {
@@ -1686,7 +1691,8 @@ export const ChatShellApp = ({
       try {
         const nextState = await transport.takeover.setManual({
           sessionId: activeSessionId,
-          presetId
+          presetId,
+          context: presetId ? takeoverState?.context : undefined
         });
         setTakeoverState(nextState);
         setIsTakeoverMenuOpen(false);
@@ -1706,8 +1712,75 @@ export const ChatShellApp = ({
         });
       }
     },
-    [activeSessionId, refreshSessionBrowser, setStatusNotice, transport]
+    [activeSessionId, refreshSessionBrowser, setStatusNotice, takeoverState?.context, transport]
   );
+
+  const onOpenTakeoverContextEditor = useCallback((): void => {
+    setDraftTakeoverContext(takeoverState?.context ?? "");
+    setIsTakeoverContextEditorOpen(true);
+  }, [takeoverState?.context]);
+
+  const onCloseTakeoverContextEditor = useCallback((): void => {
+    if (isSavingTakeoverContext) {
+      return;
+    }
+    setIsTakeoverContextEditorOpen(false);
+  }, [isSavingTakeoverContext]);
+
+  const onSaveTakeoverContext = useCallback(async (): Promise<void> => {
+    const presetId = takeoverState?.presetId ?? takeoverState?.manualPresetId;
+    if (!transport || !activeSessionId || !presetId) {
+      setIsTakeoverContextEditorOpen(false);
+      return;
+    }
+    const willRestartReview = takeoverState?.active === true;
+    if (
+      willRestartReview &&
+      typeof window !== "undefined" &&
+      !window.confirm(
+        "Takeover is responding now. Saving this context will interrupt the current review and start a new one."
+      )
+    ) {
+      return;
+    }
+    setIsSavingTakeoverContext(true);
+    try {
+      const nextState = await transport.takeover.setManual({
+        sessionId: activeSessionId,
+        presetId,
+        context: draftTakeoverContext.trim()
+          ? draftTakeoverContext.trim()
+          : undefined
+      });
+      setTakeoverState(nextState);
+      setIsTakeoverContextEditorOpen(false);
+      await refreshSessionBrowser({ mode: "visible" });
+      setStatusNotice({
+        message: willRestartReview
+          ? "Takeover review restarted with updated context."
+          : "Takeover context updated.",
+        source: "takeover"
+      });
+    } catch (error) {
+      setStatusNotice({
+        message: `Takeover context update failed: ${(error as Error).message}`,
+        persistent: true,
+        source: "takeover",
+        ...statusNoticeErrorDetails(error)
+      });
+    } finally {
+      setIsSavingTakeoverContext(false);
+    }
+  }, [
+    activeSessionId,
+    draftTakeoverContext,
+    refreshSessionBrowser,
+    setStatusNotice,
+    takeoverState?.active,
+    takeoverState?.manualPresetId,
+    takeoverState?.presetId,
+    transport
+  ]);
 
   const onToggleTakeoverMenu = useCallback((): void => {
     const shouldOpen = !isTakeoverMenuOpen;
@@ -1848,6 +1921,72 @@ export const ChatShellApp = ({
           {action === "open_directory" ? workspaceDirectoryActionLabel : action}
         </button>
       ))}
+    </div>
+  ) : null;
+
+  const takeoverContextEditorMarkup = isTakeoverContextEditorOpen ? (
+    <div
+      className="awb-modal-scrim"
+      role="presentation"
+      onClick={onCloseTakeoverContextEditor}
+    >
+      <section
+        className="awb-modal awb-takeover-context-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="awb-takeover-context-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="awb-modal__header">
+          <div>
+            <span className="awb-main__eyebrow">Takeover</span>
+            <h2 id="awb-takeover-context-title">Context</h2>
+          </div>
+          <button
+            type="button"
+            className="awb-ghost-button"
+            onClick={onCloseTakeoverContextEditor}
+            disabled={isSavingTakeoverContext}
+          >
+            Close
+          </button>
+        </header>
+        <div className="awb-modal__body awb-takeover-context">
+          {takeoverState?.active ? (
+            <p className="awb-takeover-context__notice">
+              Takeover is responding. Saving context will interrupt this review
+              and start a new one.
+            </p>
+          ) : null}
+          <label className="awb-field awb-field--takeover-context">
+            <span>Task context</span>
+            <textarea
+              value={draftTakeoverContext}
+              onChange={(event) => setDraftTakeoverContext(event.target.value)}
+              placeholder="Goals, focus files, risks, acceptance notes..."
+              spellCheck={false}
+            />
+          </label>
+        </div>
+        <footer className="awb-modal__footer">
+          <button
+            type="button"
+            className="awb-ghost-button"
+            onClick={onCloseTakeoverContextEditor}
+            disabled={isSavingTakeoverContext}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="awb-secondary-button"
+            onClick={() => void onSaveTakeoverContext()}
+            disabled={isSavingTakeoverContext}
+          >
+            {takeoverState?.active ? "Restart review" : "Save context"}
+          </button>
+        </footer>
+      </section>
     </div>
   ) : null;
 
@@ -2036,6 +2175,7 @@ export const ChatShellApp = ({
             onRequestTranscriptBottom={viewport.scrollToBottom}
             onToggleTakeoverMenu={onToggleTakeoverMenu}
             onSelectTakeoverPreset={onSelectTakeoverPreset}
+            onOpenTakeoverContextEditor={onOpenTakeoverContextEditor}
             onRespondApproval={transport ? onRespondApproval : undefined}
           />
         </main>
@@ -2100,6 +2240,10 @@ export const ChatShellApp = ({
         (typeof document === "undefined"
           ? workspaceMenuMarkup
           : createPortal(workspaceMenuMarkup, document.body))}
+      {takeoverContextEditorMarkup &&
+        (typeof document === "undefined"
+          ? takeoverContextEditorMarkup
+          : createPortal(takeoverContextEditorMarkup, document.body))}
       <ImageLightbox image={lightboxImage} onClose={() => setLightboxImage(undefined)} />
     </>
   );

@@ -202,6 +202,7 @@ export type DesktopTransport = {
     setManual: (input: {
       sessionId: string;
       presetId?: string;
+      context?: string;
     }) => Promise<TakeoverSessionStateRpc>;
   };
   domain: {
@@ -587,6 +588,7 @@ export const createDesktopTransport = (
   const requestTakeoverSetManual = async (input: {
     sessionId: string;
     presetId?: string;
+    context?: string;
   }): Promise<TakeoverSessionStateRpc> => {
     const result = await rpc.request("takeover.setManual", input);
     return result.state;

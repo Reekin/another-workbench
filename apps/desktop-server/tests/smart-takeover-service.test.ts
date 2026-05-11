@@ -48,6 +48,8 @@ const createManualTakeoverHarness = async () => {
   const presetStore = new TakeoverPresetStore({ baseDir });
   const sessions = new Map<string, Record<string, unknown>>();
   const commands: Array<Record<string, unknown>> = [];
+  const turns: Array<Record<string, unknown>> = [];
+  const messageBlocks: Array<Record<string, unknown>> = [];
   const subscribers = new Set<(envelope: EventEnvelope) => void>();
   let childIndex = 0;
   let idIndex = 0;
@@ -78,8 +80,8 @@ const createManualTakeoverHarness = async () => {
         }
       ],
       sessions: [...sessions.values()],
-      turns: [],
-      messageBlocks: [],
+      turns,
+      messageBlocks,
       toolCalls: [],
       terminalStreams: [],
       approvalRequests: [],
@@ -164,6 +166,8 @@ const createManualTakeoverHarness = async () => {
   return {
     service,
     commands,
+    turns,
+    messageBlocks,
     sessions,
     submitVerdict,
     emit: (envelope: EventEnvelope) => {
@@ -411,7 +415,8 @@ describe("SmartTakeoverService", () => {
 
     await harness.service.setManualTakeover({
       sessionId: "session-parent",
-      presetId: "review"
+      presetId: "review",
+      context: "Focus on takeover context propagation."
     });
 
     expect(harness.service.getSessionState("session-parent")).toMatchObject({
@@ -426,6 +431,27 @@ describe("SmartTakeoverService", () => {
     if (parent) {
       parent.status = "idle";
     }
+    harness.turns.push({
+      turnId: "turn-parent",
+      sessionId: "session-parent",
+      status: "completed",
+      startedAt: "2026-05-10T00:00:00Z",
+      completedAt: "2026-05-10T00:00:01Z",
+      finalMessageId: "message-parent-final",
+      messageIds: ["message-parent-final"]
+    });
+    harness.messageBlocks.push({
+      blockId: "message-parent-final:md",
+      messageId: "message-parent-final",
+      sessionId: "session-parent",
+      turnId: "turn-parent",
+      role: "assistant",
+      phase: "final_answer",
+      kind: "markdown",
+      text: "I finished the takeover prompt cleanup and updated the tests.",
+      startedAt: "2026-05-10T00:00:00Z",
+      completedAt: "2026-05-10T00:00:01Z"
+    });
     harness.emit({
       eventId: "event-parent-completed",
       cursor: "cursor-parent-completed",
@@ -446,6 +472,15 @@ describe("SmartTakeoverService", () => {
         sessionId: "session-takeover-1"
       })
     ]);
+    expect(harness.commands[0]?.content).toContain("Latest agent output:");
+    expect(harness.commands[0]?.content).toContain(
+      "I finished the takeover prompt cleanup and updated the tests."
+    );
+    expect(harness.commands[0]?.content).toContain("Task context:");
+    expect(harness.commands[0]?.content).toContain(
+      "Focus on takeover context propagation."
+    );
+    expect(harness.commands[0]?.content).not.toContain("parent agent");
   });
 
   it("does not send the takeover prompt when disabled during launch", async () => {
@@ -588,6 +623,116 @@ describe("SmartTakeoverService", () => {
         })
       ]
     });
+  });
+
+  it("allows the managed agent to stop takeover through SmartTakeover", async () => {
+    const harness = await createManualTakeoverHarness();
+    const parent = harness.sessions.get("session-parent");
+    if (parent) {
+      parent.status = "running";
+    }
+    await harness.service.setManualTakeover({
+      sessionId: "session-parent",
+      presetId: "review"
+    });
+    const smartTakeoverTool = harness.service
+      .createHostTools()
+      .find((tool) => tool.name === "SmartTakeover");
+
+    const result = await smartTakeoverTool?.handle({
+      definition: smartTakeoverTool,
+      arguments: {
+        action: "stop"
+      },
+      context: {
+        engineId: "codex",
+        sessionId: "session-parent",
+        providerSessionId: "thread-session-parent"
+      }
+    } as never);
+
+    expect(result).toMatchObject({
+      success: true,
+      contentItems: [
+        expect.objectContaining({
+          text: expect.stringContaining("SmartTakeover disabled")
+        })
+      ]
+    });
+    expect(harness.service.getSessionState("session-parent")).toMatchObject({
+      role: "none",
+      active: false
+    });
+
+    if (parent) {
+      parent.status = "idle";
+    }
+    harness.emit({
+      eventId: "event-parent-completed-after-stop",
+      cursor: "cursor-parent-completed-after-stop",
+      occurredAt: "2026-05-10T00:00:00Z",
+      event: {
+        type: "turn.completed",
+        sessionId: "session-parent",
+        turnId: "turn-parent",
+        finishReason: "completed"
+      }
+    } as EventEnvelope);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(harness.sessions.has("session-takeover-1")).toBe(false);
+    expect(harness.commands).toEqual([]);
+  });
+
+  it("interrupts the active takeover agent when takeover is changed", async () => {
+    const harness = await createManualTakeoverHarness();
+    await harness.service.setManualTakeover({
+      sessionId: "session-parent",
+      presetId: "review"
+    });
+    await waitFor(() => harness.service.getSessionState("session-parent").active);
+    const activeState = harness.service.getSessionState("session-parent");
+    const takeoverSession = harness.sessions.get(activeState.takeoverSessionId!);
+    if (takeoverSession) {
+      takeoverSession.status = "running";
+      takeoverSession.lastTurnId = "turn-takeover-active";
+    }
+    harness.turns.push({
+      turnId: "turn-takeover-active",
+      sessionId: activeState.takeoverSessionId!,
+      status: "streaming",
+      startedAt: "2026-05-10T00:00:02Z",
+      messageIds: []
+    });
+
+    await harness.service.setManualTakeover({
+      sessionId: "session-parent",
+      presetId: "progress",
+      context: "Use progress review now."
+    });
+    await waitFor(() => {
+      const state = harness.service.getSessionState("session-parent");
+      return (
+        state.active &&
+        state.presetId === "progress" &&
+        state.takeoverSessionId !== activeState.takeoverSessionId
+      );
+    });
+
+    expect(harness.commands).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "interruptTurn",
+          sessionId: activeState.takeoverSessionId,
+          turnId: "turn-takeover-active"
+        }),
+        expect.objectContaining({
+          type: "sendUserMessage",
+          sessionId: "session-takeover-2",
+          content: expect.stringContaining("Use progress review now.")
+        })
+      ])
+    );
   });
 
   it("clears manual takeover after a complete verdict", async () => {

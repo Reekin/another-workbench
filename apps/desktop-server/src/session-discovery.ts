@@ -136,11 +136,12 @@ const resolveThreadTurnItemStartedAts = (
   if (!turn) {
     return [];
   }
-  const rolloutTimestamps = [
-    ...(rolloutTimestampGroups.find((group) => group.turnId === turn.id)?.items ??
-      rolloutTimestampGroups[turnIndex]?.items ??
-      [])
-  ];
+  const rolloutTimestampGroup = resolveRolloutTimestampGroup(
+    turn,
+    turnIndex,
+    rolloutTimestampGroups
+  );
+  const rolloutTimestamps = [...(rolloutTimestampGroup?.items ?? [])];
   return turn.items.map(
     (item, itemIndex) =>
       resolveCodexThreadItemTimestamp(item) ??
@@ -149,22 +150,40 @@ const resolveThreadTurnItemStartedAts = (
   );
 };
 
+const resolveRolloutTimestampGroup = (
+  turn: Thread["turns"][number],
+  turnIndex: number,
+  rolloutTimestampGroups: readonly CodexRolloutTimestampGroup[]
+): CodexRolloutTimestampGroup | undefined =>
+  rolloutTimestampGroups.find((group) => group.turnId === turn.id) ??
+  rolloutTimestampGroups[turnIndex];
+
 const resolveThreadTurnStartedAt = (
   thread: Thread,
   turnIndex: number,
-  itemStartedAts: readonly string[]
-): string => itemStartedAts[0] ?? buildDeterministicTurnTimestamp(thread, turnIndex);
+  itemStartedAts: readonly string[],
+  rolloutTimestampGroup?: CodexRolloutTimestampGroup
+): string => {
+  const fallbackStartedAt = buildDeterministicTurnTimestamp(thread, turnIndex);
+  const firstItemStartedAt = itemStartedAts[0];
+  if (firstItemStartedAt && firstItemStartedAt !== fallbackStartedAt) {
+    return firstItemStartedAt;
+  }
+  return rolloutTimestampGroup?.startedAt ?? firstItemStartedAt ?? fallbackStartedAt;
+};
 
 const resolveThreadTurnCompletedAt = (
   thread: Thread,
   turnIndex: number,
-  itemStartedAts: readonly string[]
+  itemStartedAts: readonly string[],
+  rolloutTimestampGroup?: CodexRolloutTimestampGroup
 ): string | undefined => {
   const turn = thread.turns[turnIndex];
   if (!turn || turn.status === "inProgress") {
     return undefined;
   }
   return (
+    rolloutTimestampGroup?.completedAt ??
     lastTimestamp([...itemStartedAts]) ??
     buildDeterministicTurnTimestamp(thread, turnIndex, turn.items.length + 1)
   );
@@ -177,10 +196,16 @@ const resolveThreadLastCompletedTurnAt = (
   for (let turnIndex = thread.turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
     const turn = thread.turns[turnIndex];
     if (turn?.status !== "inProgress") {
+      const rolloutTimestampGroup = resolveRolloutTimestampGroup(
+        turn,
+        turnIndex,
+        rolloutTimestampGroups
+      );
       return resolveThreadTurnCompletedAt(
         thread,
         turnIndex,
-        resolveThreadTurnItemStartedAts(thread, turnIndex, rolloutTimestampGroups)
+        resolveThreadTurnItemStartedAts(thread, turnIndex, rolloutTimestampGroups),
+        rolloutTimestampGroup
       );
     }
   }
@@ -473,16 +498,27 @@ const hydrateCodexTurnEntities = async (input: {
       return undefined;
     }
     const hydratedItems = turn.items;
+    const rolloutTimestampGroup = resolveRolloutTimestampGroup(
+      turn,
+      turnIndex,
+      rolloutTimestampGroups
+    );
     const itemStartedAts = resolveThreadTurnItemStartedAts(
       thread,
       turnIndex,
       rolloutTimestampGroups
     );
-    const startedAt = resolveThreadTurnStartedAt(thread, turnIndex, itemStartedAts);
+    const startedAt = resolveThreadTurnStartedAt(
+      thread,
+      turnIndex,
+      itemStartedAts,
+      rolloutTimestampGroup
+    );
     const completedAt = resolveThreadTurnCompletedAt(
       thread,
       turnIndex,
-      itemStartedAts
+      itemStartedAts,
+      rolloutTimestampGroup
     );
     const messageIds: string[] = [];
     const toolCallIds: string[] = [];

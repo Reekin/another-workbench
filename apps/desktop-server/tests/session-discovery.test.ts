@@ -147,12 +147,39 @@ describe("Session discovery and reconciliation", () => {
   });
 
   it("discovers last completed turn time by reading full codex threads", async () => {
+    const baseDir = await createTempDir();
+    const rolloutPath = join(baseDir, "rollout-discovery-completed-at.jsonl");
+    await writeFile(
+      rolloutPath,
+      [
+        {
+          timestamp: "2026-05-08T09:59:59.000Z",
+          type: "event_msg",
+          payload: {
+            type: "task_started",
+            turn_id: "turn-recent"
+          }
+        },
+        {
+          timestamp: "2026-05-08T10:06:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "task_complete",
+            turn_id: "turn-recent"
+          }
+        }
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+      "utf8"
+    );
     const listedThread = createThread({
       id: "thread-recent",
       cwd: "I:/workspace-alpha"
     });
     const readThread = vi.fn().mockResolvedValue({
       ...listedThread,
+      path: rolloutPath,
       turns: [
         {
           id: "turn-recent",
@@ -202,7 +229,7 @@ describe("Session discovery and reconciliation", () => {
     expect(readThread).toHaveBeenCalledWith("thread-recent", true);
     expect(discovered.sessions[0]).toMatchObject({
       sessionId: "codex-thread:thread-recent",
-      lastCompletedTurnAt: "2026-05-08T10:05:00.000Z"
+      lastCompletedTurnAt: "2026-05-08T10:06:00.000Z"
     });
   });
 
@@ -289,6 +316,243 @@ describe("Session discovery and reconciliation", () => {
       "codex-thread:thread-page",
       "thread-page"
     );
+  });
+
+  it("uses turn-level rollout timestamps for paged turns that start with compaction", async () => {
+    const baseDir = await createTempDir();
+    const rolloutPath = join(baseDir, "rollout-paged-compaction.jsonl");
+    await writeFile(
+      rolloutPath,
+      [
+        {
+          timestamp: "2026-05-10T19:10:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "task_started",
+            turn_id: "turn-older"
+          }
+        },
+        {
+          timestamp: "2026-05-10T19:10:02.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "older" }]
+          }
+        },
+        {
+          timestamp: "2026-05-10T19:11:00.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            phase: "final_answer",
+            content: [{ type: "output_text", text: "Older done." }]
+          }
+        },
+        {
+          timestamp: "2026-05-10T19:11:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "task_complete",
+            turn_id: "turn-older"
+          }
+        },
+        {
+          timestamp: "2026-05-10T19:22:38.814Z",
+          type: "event_msg",
+          payload: {
+            type: "task_started",
+            turn_id: "turn-latest"
+          }
+        },
+        {
+          timestamp: "2026-05-10T19:22:38.815Z",
+          type: "compacted",
+          payload: {
+            type: "compacted"
+          }
+        },
+        {
+          timestamp: "2026-05-10T19:22:38.816Z",
+          type: "event_msg",
+          payload: {
+            type: "context_compacted"
+          }
+        },
+        {
+          timestamp: "2026-05-10T19:24:00.000Z",
+          type: "compacted",
+          payload: {
+            type: "compacted"
+          }
+        },
+        {
+          timestamp: "2026-05-10T19:24:00.001Z",
+          type: "event_msg",
+          payload: {
+            type: "context_compacted"
+          }
+        },
+        {
+          timestamp: "2026-05-10T19:23:28.232Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "修2/4/5/6" }]
+          }
+        },
+        {
+          timestamp: "2026-05-10T19:27:08.508Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            phase: "final_answer",
+            content: [{ type: "output_text", text: "已按 review 修完。" }]
+          }
+        },
+        {
+          timestamp: "2026-05-10T19:27:08.629Z",
+          type: "event_msg",
+          payload: {
+            type: "task_complete",
+            turn_id: "turn-latest"
+          }
+        }
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+      "utf8"
+    );
+    const readThread = vi.fn().mockResolvedValue({
+      ...createThread({ id: "thread-paged-compaction" }),
+      createdAt: 1_776_420_000,
+      path: rolloutPath
+    });
+    const listThreadTurns = vi.fn().mockResolvedValue({
+      data: [
+        {
+          id: "turn-latest",
+          status: "completed",
+          error: null,
+          items: [
+            {
+              type: "contextCompaction",
+              id: "compact-latest-1"
+            },
+            {
+              type: "contextCompaction",
+              id: "compact-latest-2"
+            },
+            {
+              type: "userMessage",
+              id: "user-latest",
+              content: [
+                {
+                  type: "text",
+                  text: "修2/4/5/6",
+                  text_elements: []
+                }
+              ]
+            },
+            {
+              type: "agentMessage",
+              id: "agent-latest",
+              text: "已按 review 修完。",
+              phase: "final_answer",
+              memoryCitation: null
+            }
+          ]
+        },
+        {
+          id: "turn-older",
+          status: "completed",
+          error: null,
+          items: [
+            {
+              type: "userMessage",
+              id: "user-older",
+              content: [
+                {
+                  type: "text",
+                  text: "older",
+                  text_elements: []
+                }
+              ]
+            },
+            {
+              type: "agentMessage",
+              id: "agent-older",
+              text: "Older done.",
+              phase: "final_answer",
+              memoryCitation: null
+            }
+          ]
+        }
+      ],
+      nextCursor: null,
+      backwardsCursor: null
+    });
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        readThread,
+        listThreadTurns,
+        attachThreadToSession: vi.fn()
+      } as never
+    });
+
+    const hydrated = await provider.hydrateSessionWindow?.(
+      {
+        sessionId: "codex-thread:thread-paged-compaction",
+        workspaceId: "workspace-1",
+        conversationId: "conversation-paged-compaction",
+        engineId: "codex",
+        providerKind: "codex-thread",
+        providerSessionId: "thread-paged-compaction",
+        createdAt: "2026-05-10T07:07:20.000Z",
+        updatedAt: "2026-05-10T19:27:08.000Z",
+        unreadState: "read",
+        source: "reconciled"
+      },
+      {
+        limit: 8
+      }
+    );
+
+    expect(hydrated?.turns).toEqual([
+      expect.objectContaining({
+        turnId: "turn-latest",
+        startedAt: "2026-05-10T19:22:38.815Z",
+        completedAt: "2026-05-10T19:27:08.629Z",
+        finalMessageId:
+          "hydrated:codex-thread:thread-paged-compaction:agent-latest"
+      }),
+      expect.objectContaining({
+        turnId: "turn-older",
+        startedAt: "2026-05-10T19:10:02.000Z",
+        completedAt: "2026-05-10T19:11:01.000Z"
+      })
+    ]);
+    expect(hydrated?.turns[0]).toMatchObject({
+      turnId: "turn-latest",
+      startedAt: "2026-05-10T19:22:38.815Z",
+      completedAt: "2026-05-10T19:27:08.629Z",
+      finalMessageId:
+        "hydrated:codex-thread:thread-paged-compaction:agent-latest"
+    });
+    expect(hydrated?.toolCalls[0]).toMatchObject({
+      toolCallId:
+        "hydrated:codex-thread:thread-paged-compaction:compact-latest-1",
+      startedAt: "2026-05-10T19:22:38.815Z"
+    });
+    expect(hydrated?.toolCalls[1]).toMatchObject({
+      toolCallId:
+        "hydrated:codex-thread:thread-paged-compaction:compact-latest-2",
+      startedAt: "2026-05-10T19:24:00.000Z"
+    });
   });
 
   it("shares window hydration without letting a cancelled caller cancel an active caller", async () => {

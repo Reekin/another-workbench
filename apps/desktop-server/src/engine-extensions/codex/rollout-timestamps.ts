@@ -8,6 +8,8 @@ export type CodexRolloutTimestampedItem = {
 
 export type CodexRolloutTimestampGroup = {
   turnId: string;
+  startedAt?: string;
+  completedAt?: string;
   items: CodexRolloutTimestampedItem[];
 };
 
@@ -39,7 +41,13 @@ const resolveRolloutTimestampedItemType = (
     if (payload.type === "agent_reasoning") {
       return "reasoning";
     }
+    if (payload.type === "context_compacted") {
+      return "contextCompaction";
+    }
     return undefined;
+  }
+  if (entryType === "compacted") {
+    return "contextCompaction";
   }
   if (entryType !== "response_item") {
     return undefined;
@@ -94,6 +102,14 @@ const pushRolloutTimestamp = (
   group: CodexRolloutTimestampGroup,
   item: CodexRolloutTimestampedItem
 ): void => {
+  const previousItem = group.items.at(-1);
+  if (
+    item.type === "contextCompaction" &&
+    previousItem?.type === "contextCompaction" &&
+    Math.abs(Date.parse(item.timestamp) - Date.parse(previousItem.timestamp)) <= 1_000
+  ) {
+    return;
+  }
   if (
     group.items.some(
       (existing) => existing.type === item.type && existing.timestamp === item.timestamp
@@ -133,17 +149,21 @@ export const readCodexRolloutTimestampGroups = async (
       continue;
     }
     const payload = isRecord(entry.payload) ? entry.payload : {};
+    const timestamp = normalizeCodexTimestamp(entry.timestamp);
     if (entry.type === "event_msg" && payload.type === "task_started") {
       const turnId = readString(payload.turn_id) ?? `rollout-turn:${groups.length}`;
-      currentGroup = { turnId, items: [] };
+      currentGroup = { turnId, startedAt: timestamp, items: [] };
       groups.push(currentGroup);
       continue;
     }
     if (!currentGroup) {
       continue;
     }
-    const timestamp = normalizeCodexTimestamp(entry.timestamp);
     if (!timestamp) {
+      continue;
+    }
+    if (entry.type === "event_msg" && payload.type === "task_complete") {
+      currentGroup.completedAt = timestamp;
       continue;
     }
     const itemType = resolveRolloutTimestampedItemType(entry.type, payload);

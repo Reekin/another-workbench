@@ -729,9 +729,7 @@ const emitSmartTakeoverRequest = ({ threadId, turnId, start = false }) => {
   const args = start
     ? {
         action: "start",
-        presetId: "review",
-        brief: "Review the current test takeover flow.",
-        successCriteria: ["Submit a complete verdict."]
+        presetId: "review"
       }
     : {
         objective: "Confirm caller identity"
@@ -964,7 +962,7 @@ const handleRequest = (payload) => {
             return;
           }
 
-          if (prompt.includes("TAKEOVER_TASK")) {
+          if (prompt.includes("Verdict contract:")) {
             emitTakeoverVerdictRequest({ threadId, turnId, prompt });
             return;
           }

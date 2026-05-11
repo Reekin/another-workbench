@@ -63,30 +63,12 @@ export const createSmartTakeoverHostTool = (
       },
       helpTopic: {
         type: "string",
-        enum: ["overview", "presets", "brief", "loop", "result"],
+        enum: ["overview", "presets", "loop", "result"],
         description: "Optional help section when action is help."
       },
       presetId: {
         type: "string",
         description: "Preset prompt name from ~/.another-workbench/takeover."
-      },
-      brief: {
-        type: "string",
-        description: "Situation-specific handoff notes for the takeover agent."
-      },
-      customPrompt: {
-        type: "string",
-        description: "Optional prompt text appended after the selected preset."
-      },
-      successCriteria: {
-        type: "array",
-        items: { type: "string" },
-        description: "Concrete acceptance criteria for approval."
-      },
-      focusFiles: {
-        type: "array",
-        items: { type: "string" },
-        description: "Relevant workspace paths the takeover agent should inspect."
       }
     },
     additionalProperties: false

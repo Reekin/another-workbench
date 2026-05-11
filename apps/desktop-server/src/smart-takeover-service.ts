@@ -17,12 +17,8 @@ type IdFactory = () => string;
 
 type TakeoverToolArgs = {
   action?: "help" | "start";
-  helpTopic?: "overview" | "presets" | "brief" | "loop" | "result";
+  helpTopic?: "overview" | "presets" | "loop" | "result";
   presetId?: string;
-  brief?: string;
-  customPrompt?: string;
-  successCriteria?: string[];
-  focusFiles?: string[];
   timeoutMs?: number;
 };
 
@@ -84,13 +80,6 @@ const textResult = (text: string, success = true): HostToolResult => ({
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const stringArray = (value: unknown): string[] | undefined => {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-  return value.filter((item): item is string => typeof item === "string");
-};
-
 const parseTakeoverArgs = (value: unknown): TakeoverToolArgs => {
   if (!isRecord(value)) {
     return {};
@@ -103,17 +92,11 @@ const parseTakeoverArgs = (value: unknown): TakeoverToolArgs => {
     helpTopic:
       value.helpTopic === "overview" ||
       value.helpTopic === "presets" ||
-      value.helpTopic === "brief" ||
       value.helpTopic === "loop" ||
       value.helpTopic === "result"
         ? value.helpTopic
         : undefined,
     presetId: typeof value.presetId === "string" ? value.presetId : undefined,
-    brief: typeof value.brief === "string" ? value.brief : undefined,
-    customPrompt:
-      typeof value.customPrompt === "string" ? value.customPrompt : undefined,
-    successCriteria: stringArray(value.successCriteria),
-    focusFiles: stringArray(value.focusFiles),
     timeoutMs:
       typeof value.timeoutMs === "number" && Number.isFinite(value.timeoutMs)
         ? value.timeoutMs
@@ -276,9 +259,7 @@ export class SmartTakeoverService {
       parentSessionId: input.sessionId,
       args: {
         action: "start",
-        presetId: input.presetId,
-        brief:
-          "Manual takeover was enabled from Another Workbench. Inspect the current session and reply as the delegated virtual user."
+        presetId: input.presetId
       },
       source: "manual"
     });
@@ -367,7 +348,7 @@ export class SmartTakeoverService {
     const args = parseTakeoverArgs(request.arguments);
     if (
       args.action === "help" ||
-      (!args.action && !args.brief && !args.customPrompt && !args.presetId)
+      (!args.action && !args.presetId)
     ) {
       return textResult(await this.buildHelp(args.helpTopic));
     }
@@ -770,12 +751,9 @@ Use action="start" when you need a virtual user to inspect a checkpoint, review 
 
 Available presets:
 ${presetLines}`,
-      brief: `brief should be short, concrete, and situation-specific. Include what you just did, what you want checked, known risks, and what kind of feedback would help you continue.
+      loop: `For review loops, use presetId="review". If the verdict is incomplete, do the requested work from response; takeover mode will review again after the next completed response while it remains enabled.
 
-Use customPrompt only when no preset captures the situation. customPrompt is appended after the preset prompt.`,
-      loop: `For review loops, use presetId="review" and pass focusFiles plus successCriteria. If the verdict is incomplete, do the requested work from response; takeover mode will review again after the next completed response while it remains enabled.
-
-For roadmap/progress loops, use presetId="progress" and include the roadmap excerpt or acceptance criteria in brief/successCriteria.`,
+For roadmap/progress loops, use presetId="progress". Put scenario-specific review standards in the preset prompt.`,
       result: `The takeover agent must call SubmitTakeoverVerdict once. verdict="complete" means the takeover passes. verdict="incomplete" means the parent agent should continue working from response. response is the complete virtual-user reply to return to the parent agent.`
     };
     if (topic) {
@@ -784,8 +762,6 @@ For roadmap/progress loops, use presetId="progress" and include the roadmap exce
     return `${sections.overview}
 
 ${sections.presets}
-
-${sections.brief}
 
 ${sections.loop}
 
@@ -812,41 +788,18 @@ ${sections.result}`;
     args: TakeoverToolArgs;
     request: SmartTakeoverRequest;
   }): string {
-    const successCriteria = input.args.successCriteria?.length
-      ? input.args.successCriteria.map((item) => `- ${item}`).join("\n")
-      : "- No explicit criteria supplied. Infer concrete acceptance criteria from the brief and workspace state.";
-    const focusFiles = input.args.focusFiles?.length
-      ? input.args.focusFiles.map((item) => `- ${item}`).join("\n")
-      : "- No explicit focus files supplied.";
-    return `TAKEOVER_TASK
+    const sections = [`Preset instructions:\n${input.presetPrompt.trim()}`];
 
-Parent session id: ${input.parentSession.sessionId}
-Takeover session id: ${input.takeoverSession.sessionId}
-Workspace: ${input.workspacePath ?? "unknown"}
-Requested by engine: ${input.request.requestedBy.engineId}
-Source turn id: ${input.request.sourceTurnId ?? "unknown"}
-
-Preset prompt:
-${input.presetPrompt.trim()}
-
-${input.args.customPrompt ? `Custom prompt:\n${input.args.customPrompt.trim()}\n` : ""}
-Brief:
-${input.args.brief?.trim() || "No brief supplied."}
-
-Success criteria:
-${successCriteria}
-
-Focus files:
-${focusFiles}
-
-Output contract:
+    sections.push(`Verdict contract:
 Call the SubmitTakeoverVerdict tool exactly once before your final message.
 - verdict "complete": the parent agent can stop this loop.
 - verdict "incomplete": the parent agent must continue from your response.
 - response: the complete virtual-user reply to return to the parent agent.
 
 If the verdict tool is unavailable, include a final line in this exact form:
-TAKEOVER_VERDICT: complete|incomplete`;
+TAKEOVER_VERDICT: complete|incomplete`);
+
+    return sections.join("\n\n");
   }
 
   private waitForVerdict(input: {

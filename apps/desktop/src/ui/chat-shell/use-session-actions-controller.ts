@@ -25,6 +25,7 @@ export const useSessionActionsController = (input: {
     mode?: "all" | "visible" | "workspace";
     workspaceId?: string;
   }) => Promise<void>;
+  onResumeSession?: (sessionId: string) => Promise<void>;
   onStatusNotice: StatusNoticeSetter;
 }): {
   sessionMenu: SessionMenuState | undefined;
@@ -90,6 +91,21 @@ export const useSessionActionsController = (input: {
           window.open(result.rolloutFileUrl, "_blank", "noopener,noreferrer");
           input.onStatusNotice({
             message: `Opened rollout ${result.rolloutDisplayPath}`,
+            source: "session-action"
+          });
+          return;
+        }
+        if (result.action === "resume") {
+          await input.onResumeSession?.(sessionId);
+          input.onStatusNotice({
+            message: "Resume completed.",
+            source: "session-action"
+          });
+          return;
+        }
+        if (result.action === "refresh") {
+          input.onStatusNotice({
+            message: result.details ?? "Refresh completed.",
             source: "session-action"
           });
           return;

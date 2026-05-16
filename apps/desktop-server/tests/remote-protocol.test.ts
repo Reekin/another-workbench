@@ -853,7 +853,7 @@ describe("createRemoteRpcHandler", () => {
         actions: []
       }),
       runSessionAction: vi.fn().mockResolvedValue({
-        action: "reload",
+        action: "resume",
         resumed: true
       }),
       getChatTree: vi.fn().mockResolvedValue({

@@ -333,8 +333,12 @@ describe("session browser transport contracts", () => {
                 label: "Open rollout"
               },
               {
-                action: "reload",
-                label: "Reload",
+                action: "refresh",
+                label: "Refresh"
+              },
+              {
+                action: "resume",
+                label: "Resume",
                 disabled: true,
                 reason: "Session is already running"
               }
@@ -376,13 +380,24 @@ describe("session browser transport contracts", () => {
                 rolloutFileUrl: "file:///I:/logs/session-1.md"
               }
             } as const;
-          case "reload":
+          case "refresh":
             return {
               id: request.id,
               method: "sessionBrowser.runAction",
               ok: true,
               result: {
-                action: "reload",
+                action: "refresh",
+                refreshed: true,
+                details: "Reloaded user config, refreshed skills, and queued MCP server reloads."
+              }
+            } as const;
+          case "resume":
+            return {
+              id: request.id,
+              method: "sessionBrowser.runAction",
+              ok: true,
+              result: {
+                action: "resume",
                 resumed: true
               }
             } as const;
@@ -407,19 +422,24 @@ describe("session browser transport contracts", () => {
       sessionId: "session-1",
       action: "open_rollout"
     });
-    const reload = await transport.sessionBrowser.runAction({
+    const refresh = await transport.sessionBrowser.runAction({
       sessionId: "session-1",
-      action: "reload"
+      action: "refresh"
+    });
+    const resume = await transport.sessionBrowser.runAction({
+      sessionId: "session-1",
+      action: "resume"
     });
 
     expect(actions.actions.map((action) => action.action)).toEqual([
       "archive",
       "copy_session_id",
       "open_rollout",
-      "reload"
+      "refresh",
+      "resume"
     ]);
     expect(actions.actions.at(-1)).toMatchObject({
-      action: "reload",
+      action: "resume",
       disabled: true,
       reason: "Session is already running"
     });
@@ -438,8 +458,13 @@ describe("session browser transport contracts", () => {
       rolloutDisplayPath: "I:\\logs\\session-1.md",
       rolloutFileUrl: "file:///I:/logs/session-1.md"
     });
-    expect(reload).toEqual({
-      action: "reload",
+    expect(refresh).toEqual({
+      action: "refresh",
+      refreshed: true,
+      details: "Reloaded user config, refreshed skills, and queued MCP server reloads."
+    });
+    expect(resume).toEqual({
+      action: "resume",
       resumed: true
     });
 
@@ -450,7 +475,8 @@ describe("session browser transport contracts", () => {
       "archive",
       "copy_session_id",
       "open_rollout",
-      "reload"
+      "refresh",
+      "resume"
     ]);
   });
 

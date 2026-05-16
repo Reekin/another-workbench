@@ -1,4 +1,5 @@
 import readline from "node:readline";
+import { appendFileSync } from "node:fs";
 
 let nextThreadNumber = 1;
 let nextTurnNumber = 1;
@@ -11,6 +12,13 @@ const threadStartParamsByThreadId = new Map();
 
 const send = (payload) => {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
+};
+
+const recordRequest = (payload) => {
+  if (!process.env.FAKE_CODEX_REQUEST_LOG) {
+    return;
+  }
+  appendFileSync(process.env.FAKE_CODEX_REQUEST_LOG, `${JSON.stringify(payload)}\n`);
 };
 
 const emitHappyPath = ({ threadId, turnId, prompt, messagePhase = null }) => {
@@ -888,6 +896,7 @@ const emitDynamicToolResolution = ({ dynamicTool, response }) => {
 };
 
 const handleRequest = (payload) => {
+  recordRequest(payload);
   if (payload.method === "initialized") {
     return;
   }
@@ -1017,11 +1026,61 @@ const handleRequest = (payload) => {
         return;
       }
       case "turn/interrupt":
+        if (process.env.FAKE_CODEX_INTERRUPT_ERROR) {
+          send({
+            id: payload.id,
+            error: {
+              message: process.env.FAKE_CODEX_INTERRUPT_ERROR
+            }
+          });
+          return;
+        }
         send({
           id: payload.id,
           result: {
             interrupted: true
           }
+        });
+        return;
+      case "thread/unsubscribe":
+        send({
+          id: payload.id,
+          result: {
+            status: "unsubscribed"
+          }
+        });
+        return;
+      case "thread/resume": {
+        const threadId = String(payload.params?.threadId ?? `thread-${nextThreadNumber++}`);
+        send({
+          id: payload.id,
+          result: {
+            thread: {
+              id: threadId,
+              turns: []
+            }
+          }
+        });
+        return;
+      }
+      case "skills/list":
+        send({
+          id: payload.id,
+          result: {
+            skills: []
+          }
+        });
+        return;
+      case "config/batchWrite":
+        send({
+          id: payload.id,
+          result: {}
+        });
+        return;
+      case "config/mcpServer/reload":
+        send({
+          id: payload.id,
+          result: {}
         });
         return;
       case "getAuthStatus":

@@ -11,7 +11,8 @@ export type SessionActionKind =
   | "archive"
   | "copy_session_id"
   | "open_rollout"
-  | "reload";
+  | "refresh"
+  | "resume";
 
 export type SessionActionDescriptor = {
   action: SessionActionKind;
@@ -29,7 +30,8 @@ export type SessionActionResult =
       rolloutDisplayPath: string;
       rolloutFileUrl: string;
     }
-  | { action: "reload"; resumed: true };
+  | { action: "refresh"; refreshed: true; details?: string }
+  | { action: "resume"; resumed: true };
 
 export type ConversationGraphNodeSnapshot = {
   nodeId: string;
@@ -374,8 +376,12 @@ export class CapabilityRegistry {
           : undefined
     });
     actions.push({
-      action: "reload",
-      label: "Reload"
+      action: "refresh",
+      label: "Refresh"
+    });
+    actions.push({
+      action: "resume",
+      label: "Resume"
     });
 
     const provider = this.getEngineCapabilities(context.engineId)?.sessionActions;
@@ -435,7 +441,30 @@ export class CapabilityRegistry {
           action,
           archived: true
         };
-      case "reload":
+      case "refresh": {
+        const result = await provider?.runAction?.({
+          ...context,
+          action
+        });
+        return (
+          result ?? {
+            action,
+            refreshed: true,
+            details: "No runtime environment refresh is available for this session."
+          }
+        );
+      }
+      case "resume":
+        {
+          const result = await provider?.runAction?.({
+            ...context,
+            action
+          });
+          if (result) {
+            await this.sessionIndexStore.markSessionRead(sessionId);
+            return result;
+          }
+        }
         if (!session && indexEntry) {
           return {
             action,

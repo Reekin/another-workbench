@@ -1423,6 +1423,7 @@ export const ChatShellApp = ({
       transport,
       workspaceTree,
       refreshSessionBrowser,
+      onResumeSession: reloadSessionWindow,
       onStatusNotice: setStatusNotice
     });
 

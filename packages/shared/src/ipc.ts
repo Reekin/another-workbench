@@ -191,7 +191,8 @@ const zSessionActionKindSchema = z.enum([
   "archive",
   "copy_session_id",
   "open_rollout",
-  "reload"
+  "refresh",
+  "resume"
 ]);
 
 const zSessionActionDescriptorSchema = z.object({
@@ -217,7 +218,12 @@ const zSessionActionResultSchema = z.discriminatedUnion("action", [
     rolloutFileUrl: z.string().url()
   }),
   z.object({
-    action: z.literal("reload"),
+    action: z.literal("refresh"),
+    refreshed: z.literal(true),
+    details: z.string().optional()
+  }),
+  z.object({
+    action: z.literal("resume"),
     resumed: z.literal(true)
   })
 ]);

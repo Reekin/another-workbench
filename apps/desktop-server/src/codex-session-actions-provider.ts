@@ -1,9 +1,9 @@
-import type { SessionIndexStore } from "./session-index.js";
 import type { CodexAppServerRuntimePort } from "./codex-app-server-runtime-port.js";
 import { createFilePathTarget } from "./file-path-target.js";
 import type {
   SessionAgentActionsProvider,
   SessionActionDescriptor,
+  SessionActionKind,
   SessionActionProviderContext,
   SessionActionResult
 } from "./session-actions.js";
@@ -52,12 +52,43 @@ export class CodexSessionActionsProvider implements SessionAgentActionsProvider 
   }
 
   public async runAction(
-    input: SessionActionProviderContext & { action: import("./session-actions.js").SessionActionKind }
+    input: SessionActionProviderContext & { action: SessionActionKind }
   ): Promise<SessionActionResult | undefined> {
+    const threadId = resolveThreadId(input, this.codexRuntimePort);
+
+    if (input.action === "refresh") {
+      await this.codexRuntimePort.reloadUserConfig();
+      await this.codexRuntimePort.reloadMcpServers();
+      await this.codexRuntimePort.listSkills({
+        forceReload: true
+      });
+      return {
+        action: "refresh",
+        refreshed: true,
+        details: "Reloaded user config, refreshed skills, and queued MCP server reloads for loaded Codex threads."
+      };
+    }
+
+    if (input.action === "resume") {
+      if (!threadId) {
+        throw new Error("Resume is unavailable without a provider thread id.");
+      }
+      await this.codexRuntimePort.interruptThread(threadId, {
+        bestEffort: true
+      });
+      await this.codexRuntimePort.unsubscribeThread(threadId);
+      const thread = await this.codexRuntimePort.resumeThread(threadId);
+      this.codexRuntimePort.attachThreadToSession(input.sessionId, thread.id);
+      return {
+        action: "resume",
+        resumed: true
+      };
+    }
+
     if (input.action !== "open_rollout") {
       return undefined;
     }
-    const threadId = resolveThreadId(input, this.codexRuntimePort);
+
     if (!threadId) {
       throw new Error("Rollout path is unavailable before the thread is created.");
     }

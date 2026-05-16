@@ -55,8 +55,12 @@ describe("SessionActionsProvider", () => {
         reason: "Session is already archived."
       },
       {
-        action: "reload",
-        label: "Reload"
+        action: "refresh",
+        label: "Refresh"
+      },
+      {
+        action: "resume",
+        label: "Resume"
       }
     ]);
   });
@@ -101,8 +105,12 @@ describe("SessionActionsProvider", () => {
         reason: undefined
       },
       {
-        action: "reload",
-        label: "Reload"
+        action: "refresh",
+        label: "Refresh"
+      },
+      {
+        action: "resume",
+        label: "Resume"
       },
       {
         action: "open_rollout",
@@ -116,7 +124,7 @@ describe("SessionActionsProvider", () => {
     });
   });
 
-  it("runs common archive/reload behavior while allowing providers to hook archive preparation", async () => {
+  it("runs common archive, refresh, and resume behavior while allowing providers to hook archive preparation", async () => {
     const executeCommand = vi.fn().mockResolvedValue({
       commandId: "ignored",
       commandType: "listSessions",
@@ -171,16 +179,21 @@ describe("SessionActionsProvider", () => {
       action: "archive",
       archived: true
     });
-    await expect(provider.runAction("session-1", "reload")).resolves.toEqual({
-      action: "reload",
+    await expect(provider.runAction("session-1", "refresh")).resolves.toEqual({
+      action: "refresh",
+      refreshed: true,
+      details: "No runtime environment refresh is available for this session."
+    });
+    await expect(provider.runAction("session-1", "resume")).resolves.toEqual({
+      action: "resume",
       resumed: true
     });
     await expect(provider.runAction("session-indexed", "archive")).resolves.toEqual({
       action: "archive",
       archived: true
     });
-    await expect(provider.runAction("session-indexed", "reload")).resolves.toEqual({
-      action: "reload",
+    await expect(provider.runAction("session-indexed", "resume")).resolves.toEqual({
+      action: "resume",
       resumed: true
     });
 

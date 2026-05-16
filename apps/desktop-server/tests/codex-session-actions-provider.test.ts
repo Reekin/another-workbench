@@ -67,6 +67,78 @@ describe("CodexSessionActionsProvider", () => {
     expect(archiveThread).toHaveBeenCalledWith("thread-1");
   });
 
+  it("refreshes Codex user config, MCP servers, and skill discovery", async () => {
+    const reloadUserConfig = vi.fn().mockResolvedValue(undefined);
+    const reloadMcpServers = vi.fn().mockResolvedValue(undefined);
+    const listSkills = vi.fn().mockResolvedValue([]);
+    const provider = new CodexSessionActionsProvider({
+      codexRuntimePort: {
+        getThreadIdForSession: vi.fn().mockReturnValue("thread-1"),
+        reloadUserConfig,
+        reloadMcpServers,
+        listSkills
+      } as unknown as CodexAppServerRuntimePort
+    });
+
+    await expect(
+      provider.runAction({
+        sessionId: "session-1",
+        engineId: "codex",
+        action: "refresh",
+        runtimeService: {} as never,
+        sessionIndexStore: {} as never
+      })
+    ).resolves.toEqual({
+      action: "refresh",
+      refreshed: true,
+      details: "Reloaded user config, refreshed skills, and queued MCP server reloads for loaded Codex threads."
+    });
+
+    expect(reloadUserConfig).toHaveBeenCalledTimes(1);
+    expect(reloadMcpServers).toHaveBeenCalledTimes(1);
+    expect(listSkills).toHaveBeenCalledWith({
+      forceReload: true
+    });
+  });
+
+  it("interrupts, unsubscribes, and resumes the underlying Codex thread before reattaching it", async () => {
+    const interruptThread = vi.fn().mockResolvedValue(undefined);
+    const unsubscribeThread = vi.fn().mockResolvedValue(undefined);
+    const resumeThread = vi.fn().mockResolvedValue({
+      id: "thread-2"
+    });
+    const attachThreadToSession = vi.fn();
+    const provider = new CodexSessionActionsProvider({
+      codexRuntimePort: {
+        getThreadIdForSession: vi.fn().mockReturnValue("thread-1"),
+        interruptThread,
+        unsubscribeThread,
+        resumeThread,
+        attachThreadToSession
+      } as unknown as CodexAppServerRuntimePort
+    });
+
+    await expect(
+      provider.runAction({
+        sessionId: "session-1",
+        engineId: "codex",
+        action: "resume",
+        runtimeService: {} as never,
+        sessionIndexStore: {} as never
+      })
+    ).resolves.toEqual({
+      action: "resume",
+      resumed: true
+    });
+
+    expect(interruptThread).toHaveBeenCalledWith("thread-1", {
+      bestEffort: true
+    });
+    expect(unsubscribeThread).toHaveBeenCalledWith("thread-1");
+    expect(resumeThread).toHaveBeenCalledWith("thread-1");
+    expect(attachThreadToSession).toHaveBeenCalledWith("session-1", "thread-2");
+  });
+
   it("opens rollout paths through the Codex thread reader", async () => {
     const readThread = vi
       .fn()

@@ -685,7 +685,7 @@ export class WorkbenchShellService {
     const result = this.capabilities
       ? await this.capabilities.runSessionAction(input.sessionId, input.action)
       : await this.requireSessionActions().runAction(input.sessionId, input.action);
-    if (input.action === "reload") {
+    if (input.action === "resume") {
       await this.sessionCatalog.markSessionRead(input.sessionId);
     }
     return result;

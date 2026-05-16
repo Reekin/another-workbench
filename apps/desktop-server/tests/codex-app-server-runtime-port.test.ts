@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createCodexAppServerRuntimePort } from "../src/codex-app-server-runtime-port.js";
 import {
@@ -31,6 +34,13 @@ const waitFor = async (
   }
 };
 
+const readRequestLog = (path: string): Array<Record<string, unknown>> =>
+  readFileSync(path, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+
 describe("Codex app-server runtime port", () => {
   const disposers: Array<() => Promise<void>> = [];
 
@@ -42,6 +52,123 @@ describe("Codex app-server runtime port", () => {
         await dispose();
       }
     }
+  });
+
+  it("sends expected JSON-RPC payloads for resume and refresh helpers", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "awb-codex-rpc-"));
+    const requestLogPath = join(tempDir, "requests.jsonl");
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    try {
+      await port.start({
+        env: {
+          FAKE_CODEX_REQUEST_LOG: requestLogPath
+        }
+      });
+
+      await port.interruptThread("thread-1");
+      await port.unsubscribeThread("thread-1");
+      await port.resumeThread("thread-1");
+      await port.reloadUserConfig();
+      await port.reloadMcpServers();
+      await port.listSkills({
+        forceReload: true
+      });
+
+      const requests = readRequestLog(requestLogPath);
+      expect(requests).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "turn/interrupt",
+            params: {
+              threadId: "thread-1",
+              turnId: ""
+            }
+          }),
+          expect.objectContaining({
+            method: "thread/unsubscribe",
+            params: {
+              threadId: "thread-1"
+            }
+          }),
+          expect.objectContaining({
+            method: "thread/resume",
+            params: expect.objectContaining({
+              threadId: "thread-1"
+            })
+          }),
+          expect.objectContaining({
+            method: "config/batchWrite",
+            params: {
+              edits: [],
+              reloadUserConfig: true
+            }
+          }),
+          expect.objectContaining({
+            method: "skills/list",
+            params: {
+              forceReload: true
+            }
+          })
+        ])
+      );
+      const mcpReloadRequest = requests.find(
+        (request) => request.method === "config/mcpServer/reload"
+      );
+      expect(mcpReloadRequest).toEqual(
+        expect.objectContaining({
+          method: "config/mcpServer/reload"
+        })
+      );
+      expect(mcpReloadRequest).not.toHaveProperty("params");
+    } finally {
+      rmSync(tempDir, {
+        recursive: true,
+        force: true
+      });
+    }
+  });
+
+  it("reports best-effort interrupt failures without rejecting resume callers", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+    const runtimeErrors: Array<Record<string, unknown>> = [];
+    port.subscribe((event) => {
+      if (event.method === "runtime.error") {
+        runtimeErrors.push(event.params);
+      }
+    });
+
+    await port.start({
+      env: {
+        FAKE_CODEX_INTERRUPT_ERROR: "no active turn to interrupt"
+      }
+    });
+
+    await expect(
+      port.interruptThread("thread-1", {
+        bestEffort: true
+      })
+    ).resolves.toBeUndefined();
+    expect(runtimeErrors).toEqual([
+      expect.objectContaining({
+        code: "CODEX_TURN_INTERRUPT_FAILED",
+        message: "no active turn to interrupt",
+        recoverable: true,
+        details: {
+          threadId: "thread-1"
+        }
+      })
+    ]);
   });
 
   it("maps real app-server style notifications into message, tool, and terminal events", async () => {

@@ -14,6 +14,7 @@ import type { GitDiffToRemoteParams } from "./codex-app-server-generated/GitDiff
 import type { GitDiffToRemoteResponse } from "./codex-app-server-generated/GitDiffToRemoteResponse.js";
 import type { AskForApproval } from "./codex-app-server-generated/v2/AskForApproval.js";
 import type { Config } from "./codex-app-server-generated/v2/Config.js";
+import type { ConfigBatchWriteParams } from "./codex-app-server-generated/v2/ConfigBatchWriteParams.js";
 import type { ConfigReadParams } from "./codex-app-server-generated/v2/ConfigReadParams.js";
 import type { ConfigReadResponse } from "./codex-app-server-generated/v2/ConfigReadResponse.js";
 import type { SandboxMode } from "./codex-app-server-generated/v2/SandboxMode.js";
@@ -32,8 +33,10 @@ import type { ThreadReadParams } from "./codex-app-server-generated/v2/ThreadRea
 import type { ThreadReadResponse } from "./codex-app-server-generated/v2/ThreadReadResponse.js";
 import type { ThreadResumeParams } from "./codex-app-server-generated/v2/ThreadResumeParams.js";
 import type { ThreadResumeResponse } from "./codex-app-server-generated/v2/ThreadResumeResponse.js";
+import type { ThreadUnsubscribeParams } from "./codex-app-server-generated/v2/ThreadUnsubscribeParams.js";
 import type { ThreadTurnsListParams } from "./codex-app-server-generated/v2/ThreadTurnsListParams.js";
 import type { ThreadTurnsListResponse } from "./codex-app-server-generated/v2/ThreadTurnsListResponse.js";
+import type { TurnInterruptParams } from "./codex-app-server-generated/v2/TurnInterruptParams.js";
 import type { TurnSteerParams } from "./codex-app-server-generated/v2/TurnSteerParams.js";
 import type { TurnStartResponse } from "./codex-app-server-generated/v2/TurnStartResponse.js";
 import type { ThreadItem } from "./codex-app-server-generated/v2/ThreadItem.js";
@@ -734,6 +737,41 @@ export class CodexAppServerRuntimePort
     return result.thread;
   }
 
+  public async unsubscribeThread(threadId: string): Promise<void> {
+    await this.start(this.startConfig);
+    await this.rpc("thread/unsubscribe", {
+      threadId
+    } satisfies ThreadUnsubscribeParams);
+  }
+
+  public async interruptThread(
+    threadId: string,
+    options: { bestEffort?: boolean } = {}
+  ): Promise<void> {
+    try {
+      await this.start(this.startConfig);
+      await this.rpc("turn/interrupt", {
+        threadId,
+        turnId: ""
+      } satisfies TurnInterruptParams);
+    } catch (error) {
+      if (!options.bestEffort) {
+        throw error;
+      }
+      this.emitEvent("runtime.error", {
+        code: "CODEX_TURN_INTERRUPT_FAILED",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Codex turn interrupt failed during resume.",
+        recoverable: true,
+        details: {
+          threadId
+        }
+      });
+    }
+  }
+
   public async readChatTree(threadId: string): Promise<ChatTreeReadResponse> {
     await this.start(this.startConfig);
     return (await this.rpc("chatTree/read", {
@@ -853,6 +891,19 @@ export class CodexAppServerRuntimePort
     return (await this.rpc("skills/list", payload)) as SkillsListResponse;
   }
 
+  public async reloadUserConfig(): Promise<void> {
+    await this.start(this.startConfig);
+    await this.rpc("config/batchWrite", {
+      edits: [],
+      reloadUserConfig: true
+    } satisfies ConfigBatchWriteParams);
+  }
+
+  public async reloadMcpServers(): Promise<void> {
+    await this.start(this.startConfig);
+    await this.rpc("config/mcpServer/reload");
+  }
+
   private async handleTurnStart(payload: CodexRuntimeRequest): Promise<void> {
     const sessionId = String(payload.params.sessionId ?? "");
     const content = String(payload.params.content ?? "");
@@ -908,7 +959,7 @@ export class CodexAppServerRuntimePort
     await this.rpc("turn/interrupt", {
       threadId,
       turnId
-    });
+    } satisfies TurnInterruptParams);
   }
 
   private async handleApprovalResponse(payload: CodexRuntimeRequest): Promise<void> {
@@ -1938,7 +1989,7 @@ export class CodexAppServerRuntimePort
     return this.sessionIdByThreadId.get(rawThreadId);
   }
 
-  private async rpc(method: string, params: Record<string, unknown>): Promise<unknown> {
+  private async rpc(method: string, params?: Record<string, unknown>): Promise<unknown> {
     const id = String(++this.requestCounter);
     const result = new Promise<unknown>((resolve, reject) => {
       this.pendingRpcById.set(id, { resolve, reject });
@@ -1946,7 +1997,7 @@ export class CodexAppServerRuntimePort
     this.write({
       id,
       method,
-      params
+      ...(params === undefined ? {} : { params })
     });
     return result;
   }

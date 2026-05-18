@@ -1161,7 +1161,8 @@ export const ChatShellApp = ({
     onToggleSessionTree
   } = useWorkspaceBrowserController({
     transport,
-    eventCursor: state.eventStream.lastCursor,
+    refreshSignal: state.refreshSignals.sessionBrowser,
+    openingSessionId,
     onStatusNotice: setStatusNotice
   });
 
@@ -1253,7 +1254,7 @@ export const ChatShellApp = ({
     return () => {
       disposed = true;
     };
-  }, [activeSessionId, setStatusNotice, state.eventStream.lastCursor, transport]);
+  }, [activeSessionId, setStatusNotice, state.refreshSignals.takeover, transport]);
 
   useRendererDiagnostics({
     transport,
@@ -1390,7 +1391,7 @@ export const ChatShellApp = ({
     displayedSessionId,
     displayedSessionIdRef: viewport.displayedSessionIdRef,
     isOpeningSelectedSession,
-    eventCursor: state.eventStream.lastCursor,
+    refreshSignal: state.refreshSignals.chatTree,
     onStatusNotice: setStatusNotice,
     reloadSessionWindow
   });

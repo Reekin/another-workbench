@@ -19,6 +19,7 @@ import {
   upsertToolCall,
   upsertTurn
 } from "./state.js";
+import { advanceRendererRefreshSignals } from "./refresh-signals.js";
 
 const nowIso = (): string => new Date().toISOString();
 const unknownAgentId = "unknown-agent";
@@ -55,10 +56,11 @@ type TurnCollectionKey =
 
 const withEventType = (
   state: RendererStoreState,
-  eventType: RuntimeEvent["type"]
+  event: RuntimeEvent
 ): RendererStoreState => ({
   ...state,
-  lastEventType: eventType
+  lastEventType: event.type,
+  refreshSignals: advanceRendererRefreshSignals(state.refreshSignals, event)
 });
 
 const ensureConversationSessionLink = (
@@ -541,7 +543,7 @@ const applyRuntimeEvent = (
       const sessionIds = event.activeSessionId
         ? addUnique(existing?.sessionIds ?? [], event.activeSessionId)
         : existing?.sessionIds ?? [];
-      return upsertConversation(withEventType(state, event.type), {
+      return upsertConversation(withEventType(state, event), {
         conversationId: event.conversationId,
         workspaceId: event.workspaceId ?? existing?.workspaceId,
         participantEngineIds,
@@ -554,7 +556,7 @@ const applyRuntimeEvent = (
       });
     }
     case "session.created": {
-      const withSession = upsertSession(withEventType(state, event.type), {
+      const withSession = upsertSession(withEventType(state, event), {
         sessionId: event.sessionId,
         conversationId: event.conversationId,
         engineId: event.engineId,
@@ -575,7 +577,7 @@ const applyRuntimeEvent = (
     }
     case "session.updated": {
       const existing = state.entities.sessions[event.sessionId];
-      const withSession = upsertSession(withEventType(state, event.type), {
+      const withSession = upsertSession(withEventType(state, event), {
         sessionId: event.sessionId,
         conversationId: event.conversationId,
         engineId: existing?.engineId ?? unknownAgentId,
@@ -599,9 +601,9 @@ const applyRuntimeEvent = (
     case "session.context.updated": {
       const existing = state.entities.sessions[event.sessionId];
       if (!existing) {
-        return withEventType(state, event.type);
+        return withEventType(state, event);
       }
-      return upsertSession(withEventType(state, event.type), {
+      return upsertSession(withEventType(state, event), {
         ...existing,
         contextUsage: event.contextUsage,
         updatedAt: timestamp
@@ -610,10 +612,10 @@ const applyRuntimeEvent = (
     case "session.archived": {
       const existing = state.entities.sessions[event.sessionId];
       if (!existing) {
-        return withEventType(state, event.type);
+        return withEventType(state, event);
       }
       return upsertSession(
-        withEventType(state, event.type),
+        withEventType(state, event),
         {
           ...existing,
           archivedAt: event.archivedAt,
@@ -623,13 +625,13 @@ const applyRuntimeEvent = (
     }
     case "session.disposed": {
       if (!state.entities.sessions[event.sessionId]) {
-        return withEventType(state, event.type);
+        return withEventType(state, event);
       }
-      return withEventType(disposeSessionState(state, event.sessionId), event.type);
+      return withEventType(disposeSessionState(state, event.sessionId), event);
     }
     case "turn.started": {
       const withTurn = upsertTurn(
-        withEventType(state, event.type),
+        withEventType(state, event),
         {
           turnId: event.turnId,
           sessionId: event.sessionId,
@@ -650,7 +652,7 @@ const applyRuntimeEvent = (
         existing?.finalMessageId ??
         selectFinalAssistantMessageId(state, existing?.messageIds ?? []);
       const withTurn = upsertTurn(
-        withEventType(state, event.type),
+        withEventType(state, event),
         {
           turnId: event.turnId,
           sessionId: event.sessionId,
@@ -671,7 +673,7 @@ const applyRuntimeEvent = (
     case "message.started": {
       const current = state.entities.messageBlocks[`${event.messageId}${markdownBlockSuffix}`];
       const withBlock = upsertMessageBlock(
-        withEventType(state, event.type),
+        withEventType(state, event),
         {
           blockId: `${event.messageId}${markdownBlockSuffix}`,
           messageId: event.messageId,
@@ -699,7 +701,7 @@ const applyRuntimeEvent = (
       const current = state.entities.messageBlocks[`${event.messageId}${markdownBlockSuffix}`];
       const base = current ?? buildMessageDeltaBlock(event, timestamp);
       const withBlock = upsertMessageBlock(
-        withEventType(state, event.type),
+        withEventType(state, event),
         {
           ...base,
           phase: event.phase ?? base.phase,
@@ -732,7 +734,7 @@ const applyRuntimeEvent = (
           startedAt: timestamp
         } satisfies MessageBlock);
       const withBlock = upsertMessageBlock(
-        withEventType(state, event.type),
+        withEventType(state, event),
         {
           ...base,
           phase: event.phase ?? base.phase,
@@ -764,7 +766,7 @@ const applyRuntimeEvent = (
     case "tool.started": {
       const current = state.entities.toolCalls[event.toolCallId];
       const withTool = upsertToolCall(
-        withEventType(state, event.type),
+        withEventType(state, event),
         {
           toolCallId: event.toolCallId,
           sessionId: event.sessionId,
@@ -794,7 +796,7 @@ const applyRuntimeEvent = (
     case "tool.delta": {
       const current = state.entities.toolCalls[event.toolCallId];
       const withTool = upsertToolCall(
-        withEventType(state, event.type),
+        withEventType(state, event),
         {
           toolCallId: event.toolCallId,
           sessionId: event.sessionId,
@@ -824,7 +826,7 @@ const applyRuntimeEvent = (
     case "tool.completed": {
       const current = state.entities.toolCalls[event.toolCallId];
       const withTool = upsertToolCall(
-        withEventType(state, event.type),
+        withEventType(state, event),
         {
           toolCallId: event.toolCallId,
           sessionId: event.sessionId,
@@ -857,7 +859,7 @@ const applyRuntimeEvent = (
     case "terminal.started": {
       const current = state.entities.terminalStreams[event.terminalId];
       const withTerminal = upsertTerminalStream(
-        withEventType(state, event.type),
+        withEventType(state, event),
         {
           terminalId: event.terminalId,
           sessionId: event.sessionId,
@@ -887,7 +889,7 @@ const applyRuntimeEvent = (
     case "terminal.output": {
       const current = state.entities.terminalStreams[event.terminalId];
       const withTerminal = upsertTerminalStream(
-        withEventType(state, event.type),
+        withEventType(state, event),
         {
           terminalId: event.terminalId,
           sessionId: event.sessionId,
@@ -919,7 +921,7 @@ const applyRuntimeEvent = (
       const status =
         typeof event.exitCode === "number" && event.exitCode !== 0 ? "failed" : "completed";
       const withTerminal = upsertTerminalStream(
-        withEventType(state, event.type),
+        withEventType(state, event),
         {
           terminalId: event.terminalId,
           sessionId: event.sessionId,
@@ -948,7 +950,7 @@ const applyRuntimeEvent = (
     }
     case "approval.requested": {
       const withApproval = upsertApprovalRequest(
-        withEventType(state, event.type),
+        withEventType(state, event),
         {
           requestId: event.requestId,
           sessionId: event.sessionId,
@@ -977,7 +979,7 @@ const applyRuntimeEvent = (
       const current = state.entities.approvalRequests[event.requestId];
       if (!current) {
         return appendTurnCollection(
-          withEventType(state, event.type),
+          withEventType(state, event),
           event.turnId,
           event.sessionId,
           "approvalRequestIds",
@@ -986,7 +988,7 @@ const applyRuntimeEvent = (
         );
       }
       const withApproval = upsertApprovalRequest(
-        withEventType(state, event.type),
+        withEventType(state, event),
         {
           ...current,
           status:
@@ -1009,7 +1011,7 @@ const applyRuntimeEvent = (
     }
     case "participant.updated": {
       const withParticipant = upsertParticipant(
-        withEventType(state, event.type),
+        withEventType(state, event),
         {
           participantId: event.participantId,
           conversationId: event.conversationId,
@@ -1027,11 +1029,11 @@ const applyRuntimeEvent = (
       );
     }
     case "conversationGraph.updated": {
-      return withEventType(state, event.type);
+      return withEventType(state, event);
     }
     case "runtime.error": {
       const withError = {
-        ...withEventType(state, event.type),
+        ...withEventType(state, event),
         lastError: {
           code: event.code,
           message: event.message,

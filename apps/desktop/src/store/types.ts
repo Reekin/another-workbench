@@ -12,6 +12,7 @@ import type {
   ToolCall,
   Turn
 } from "@another-workbench/shared";
+import type { RendererRefreshSignals } from "./refresh-signals.js";
 
 export type IdMap<T> = Record<string, T>;
 
@@ -46,6 +47,7 @@ export type RendererStoreState = {
     recentEventIds: string[];
     seenEventIds: Record<string, true>;
   };
+  refreshSignals: RendererRefreshSignals;
   activeConversationId?: string;
   activeSessionId?: string;
   lastEventType?: RuntimeEvent["type"];

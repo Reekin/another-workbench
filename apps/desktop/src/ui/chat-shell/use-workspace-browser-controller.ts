@@ -25,7 +25,7 @@ export type WorkspaceBrowserController = {
 
 export const useWorkspaceBrowserController = (input: {
   transport?: DesktopTransport;
-  eventCursor?: string;
+  refreshSignal: number;
   openingSessionId?: string;
   onStatusNotice: StatusNoticeSetter;
 }): WorkspaceBrowserController => {
@@ -203,7 +203,7 @@ export const useWorkspaceBrowserController = (input: {
         ...statusNoticeErrorDetails(error)
       });
     });
-  }, [input.transport, input.eventCursor]);
+  }, [input.transport, input.refreshSignal]);
 
   useEffect(() => {
     if (!input.transport || reconcileQueueRef.current.length === 0 || input.openingSessionId) {

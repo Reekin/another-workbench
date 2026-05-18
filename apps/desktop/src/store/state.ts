@@ -10,6 +10,7 @@ import type {
   Turn
 } from "@another-workbench/shared";
 import type { IdMap, RendererEntities, RendererIndexes, RendererStoreState } from "./types.js";
+import { createInitialRendererRefreshSignals } from "./refresh-signals.js";
 
 const addUnique = (items: string[], value: string): string[] => {
   if (items.includes(value)) {
@@ -59,7 +60,8 @@ export const createInitialRendererStoreState = (): RendererStoreState => ({
   eventStream: {
     recentEventIds: [],
     seenEventIds: {}
-  }
+  },
+  refreshSignals: createInitialRendererRefreshSignals()
 });
 
 export const upsertConversation = (

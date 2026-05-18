@@ -16,7 +16,7 @@ export const useChatTreeController = (input: {
   displayedSessionId?: string;
   displayedSessionIdRef: RefObject<string | undefined>;
   isOpeningSelectedSession: boolean;
-  eventCursor?: string;
+  refreshSignal: number;
   releasedSessionId?: string;
   onStatusNotice: StatusNoticeSetter;
   reloadSessionWindow: (sessionId: string) => Promise<void>;
@@ -61,7 +61,7 @@ export const useChatTreeController = (input: {
     return () => {
       disposed = true;
     };
-  }, [input.transport, input.browsedSessionId, input.eventCursor]);
+  }, [input.transport, input.browsedSessionId, input.refreshSignal]);
 
   return {
     chatTree,

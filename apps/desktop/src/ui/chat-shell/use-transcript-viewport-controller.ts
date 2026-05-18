@@ -1,4 +1,10 @@
-import { useEffect, useRef, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type RefObject
+} from "react";
 
 const STICKY_BOTTOM_THRESHOLD_PX = 96;
 
@@ -14,8 +20,23 @@ type PendingViewportTarget = {
   turnId?: string;
 };
 
+type ManualViewportIntent = {
+  sessionId?: string;
+  type: "manual";
+};
+
+type PrependViewportIntent = PendingPrependScroll & {
+  type: "prepend";
+};
+
+type ViewportIntent =
+  | ManualViewportIntent
+  | PendingViewportTarget
+  | PrependViewportIntent;
+
 export type TranscriptViewportController = {
   transcriptRef: RefObject<HTMLElement | null>;
+  transcriptContentRef: RefObject<HTMLDivElement | null>;
   displayedSessionIdRef: RefObject<string | undefined>;
   setDisplayedSessionIdRef: (sessionId: string | undefined) => void;
   queuePrependScrollRestore: (input: PendingPrependScroll) => void;
@@ -36,18 +57,108 @@ export const useTranscriptViewportController = (input: {
   transcriptContentVersion: string;
 }): TranscriptViewportController => {
   const transcriptRef = useRef<HTMLElement | null>(null);
+  const transcriptContentRef = useRef<HTMLDivElement | null>(null);
   const displayedSessionIdRef = useRef<string | undefined>(undefined);
-  const isStickyToBottomRef = useRef(true);
-  const pendingPrependScrollRef = useRef<PendingPrependScroll | undefined>(
-    undefined
-  );
-  const pendingViewportTargetRef = useRef<PendingViewportTarget | undefined>(
-    undefined
+  const isOpeningSelectedSessionRef = useRef(false);
+  const viewportIntentRef = useRef<ViewportIntent | undefined>(undefined);
+  const pendingApplyFrameRef = useRef<number | undefined>(undefined);
+  const isApplyingProgrammaticScrollRef = useRef(false);
+  const programmaticScrollFrameRef = useRef<number | undefined>(undefined);
+
+  displayedSessionIdRef.current = input.displayedSessionId;
+  isOpeningSelectedSessionRef.current = input.isOpeningSelectedSession;
+
+  const clearProgrammaticScrollAfterFrame = useCallback(() => {
+    if (programmaticScrollFrameRef.current !== undefined) {
+      window.cancelAnimationFrame(programmaticScrollFrameRef.current);
+    }
+    programmaticScrollFrameRef.current = window.requestAnimationFrame(() => {
+      isApplyingProgrammaticScrollRef.current = false;
+      programmaticScrollFrameRef.current = undefined;
+    });
+  }, []);
+
+  const runProgrammaticScroll = useCallback(
+    (scroll: () => void) => {
+      isApplyingProgrammaticScrollRef.current = true;
+      scroll();
+      clearProgrammaticScrollAfterFrame();
+    },
+    [clearProgrammaticScrollAfterFrame]
   );
 
-  useEffect(() => {
-    displayedSessionIdRef.current = input.displayedSessionId;
-  }, [input.displayedSessionId]);
+  const applyViewportIntent = useCallback(() => {
+    pendingApplyFrameRef.current = undefined;
+    const element = transcriptRef.current;
+    const displayedSessionId = displayedSessionIdRef.current;
+    const intent = viewportIntentRef.current;
+    if (
+      !element ||
+      !displayedSessionId ||
+      !intent ||
+      isOpeningSelectedSessionRef.current
+    ) {
+      return;
+    }
+    if (intent.sessionId && intent.sessionId !== displayedSessionId) {
+      return;
+    }
+
+    if (intent.type === "manual") {
+      return;
+    }
+
+    if (intent.type === "prepend") {
+      viewportIntentRef.current = {
+        sessionId: displayedSessionId,
+        type: "manual"
+      };
+      runProgrammaticScroll(() => {
+        element.scrollTop =
+          element.scrollHeight -
+          intent.previousScrollHeight +
+          intent.previousScrollTop;
+      });
+      return;
+    }
+
+    if (intent.type === "turn" && intent.turnId) {
+      const targetRow = queryTurnRow(element, intent.turnId);
+      if (targetRow) {
+        runProgrammaticScroll(() => {
+          targetRow.scrollIntoView({
+            block: "start"
+          });
+        });
+        return;
+      }
+    }
+
+    runProgrammaticScroll(() => {
+      scrollTranscriptToBottom(element);
+    });
+  }, [runProgrammaticScroll]);
+
+  const scheduleViewportApply = useCallback(() => {
+    if (pendingApplyFrameRef.current !== undefined) {
+      return;
+    }
+    pendingApplyFrameRef.current = window.requestAnimationFrame(() => {
+      applyViewportIntent();
+    });
+  }, [applyViewportIntent]);
+
+  useEffect(
+    () => () => {
+      if (pendingApplyFrameRef.current !== undefined) {
+        window.cancelAnimationFrame(pendingApplyFrameRef.current);
+      }
+      if (programmaticScrollFrameRef.current !== undefined) {
+        window.cancelAnimationFrame(programmaticScrollFrameRef.current);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     const element = transcriptRef.current;
@@ -55,118 +166,68 @@ export const useTranscriptViewportController = (input: {
       return;
     }
 
-    const updateStickyState = (): void => {
-      isStickyToBottomRef.current = isTranscriptNearBottom(element);
+    const updateViewportIntentFromScroll = (): void => {
+      if (isApplyingProgrammaticScrollRef.current) {
+        return;
+      }
+      viewportIntentRef.current = resolveTranscriptScrollIntent({
+        displayedSessionId: displayedSessionIdRef.current,
+        isNearBottom: isTranscriptNearBottom(element)
+      });
     };
 
-    updateStickyState();
-    element.addEventListener("scroll", updateStickyState, { passive: true });
+    if (!viewportIntentRef.current) {
+      updateViewportIntentFromScroll();
+    }
+    element.addEventListener("scroll", updateViewportIntentFromScroll, {
+      passive: true
+    });
     return () => {
-      element.removeEventListener("scroll", updateStickyState);
+      element.removeEventListener("scroll", updateViewportIntentFromScroll);
     };
   }, [input.displayedSessionId]);
 
   useEffect(() => {
-    const pending = pendingPrependScrollRef.current;
-    const element = transcriptRef.current;
-    if (
-      !pending ||
-      !element ||
-      input.displayedSessionId !== pending.sessionId ||
-      input.isOpeningSelectedSession
-    ) {
+    const contentElement = transcriptContentRef.current;
+    if (!contentElement || typeof ResizeObserver === "undefined") {
       return;
     }
-    pendingPrependScrollRef.current = undefined;
-    isStickyToBottomRef.current = false;
-    const animationFrameId = window.requestAnimationFrame(() => {
-      element.scrollTop =
-        element.scrollHeight -
-        pending.previousScrollHeight +
-        pending.previousScrollTop;
+    const resizeObserver = new ResizeObserver(() => {
+      scheduleViewportApply();
     });
-    return () => window.cancelAnimationFrame(animationFrameId);
+    resizeObserver.observe(contentElement);
+    return () => resizeObserver.disconnect();
+  }, [input.displayedSessionId, scheduleViewportApply]);
+
+  useLayoutEffect(() => {
+    scheduleViewportApply();
   }, [
     input.displayedSessionId,
     input.isOpeningSelectedSession,
-    input.windowStartTurnId
-  ]);
-
-  useEffect(() => {
-    const pendingTarget = pendingViewportTargetRef.current;
-    const element = transcriptRef.current;
-    if (
-      !pendingTarget ||
-      !element ||
-      input.displayedSessionId !== pendingTarget.sessionId ||
-      input.isOpeningSelectedSession
-    ) {
-      return;
-    }
-
-    pendingViewportTargetRef.current = undefined;
-    isStickyToBottomRef.current = pendingTarget.type === "bottom";
-    const animationFrameId = window.requestAnimationFrame(() => {
-      if (pendingTarget.type === "turn" && pendingTarget.turnId) {
-        const targetRow = element.querySelector<HTMLElement>(
-          `[data-turn-id="${pendingTarget.turnId}"]`
-        );
-        if (targetRow) {
-          targetRow.scrollIntoView({
-            block: "start"
-          });
-          return;
-        }
-      }
-      scrollTranscriptToBottom(element);
-    });
-
-    return () => window.cancelAnimationFrame(animationFrameId);
-  }, [
-    input.displayedSessionId,
-    input.isOpeningSelectedSession,
-    input.windowEndTurnId,
-    input.renderedTranscriptRowCount
-  ]);
-
-  useEffect(() => {
-    const element = transcriptRef.current;
-    if (
-      !element ||
-      input.isOpeningSelectedSession ||
-      pendingPrependScrollRef.current ||
-      pendingViewportTargetRef.current ||
-      !isStickyToBottomRef.current
-    ) {
-      return;
-    }
-
-    const animationFrameId = window.requestAnimationFrame(() => {
-      if (isStickyToBottomRef.current) {
-        scrollTranscriptToBottom(element);
-      }
-    });
-
-    return () => window.cancelAnimationFrame(animationFrameId);
-  }, [
-    input.displayedSessionId,
-    input.isOpeningSelectedSession,
+    input.windowStartTurnId,
     input.windowEndTurnId,
     input.renderedTranscriptRowCount,
-    input.transcriptContentVersion
+    input.transcriptContentVersion,
+    scheduleViewportApply
   ]);
 
   return {
     transcriptRef,
+    transcriptContentRef,
     displayedSessionIdRef,
     setDisplayedSessionIdRef: (sessionId: string | undefined) => {
       displayedSessionIdRef.current = sessionId;
     },
     queuePrependScrollRestore: (next) => {
-      pendingPrependScrollRef.current = next;
+      viewportIntentRef.current = {
+        ...next,
+        type: "prepend"
+      };
+      scheduleViewportApply();
     },
     queueViewportTarget: (next) => {
-      pendingViewportTargetRef.current = next;
+      viewportIntentRef.current = next;
+      scheduleViewportApply();
     },
     scrollToBottom: (sessionId, options = {}) => {
       const request = resolveTranscriptBottomRequest({
@@ -175,28 +236,18 @@ export const useTranscriptViewportController = (input: {
         allowPendingForInactive: options.allowPendingForInactive
       });
       if (request.pending) {
-        pendingViewportTargetRef.current = request.pending;
+        viewportIntentRef.current = request.pending;
+        scheduleViewportApply();
         return;
       }
       if (!request.immediate) {
         return;
       }
-      pendingViewportTargetRef.current = undefined;
-      isStickyToBottomRef.current = true;
-      const element = transcriptRef.current;
-      if (!element) {
-        return;
-      }
-      const target = request.immediate;
-      window.requestAnimationFrame(() => {
-        if (displayedSessionIdRef.current === target.sessionId) {
-          scrollTranscriptToBottom(element);
-        }
-      });
+      viewportIntentRef.current = request.immediate;
+      scheduleViewportApply();
     },
     clearPendingViewportState: () => {
-      pendingPrependScrollRef.current = undefined;
-      pendingViewportTargetRef.current = undefined;
+      viewportIntentRef.current = undefined;
     }
   };
 };
@@ -242,6 +293,35 @@ export const isTranscriptNearBottom = (element: {
 }): boolean =>
   element.scrollHeight - element.scrollTop - element.clientHeight <=
   STICKY_BOTTOM_THRESHOLD_PX;
+
+export const resolveTranscriptScrollIntent = (input: {
+  displayedSessionId: string | undefined;
+  isNearBottom: boolean;
+}): ManualViewportIntent | PendingViewportTarget => {
+  if (input.isNearBottom && input.displayedSessionId) {
+    return {
+      sessionId: input.displayedSessionId,
+      type: "bottom"
+    };
+  }
+  return {
+    sessionId: input.displayedSessionId,
+    type: "manual"
+  };
+};
+
+const queryTurnRow = (
+  element: HTMLElement,
+  turnId: string
+): HTMLElement | null => {
+  const escapedTurnId =
+    typeof CSS !== "undefined" && typeof CSS.escape === "function"
+      ? CSS.escape(turnId)
+      : turnId.replace(/"/g, '\\"');
+  return element.querySelector<HTMLElement>(
+    `[data-turn-id="${escapedTurnId}"]`
+  );
+};
 
 const scrollTranscriptToBottom = (element: HTMLElement): void => {
   element.scrollTop = element.scrollHeight;

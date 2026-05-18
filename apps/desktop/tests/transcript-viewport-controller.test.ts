@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createTranscriptBottomTarget,
   isTranscriptNearBottom,
+  resolveTranscriptScrollIntent,
   resolveTranscriptBottomRequest
 } from "../src/ui/chat-shell/use-transcript-viewport-controller.js";
 
@@ -24,6 +25,27 @@ describe("transcript viewport controller", () => {
         clientHeight: 250
       })
     ).toBe(false);
+  });
+
+  it("keeps an explicit bottom intent while the user remains near the bottom", () => {
+    expect(
+      resolveTranscriptScrollIntent({
+        displayedSessionId: "session-1",
+        isNearBottom: true
+      })
+    ).toEqual({
+      sessionId: "session-1",
+      type: "bottom"
+    });
+    expect(
+      resolveTranscriptScrollIntent({
+        displayedSessionId: "session-1",
+        isNearBottom: false
+      })
+    ).toEqual({
+      sessionId: "session-1",
+      type: "manual"
+    });
   });
 
   it("creates an explicit bottom target for user-initiated transcript jumps", () => {

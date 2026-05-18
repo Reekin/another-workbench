@@ -84,6 +84,7 @@ const takeoverPresetNamePattern = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 type TranscriptPaneProps = {
   transcriptRef: RefObject<HTMLElement | null>;
+  transcriptContentRef: RefObject<HTMLDivElement | null>;
   renderedTranscriptRows: ReturnType<typeof buildTurnTranscriptRows>;
   participantDirectory: ReturnType<typeof buildParticipantDirectory>;
   transport?: DesktopTransport;
@@ -434,6 +435,7 @@ const formatPreviousMessagesLabel = (count: number): string =>
 const TranscriptPane = memo(
   ({
     transcriptRef,
+    transcriptContentRef,
     renderedTranscriptRows,
     participantDirectory,
     transport,
@@ -451,173 +453,175 @@ const TranscriptPane = memo(
     onRespondApproval
   }: TranscriptPaneProps): ReactElement => (
     <section className="awb-transcript" ref={transcriptRef}>
-      {renderedTranscriptRows.length === 0 && (
-        <div className="awb-transcript__empty">
-          {isOpeningSelectedSession && <div className="awb-loading-spinner" aria-hidden="true" />}
-          <h3>
-            {isOpeningSelectedSession
-              ? "Loading thread"
-              : activeSessionId
-                ? "Empty thread"
-                : "No thread selected"}
-          </h3>
-          <p>
-            {isOpeningSelectedSession
-              ? "Loading conversation history for the selected session."
-              : activeSessionId
-                ? "Send a message to start the next turn in this session."
-                : "Open an existing session or create a new one from the workspace pane."}
-          </p>
-        </div>
-      )}
+      <div className="awb-transcript__content" ref={transcriptContentRef}>
+        {renderedTranscriptRows.length === 0 && (
+          <div className="awb-transcript__empty">
+            {isOpeningSelectedSession && <div className="awb-loading-spinner" aria-hidden="true" />}
+            <h3>
+              {isOpeningSelectedSession
+                ? "Loading thread"
+                : activeSessionId
+                  ? "Empty thread"
+                  : "No thread selected"}
+            </h3>
+            <p>
+              {isOpeningSelectedSession
+                ? "Loading conversation history for the selected session."
+                : activeSessionId
+                  ? "Send a message to start the next turn in this session."
+                  : "Open an existing session or create a new one from the workspace pane."}
+            </p>
+          </div>
+        )}
 
-      {activeSessionWindow?.hasOlder && renderedTranscriptRows.length > 0 && (
-        <div className="awb-transcript__load-earlier">
-          <button
-            type="button"
-            className="awb-transcript__load-earlier-button"
-            onClick={onLoadOlder}
-            disabled={loadingOlderTurns || isOpeningSelectedSession}
-          >
-            {loadingOlderTurns ? "Loading earlier…" : "Load earlier"}
-          </button>
-        </div>
-      )}
+        {activeSessionWindow?.hasOlder && renderedTranscriptRows.length > 0 && (
+          <div className="awb-transcript__load-earlier">
+            <button
+              type="button"
+              className="awb-transcript__load-earlier-button"
+              onClick={onLoadOlder}
+              disabled={loadingOlderTurns || isOpeningSelectedSession}
+            >
+              {loadingOlderTurns ? "Loading earlier…" : "Load earlier"}
+            </button>
+          </div>
+        )}
 
-      {buildRenderedTurnGroups(renderedTranscriptRows).map(({ visibleRow, hiddenRows }, index, groups) => {
-        const isUserTurn = visibleRow.messageRole === "user";
-        const isInlineProcessRow =
-          visibleRow.rowKind === "process" && visibleRow.turn.status !== "completed";
-        const nextGroup = groups[index + 1];
-        const isFollowedBySameTurn =
-          nextGroup?.visibleRow.turn.turnId === visibleRow.turn.turnId;
-        const hiddenMessageCount = countHiddenMessages(hiddenRows);
-        const hasCollapsedContent = hiddenRows.length > 0;
-        const hasExpandableDetails =
-          !isUserTurn &&
-          !isInlineProcessRow &&
-          (visibleRow.hasProcessDetails || hasCollapsedContent);
-        const defaultExpanded = hasCollapsedContent
-          ? false
-          : visibleRow.defaultProcessExpanded;
-        const isProcessExpanded =
-          hasExpandableDetails &&
-          resolveProcessExpanded(
-            defaultExpanded,
-            processVisibilityByTurnId[visibleRow.turn.turnId]
-          );
-        const processSummary = summarizeProcessToggle({
-          hiddenMessageCount,
-          toolCount: visibleRow.toolCalls.length,
-          terminalCount: visibleRow.terminalStreams.length,
-          approvalCount: visibleRow.approvals.length
-        });
-        const processToggleLabel = resolveProcessOutputToggleLabel(isProcessExpanded);
-        const previousMessagesLabel = formatPreviousMessagesLabel(hiddenMessageCount);
-        const isFinalDisplayedAssistantRow =
-          !isUserTurn && visibleRow.turn.status === "completed" && !isInlineProcessRow;
-        const shouldShowTimestamp = isUserTurn || isFinalDisplayedAssistantRow;
-        const shouldRenderExtensions = isFinalDisplayedAssistantRow;
-        return (
-          <article
-            key={visibleRow.rowId}
-            data-turn-id={visibleRow.turn.turnId}
-            data-final-response-row={visibleRow.isFinalResponseRow ? "true" : "false"}
-            className={`awb-chat-entry ${isUserTurn ? "is-user" : "is-assistant"} ${
-              isFollowedBySameTurn ? "is-followed-by-same-turn" : ""
-            }`}
-          >
-            {shouldShowTimestamp && (
-              <header className="awb-chat-entry__identity">
-                <time className="awb-chat-entry__timestamp">
-                  {formatTimestamp(
-                    visibleRow.startedAt ??
-                      visibleRow.turn.completedAt ??
-                      visibleRow.turn.startedAt
-                  )}
-                </time>
-              </header>
-            )}
-            {hasExpandableDetails && (
-              <div
-                className={`awb-turn__process ${
-                  hasCollapsedContent ? "awb-turn__process--history" : ""
-                }`}
-              >
-                <button
-                  type="button"
-                  className={`awb-turn__process-toggle ${
-                    hasCollapsedContent ? "is-history-divider" : ""
+        {buildRenderedTurnGroups(renderedTranscriptRows).map(({ visibleRow, hiddenRows }, index, groups) => {
+          const isUserTurn = visibleRow.messageRole === "user";
+          const isInlineProcessRow =
+            visibleRow.rowKind === "process" && visibleRow.turn.status !== "completed";
+          const nextGroup = groups[index + 1];
+          const isFollowedBySameTurn =
+            nextGroup?.visibleRow.turn.turnId === visibleRow.turn.turnId;
+          const hiddenMessageCount = countHiddenMessages(hiddenRows);
+          const hasCollapsedContent = hiddenRows.length > 0;
+          const hasExpandableDetails =
+            !isUserTurn &&
+            !isInlineProcessRow &&
+            (visibleRow.hasProcessDetails || hasCollapsedContent);
+          const defaultExpanded = hasCollapsedContent
+            ? false
+            : visibleRow.defaultProcessExpanded;
+          const isProcessExpanded =
+            hasExpandableDetails &&
+            resolveProcessExpanded(
+              defaultExpanded,
+              processVisibilityByTurnId[visibleRow.turn.turnId]
+            );
+          const processSummary = summarizeProcessToggle({
+            hiddenMessageCount,
+            toolCount: visibleRow.toolCalls.length,
+            terminalCount: visibleRow.terminalStreams.length,
+            approvalCount: visibleRow.approvals.length
+          });
+          const processToggleLabel = resolveProcessOutputToggleLabel(isProcessExpanded);
+          const previousMessagesLabel = formatPreviousMessagesLabel(hiddenMessageCount);
+          const isFinalDisplayedAssistantRow =
+            !isUserTurn && visibleRow.turn.status === "completed" && !isInlineProcessRow;
+          const shouldShowTimestamp = isUserTurn || isFinalDisplayedAssistantRow;
+          const shouldRenderExtensions = isFinalDisplayedAssistantRow;
+          return (
+            <article
+              key={visibleRow.rowId}
+              data-turn-id={visibleRow.turn.turnId}
+              data-final-response-row={visibleRow.isFinalResponseRow ? "true" : "false"}
+              className={`awb-chat-entry ${isUserTurn ? "is-user" : "is-assistant"} ${
+                isFollowedBySameTurn ? "is-followed-by-same-turn" : ""
+              }`}
+            >
+              {shouldShowTimestamp && (
+                <header className="awb-chat-entry__identity">
+                  <time className="awb-chat-entry__timestamp">
+                    {formatTimestamp(
+                      visibleRow.startedAt ??
+                        visibleRow.turn.completedAt ??
+                        visibleRow.turn.startedAt
+                    )}
+                  </time>
+                </header>
+              )}
+              {hasExpandableDetails && (
+                <div
+                  className={`awb-turn__process ${
+                    hasCollapsedContent ? "awb-turn__process--history" : ""
                   }`}
-                  onClick={() => onToggleProcess(visibleRow.turn.turnId, defaultExpanded)}
-                  aria-expanded={isProcessExpanded}
                 >
-                  {hasCollapsedContent ? (
-                    <>
-                      <span aria-hidden="true" />
-                      <span>{previousMessagesLabel}</span>
-                      <span aria-hidden="true" />
-                    </>
-                  ) : (
-                    <>
-                      <span>{processToggleLabel}</span>
-                      <span>{processSummary}</span>
-                    </>
+                  <button
+                    type="button"
+                    className={`awb-turn__process-toggle ${
+                      hasCollapsedContent ? "is-history-divider" : ""
+                    }`}
+                    onClick={() => onToggleProcess(visibleRow.turn.turnId, defaultExpanded)}
+                    aria-expanded={isProcessExpanded}
+                  >
+                    {hasCollapsedContent ? (
+                      <>
+                        <span aria-hidden="true" />
+                        <span>{previousMessagesLabel}</span>
+                        <span aria-hidden="true" />
+                      </>
+                    ) : (
+                      <>
+                        <span>{processToggleLabel}</span>
+                        <span>{processSummary}</span>
+                      </>
+                    )}
+                  </button>
+                  {isProcessExpanded && (
+                    <TurnProcessPanel
+                      row={visibleRow}
+                      hiddenRows={hiddenRows}
+                      participantDirectory={participantDirectory}
+                      onActivateResourceLink={onActivateResourceLink}
+                      onPreviewImage={onPreviewImage}
+                      onRespondApproval={onRespondApproval}
+                    />
                   )}
-                </button>
-                {isProcessExpanded && (
+                </div>
+              )}
+              {isInlineProcessRow && (
+                <div className="awb-turn__process awb-turn__process--inline">
                   <TurnProcessPanel
                     row={visibleRow}
-                    hiddenRows={hiddenRows}
+                    hiddenRows={[]}
                     participantDirectory={participantDirectory}
                     onActivateResourceLink={onActivateResourceLink}
                     onPreviewImage={onPreviewImage}
                     onRespondApproval={onRespondApproval}
                   />
-                )}
-              </div>
-            )}
-            {isInlineProcessRow && (
-              <div className="awb-turn__process awb-turn__process--inline">
-                <TurnProcessPanel
-                  row={visibleRow}
-                  hiddenRows={[]}
-                  participantDirectory={participantDirectory}
-                  onActivateResourceLink={onActivateResourceLink}
-                  onPreviewImage={onPreviewImage}
-                  onRespondApproval={onRespondApproval}
-                />
-              </div>
-            )}
-            {!isInlineProcessRow && (
-              <div className="awb-chat-entry__messages">
-                {visibleRow.blocks.length === 0 && (
-                  <p className="awb-turn__empty">
-                    {isUserTurn ? "No message content." : "Waiting for response…"}
-                  </p>
-                )}
-                {visibleRow.blocks.map((block) => (
-                  <MessageMarkdownView
-                    key={block.blockId}
-                    block={block}
-                    onActivateResourceLink={onActivateResourceLink}
-                    onPreviewImage={onPreviewImage}
-                  />
-                ))}
-              </div>
-            )}
-            {shouldRenderExtensions
-              ? renderTurnExtensions({
-                  transport,
-                  engineId,
-                  engineSurface,
-                  sessionId: visibleRow.turn.sessionId,
-                  turnId: visibleRow.turn.turnId
-                })
-              : null}
-          </article>
-        );
-      })}
+                </div>
+              )}
+              {!isInlineProcessRow && (
+                <div className="awb-chat-entry__messages">
+                  {visibleRow.blocks.length === 0 && (
+                    <p className="awb-turn__empty">
+                      {isUserTurn ? "No message content." : "Waiting for response…"}
+                    </p>
+                  )}
+                  {visibleRow.blocks.map((block) => (
+                    <MessageMarkdownView
+                      key={block.blockId}
+                      block={block}
+                      onActivateResourceLink={onActivateResourceLink}
+                      onPreviewImage={onPreviewImage}
+                    />
+                  ))}
+                </div>
+              )}
+              {shouldRenderExtensions
+                ? renderTurnExtensions({
+                    transport,
+                    engineId,
+                    engineSurface,
+                    sessionId: visibleRow.turn.sessionId,
+                    turnId: visibleRow.turn.turnId
+                  })
+                : null}
+            </article>
+          );
+        })}
+      </div>
     </section>
   ),
   (previous, next) =>
@@ -632,6 +636,7 @@ const TranscriptPane = memo(
     previous.loadingOlderTurns === next.loadingOlderTurns &&
     previous.processVisibilityByTurnId === next.processVisibilityByTurnId &&
     previous.transcriptRef === next.transcriptRef &&
+    previous.transcriptContentRef === next.transcriptContentRef &&
     previous.onActivateResourceLink === next.onActivateResourceLink &&
     previous.onPreviewImage === next.onPreviewImage
 );
@@ -2137,6 +2142,7 @@ export const ChatShellApp = ({
           <div className="awb-main__body">
             <TranscriptPane
               transcriptRef={viewport.transcriptRef}
+              transcriptContentRef={viewport.transcriptContentRef}
               renderedTranscriptRows={renderedTranscriptRows}
               participantDirectory={participantDirectory}
               transport={transport}

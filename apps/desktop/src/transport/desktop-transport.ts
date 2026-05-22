@@ -20,6 +20,8 @@ import type {
   FileActionKindRpc,
   FileActionResultRpc,
   FilePreviewRpc,
+  SchedulerTaskDocumentRpc,
+  SchedulerTaskScheduleRpc,
   SkillDescriptorRpc,
   SessionActionDescriptorRpc,
   SessionActionKindRpc,
@@ -180,6 +182,31 @@ export type DesktopTransport = {
     update: (input: {
       defaultNewSessionEngineId?: string;
     }) => Promise<WorkbenchSettingsRpc>;
+  };
+  scheduler: {
+    list: (input: {
+      workspaceId: string;
+    }) => Promise<{
+      rootPath: string;
+      tasks: SchedulerTaskDocumentRpc[];
+    }>;
+    upsert: (input: {
+      taskId?: string;
+      name: string;
+      enabled: boolean;
+      schedule: SchedulerTaskScheduleRpc;
+      startDate?: string;
+      endDate?: string;
+      workspaceId: string;
+      prompt: string;
+    }) => Promise<SchedulerTaskDocumentRpc>;
+    delete: (input: {
+      taskId: string;
+      workspaceId: string;
+    }) => Promise<{
+      taskId: string;
+      deleted: boolean;
+    }>;
   };
   takeoverPresets: {
     list: () => Promise<{
@@ -549,6 +576,36 @@ export const createDesktopTransport = (
     return rpc.request("settings.update", input);
   };
 
+  const requestSchedulerList = async (input: {
+    workspaceId: string;
+  }): Promise<{
+    rootPath: string;
+    tasks: SchedulerTaskDocumentRpc[];
+  }> => {
+    return rpc.request("scheduler.list", input);
+  };
+
+  const requestSchedulerUpsert = async (input: {
+    taskId?: string;
+    name: string;
+    enabled: boolean;
+    schedule: SchedulerTaskScheduleRpc;
+    startDate?: string;
+    endDate?: string;
+    workspaceId: string;
+    prompt: string;
+  }): Promise<SchedulerTaskDocumentRpc> => {
+    const result = await rpc.request("scheduler.upsert", input);
+    return result.task;
+  };
+
+  const requestSchedulerDelete = async (input: {
+    taskId: string;
+    workspaceId: string;
+  }): Promise<{ taskId: string; deleted: boolean }> => {
+    return rpc.request("scheduler.delete", input);
+  };
+
   const requestTakeoverPresetsList = async (): Promise<{
     rootPath: string;
     presets: TakeoverPresetSummaryRpc[];
@@ -680,6 +737,11 @@ export const createDesktopTransport = (
     settings: {
       get: requestSettingsGet,
       update: requestSettingsUpdate
+    },
+    scheduler: {
+      list: requestSchedulerList,
+      upsert: requestSchedulerUpsert,
+      delete: requestSchedulerDelete
     },
     takeoverPresets: {
       list: requestTakeoverPresetsList,

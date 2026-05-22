@@ -18,6 +18,8 @@ import type {
   EngineDefinitionRpc,
   EngineSurfaceRpc,
   ExtractedFileReference,
+  SchedulerTaskDocumentRpc,
+  SchedulerTaskScheduleRpc,
   Turn,
   SessionWindowRpc,
   TakeoverSessionStateRpc,
@@ -112,7 +114,7 @@ type RenderedTurnGroup = {
   visibleRow: TranscriptRow;
   hiddenRows: TranscriptRow[];
 };
-type WorkspaceMenuAction = "open_directory";
+type WorkspaceMenuAction = "open_directory" | "schedule";
 type WorkspaceMenuState = {
   workspaceId: string;
   label: string;
@@ -124,6 +126,16 @@ type WorkspaceMenuState = {
 
 const emptyTurns: Turn[] = [];
 const emptyParticipants: AgentParticipant[] = [];
+const weekDayOptions = [
+  { value: 1, label: "Mon" },
+  { value: 2, label: "Tue" },
+  { value: 3, label: "Wed" },
+  { value: 4, label: "Thu" },
+  { value: 5, label: "Fri" },
+  { value: 6, label: "Sat" },
+  { value: 0, label: "Sun" }
+] as const;
+const monthDayOptions = Array.from({ length: 31 }, (_, index) => index + 1);
 
 const resolveFloatingMenuViewportStyle = (input: {
   x: number;
@@ -1070,6 +1082,615 @@ Use this takeover preset to describe the role, inspection scope, and verdict sta
   );
 };
 
+type ScheduleWorkspaceTarget = {
+  workspaceId: string;
+  label: string;
+  rootPath: string;
+};
+
+type ScheduleDraft = {
+  taskId?: string;
+  name: string;
+  enabled: boolean;
+  scheduleKind: SchedulerTaskScheduleRpc["kind"];
+  runAt: string;
+  time: string;
+  everyMinutes: string;
+  daysOfWeek: number[];
+  daysOfMonth: number[];
+  startDate: string;
+  endDate: string;
+  prompt: string;
+};
+
+type ScheduleWorkspaceModalProps = {
+  workspace: ScheduleWorkspaceTarget;
+  transport?: DesktopTransport;
+  onClose: () => void;
+  onStatusNotice: (notice: ComposerStatusNotice) => void;
+};
+
+const localTodayDateValue = (): string => {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const nextHourDateTimeValue = (): string => {
+  const date = new Date(Date.now() + 60 * 60 * 1000);
+  date.setMinutes(0, 0, 0);
+  return formatLocalDateTimeInputValue(date);
+};
+
+const formatLocalDateTimeInputValue = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  const hour = `${date.getHours()}`.padStart(2, "0");
+  const minute = `${date.getMinutes()}`.padStart(2, "0");
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+};
+
+const isoToLocalDateTimeInputValue = (value: string): string => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return nextHourDateTimeValue();
+  }
+  return formatLocalDateTimeInputValue(date);
+};
+
+const formatLocalDateTimeSummary = (value: string): string => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+};
+
+const createEmptyScheduleDraft = (
+  workspace: ScheduleWorkspaceTarget
+): ScheduleDraft => ({
+  name: `${workspace.label} scheduled task`,
+  enabled: true,
+  scheduleKind: "daily",
+  runAt: nextHourDateTimeValue(),
+  time: "09:00",
+  everyMinutes: "60",
+  daysOfWeek: [1],
+  daysOfMonth: [1],
+  startDate: localTodayDateValue(),
+  endDate: "",
+  prompt: ""
+});
+
+const draftFromTask = (task: SchedulerTaskDocumentRpc): ScheduleDraft => {
+  const schedule = task.schedule;
+  return {
+    taskId: task.id,
+    name: task.name,
+    enabled: task.enabled,
+    scheduleKind: schedule.kind,
+    runAt:
+      schedule.kind === "once"
+        ? isoToLocalDateTimeInputValue(schedule.runAt)
+        : nextHourDateTimeValue(),
+    time:
+      schedule.kind === "daily" ||
+      schedule.kind === "weekly" ||
+      schedule.kind === "monthly"
+        ? schedule.time
+        : "09:00",
+    everyMinutes:
+      schedule.kind === "interval" ? String(schedule.everyMinutes) : "60",
+    daysOfWeek: schedule.kind === "weekly" ? schedule.daysOfWeek : [1],
+    daysOfMonth: schedule.kind === "monthly" ? schedule.daysOfMonth : [1],
+    startDate: task.startDate ?? localTodayDateValue(),
+    endDate: task.endDate ?? "",
+    prompt: task.source?.prompt ?? ""
+  };
+};
+
+const parseIntervalMinutes = (value: string): number => {
+  const trimmedValue = value.trim();
+  if (trimmedValue.length === 0) {
+    throw new Error("Interval minutes must be a positive whole number.");
+  }
+  const everyMinutes = Number(trimmedValue);
+  if (!Number.isInteger(everyMinutes) || everyMinutes < 1) {
+    throw new Error("Interval minutes must be a positive whole number.");
+  }
+  return everyMinutes;
+};
+
+const buildScheduleFromDraft = (
+  draft: ScheduleDraft
+): SchedulerTaskScheduleRpc => {
+  switch (draft.scheduleKind) {
+    case "once":
+      if (!draft.runAt) {
+        throw new Error("Run at is required for one-time schedules.");
+      }
+      {
+        const runAt = new Date(draft.runAt);
+        if (Number.isNaN(runAt.getTime())) {
+          throw new Error("Run at must be a valid local date and time.");
+        }
+        return {
+          kind: "once",
+          runAt: runAt.toISOString()
+        };
+      }
+    case "interval":
+      return {
+        kind: "interval",
+        everyMinutes: parseIntervalMinutes(draft.everyMinutes)
+      };
+    case "weekly":
+      return {
+        kind: "weekly",
+        time: draft.time,
+        daysOfWeek: draft.daysOfWeek.length > 0 ? draft.daysOfWeek : [1]
+      };
+    case "monthly":
+      return {
+        kind: "monthly",
+        time: draft.time,
+        daysOfMonth: draft.daysOfMonth.length > 0 ? draft.daysOfMonth : [1]
+      };
+    case "daily":
+    default:
+      return {
+        kind: "daily",
+        time: draft.time
+      };
+  }
+};
+
+const validateScheduleDraft = (draft: ScheduleDraft): void => {
+  if (draft.startDate && draft.endDate && draft.endDate < draft.startDate) {
+    throw new Error("End date must be on or after start date.");
+  }
+  if (draft.scheduleKind === "interval") {
+    parseIntervalMinutes(draft.everyMinutes);
+  }
+  if (
+    (draft.scheduleKind === "daily" ||
+      draft.scheduleKind === "weekly" ||
+      draft.scheduleKind === "monthly") &&
+    !/^\d{2}:\d{2}$/.test(draft.time)
+  ) {
+    throw new Error("Time must be set for repeating schedules.");
+  }
+};
+
+const buildValidatedScheduleFromDraft = (
+  draft: ScheduleDraft
+): SchedulerTaskScheduleRpc => {
+  validateScheduleDraft(draft);
+  return buildScheduleFromDraft(draft);
+};
+
+const formatSchedulerTaskSummary = (task: SchedulerTaskDocumentRpc): string => {
+  switch (task.schedule.kind) {
+    case "once":
+      return `Once at ${formatLocalDateTimeSummary(task.schedule.runAt)}`;
+    case "interval":
+      return `Every ${task.schedule.everyMinutes} min`;
+    case "daily":
+      return `Daily at ${task.schedule.time}`;
+    case "weekly":
+      return `Weekly at ${task.schedule.time}`;
+    case "monthly":
+      return `Monthly at ${task.schedule.time}`;
+  }
+};
+
+const ScheduleWorkspaceModal = ({
+  workspace,
+  transport,
+  onClose,
+  onStatusNotice
+}: ScheduleWorkspaceModalProps): ReactElement => {
+  const [rootPath, setRootPath] = useState("");
+  const [tasks, setTasks] = useState<SchedulerTaskDocumentRpc[]>([]);
+  const [selectedTaskId, setSelectedTaskId] = useState("");
+  const [draft, setDraft] = useState<ScheduleDraft>(() =>
+    createEmptyScheduleDraft(workspace)
+  );
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const loadTasks = useCallback(
+    async (nextSelectedTaskId?: string): Promise<void> => {
+      if (!transport) {
+        return;
+      }
+      setIsLoading(true);
+      try {
+        const result = await transport.scheduler.list({
+          workspaceId: workspace.workspaceId
+        });
+        setRootPath(result.rootPath);
+        setTasks(result.tasks);
+        const resolvedTask =
+          result.tasks.find((task) => task.id === nextSelectedTaskId) ??
+          result.tasks[0];
+        if (resolvedTask) {
+          setSelectedTaskId(resolvedTask.id);
+          setDraft(draftFromTask(resolvedTask));
+        } else {
+          setSelectedTaskId("");
+          setDraft(createEmptyScheduleDraft(workspace));
+        }
+      } catch (error) {
+        onStatusNotice({
+          message: `Schedule load failed: ${(error as Error).message}`,
+          persistent: true,
+          source: "scheduler",
+          ...statusNoticeErrorDetails(error)
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [onStatusNotice, transport, workspace]
+  );
+
+  useEffect(() => {
+    void loadTasks();
+  }, [loadTasks]);
+
+  const selectTask = (task: SchedulerTaskDocumentRpc): void => {
+    setSelectedTaskId(task.id);
+    setDraft(draftFromTask(task));
+  };
+
+  const newTask = (): void => {
+    setSelectedTaskId("");
+    setDraft(createEmptyScheduleDraft(workspace));
+  };
+
+  const toggleWeekDay = (value: number): void => {
+    setDraft((current) => ({
+      ...current,
+      daysOfWeek: current.daysOfWeek.includes(value)
+        ? current.daysOfWeek.filter((day) => day !== value)
+        : [...current.daysOfWeek, value].sort((left, right) => left - right)
+    }));
+  };
+
+  const toggleMonthDay = (value: number): void => {
+    setDraft((current) => ({
+      ...current,
+      daysOfMonth: current.daysOfMonth.includes(value)
+        ? current.daysOfMonth.filter((day) => day !== value)
+        : [...current.daysOfMonth, value].sort((left, right) => left - right)
+    }));
+  };
+
+  const saveTask = async (): Promise<void> => {
+    if (!transport) {
+      return;
+    }
+    const name = draft.name.trim();
+    const prompt = draft.prompt.trim();
+    if (!name || !prompt) {
+      onStatusNotice({
+        message: "Schedule name and prompt are required.",
+        persistent: true,
+        source: "scheduler"
+      });
+      return;
+    }
+    const taskId = draft.taskId;
+    setIsSaving(true);
+    try {
+      const schedule = buildValidatedScheduleFromDraft(draft);
+      const saved = await transport.scheduler.upsert({
+        taskId,
+        name,
+        enabled: draft.enabled,
+        schedule,
+        startDate: draft.startDate || undefined,
+        endDate: draft.endDate || undefined,
+        workspaceId: workspace.workspaceId,
+        prompt
+      });
+      await loadTasks(saved.id);
+      onStatusNotice({
+        message: `Schedule saved: ${saved.name}`,
+        source: "scheduler"
+      });
+    } catch (error) {
+      onStatusNotice({
+        message: `Schedule save failed: ${(error as Error).message}`,
+        persistent: true,
+        source: "scheduler",
+        ...statusNoticeErrorDetails(error)
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const deleteTask = async (): Promise<void> => {
+    if (!transport || !selectedTaskId) {
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const result = await transport.scheduler.delete({
+        taskId: selectedTaskId,
+        workspaceId: workspace.workspaceId
+      });
+      await loadTasks("");
+      onStatusNotice({
+        message: result.deleted
+          ? `Schedule deleted: ${result.taskId}`
+          : `Schedule not found: ${result.taskId}`,
+        source: "scheduler"
+      });
+    } catch (error) {
+      onStatusNotice({
+        message: `Schedule delete failed: ${(error as Error).message}`,
+        persistent: true,
+        source: "scheduler",
+        ...statusNoticeErrorDetails(error)
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="awb-modal-scrim" role="presentation" onClick={onClose}>
+      <section
+        className="awb-modal awb-scheduler-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="awb-scheduler-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="awb-modal__header">
+          <div>
+            <span className="awb-main__eyebrow">Schedule</span>
+            <h2 id="awb-scheduler-title">{workspace.label}</h2>
+          </div>
+          <button type="button" className="awb-ghost-button" onClick={onClose}>
+            Close
+          </button>
+        </header>
+        <div className="awb-scheduler">
+          <aside className="awb-scheduler__list">
+            <div className="awb-scheduler__bar">
+              <div>
+                <span>Tasks</span>
+                <code title={rootPath || "~/.scheduler"}>
+                  {rootPath || "~/.scheduler"}
+                </code>
+              </div>
+              <button
+                type="button"
+                className="awb-secondary-button awb-secondary-button--small"
+                onClick={newTask}
+              >
+                New
+              </button>
+            </div>
+            <div className="awb-scheduler__items">
+              {tasks.map((task) => (
+                <button
+                  type="button"
+                  key={task.id}
+                  className={task.id === selectedTaskId ? "is-active" : undefined}
+                  onClick={() => selectTask(task)}
+                >
+                  <strong>{task.name}</strong>
+                  <span>{formatSchedulerTaskSummary(task)}</span>
+                  <em>{task.enabled ? "Enabled" : "Disabled"}</em>
+                </button>
+              ))}
+              {tasks.length === 0 && (
+                <p>{isLoading ? "Loading..." : "No scheduled tasks"}</p>
+              )}
+            </div>
+          </aside>
+          <section className="awb-scheduler__editor">
+            <label className="awb-field">
+              <span>Task name</span>
+              <input
+                value={draft.name}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    name: event.target.value
+                  }))
+                }
+              />
+            </label>
+            <div className="awb-scheduler__grid">
+              <label className="awb-field">
+                <span>Frequency</span>
+                <select
+                  value={draft.scheduleKind}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      scheduleKind: event.target.value as ScheduleDraft["scheduleKind"]
+                    }))
+                  }
+                >
+                  <option value="once">Once</option>
+                  <option value="interval">Every N minutes</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </label>
+              {draft.scheduleKind === "once" ? (
+                <label className="awb-field">
+                  <span>Run at</span>
+                  <input
+                    type="datetime-local"
+                    value={draft.runAt}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        runAt: event.target.value
+                      }))
+                    }
+                  />
+                </label>
+              ) : draft.scheduleKind === "interval" ? (
+                <label className="awb-field">
+                  <span>Minutes</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={draft.everyMinutes}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        everyMinutes: event.target.value
+                      }))
+                    }
+                  />
+                </label>
+              ) : (
+                <label className="awb-field">
+                  <span>Time</span>
+                  <input
+                    type="time"
+                    value={draft.time}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        time: event.target.value
+                      }))
+                    }
+                  />
+                </label>
+              )}
+            </div>
+            {draft.scheduleKind === "weekly" && (
+              <div className="awb-scheduler__choice-set">
+                {weekDayOptions.map((option) => (
+                  <button
+                    type="button"
+                    key={option.value}
+                    className={
+                      draft.daysOfWeek.includes(option.value) ? "is-active" : undefined
+                    }
+                    onClick={() => toggleWeekDay(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {draft.scheduleKind === "monthly" && (
+              <div className="awb-scheduler__month-grid">
+                {monthDayOptions.map((day) => (
+                  <button
+                    type="button"
+                    key={day}
+                    className={draft.daysOfMonth.includes(day) ? "is-active" : undefined}
+                    onClick={() => toggleMonthDay(day)}
+                  >
+                    {day}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="awb-scheduler__grid">
+              <label className="awb-field">
+                <span>Start date</span>
+                <input
+                  type="date"
+                  value={draft.startDate}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      startDate: event.target.value
+                    }))
+                  }
+                />
+              </label>
+              <label className="awb-field">
+                <span>End date</span>
+                <input
+                  type="date"
+                  value={draft.endDate}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      endDate: event.target.value
+                    }))
+                  }
+                />
+              </label>
+            </div>
+            <label className="awb-field awb-field--scheduler-prompt">
+              <span>Prompt</span>
+              <textarea
+                value={draft.prompt}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    prompt: event.target.value
+                  }))
+                }
+                spellCheck={false}
+              />
+            </label>
+            <footer className="awb-scheduler__footer">
+              <label className="awb-scheduler__enabled">
+                <input
+                  type="checkbox"
+                  checked={draft.enabled}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      enabled: event.target.checked
+                    }))
+                  }
+                />
+                <span>Enabled</span>
+              </label>
+              <div>
+                <button
+                  type="button"
+                  className="awb-ghost-button"
+                  disabled={!selectedTaskId || isSaving}
+                  onClick={() => void deleteTask()}
+                >
+                  Delete
+                </button>
+                <button
+                  type="button"
+                  className="awb-secondary-button"
+                  disabled={isSaving}
+                  onClick={() => void saveTask()}
+                >
+                  Save
+                </button>
+              </div>
+            </footer>
+          </section>
+        </div>
+      </section>
+    </div>
+  );
+};
+
 export const ChatShellApp = ({
   store,
   transport,
@@ -1099,6 +1720,8 @@ export const ChatShellApp = ({
   const [lightboxImage, setLightboxImage] = useState<ImageLightboxState | undefined>();
   const [settingsHydrated, setSettingsHydrated] = useState(false);
   const [workspaceMenu, setWorkspaceMenu] = useState<WorkspaceMenuState | undefined>();
+  const [scheduleWorkspace, setScheduleWorkspace] =
+    useState<ScheduleWorkspaceTarget | undefined>();
   const [workspaceSessionPages, setWorkspaceSessionPages] = useState<
     Record<string, number>
   >({});
@@ -1653,7 +2276,7 @@ export const ChatShellApp = ({
         rootPath: workspace.rootPath,
         x: event.clientX,
         y: event.clientY,
-        actions: ["open_directory"]
+        actions: ["schedule", "open_directory"]
       });
     },
     []
@@ -1665,6 +2288,14 @@ export const ChatShellApp = ({
       action: WorkspaceMenuAction
     ): Promise<void> => {
       setWorkspaceMenu(undefined);
+      if (action === "schedule") {
+        setScheduleWorkspace({
+          workspaceId: workspaceMenuState.workspaceId,
+          label: workspaceMenuState.label,
+          rootPath: workspaceMenuState.rootPath
+        });
+        return;
+      }
       if (action !== "open_directory") {
         return;
       }
@@ -1925,7 +2556,7 @@ export const ChatShellApp = ({
           type="button"
           onClick={() => void onRunWorkspaceMenuAction(workspaceMenu, action)}
         >
-          {action === "open_directory" ? workspaceDirectoryActionLabel : action}
+          {action === "open_directory" ? workspaceDirectoryActionLabel : "Schedule"}
         </button>
       ))}
     </div>
@@ -2252,6 +2883,25 @@ export const ChatShellApp = ({
         (typeof document === "undefined"
           ? takeoverContextEditorMarkup
           : createPortal(takeoverContextEditorMarkup, document.body))}
+      {scheduleWorkspace &&
+        (typeof document === "undefined" ? (
+          <ScheduleWorkspaceModal
+            workspace={scheduleWorkspace}
+            transport={transport}
+            onClose={() => setScheduleWorkspace(undefined)}
+            onStatusNotice={setStatusNotice}
+          />
+        ) : (
+          createPortal(
+            <ScheduleWorkspaceModal
+              workspace={scheduleWorkspace}
+              transport={transport}
+              onClose={() => setScheduleWorkspace(undefined)}
+              onStatusNotice={setStatusNotice}
+            />,
+            document.body
+          )
+        ))}
       <ImageLightbox image={lightboxImage} onClose={() => setLightboxImage(undefined)} />
     </>
   );

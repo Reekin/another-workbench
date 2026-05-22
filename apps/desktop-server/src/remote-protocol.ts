@@ -124,6 +124,50 @@ export const createRemoteRpcHandler = (
               ok: true,
               result: await shellService.updateSettings(request.params)
             });
+          case "scheduler.list":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "SCHEDULER_UNAVAILABLE",
+                "Scheduler APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: await shellService.listSchedulerTasks(request.params)
+            });
+          case "scheduler.upsert":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "SCHEDULER_UNAVAILABLE",
+                "Scheduler APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: {
+                task: await shellService.upsertSchedulerTask(request.params)
+              }
+            });
+          case "scheduler.delete":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "SCHEDULER_UNAVAILABLE",
+                "Scheduler APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: await shellService.deleteSchedulerTask(request.params)
+            });
           case "takeoverPresets.list":
             if (!shellService) {
               return toErrorResponse(

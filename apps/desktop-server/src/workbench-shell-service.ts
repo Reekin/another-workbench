@@ -14,6 +14,7 @@ import type {
   EventEnvelope,
   ErrorLogWriteInputRpc,
   ErrorLogWriteResultRpc,
+  SchedulerTaskDocumentRpc,
   SkillDescriptorRpc,
   TakeoverPresetDocumentRpc,
   TakeoverPresetSummaryRpc,
@@ -60,8 +61,16 @@ import { ErrorLogService } from "./error-log-service.js";
 import { DiagnosticLogService } from "./diagnostic-log-service.js";
 import { TakeoverPresetStore } from "./takeover-preset-store.js";
 import type { SmartTakeoverService } from "./smart-takeover-service.js";
+import { SchedulerStore } from "./scheduler-store.js";
 
 const defaultSessionWindowLimit = 8;
+
+const createSchedulerTaskId = (workspaceId: string): string => {
+  const safeWorkspaceId = workspaceId.replace(/[^A-Za-z0-9_-]+/g, "-");
+  return `aw-${safeWorkspaceId}-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+};
 
 const baseComposerSlashSuggestions: readonly ComposerSlashSuggestionRpc[] = [
   {
@@ -159,6 +168,7 @@ export type WorkbenchShellServiceOptions = {
   codexTurnChangesService?: CodexTurnChangesService;
   takeoverPresetStore?: TakeoverPresetStore;
   smartTakeoverService?: SmartTakeoverService;
+  schedulerStore?: SchedulerStore;
 };
 
 export class WorkbenchShellService {
@@ -186,6 +196,7 @@ export class WorkbenchShellService {
   private readonly codexTurnChangesService: CodexTurnChangesService;
   private readonly takeoverPresetStore: TakeoverPresetStore;
   private readonly smartTakeoverService: SmartTakeoverService | undefined;
+  private readonly schedulerStore: SchedulerStore;
   private openSessionGeneration = 0;
   private activationQueue: Promise<void> = Promise.resolve();
   private readonly partiallyHydratedSessionIds = new Set<string>();
@@ -226,6 +237,7 @@ export class WorkbenchShellService {
     this.takeoverPresetStore =
       options.takeoverPresetStore ?? new TakeoverPresetStore();
     this.smartTakeoverService = options.smartTakeoverService;
+    this.schedulerStore = options.schedulerStore ?? new SchedulerStore();
     this.turnChangeService =
       options.turnChangeService ?? new TurnChangeService();
     this.codexTurnChangesService =
@@ -312,6 +324,80 @@ export class WorkbenchShellService {
     presetId: string;
   }): Promise<{ presetId: string; deleted: boolean }> {
     return this.takeoverPresetStore.delete(input.presetId);
+  }
+
+  public async listSchedulerTasks(input: {
+    workspaceId: string;
+  }): Promise<{ rootPath: string; tasks: SchedulerTaskDocumentRpc[] }> {
+    const workspace = await this.resolveSchedulerWorkspace(input.workspaceId);
+    return this.schedulerStore.list({
+      workspaceId: workspace.workspaceId,
+      workspaceRoot: workspace.absolutePath
+    });
+  }
+
+  public async upsertSchedulerTask(input: {
+    taskId?: string;
+    name: string;
+    enabled: boolean;
+    schedule: SchedulerTaskDocumentRpc["schedule"];
+    startDate?: string;
+    endDate?: string;
+    workspaceId: string;
+    prompt: string;
+  }): Promise<SchedulerTaskDocumentRpc> {
+    if (input.startDate && input.endDate && input.endDate < input.startDate) {
+      throw new Error("Schedule end date must be on or after start date.");
+    }
+    const workspace = await this.resolveSchedulerWorkspace(input.workspaceId);
+    const timestamp = new Date().toISOString();
+    const existing = input.taskId
+      ? await this.schedulerStore.readOwnedTask(input.taskId, {
+          workspaceId: workspace.workspaceId,
+          workspaceRoot: workspace.absolutePath
+        })
+      : undefined;
+    const task = {
+      version: 1,
+      id: input.taskId ?? createSchedulerTaskId(input.workspaceId),
+      name: input.name,
+      enabled: input.enabled,
+      createdAt: existing?.createdAt ?? timestamp,
+      updatedAt: timestamp,
+      schedule: input.schedule,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      timezone: "local",
+      overlap: "skip",
+      action: {
+        command: "codex",
+        args: ["exec", "-C", workspace.absolutePath, input.prompt],
+        cwd: workspace.absolutePath
+      },
+      source: {
+        app: "another-workbench",
+        workspaceId: workspace.workspaceId,
+        workspaceRoot: workspace.absolutePath,
+        workspaceLabel: workspace.label,
+        prompt: input.prompt
+      }
+    } satisfies SchedulerTaskDocumentRpc;
+    return this.schedulerStore.upsert(task, {
+      workspaceId: workspace.workspaceId,
+      workspaceRoot: workspace.absolutePath
+    });
+  }
+
+  public async deleteSchedulerTask(input: {
+    taskId: string;
+    workspaceId: string;
+  }): Promise<{ taskId: string; deleted: boolean }> {
+    const workspace = await this.resolveSchedulerWorkspace(input.workspaceId);
+    return this.schedulerStore.delete({
+      taskId: input.taskId,
+      workspaceId: workspace.workspaceId,
+      workspaceRoot: workspace.absolutePath
+    });
   }
 
   public getTakeoverState(input: {
@@ -874,6 +960,16 @@ export class WorkbenchShellService {
       throw new Error("Workspace registry is unavailable.");
     }
     return registry;
+  }
+
+  private async resolveSchedulerWorkspace(workspaceId: string): Promise<WorkspaceRecord> {
+    const registry = this.requireWorkspaceRegistry();
+    await registry.ready();
+    const workspace = registry.getWorkspace(workspaceId);
+    if (!workspace) {
+      throw new Error(`Workspace not found: ${workspaceId}`);
+    }
+    return workspace;
   }
 
   private createWorkspaceSelectionService(): WorkspaceSelectionService {

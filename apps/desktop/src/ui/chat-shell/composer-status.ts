@@ -21,6 +21,7 @@ export type ComposerStatusNotice = {
     | "delegation"
     | "files"
     | "settings"
+    | "scheduler"
     | "takeover";
 };
 

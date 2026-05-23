@@ -784,6 +784,7 @@ export class SmartTakeoverService {
     const isCurrentConfig = (): boolean =>
       this.takeoverConfigByParentSessionId.get(parentSessionId) === config;
     const providerHandle = this.runtimeService.resolveProviderSessionHandle(parentSessionId);
+    let launchedRun: TakeoverRun | undefined;
     try {
       if (!isCurrentConfig()) {
         return;
@@ -803,13 +804,27 @@ export class SmartTakeoverService {
         config.source,
         isCurrentConfig
       );
+      launchedRun = launch.run;
       if (!isCurrentConfig()) {
         return;
       }
       const verdict = await launch.verdictPromise;
       await this.forwardTakeoverVerdictToParent(launch.run, verdict);
-    } catch {
+    } catch (error) {
       if (this.takeoverConfigByParentSessionId.get(parentSessionId) === config) {
+        const currentRunId = this.runIdByParentSessionId.get(parentSessionId);
+        const currentRun = currentRunId ? this.runsById.get(currentRunId) : undefined;
+        console.warn("[another-workbench] SmartTakeover run failed; disabling takeover.", {
+          parentSessionId,
+          runId: launchedRun?.runId ?? currentRunId,
+          takeoverSessionId:
+            launchedRun?.takeoverSessionId ?? currentRun?.takeoverSessionId,
+          presetId: config.presetId,
+          source: config.source,
+          sourceTurnId: config.sourceTurnId,
+          sourceToolCallId: config.sourceToolCallId,
+          reason: error instanceof Error ? error.message : String(error)
+        });
         this.takeoverConfigByParentSessionId.delete(parentSessionId);
         this.cancelPendingLaunch(parentSessionId);
       }

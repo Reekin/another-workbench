@@ -917,7 +917,8 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
         threadId,
         cursor: input.cursor ?? null,
         limit: input.limit,
-        sortDirection: "desc"
+        sortDirection: "desc",
+        itemsView: "full"
       })
     ]);
     if (input.isCancelled?.()) {

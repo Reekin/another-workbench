@@ -309,7 +309,8 @@ describe("Session discovery and reconciliation", () => {
       threadId: "thread-page",
       cursor: "cursor-1",
       limit: 1,
-      sortDirection: "desc"
+      sortDirection: "desc",
+      itemsView: "full"
     });
     expect(resumeThread).not.toHaveBeenCalled();
     expect(attachThreadToSession).toHaveBeenCalledWith(

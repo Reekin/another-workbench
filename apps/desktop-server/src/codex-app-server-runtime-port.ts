@@ -19,7 +19,6 @@ import type { ConfigReadParams } from "./codex-app-server-generated/v2/ConfigRea
 import type { ConfigReadResponse } from "./codex-app-server-generated/v2/ConfigReadResponse.js";
 import type { SandboxMode } from "./codex-app-server-generated/v2/SandboxMode.js";
 import type { ReasoningEffort } from "./codex-app-server-generated/ReasoningEffort.js";
-import type { ServiceTier } from "./codex-app-server-generated/ServiceTier.js";
 import type { ThreadStartResponse } from "./codex-app-server-generated/v2/ThreadStartResponse.js";
 import type { Thread } from "./codex-app-server-generated/v2/Thread.js";
 import type { ThreadArchiveParams } from "./codex-app-server-generated/v2/ThreadArchiveParams.js";
@@ -34,11 +33,11 @@ import type { ThreadReadResponse } from "./codex-app-server-generated/v2/ThreadR
 import type { ThreadResumeParams } from "./codex-app-server-generated/v2/ThreadResumeParams.js";
 import type { ThreadResumeResponse } from "./codex-app-server-generated/v2/ThreadResumeResponse.js";
 import type { ThreadUnsubscribeParams } from "./codex-app-server-generated/v2/ThreadUnsubscribeParams.js";
-import type { ThreadTurnsListParams } from "./codex-app-server-generated/v2/ThreadTurnsListParams.js";
-import type { ThreadTurnsListResponse } from "./codex-app-server-generated/v2/ThreadTurnsListResponse.js";
 import type { TurnInterruptParams } from "./codex-app-server-generated/v2/TurnInterruptParams.js";
 import type { TurnSteerParams } from "./codex-app-server-generated/v2/TurnSteerParams.js";
 import type { TurnStartResponse } from "./codex-app-server-generated/v2/TurnStartResponse.js";
+import type { Turn } from "./codex-app-server-generated/v2/Turn.js";
+import type { TurnItemsView } from "./codex-app-server-generated/v2/TurnItemsView.js";
 import type { ThreadItem } from "./codex-app-server-generated/v2/ThreadItem.js";
 import type { ResponseItem } from "./codex-app-server-generated/ResponseItem.js";
 import type { SkillsListParams } from "./codex-app-server-generated/v2/SkillsListParams.js";
@@ -133,7 +132,21 @@ type CodexSelectedConfig = {
   sandbox?: SandboxMode;
   cwd?: string;
   reasoningEffort?: ReasoningEffort;
-  serviceTier?: ServiceTier;
+  serviceTier?: string;
+};
+
+type ThreadTurnsListParams = {
+  threadId: string;
+  cursor?: string | null;
+  limit?: number | null;
+  sortDirection?: "asc" | "desc" | null;
+  itemsView?: TurnItemsView | null;
+};
+
+type ThreadTurnsListResponse = {
+  data: Turn[];
+  nextCursor: string | null;
+  backwardsCursor: string | null;
 };
 
 type CodexRevisionInput = number | string | bigint | null | undefined;
@@ -901,13 +914,15 @@ export class CodexAppServerRuntimePort
     cursor?: string | null;
     limit?: number | null;
     sortDirection?: "asc" | "desc" | null;
+    itemsView?: TurnItemsView | null;
   }): Promise<ThreadTurnsListResponse> {
     await this.start(this.startConfig);
     return (await this.rpc("thread/turns/list", {
       threadId: input.threadId,
       cursor: input.cursor ?? null,
       limit: input.limit ?? null,
-      sortDirection: input.sortDirection ?? null
+      sortDirection: input.sortDirection ?? null,
+      itemsView: input.itemsView ?? null
     } satisfies ThreadTurnsListParams)) as ThreadTurnsListResponse;
   }
 
@@ -916,7 +931,6 @@ export class CodexAppServerRuntimePort
     const selected = this.resolveSelectedConfig();
     const result = (await this.rpc("thread/resume", {
       threadId,
-      persistExtendedHistory: true,
       cwd: selected.cwd ?? this.startConfig.cwd ?? null,
       model: selected.model ?? null,
       modelProvider: selected.modelProvider ?? null,
@@ -1074,9 +1088,6 @@ export class CodexAppServerRuntimePort
     };
     if (params.cwds) {
       payload.cwds = params.cwds;
-    }
-    if (params.perCwdExtraUserRoots) {
-      payload.perCwdExtraUserRoots = params.perCwdExtraUserRoots;
     }
     return (await this.rpc("skills/list", payload)) as SkillsListResponse;
   }
@@ -1318,8 +1329,7 @@ export class CodexAppServerRuntimePort
     const selected = this.resolveSelectedConfig();
     const threadStartParams: Record<string, unknown> = {
       ephemeral: false,
-      experimentalRawEvents: false,
-      persistExtendedHistory: true
+      experimentalRawEvents: false
     };
     const dynamicTools = this.hostTools?.listDefinitions({
       engineId: this.engineId,

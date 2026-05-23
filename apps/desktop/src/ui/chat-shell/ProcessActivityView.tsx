@@ -1,10 +1,12 @@
 import type { ReactElement } from "react";
 import type { TerminalStream, ToolCall } from "@another-workbench/shared";
+import type { ImageLightboxState } from "./ImageLightbox.js";
 import { normalizeTerminalOutput } from "./terminal-output.js";
 
 export type ProcessActivityViewProps = {
   toolCalls: ToolCall[];
   terminalStreams: TerminalStream[];
+  onPreviewImage?: (input: ImageLightboxState) => void;
 };
 
 export type ProcessActivityEntry = {
@@ -69,9 +71,50 @@ const displayToolName = (toolName: string): string => {
       return "Reasoning";
     case "webSearch":
       return "Web search";
+    case "imageView":
+      return "View image";
+    case "imageGeneration":
+      return "Image generation";
     default:
       return toolName;
   }
+};
+
+const splitProcessImageOutput = (
+  value: string | undefined
+): { alt: string; src: string; text?: string } | undefined => {
+  if (!value) {
+    return undefined;
+  }
+  const imageStart = value.indexOf("![");
+  if (imageStart < 0) {
+    return undefined;
+  }
+  const altEnd = value.indexOf("](", imageStart + 2);
+  if (altEnd < 0) {
+    return undefined;
+  }
+  const srcStart = altEnd + 2;
+  const lineEnd = value.indexOf("\n", srcStart);
+  const searchEnd = lineEnd >= 0 ? lineEnd : value.length;
+  const closeIndex = value.lastIndexOf(")", searchEnd);
+  if (closeIndex < srcStart) {
+    return undefined;
+  }
+  const rawSrc = value.slice(srcStart, closeIndex).trim();
+  const src =
+    rawSrc.startsWith("<") && rawSrc.endsWith(">")
+      ? rawSrc.slice(1, -1).trim()
+      : rawSrc;
+  if (!src) {
+    return undefined;
+  }
+  const text = `${value.slice(0, imageStart)}${value.slice(closeIndex + 1)}`.trim();
+  return {
+    alt: value.slice(imageStart + 2, altEnd).trim() || "Image preview",
+    src,
+    text: text.length > 0 ? text : undefined
+  };
 };
 
 const buildToolSummary = (toolCall: ToolCall): string => {
@@ -167,13 +210,16 @@ export const buildProcessActivityEntries = (
 };
 
 export const ProcessActivityItemView = ({
-  entry
+  entry,
+  onPreviewImage
 }: {
   entry: ProcessActivityEntry;
+  onPreviewImage?: (input: ImageLightboxState) => void;
 }): ReactElement => {
   const rawOutputText = entry.outputText?.trim();
   const inputText = entry.inputText?.trim();
   const outputText = rawOutputText && rawOutputText !== inputText ? rawOutputText : undefined;
+  const imageOutput = splitProcessImageOutput(outputText);
   return (
     <details
       key={entry.id}
@@ -193,7 +239,35 @@ export const ProcessActivityItemView = ({
           <span>{entry.label}</span>
           {inputText ? <code>{inputText}</code> : <code>(no parameters)</code>}
         </div>
-        {outputText || entry.status === "running" ? (
+        {imageOutput ? (
+          <div className="awb-process-activity__media-output">
+            {onPreviewImage ? (
+              <button
+                type="button"
+                className="awb-inline-image-button"
+                onClick={() =>
+                  onPreviewImage({
+                    src: imageOutput.src,
+                    alt: imageOutput.alt
+                  })
+                }
+              >
+                <img src={imageOutput.src} alt={imageOutput.alt} />
+              </button>
+            ) : (
+              <img
+                className="awb-process-activity__image"
+                src={imageOutput.src}
+                alt={imageOutput.alt}
+              />
+            )}
+            {imageOutput.text ? (
+              <pre className="awb-process-activity__output">
+                {imageOutput.text}
+              </pre>
+            ) : null}
+          </div>
+        ) : outputText || entry.status === "running" ? (
           <pre className="awb-process-activity__output">
             {outputText || "(no output yet)"}
           </pre>
@@ -205,7 +279,8 @@ export const ProcessActivityItemView = ({
 
 export const ProcessActivityView = ({
   toolCalls,
-  terminalStreams
+  terminalStreams,
+  onPreviewImage
 }: ProcessActivityViewProps): ReactElement => {
   const entries = buildProcessActivityEntries(toolCalls, terminalStreams);
 
@@ -216,7 +291,11 @@ export const ProcessActivityView = ({
   return (
     <div className="awb-process-activity-list">
       {entries.map((entry) => (
-        <ProcessActivityItemView key={entry.id} entry={entry} />
+        <ProcessActivityItemView
+          key={entry.id}
+          entry={entry}
+          onPreviewImage={onPreviewImage}
+        />
       ))}
     </div>
   );

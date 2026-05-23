@@ -15,6 +15,7 @@ import type {
   EngineSurfaceRpc,
   ErrorLogWriteInputRpc,
   ErrorLogWriteResultRpc,
+  CodexHookActivityResultRpc,
   CodexTurnChangesResultRpc,
   CodexTurnChangesUndoResultRpc,
   FileActionKindRpc,
@@ -361,6 +362,10 @@ export type DesktopTransport = {
     }) => Promise<FileActionResultRpc>;
   };
   codex: {
+    getHookActivity: (input: {
+      sessionId: string;
+      turnId: string;
+    }) => Promise<CodexHookActivityResultRpc>;
     getTurnChanges: (input: {
       sessionId: string;
       turnId: string;
@@ -963,6 +968,9 @@ export const createDesktopTransport = (
       }
     },
     codex: {
+      getHookActivity: async (input) => {
+        return rpc.request("codex.hookActivity.get", input);
+      },
       getTurnChanges: async (input) => {
         return rpc.request("codex.turnChanges.get", input);
       },

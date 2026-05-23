@@ -736,6 +736,547 @@ const emitRuntimeErrorPath = ({ threadId, turnId }) => {
   });
 };
 
+const emitRawCustomToolPath = ({ threadId, turnId }) => {
+  const callId = `apply-patch-${turnId}`;
+  const patch = "*** Begin Patch\n*** Add File: live.txt\n+live line\n*** End Patch\n";
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "active" }
+    }
+  });
+  send({
+    method: "turn/started",
+    params: {
+      threadId,
+      turn: { id: turnId }
+    }
+  });
+  send({
+    method: "rawResponseItem/completed",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "custom_tool_call",
+        status: "completed",
+        call_id: callId,
+        name: "apply_patch",
+        input: patch
+      }
+    }
+  });
+  send({
+    method: "rawResponseItem/completed",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "custom_tool_call_output",
+        call_id: callId,
+        name: "apply_patch",
+        output:
+          "Exit code: 0\nWall time: 0 seconds\nOutput:\nSuccess. Updated the following files:\nM live.txt\n"
+      }
+    }
+  });
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "idle" }
+    }
+  });
+  send({
+    method: "turn/completed",
+    params: {
+      threadId,
+      turn: {
+        id: turnId,
+        status: "completed"
+      }
+    }
+  });
+};
+
+const emitRawCustomToolOutputOnlyPath = ({ threadId, turnId }) => {
+  const callId = `notify-${turnId}`;
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "active" }
+    }
+  });
+  send({
+    method: "turn/started",
+    params: {
+      threadId,
+      turn: { id: turnId }
+    }
+  });
+  send({
+    method: "rawResponseItem/completed",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "custom_tool_call_output",
+        call_id: callId,
+        name: "notify",
+        output: [
+          {
+            type: "input_text",
+            text: "background notification"
+          }
+        ]
+      }
+    }
+  });
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "idle" }
+    }
+  });
+  send({
+    method: "turn/completed",
+    params: {
+      threadId,
+      turn: {
+        id: turnId,
+        status: "completed"
+      }
+    }
+  });
+};
+
+const emitImageItemsPath = ({ threadId, turnId }) => {
+  const imageViewId = `image-view-${turnId}`;
+  const imageGenerationId = `image-generation-${turnId}`;
+  const imagePath = "D:/workspace/sample.png";
+  const generatedPath = "D:/workspace/generated.png";
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "active" }
+    }
+  });
+  send({
+    method: "turn/started",
+    params: {
+      threadId,
+      turn: { id: turnId }
+    }
+  });
+  send({
+    method: "item/started",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "imageView",
+        id: imageViewId,
+        path: imagePath
+      }
+    }
+  });
+  send({
+    method: "item/completed",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "imageView",
+        id: imageViewId,
+        path: imagePath
+      }
+    }
+  });
+  send({
+    method: "item/started",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "imageGeneration",
+        id: imageGenerationId,
+        status: "inProgress",
+        revisedPrompt: "A quiet dashboard screenshot",
+        result: ""
+      }
+    }
+  });
+  send({
+    method: "item/completed",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "imageGeneration",
+        id: imageGenerationId,
+        status: "completed",
+        revisedPrompt: "A quiet dashboard screenshot",
+        result: "ignored-when-saved-path-exists",
+        savedPath: generatedPath
+      }
+    }
+  });
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "idle" }
+    }
+  });
+  send({
+    method: "turn/completed",
+    params: {
+      threadId,
+      turn: {
+        id: turnId,
+        status: "completed"
+      }
+    }
+  });
+};
+
+const emitUnhandledDiagnosticsPath = ({ threadId, turnId }) => {
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "active" }
+    }
+  });
+  send({
+    method: "turn/started",
+    params: {
+      threadId,
+      turn: { id: turnId }
+    }
+  });
+  for (const suffix of ["a", "b"]) {
+    send({
+      method: "item/completed",
+      params: {
+        threadId,
+        turnId,
+        item: {
+          type: "plan",
+          id: `plan-${suffix}-${turnId}`,
+          text: "diagnostic plan"
+        }
+      }
+    });
+    send({
+      method: "rawResponseItem/completed",
+      params: {
+        threadId,
+        turnId,
+        item: {
+          type: "tool_search_call",
+          call_id: `tool-search-${suffix}-${turnId}`,
+          status: "completed",
+          execution: "search",
+          arguments: {
+            query: "diagnostic"
+          }
+        }
+      }
+    });
+  }
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "idle" }
+    }
+  });
+  send({
+    method: "turn/completed",
+    params: {
+      threadId,
+      turn: {
+        id: turnId,
+        status: "completed"
+      }
+    }
+  });
+};
+
+const sampleHookRun = ({
+  id,
+  eventName,
+  status,
+  entries = [],
+  durationMs = null,
+  scope = "turn"
+}) => ({
+  id,
+  eventName,
+  handlerType: "command",
+  executionMode: "sync",
+  scope,
+  sourcePath: "D:/workspace/.codex/hooks.json",
+  source: "project",
+  displayOrder: 1,
+  status,
+  statusMessage: status === "running" ? "running hook" : null,
+  startedAt: 1700000000000,
+  completedAt: status === "running" ? null : 1700000000025,
+  durationMs,
+  entries
+});
+
+const emitHookActivityPath = ({ threadId, turnId }) => {
+  const startedRun = sampleHookRun({
+    id: `hook-${turnId}`,
+    eventName: "preToolUse",
+    status: "running"
+  });
+  const completedRun = sampleHookRun({
+    id: `hook-${turnId}`,
+    eventName: "preToolUse",
+    status: "completed",
+    durationMs: 25,
+    entries: [
+      {
+        kind: "warning",
+        text: "checked command policy"
+      },
+      {
+        kind: "context",
+        text: "workspace hook context"
+      }
+    ]
+  });
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "active" }
+    }
+  });
+  send({
+    method: "turn/started",
+    params: {
+      threadId,
+      turn: { id: turnId }
+    }
+  });
+  send({
+    method: "hook/started",
+    params: {
+      threadId,
+      turnId,
+      run: startedRun
+    }
+  });
+  send({
+    method: "hook/completed",
+    params: {
+      threadId,
+      turnId,
+      run: completedRun
+    }
+  });
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "idle" }
+    }
+  });
+  send({
+    method: "turn/completed",
+    params: {
+      threadId,
+      turn: {
+        id: turnId,
+        status: "completed"
+      }
+    }
+  });
+};
+
+const emitThreadScopeHookActivityPath = ({ threadId, turnId }) => {
+  const completedRun = sampleHookRun({
+    id: `thread-hook-${turnId}`,
+    eventName: "sessionStart",
+    status: "completed",
+    scope: "thread",
+    durationMs: 12,
+    entries: [
+      {
+        kind: "context",
+        text: "thread startup hook context"
+      }
+    ]
+  });
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "active" }
+    }
+  });
+  send({
+    method: "turn/started",
+    params: {
+      threadId,
+      turn: { id: turnId }
+    }
+  });
+  send({
+    method: "hook/completed",
+    params: {
+      threadId,
+      turnId: null,
+      run: completedRun
+    }
+  });
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "idle" }
+    }
+  });
+  send({
+    method: "turn/completed",
+    params: {
+      threadId,
+      turn: {
+        id: turnId,
+        status: "completed"
+      }
+    }
+  });
+};
+
+const emitPostCompleteHookActivityPath = ({ threadId, turnId }) => {
+  const completedRun = sampleHookRun({
+    id: `late-thread-hook-${turnId}`,
+    eventName: "stop",
+    status: "completed",
+    scope: "thread",
+    durationMs: 9
+  });
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "active" }
+    }
+  });
+  send({
+    method: "turn/started",
+    params: {
+      threadId,
+      turn: { id: turnId }
+    }
+  });
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "idle" }
+    }
+  });
+  send({
+    method: "turn/completed",
+    params: {
+      threadId,
+      turn: {
+        id: turnId,
+        status: "completed"
+      }
+    }
+  });
+  send({
+    method: "hook/completed",
+    params: {
+      threadId,
+      turnId: null,
+      run: completedRun
+    }
+  });
+};
+
+const emitAsyncThreadScopeHookActivityPath = ({ threadId, turnId }) => {
+  const hookRunId = `async-thread-hook-${turnId}`;
+  const startedRun = sampleHookRun({
+    id: hookRunId,
+    eventName: "stop",
+    status: "running",
+    scope: "thread"
+  });
+  const completedRun = sampleHookRun({
+    id: hookRunId,
+    eventName: "stop",
+    status: "completed",
+    scope: "thread",
+    durationMs: 42,
+    entries: [
+      {
+        kind: "context",
+        text: "async hook completed after turn"
+      }
+    ]
+  });
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "active" }
+    }
+  });
+  send({
+    method: "turn/started",
+    params: {
+      threadId,
+      turn: { id: turnId }
+    }
+  });
+  send({
+    method: "hook/started",
+    params: {
+      threadId,
+      turnId: null,
+      run: startedRun
+    }
+  });
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "idle" }
+    }
+  });
+  send({
+    method: "turn/completed",
+    params: {
+      threadId,
+      turn: {
+        id: turnId,
+        status: "completed"
+      }
+    }
+  });
+  send({
+    method: "hook/completed",
+    params: {
+      threadId,
+      turnId: null,
+      run: completedRun
+    }
+  });
+};
+
 const emitRecoverableRuntimeErrorPath = ({ threadId, turnId }) => {
   send({
     method: "thread/status/changed",
@@ -1232,6 +1773,26 @@ const handleRequest = (payload) => {
             return;
           }
 
+          if (prompt.includes("async-thread-scope hook-activity")) {
+            emitAsyncThreadScopeHookActivityPath({ threadId, turnId });
+            return;
+          }
+
+          if (prompt.includes("thread-scope hook-activity")) {
+            emitThreadScopeHookActivityPath({ threadId, turnId });
+            return;
+          }
+
+          if (prompt.includes("post-complete hook-activity")) {
+            emitPostCompleteHookActivityPath({ threadId, turnId });
+            return;
+          }
+
+          if (prompt.includes("hook-activity")) {
+            emitHookActivityPath({ threadId, turnId });
+            return;
+          }
+
           if (prompt.includes("recoverable-runtime-error")) {
             emitRecoverableRuntimeErrorPath({ threadId, turnId });
             return;
@@ -1244,6 +1805,26 @@ const handleRequest = (payload) => {
 
           if (prompt.includes("process-events")) {
             emitProcessPath({ threadId, turnId });
+            return;
+          }
+
+          if (prompt.includes("raw-custom-tool-output-only")) {
+            emitRawCustomToolOutputOnlyPath({ threadId, turnId });
+            return;
+          }
+
+          if (prompt.includes("raw-custom-tool")) {
+            emitRawCustomToolPath({ threadId, turnId });
+            return;
+          }
+
+          if (prompt.includes("image-items")) {
+            emitImageItemsPath({ threadId, turnId });
+            return;
+          }
+
+          if (prompt.includes("unhandled-diagnostics")) {
+            emitUnhandledDiagnosticsPath({ threadId, turnId });
             return;
           }
 

@@ -1124,6 +1124,9 @@ const applyRuntimeEvent = (
     case "conversationGraph.updated": {
       return withEventType(state, event);
     }
+    case "engineExtension.updated": {
+      return withEventType(state, event);
+    }
     case "runtime.error": {
       const withError = {
         ...withEventType(state, event),

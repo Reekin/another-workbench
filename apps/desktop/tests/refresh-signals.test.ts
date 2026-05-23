@@ -52,6 +52,7 @@ describe("renderer refresh signals", () => {
     expect(signals).toEqual({
       sessionBrowser: 0,
       chatTree: 0,
+      engineExtensions: 0,
       takeover: 0
     });
   });
@@ -92,6 +93,7 @@ describe("renderer refresh signals", () => {
     expect(signals).toEqual({
       sessionBrowser: 3,
       chatTree: 2,
+      engineExtensions: 0,
       takeover: 2
     });
   });
@@ -111,7 +113,27 @@ describe("renderer refresh signals", () => {
     expect(signals).toEqual({
       sessionBrowser: 0,
       chatTree: 0,
+      engineExtensions: 0,
       takeover: 1
+    });
+  });
+
+  it("refreshes engine extension slots when extension data changes", () => {
+    const signals = advance([
+      {
+        type: "engineExtension.updated",
+        engineId: "codex",
+        extensionKey: "hook-activity",
+        sessionId: "session-1",
+        turnId: "turn-1"
+      }
+    ]);
+
+    expect(signals).toEqual({
+      sessionBrowser: 0,
+      chatTree: 0,
+      engineExtensions: 1,
+      takeover: 0
     });
   });
 
@@ -155,5 +177,6 @@ describe("renderer refresh signals", () => {
     expect(state.refreshSignals.sessionBrowser).toBe(1);
     expect(state.refreshSignals.takeover).toBe(1);
     expect(state.refreshSignals.chatTree).toBe(0);
+    expect(state.refreshSignals.engineExtensions).toBe(0);
   });
 });

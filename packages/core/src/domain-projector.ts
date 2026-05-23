@@ -295,6 +295,9 @@ export class DomainProjector {
         }
         return;
       }
+      case "engineExtension.updated": {
+        return;
+      }
       case "participant.updated": {
         this.store.upsertParticipant(
           parseAgentParticipant({

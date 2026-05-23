@@ -25,7 +25,10 @@ type ApprovalContinuation<TEvent> = {
   continueWith: (action: "approve" | "deny" | "defer") => TEvent[];
 };
 
-type DemoRuntimeEventType = Exclude<EventType, "conversationGraph.updated">;
+type DemoRuntimeEventType = Exclude<
+  EventType,
+  "conversationGraph.updated" | "engineExtension.updated"
+>;
 
 type DemoRuntimePortOptions<TRequest, TResponse, TEvent> = {
   engineId: string;

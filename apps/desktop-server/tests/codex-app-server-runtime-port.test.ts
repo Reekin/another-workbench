@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,10 @@ import {
   clearCodexTurnChangesStore,
   getRecordedCodexTurnChanges
 } from "../src/engine-extensions/codex/turn-changes-store.js";
+import {
+  clearCodexHookActivityStore,
+  getRecordedCodexHookActivity
+} from "../src/engine-extensions/codex/hook-activity-store.js";
 import { HostToolRegistry } from "../src/host-tools.js";
 import {
   createSmartTakeoverHostTool,
@@ -46,6 +50,7 @@ describe("Codex app-server runtime port", () => {
 
   afterEach(async () => {
     clearCodexTurnChangesStore();
+    clearCodexHookActivityStore();
     while (disposers.length > 0) {
       const dispose = disposers.pop();
       if (dispose) {
@@ -420,6 +425,253 @@ describe("Codex app-server runtime port", () => {
           })
         })
       ])
+    );
+  });
+
+  it("maps raw custom tool response items into a visible tool lifecycle", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+    port.subscribe((event) => {
+      events.push({
+        method: event.method,
+        params: event.params
+      });
+    });
+
+    await port.start();
+    await port.request({
+      id: "turn-raw-custom-tool",
+      method: "turn/start",
+      params: {
+        sessionId: "session-1",
+        content: "please trigger raw-custom-tool"
+      }
+    });
+
+    await waitFor(() => events.some((event) => event.method === "turn.completed"));
+
+    const turnId = String(
+      events.find((event) => event.method === "turn.completed")?.params.turnId
+    );
+    const toolCallId = `raw-custom-tool:${turnId}:apply-patch-${turnId}`;
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "tool.started",
+          params: expect.objectContaining({
+            sessionId: "session-1",
+            turnId,
+            toolCallId,
+            toolName: "apply_patch",
+            inputSummary: expect.stringContaining("*** Begin Patch")
+          })
+        }),
+        expect.objectContaining({
+          method: "tool.completed",
+          params: expect.objectContaining({
+            sessionId: "session-1",
+            turnId,
+            toolCallId,
+            status: "completed",
+            outputSummary: expect.stringContaining("Success. Updated")
+          })
+        })
+      ])
+    );
+  });
+
+  it("maps output-only raw custom tool response items when the item carries a name", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+    port.subscribe((event) => {
+      events.push({
+        method: event.method,
+        params: event.params
+      });
+    });
+
+    await port.start();
+    await port.request({
+      id: "turn-raw-custom-tool-output-only",
+      method: "turn/start",
+      params: {
+        sessionId: "session-1",
+        content: "please trigger raw-custom-tool-output-only"
+      }
+    });
+
+    await waitFor(() => events.some((event) => event.method === "turn.completed"));
+
+    const turnId = String(
+      events.find((event) => event.method === "turn.completed")?.params.turnId
+    );
+    const toolCallId = `raw-custom-tool:${turnId}:notify-${turnId}`;
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "tool.started",
+          params: expect.objectContaining({
+            sessionId: "session-1",
+            turnId,
+            toolCallId,
+            toolName: "notify"
+          })
+        }),
+        expect.objectContaining({
+          method: "tool.completed",
+          params: expect.objectContaining({
+            sessionId: "session-1",
+            turnId,
+            toolCallId,
+            status: "completed",
+            outputSummary: "background notification"
+          })
+        })
+      ])
+    );
+  });
+
+  it("maps canonical image view and generation items into visible image activity", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+    port.subscribe((event) => {
+      events.push({
+        method: event.method,
+        params: event.params
+      });
+    });
+
+    await port.start();
+    await port.request({
+      id: "turn-image-items",
+      method: "turn/start",
+      params: {
+        sessionId: "session-1",
+        content: "please trigger image-items"
+      }
+    });
+
+    await waitFor(() => events.some((event) => event.method === "turn.completed"));
+
+    const turnId = String(
+      events.find((event) => event.method === "turn.completed")?.params.turnId
+    );
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "tool.started",
+          params: expect.objectContaining({
+            sessionId: "session-1",
+            turnId,
+            toolCallId: `image-view-${turnId}`,
+            toolName: "imageView",
+            inputSummary: "D:/workspace/sample.png"
+          })
+        }),
+        expect.objectContaining({
+          method: "tool.completed",
+          params: expect.objectContaining({
+            sessionId: "session-1",
+            turnId,
+            toolCallId: `image-view-${turnId}`,
+            status: "completed",
+            outputSummary: expect.stringContaining(
+              "![Viewed image](file:///D:/workspace/sample.png)"
+            )
+          })
+        }),
+        expect.objectContaining({
+          method: "tool.started",
+          params: expect.objectContaining({
+            sessionId: "session-1",
+            turnId,
+            toolCallId: `image-generation-${turnId}`,
+            toolName: "imageGeneration",
+            inputSummary: "A quiet dashboard screenshot"
+          })
+        }),
+        expect.objectContaining({
+          method: "tool.completed",
+          params: expect.objectContaining({
+            sessionId: "session-1",
+            turnId,
+            toolCallId: `image-generation-${turnId}`,
+            status: "completed",
+            outputSummary: expect.stringContaining(
+              "![Generated image](file:///D:/workspace/generated.png)"
+            )
+          })
+        })
+      ])
+    );
+  });
+
+  it("diagnoses unsupported canonical and raw Codex items once per type", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(async () => {
+      warn.mockRestore();
+      await port.stop();
+    });
+
+    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+    port.subscribe((event) => {
+      events.push({
+        method: event.method,
+        params: event.params
+      });
+    });
+
+    await port.start();
+    await port.request({
+      id: "turn-unhandled-diagnostics",
+      method: "turn/start",
+      params: {
+        sessionId: "session-1",
+        content: "please trigger unhandled-diagnostics"
+      }
+    });
+
+    await waitFor(() => events.some((event) => event.method === "turn.completed"));
+
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledWith(
+      "[another-workbench] Ignored unsupported Codex ThreadItem.",
+      expect.objectContaining({
+        method: "item/completed",
+        sessionId: "session-1",
+        itemType: "plan"
+      })
+    );
+    expect(warn).toHaveBeenCalledWith(
+      "[another-workbench] Ignored unsupported Codex raw ResponseItem.",
+      expect.objectContaining({
+        method: "rawResponseItem/completed",
+        sessionId: "session-1",
+        itemType: "tool_search_call"
+      })
     );
   });
 
@@ -1530,5 +1782,276 @@ describe("Codex app-server runtime port", () => {
         })
       ]
     });
+  });
+
+  it("records hook lifecycle notifications for the Codex hook activity extension", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+    port.subscribe((event) => {
+      events.push({
+        method: event.method,
+        params: event.params
+      });
+    });
+
+    await port.start();
+    await port.request({
+      id: "turn-hook-activity",
+      method: "turn/start",
+      params: {
+        sessionId: "session-1",
+        content: "please trigger hook-activity"
+      }
+    });
+
+    await waitFor(() =>
+      events.some((event) => event.method === "turn.completed")
+    );
+
+    const turnId = String(
+      events.find((event) => event.method === "turn.completed")?.params.turnId
+    );
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "engineExtension.updated",
+          params: expect.objectContaining({
+            engineId: "codex",
+            extensionKey: "hook-activity",
+            sessionId: "session-1",
+            turnId
+          })
+        })
+      ])
+    );
+    expect(getRecordedCodexHookActivity("session-1", turnId)).toMatchObject({
+      runs: [
+        expect.objectContaining({
+          id: `hook-${turnId}`,
+          eventName: "preToolUse",
+          handlerType: "command",
+          executionMode: "sync",
+          scope: "turn",
+          source: "project",
+          status: "completed",
+          durationMs: 25,
+          entries: [
+            {
+              kind: "warning",
+              text: "checked command policy"
+            },
+            {
+              kind: "context",
+              text: "workspace hook context"
+            }
+          ]
+        })
+      ]
+    });
+  });
+
+  it("attaches null-turn hook activity to the active Codex turn", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+    port.subscribe((event) => {
+      events.push({
+        method: event.method,
+        params: event.params
+      });
+    });
+
+    await port.start();
+    await port.request({
+      id: "turn-thread-scope-hook-activity",
+      method: "turn/start",
+      params: {
+        sessionId: "session-1",
+        content: "please trigger thread-scope hook-activity"
+      }
+    });
+
+    await waitFor(() =>
+      events.some((event) => event.method === "turn.completed")
+    );
+
+    const turnId = String(
+      events.find((event) => event.method === "turn.completed")?.params.turnId
+    );
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "engineExtension.updated",
+          params: expect.objectContaining({
+            engineId: "codex",
+            extensionKey: "hook-activity",
+            sessionId: "session-1",
+            turnId
+          })
+        })
+      ])
+    );
+    expect(getRecordedCodexHookActivity("session-1", turnId)).toMatchObject({
+      runs: [
+        expect.objectContaining({
+          id: `thread-hook-${turnId}`,
+          eventName: "sessionStart",
+          scope: "thread",
+          status: "completed",
+          entries: [
+            {
+              kind: "context",
+              text: "thread startup hook context"
+            }
+          ]
+        })
+      ]
+    });
+  });
+
+  it("matches null-turn hook completion to a prior started run after the turn completes", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(async () => {
+      warn.mockRestore();
+      await port.stop();
+    });
+
+    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+    port.subscribe((event) => {
+      events.push({
+        method: event.method,
+        params: event.params
+      });
+    });
+
+    await port.start();
+    await port.request({
+      id: "turn-async-thread-scope-hook-activity",
+      method: "turn/start",
+      params: {
+        sessionId: "session-1",
+        content: "please trigger async-thread-scope hook-activity"
+      }
+    });
+
+    await waitFor(() => {
+      const turnId = events.find(
+        (event) => event.method === "turn.completed"
+      )?.params.turnId;
+      return (
+        typeof turnId === "string" &&
+        getRecordedCodexHookActivity("session-1", turnId)?.runs[0]?.status ===
+          "completed"
+      );
+    });
+
+    const turnId = String(
+      events.find((event) => event.method === "turn.completed")?.params.turnId
+    );
+    const hookActivity = getRecordedCodexHookActivity("session-1", turnId);
+    expect(hookActivity).toMatchObject({
+      runs: [
+        expect.objectContaining({
+          id: `async-thread-hook-${turnId}`,
+          eventName: "stop",
+          scope: "thread",
+          status: "completed",
+          durationMs: 42,
+          entries: [
+            {
+              kind: "context",
+              text: "async hook completed after turn"
+            }
+          ]
+        })
+      ]
+    });
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "engineExtension.updated",
+          params: expect.objectContaining({
+            engineId: "codex",
+            extensionKey: "hook-activity",
+            sessionId: "session-1",
+            turnId
+          })
+        })
+      ])
+    );
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("Ignoring Codex hook activity"),
+      expect.anything()
+    );
+  });
+
+  it("warns instead of silently dropping null-turn hook activity with no active turn", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(async () => {
+      warn.mockRestore();
+      await port.stop();
+    });
+
+    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+    port.subscribe((event) => {
+      events.push({
+        method: event.method,
+        params: event.params
+      });
+    });
+
+    await port.start();
+    await port.request({
+      id: "turn-post-complete-hook-activity",
+      method: "turn/start",
+      params: {
+        sessionId: "session-1",
+        content: "please trigger post-complete hook-activity"
+      }
+    });
+
+    await waitFor(() =>
+      warn.mock.calls.some((call) =>
+        String(call[0]).includes("Ignoring Codex hook activity")
+      )
+    );
+
+    const turnId = String(
+      events.find((event) => event.method === "turn.completed")?.params.turnId
+    );
+    expect(getRecordedCodexHookActivity("session-1", turnId)).toBeUndefined();
+    expect(events).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "engineExtension.updated",
+          params: expect.objectContaining({
+            extensionKey: "hook-activity",
+            sessionId: "session-1",
+            turnId
+          })
+        })
+      ])
+    );
   });
 });

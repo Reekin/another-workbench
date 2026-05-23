@@ -74,6 +74,7 @@ export const workbenchRpcMethods = [
   "file.searchWorkspace",
   "file.getPreview",
   "file.runAction",
+  "codex.hookActivity.get",
   "codex.turnChanges.get",
   "codex.turnChanges.undo",
   "runtime.command",
@@ -463,6 +464,44 @@ const zCodexTurnChangeKindSchema = z.enum(["add", "delete", "update"]);
 const zCodexChangedFileSchema = zFileReferenceSchema.extend({
   changeKind: zCodexTurnChangeKindSchema,
   diff: z.string().min(1).optional()
+});
+
+const zCodexHookOutputEntryKindSchema = z.enum([
+  "warning",
+  "stop",
+  "feedback",
+  "context",
+  "error"
+]);
+
+const zCodexHookRunStatusSchema = z.enum([
+  "running",
+  "completed",
+  "failed",
+  "blocked",
+  "stopped"
+]);
+
+const zCodexHookRunSchema = z.object({
+  id: z.string().min(1),
+  eventName: z.string().min(1),
+  handlerType: z.string().min(1),
+  executionMode: z.string().min(1),
+  scope: z.string().min(1),
+  sourcePath: z.string().min(1),
+  source: z.string().min(1),
+  displayOrder: z.number().int(),
+  status: zCodexHookRunStatusSchema,
+  statusMessage: z.string().min(1).nullable().optional(),
+  startedAt: z.number().int(),
+  completedAt: z.number().int().nullable().optional(),
+  durationMs: z.number().int().nonnegative().nullable().optional(),
+  entries: z.array(
+    z.object({
+      kind: zCodexHookOutputEntryKindSchema,
+      text: z.string()
+    })
+  ).default([])
 });
 
 const zEngineListRequestSchema = z.object({
@@ -890,6 +929,15 @@ const zCodexTurnChangesGetRequestSchema = z.object({
   })
 });
 
+const zCodexHookActivityGetRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("codex.hookActivity.get"),
+  params: z.object({
+    sessionId: zSessionId,
+    turnId: zTurnId
+  })
+});
+
 const zCodexTurnChangesUndoRequestSchema = z.object({
   id: zRequestId,
   method: z.literal("codex.turnChanges.undo"),
@@ -979,6 +1027,7 @@ export const zWorkbenchRpcRequestSchema = z.discriminatedUnion("method", [
   zFileSearchWorkspaceRequestSchema,
   zFileGetPreviewRequestSchema,
   zFileRunActionRequestSchema,
+  zCodexHookActivityGetRequestSchema,
   zCodexTurnChangesGetRequestSchema,
   zCodexTurnChangesUndoRequestSchema,
   zRuntimeCommandRequestSchema,
@@ -1418,6 +1467,18 @@ const zCodexTurnChangesGetResponseSchema = z.object({
   })
 });
 
+const zCodexHookActivityGetResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("codex.hookActivity.get"),
+  ok: z.literal(true),
+  result: z.object({
+    engineId: z.literal("codex"),
+    sessionId: zSessionId,
+    turnId: zTurnId,
+    runs: z.array(zCodexHookRunSchema).default([])
+  })
+});
+
 const zCodexTurnChangesUndoResponseSchema = z.object({
   id: zRequestId,
   method: z.literal("codex.turnChanges.undo"),
@@ -1531,6 +1592,7 @@ export const zWorkbenchRpcResponseSchema = z.union([
   zFileSearchWorkspaceResponseSchema,
   zFileGetPreviewResponseSchema,
   zFileRunActionResponseSchema,
+  zCodexHookActivityGetResponseSchema,
   zCodexTurnChangesGetResponseSchema,
   zCodexTurnChangesUndoResponseSchema,
   zRuntimeCommandResponseSchema,
@@ -1608,6 +1670,14 @@ export type FileActionKindRpc = z.infer<typeof zFileActionKindSchema>;
 export type FileActionResultRpc = z.infer<typeof zFileActionResultSchema>;
 export type CodexTurnChangeKindRpc = z.infer<typeof zCodexTurnChangeKindSchema>;
 export type CodexChangedFileRpc = z.infer<typeof zCodexChangedFileSchema>;
+export type CodexHookOutputEntryKindRpc = z.infer<
+  typeof zCodexHookOutputEntryKindSchema
+>;
+export type CodexHookRunStatusRpc = z.infer<typeof zCodexHookRunStatusSchema>;
+export type CodexHookRunRpc = z.infer<typeof zCodexHookRunSchema>;
+export type CodexHookActivityResultRpc = z.infer<
+  typeof zCodexHookActivityGetResponseSchema
+>["result"];
 export type CodexTurnChangesResultRpc = z.infer<
   typeof zCodexTurnChangesGetResponseSchema
 >["result"];

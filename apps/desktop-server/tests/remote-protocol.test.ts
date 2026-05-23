@@ -1258,10 +1258,38 @@ describe("createRemoteRpcHandler", () => {
     });
   });
 
-  it("serves Codex turn-change extension requests through codex-scoped RPC methods", async () => {
+  it("serves Codex extension requests through codex-scoped RPC methods", async () => {
     const shellService = {
       listWorkspaces: vi.fn().mockResolvedValue({
         workspaces: []
+      }),
+      getCodexHookActivity: vi.fn().mockResolvedValue({
+        engineId: "codex",
+        sessionId: "session-1",
+        turnId: "turn-2",
+        runs: [
+          {
+            id: "hook-1",
+            eventName: "preToolUse",
+            handlerType: "command",
+            executionMode: "sync",
+            scope: "turn",
+            sourcePath: "I:\\repo\\.codex\\hooks.json",
+            source: "project",
+            displayOrder: 1,
+            status: "completed",
+            statusMessage: null,
+            startedAt: 1700000000000,
+            completedAt: 1700000000025,
+            durationMs: 25,
+            entries: [
+              {
+                kind: "warning",
+                text: "checked command policy"
+              }
+            ]
+          }
+        ]
       }),
       getCodexTurnChanges: vi.fn().mockResolvedValue({
         engineId: "codex",
@@ -1316,6 +1344,14 @@ describe("createRemoteRpcHandler", () => {
     };
     const handler = createRemoteRpcHandler(shellService as never);
 
+    const hookResponse = await handler.handleRequest({
+      id: "req-codex-hook-activity",
+      method: "codex.hookActivity.get",
+      params: {
+        sessionId: "session-1",
+        turnId: "turn-2"
+      }
+    });
     const getResponse = await handler.handleRequest({
       id: "req-codex-turn-changes",
       method: "codex.turnChanges.get",
@@ -1333,6 +1369,22 @@ describe("createRemoteRpcHandler", () => {
       }
     });
 
+    expect(hookResponse).toMatchObject({
+      id: "req-codex-hook-activity",
+      method: "codex.hookActivity.get",
+      ok: true,
+      result: {
+        engineId: "codex",
+        sessionId: "session-1",
+        turnId: "turn-2",
+        runs: [
+          expect.objectContaining({
+            eventName: "preToolUse",
+            status: "completed"
+          })
+        ]
+      }
+    });
     expect(getResponse).toMatchObject({
       id: "req-codex-turn-changes",
       method: "codex.turnChanges.get",
@@ -1363,6 +1415,10 @@ describe("createRemoteRpcHandler", () => {
       }
     });
     expect(shellService.getCodexTurnChanges).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      turnId: "turn-2"
+    });
+    expect(shellService.getCodexHookActivity).toHaveBeenCalledWith({
       sessionId: "session-1",
       turnId: "turn-2"
     });

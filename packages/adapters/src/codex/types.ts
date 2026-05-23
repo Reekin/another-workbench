@@ -37,6 +37,7 @@ export const codexRuntimeEventMethods = [
   "approval.resolved",
   "interaction.requested",
   "interaction.resolved",
+  "engineExtension.updated",
   "conversationGraph.updated",
   "participant.updated",
   "runtime.error"

@@ -147,6 +147,13 @@ export const createWorkbenchRuntimeService = (
             displayName: "Changed Files",
             description: "Codex turn-level file changes and local undo actions.",
             available: true
+          },
+          {
+            engineId: codexAgentId,
+            key: "hook-activity",
+            displayName: "Hook Activity",
+            description: "Codex hook runs, statuses, and hook output entries.",
+            available: true
           }
         ]
       },

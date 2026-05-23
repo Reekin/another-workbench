@@ -35,6 +35,8 @@ export * from "./chat-tree-provider.js";
 export * from "./workbench-shell-service.js";
 export * from "./engine-extensions/codex/turn-changes-store.js";
 export * from "./engine-extensions/codex/turn-changes-service.js";
+export * from "./engine-extensions/codex/hook-activity-store.js";
+export * from "./engine-extensions/codex/hook-activity-service.js";
 export * from "./engine-control/engine-definition.js";
 export * from "./engine-control/engine-registry.js";
 export * from "./engine-control/capability-surface.js";

@@ -700,8 +700,7 @@ export class SmartTakeoverService {
       verdictPromise = this.waitForVerdict({
         runId,
         takeoverSessionId: takeoverSession.sessionId,
-        fromCursor: cursor,
-        timeoutMs
+        fromCursor: cursor
       });
       if (!shouldContinue()) {
         throw new Error("Takeover launch cancelled.");
@@ -988,7 +987,6 @@ TAKEOVER_VERDICT: complete|incomplete`);
     runId: string;
     takeoverSessionId: string;
     fromCursor?: string;
-    timeoutMs: number;
   }): Promise<TakeoverVerdictPayload> {
     return new Promise((resolve, reject) => {
       let finalText: string | undefined;
@@ -999,7 +997,6 @@ TAKEOVER_VERDICT: complete|incomplete`);
           return;
         }
         settled = true;
-        clearTimeout(timeout);
         unsubscribe?.();
         this.finalizeRun(input.runId);
         resolve(verdict);
@@ -1009,18 +1006,10 @@ TAKEOVER_VERDICT: complete|incomplete`);
           return;
         }
         settled = true;
-        clearTimeout(timeout);
         unsubscribe?.();
         this.finalizeRun(input.runId);
         reject(error);
       };
-      const timeout = setTimeout(() => {
-        fail(
-          new Error(
-            `Takeover run ${input.runId} timed out after ${input.timeoutMs}ms.`
-          )
-        );
-      }, input.timeoutMs);
       this.pendingVerdictResolvers.set(input.runId, finish);
       this.pendingVerdictRejecters.set(input.runId, fail);
       unsubscribe = this.runtimeService.subscribeFromCursor(

@@ -367,9 +367,44 @@ describe("Desktop transport facade", () => {
     });
   });
 
-  it("maps Codex turn-change RPCs to explicit codex transport methods", async () => {
+  it("maps Codex extension RPCs to explicit codex transport methods", async () => {
     const preload = createPreloadMock({
       onRequest: async (request) => {
+        if (request.method === "codex.hookActivity.get") {
+          return {
+            id: request.id,
+            method: request.method,
+            ok: true,
+            result: {
+              engineId: "codex",
+              sessionId: request.params.sessionId,
+              turnId: request.params.turnId,
+              runs: [
+                {
+                  id: "hook-1",
+                  eventName: "preToolUse",
+                  handlerType: "command",
+                  executionMode: "sync",
+                  scope: "turn",
+                  sourcePath: "I:\\repo\\.codex\\hooks.json",
+                  source: "project",
+                  displayOrder: 1,
+                  status: "completed",
+                  statusMessage: null,
+                  startedAt: 1700000000000,
+                  completedAt: 1700000000025,
+                  durationMs: 25,
+                  entries: [
+                    {
+                      kind: "warning",
+                      text: "checked command policy"
+                    }
+                  ]
+                }
+              ]
+            }
+          } as const;
+        }
         if (request.method === "codex.turnChanges.get") {
           return {
             id: request.id,
@@ -421,6 +456,22 @@ describe("Desktop transport facade", () => {
     });
     const transport = createDesktopTransport(preload.api);
 
+    await expect(
+      transport.codex.getHookActivity({
+        sessionId: "session-1",
+        turnId: "turn-1"
+      })
+    ).resolves.toMatchObject({
+      engineId: "codex",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      runs: [
+        expect.objectContaining({
+          eventName: "preToolUse",
+          status: "completed"
+        })
+      ]
+    });
     await expect(
       transport.codex.getTurnChanges({
         sessionId: "session-1",

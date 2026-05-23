@@ -43,8 +43,15 @@ import {
 } from "./engine-extensions/codex/turn-changes-store.js";
 import {
   isCodexContextCompactionThreadItem,
+  isCodexImageGenerationThreadItem,
+  isCodexImageViewThreadItem,
   isCodexReasoningThreadItem,
   isCodexWebSearchThreadItem,
+  mapCodexResponseItemStatus,
+  summarizeCodexImageGenerationInput,
+  summarizeCodexImageGenerationOutput,
+  summarizeCodexImageViewInput,
+  summarizeCodexImageViewOutput,
   summarizeCodexReasoningThreadItem,
   summarizeCodexWebSearchAction
 } from "./engine-extensions/codex/process-activity.js";
@@ -682,6 +689,45 @@ const hydrateCodexTurnEntities = async (input: {
             status: "completed",
             startedAt: itemStartedAt,
             completedAt: itemStartedAt
+          })
+        );
+        continue;
+      }
+
+      if (isCodexImageViewThreadItem(item)) {
+        toolCallIds.push(itemEntityId);
+        toolCalls.push(
+          parseToolCall({
+            toolCallId: itemEntityId,
+            sessionId: entry.sessionId,
+            turnId: turn.id,
+            toolName: "imageView",
+            inputSummary: summarizeCodexImageViewInput(item),
+            outputSummary: summarizeCodexImageViewOutput(item),
+            status: "completed",
+            startedAt: itemStartedAt,
+            completedAt: itemStartedAt
+          })
+        );
+        continue;
+      }
+
+      if (isCodexImageGenerationThreadItem(item)) {
+        toolCallIds.push(itemEntityId);
+        toolCalls.push(
+          parseToolCall({
+            toolCallId: itemEntityId,
+            sessionId: entry.sessionId,
+            turnId: turn.id,
+            toolName: "imageGeneration",
+            inputSummary: summarizeCodexImageGenerationInput(item),
+            outputSummary: summarizeCodexImageGenerationOutput(item),
+            status:
+              item.status === "inProgress"
+                ? "running"
+                : mapCodexResponseItemStatus(item.status),
+            startedAt: itemStartedAt,
+            completedAt: item.status === "inProgress" ? undefined : itemStartedAt
           })
         );
         continue;

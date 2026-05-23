@@ -42,6 +42,7 @@ export const eventTypes = [
   "approval.resolved",
   "interaction.requested",
   "interaction.resolved",
+  "engineExtension.updated",
   "conversationGraph.updated",
   "participant.updated",
   "runtime.error"
@@ -276,6 +277,14 @@ const zConversationGraphUpdatedEvent = z.object({
   visibleTurnIds: z.array(zTurnId).default([])
 });
 
+const zEngineExtensionUpdatedEvent = z.object({
+  type: z.literal("engineExtension.updated"),
+  engineId: zEngineId,
+  extensionKey: z.string().min(1),
+  sessionId: zSessionId,
+  turnId: zTurnId.optional()
+});
+
 const zRuntimeErrorEvent = z.object({
   type: z.literal("runtime.error"),
   sessionId: zSessionId.optional(),
@@ -322,6 +331,7 @@ export const zEventSchema = z
     zApprovalResolvedEvent,
     zInteractionRequestedEvent,
     zInteractionResolvedEvent,
+    zEngineExtensionUpdatedEvent,
     zConversationGraphUpdatedEvent,
     zParticipantUpdatedEvent,
     zRuntimeErrorEvent

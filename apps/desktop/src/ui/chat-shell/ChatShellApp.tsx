@@ -93,6 +93,7 @@ type TranscriptPaneProps = {
   transport?: DesktopTransport;
   engineId?: string;
   engineSurface?: EngineSurfaceRpc;
+  engineExtensionRefreshSignal: number;
   activeSessionWindow?: SessionWindowRpc;
   activeSessionId?: string;
   isOpeningSelectedSession: boolean;
@@ -464,6 +465,7 @@ const TranscriptPane = memo(
     transport,
     engineId,
     engineSurface,
+    engineExtensionRefreshSignal,
     activeSessionWindow,
     activeSessionId,
     isOpeningSelectedSession,
@@ -641,7 +643,8 @@ const TranscriptPane = memo(
                     engineId,
                     engineSurface,
                     sessionId: visibleRow.turn.sessionId,
-                    turnId: visibleRow.turn.turnId
+                    turnId: visibleRow.turn.turnId,
+                    refreshSignal: engineExtensionRefreshSignal
                   })
                 : null}
             </article>
@@ -656,6 +659,7 @@ const TranscriptPane = memo(
     previous.transport === next.transport &&
     previous.engineId === next.engineId &&
     previous.engineSurface === next.engineSurface &&
+    previous.engineExtensionRefreshSignal === next.engineExtensionRefreshSignal &&
     previous.activeSessionWindow === next.activeSessionWindow &&
     previous.activeSessionId === next.activeSessionId &&
     previous.isOpeningSelectedSession === next.isOpeningSelectedSession &&
@@ -2819,6 +2823,7 @@ export const ChatShellApp = ({
               transport={transport}
               engineId={displayedEngineId}
               engineSurface={displayedEngineId ? engineSurfacesById[displayedEngineId] : undefined}
+              engineExtensionRefreshSignal={state.refreshSignals.engineExtensions}
               activeSessionWindow={activeSessionWindow}
               activeSessionId={activeSessionId}
               isOpeningSelectedSession={isOpeningSelectedSession}

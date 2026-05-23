@@ -114,7 +114,11 @@ export const TurnProcessPanel = ({
           <div className="awb-turn-process__history">
             {historyItems.map((item) =>
               item.kind === "activity" ? (
-                <ProcessActivityItemView key={item.id} entry={item.entry} />
+                <ProcessActivityItemView
+                  key={item.id}
+                  entry={item.entry}
+                  onPreviewImage={onPreviewImage}
+                />
               ) : (
                 <Fragment key={item.row.rowId}>
                   {item.row.blocks.map((block) => (
@@ -137,6 +141,7 @@ export const TurnProcessPanel = ({
           <ProcessActivityView
             toolCalls={row.toolCalls}
             terminalStreams={row.terminalStreams}
+            onPreviewImage={onPreviewImage}
           />
         )}
 

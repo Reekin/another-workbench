@@ -1,6 +1,7 @@
 import type { ReactElement } from "react";
 import type { EngineSurfaceRpc } from "@another-workbench/shared";
 import type { DesktopTransport } from "../../transport/desktop-transport.js";
+import { CodexHookActivitySlot } from "./codex/CodexHookActivitySlot.js";
 import { CodexTurnChangesSlot } from "./codex/CodexTurnChangesSlot.js";
 
 export type TurnExtensionRenderInput = {
@@ -9,11 +10,21 @@ export type TurnExtensionRenderInput = {
   engineSurface?: EngineSurfaceRpc;
   sessionId: string;
   turnId: string;
+  refreshSignal?: number;
 };
 
 type TurnExtensionRenderer = (input: TurnExtensionRenderInput) => ReactElement | null;
 
 const rendererByExtensionId: Record<string, TurnExtensionRenderer> = {
+  "codex:hook-activity": (input) => (
+    <CodexHookActivitySlot
+      transport={input.transport}
+      engineSurface={input.engineSurface}
+      sessionId={input.sessionId}
+      turnId={input.turnId}
+      refreshSignal={input.refreshSignal}
+    />
+  ),
   "codex:changed-files": (input) => (
     <CodexTurnChangesSlot
       transport={input.transport}

@@ -2,6 +2,7 @@ import type {
   ChatInteractionCapabilitiesRpc,
   ChatSession,
   ComposerSlashSuggestionRpc,
+  CodexHookActivityResultRpc,
   CodexTurnChangesResultRpc,
   CodexTurnChangesUndoResultRpc,
   CommandEnvelope,
@@ -56,6 +57,7 @@ import { FileActionService } from "./file-action-service.js";
 import { FilePreviewService } from "./file-preview-service.js";
 import { WorkspaceFileSearchService } from "./workspace-file-search-service.js";
 import { TurnChangeService } from "./turn-change-service.js";
+import { CodexHookActivityService } from "./engine-extensions/codex/hook-activity-service.js";
 import { CodexTurnChangesService } from "./engine-extensions/codex/turn-changes-service.js";
 import { ErrorLogService } from "./error-log-service.js";
 import { DiagnosticLogService } from "./diagnostic-log-service.js";
@@ -165,6 +167,7 @@ export type WorkbenchShellServiceOptions = {
   errorLogService?: ErrorLogService;
   diagnosticLogService?: DiagnosticLogService;
   turnChangeService?: TurnChangeService;
+  codexHookActivityService?: CodexHookActivityService;
   codexTurnChangesService?: CodexTurnChangesService;
   takeoverPresetStore?: TakeoverPresetStore;
   smartTakeoverService?: SmartTakeoverService;
@@ -193,6 +196,7 @@ export class WorkbenchShellService {
   private readonly errorLogService: ErrorLogService;
   private readonly diagnosticLogService: DiagnosticLogService;
   private readonly turnChangeService: TurnChangeService;
+  private readonly codexHookActivityService: CodexHookActivityService;
   private readonly codexTurnChangesService: CodexTurnChangesService;
   private readonly takeoverPresetStore: TakeoverPresetStore;
   private readonly smartTakeoverService: SmartTakeoverService | undefined;
@@ -240,6 +244,12 @@ export class WorkbenchShellService {
     this.schedulerStore = options.schedulerStore ?? new SchedulerStore();
     this.turnChangeService =
       options.turnChangeService ?? new TurnChangeService();
+    this.codexHookActivityService =
+      options.codexHookActivityService ??
+      new CodexHookActivityService({
+        resolveSessionEngineId: (sessionId) =>
+          this.sessionIdentity.resolveContext(sessionId).engineId
+      });
     this.codexTurnChangesService =
       options.codexTurnChangesService ??
       new CodexTurnChangesService({
@@ -945,6 +955,13 @@ export class WorkbenchShellService {
     turnId: string;
   }): Promise<CodexTurnChangesResultRpc> {
     return this.codexTurnChangesService.getTurnChanges(input);
+  }
+
+  public async getCodexHookActivity(input: {
+    sessionId: string;
+    turnId: string;
+  }): Promise<CodexHookActivityResultRpc> {
+    return this.codexHookActivityService.getHookActivity(input);
   }
 
   public async undoCodexTurnChanges(input: {

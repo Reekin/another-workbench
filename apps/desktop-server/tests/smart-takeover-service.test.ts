@@ -354,14 +354,12 @@ describe("SmartTakeoverService", () => {
       waitForVerdict: (input: {
         runId: string;
         takeoverSessionId: string;
-        timeoutMs: number;
       }) => Promise<{ verdict: "complete" | "incomplete"; response: string }>;
     };
 
     const verdict = internals.waitForVerdict({
       runId: "run-1",
-      takeoverSessionId: "session-takeover",
-      timeoutMs: 1_000
+      takeoverSessionId: "session-takeover"
     });
     await waitFor(() => Boolean(onEnvelope));
 

@@ -7,7 +7,12 @@ import type {
   CodexRuntimeResponse
 } from "@another-workbench/adapters";
 import type { AgentAdapterRuntimeConfig } from "@another-workbench/adapters";
-import type { Attachment, ContextUsage, EventType } from "@another-workbench/shared";
+import type {
+  Attachment,
+  CodexHookRunRpc,
+  ContextUsage,
+  EventType
+} from "@another-workbench/shared";
 import type { GetAuthStatusParams } from "./codex-app-server-generated/GetAuthStatusParams.js";
 import type { GetAuthStatusResponse } from "./codex-app-server-generated/GetAuthStatusResponse.js";
 import type { GitDiffToRemoteParams } from "./codex-app-server-generated/GitDiffToRemoteParams.js";
@@ -50,12 +55,21 @@ import {
   recordCodexTurnChangesFromFileUpdate,
   recordCodexTurnChangesFromUnifiedDiff
 } from "./engine-extensions/codex/turn-changes-store.js";
+import { recordCodexHookRun } from "./engine-extensions/codex/hook-activity-store.js";
 import {
+  codexRawCustomToolCallId,
   codexRawResponseToolCallId,
   isCodexContextCompactionThreadItem,
+  isCodexImageGenerationThreadItem,
+  isCodexImageViewThreadItem,
   isCodexReasoningThreadItem,
   isCodexWebSearchThreadItem,
   mapCodexResponseItemStatus,
+  summarizeCodexFunctionOutputBody,
+  summarizeCodexImageGenerationInput,
+  summarizeCodexImageGenerationOutput,
+  summarizeCodexImageViewInput,
+  summarizeCodexImageViewOutput,
   summarizeCodexRawReasoningItem,
   summarizeCodexReasoningThreadItem,
   summarizeCodexWebSearchAction
@@ -101,6 +115,8 @@ type PendingApproval = {
   requestedPermissions?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
 };
+
+const codexHookActivityExtensionKey = "hook-activity";
 
 type PendingApprovalResolution = {
   action: "approve" | "deny" | "defer";
@@ -627,6 +643,114 @@ const readPositiveInteger = (
   return value && value > 0 ? value : undefined;
 };
 
+const numberFromRuntimeInteger = (value: unknown): number | undefined => {
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return value;
+  }
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+  if (typeof value === "string" && /^-?\d+$/.test(value)) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : undefined;
+  }
+  return undefined;
+};
+
+const codexHookRunStatuses = new Set<CodexHookRunRpc["status"]>([
+  "running",
+  "completed",
+  "failed",
+  "blocked",
+  "stopped"
+]);
+
+const codexHookEntryKinds = new Set<CodexHookRunRpc["entries"][number]["kind"]>([
+  "warning",
+  "stop",
+  "feedback",
+  "context",
+  "error"
+]);
+
+const normalizeCodexHookRun = (value: unknown): CodexHookRunRpc | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const id = typeof value.id === "string" ? value.id : undefined;
+  const eventName = typeof value.eventName === "string" ? value.eventName : undefined;
+  const handlerType =
+    typeof value.handlerType === "string" ? value.handlerType : undefined;
+  const executionMode =
+    typeof value.executionMode === "string" ? value.executionMode : undefined;
+  const scope = typeof value.scope === "string" ? value.scope : undefined;
+  const sourcePath =
+    typeof value.sourcePath === "string" ? value.sourcePath : undefined;
+  const source = typeof value.source === "string" ? value.source : "unknown";
+  const status =
+    typeof value.status === "string" &&
+    codexHookRunStatuses.has(value.status as CodexHookRunRpc["status"])
+      ? (value.status as CodexHookRunRpc["status"])
+      : undefined;
+  const displayOrder = numberFromRuntimeInteger(value.displayOrder);
+  const startedAt = numberFromRuntimeInteger(value.startedAt);
+
+  if (
+    !id ||
+    !eventName ||
+    !handlerType ||
+    !executionMode ||
+    !scope ||
+    !sourcePath ||
+    !status ||
+    displayOrder === undefined ||
+    startedAt === undefined
+  ) {
+    return undefined;
+  }
+
+  const entries = Array.isArray(value.entries)
+    ? value.entries
+        .filter(isRecord)
+        .map((entry) => {
+          const kind =
+            typeof entry.kind === "string" &&
+            codexHookEntryKinds.has(
+              entry.kind as CodexHookRunRpc["entries"][number]["kind"]
+            )
+              ? (entry.kind as CodexHookRunRpc["entries"][number]["kind"])
+              : undefined;
+          return kind
+            ? {
+                kind,
+                text: typeof entry.text === "string" ? entry.text : ""
+              }
+            : undefined;
+        })
+        .filter((entry): entry is CodexHookRunRpc["entries"][number] =>
+          Boolean(entry)
+        )
+    : [];
+
+  return {
+    id,
+    eventName,
+    handlerType,
+    executionMode,
+    scope,
+    sourcePath,
+    source,
+    displayOrder,
+    status,
+    statusMessage:
+      typeof value.statusMessage === "string" ? value.statusMessage : null,
+    startedAt,
+    completedAt: numberFromRuntimeInteger(value.completedAt) ?? null,
+    durationMs: numberFromRuntimeInteger(value.durationMs) ?? null,
+    entries
+  };
+};
+
 const mapTokenUsageBreakdown = (
   value: unknown
 ):
@@ -688,6 +812,12 @@ export class CodexAppServerRuntimePort
   private readonly pendingRpcById = new Map<string, PendingRpc>();
   private readonly threadIdBySessionId = new Map<string, string>();
   private readonly sessionIdByThreadId = new Map<string, string>();
+  private readonly activeTurnIdByThreadId = new Map<string, string>();
+  private readonly hookTurnIdByThreadAndRun = new Map<string, string>();
+  private readonly rawCustomToolNameByTurnAndCall = new Map<string, string>();
+  private readonly startedCodexToolItemIds = new Set<string>();
+  private readonly warnedUnhandledItemLifecycle = new Set<string>();
+  private readonly warnedUnhandledRawResponseItems = new Set<string>();
   private readonly pendingApprovalsById = new Map<string, PendingApproval>();
   private readonly pendingApprovalResolutionsById = new Map<
     string,
@@ -786,6 +916,12 @@ export class CodexAppServerRuntimePort
     this.pendingApprovalResolutionsById.clear();
     this.threadIdBySessionId.clear();
     this.sessionIdByThreadId.clear();
+    this.activeTurnIdByThreadId.clear();
+    this.hookTurnIdByThreadAndRun.clear();
+    this.rawCustomToolNameByTurnAndCall.clear();
+    this.startedCodexToolItemIds.clear();
+    this.warnedUnhandledItemLifecycle.clear();
+    this.warnedUnhandledRawResponseItems.clear();
 
     const child = this.process;
     this.process = undefined;
@@ -1124,6 +1260,7 @@ export class CodexAppServerRuntimePort
     })) as TurnStartResponse;
 
     if (result?.turn?.id) {
+      this.setActiveTurnForThread(threadId, result.turn.id);
       this.emitEvent("turn.started", {
         sessionId,
         turnId: result.turn.id
@@ -1804,10 +1941,15 @@ export class CodexAppServerRuntimePort
         return;
       }
       case "turn/started": {
+        const threadId =
+          typeof params.threadId === "string" ? params.threadId : undefined;
         const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
         const turn = isRecord(params.turn) ? params.turn : undefined;
         if (!sessionId || !turn || typeof turn.id !== "string") {
           return;
+        }
+        if (threadId) {
+          this.setActiveTurnForThread(threadId, turn.id);
         }
         this.emitEvent("turn.started", {
           sessionId,
@@ -1816,10 +1958,15 @@ export class CodexAppServerRuntimePort
         return;
       }
       case "turn/completed": {
+        const threadId =
+          typeof params.threadId === "string" ? params.threadId : undefined;
         const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
         const turn = isRecord(params.turn) ? params.turn : undefined;
         if (!sessionId || !turn || typeof turn.id !== "string") {
           return;
+        }
+        if (threadId) {
+          this.clearActiveTurnForThread(threadId, turn.id);
         }
         this.emitEvent("turn.completed", {
           sessionId,
@@ -1849,6 +1996,43 @@ export class CodexAppServerRuntimePort
         if (record) {
           this.recordTurnChanges?.(record);
         }
+        return;
+      }
+      case "hook/started":
+      case "hook/completed": {
+        const threadId =
+          typeof params.threadId === "string" ? params.threadId : undefined;
+        const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
+        const run = normalizeCodexHookRun(params.run);
+        if (!sessionId || !run) {
+          return;
+        }
+        const turnId = this.resolveHookActivityTurnId({
+          threadId,
+          rawTurnId: params.turnId,
+          run
+        });
+        if (!turnId) {
+          return;
+        }
+        recordCodexHookRun({
+          sessionId,
+          turnId,
+          run
+        });
+        if (threadId) {
+          if (method === "hook/started") {
+            this.setHookTurnForThreadRun(threadId, run.id, turnId);
+          } else {
+            this.clearHookTurnForThreadRun(threadId, run.id);
+          }
+        }
+        this.emitEvent("engineExtension.updated", {
+          engineId: this.engineId,
+          extensionKey: codexHookActivityExtensionKey,
+          sessionId,
+          turnId
+        });
         return;
       }
       case "item/started":
@@ -2224,6 +2408,81 @@ export class CodexAppServerRuntimePort
       return;
     }
 
+    if (isCodexImageViewThreadItem(item)) {
+      const toolItemKey = this.codexToolItemKey(turnId, item.id);
+      if (method === "item/started") {
+        this.startedCodexToolItemIds.add(toolItemKey);
+        this.emitEvent("tool.started", {
+          sessionId,
+          turnId,
+          toolCallId: item.id,
+          toolName: "imageView",
+          inputSummary: summarizeCodexImageViewInput(item),
+          engineId: this.engineId
+        });
+        return;
+      }
+
+      if (!this.startedCodexToolItemIds.has(toolItemKey)) {
+        this.emitEvent("tool.started", {
+          sessionId,
+          turnId,
+          toolCallId: item.id,
+          toolName: "imageView",
+          inputSummary: summarizeCodexImageViewInput(item),
+          engineId: this.engineId
+        });
+      }
+      this.emitEvent("tool.completed", {
+        sessionId,
+        turnId,
+        toolCallId: item.id,
+        status: "completed",
+        outputSummary: summarizeCodexImageViewOutput(item),
+        engineId: this.engineId
+      });
+      this.startedCodexToolItemIds.delete(toolItemKey);
+      return;
+    }
+
+    if (isCodexImageGenerationThreadItem(item)) {
+      const inputSummary = summarizeCodexImageGenerationInput(item);
+      const toolItemKey = this.codexToolItemKey(turnId, item.id);
+      if (method === "item/started") {
+        this.startedCodexToolItemIds.add(toolItemKey);
+        this.emitEvent("tool.started", {
+          sessionId,
+          turnId,
+          toolCallId: item.id,
+          toolName: "imageGeneration",
+          inputSummary,
+          engineId: this.engineId
+        });
+        return;
+      }
+
+      if (!this.startedCodexToolItemIds.has(toolItemKey)) {
+        this.emitEvent("tool.started", {
+          sessionId,
+          turnId,
+          toolCallId: item.id,
+          toolName: "imageGeneration",
+          inputSummary,
+          engineId: this.engineId
+        });
+      }
+      this.emitEvent("tool.completed", {
+        sessionId,
+        turnId,
+        toolCallId: item.id,
+        status: mapCodexResponseItemStatus(item.status),
+        outputSummary: summarizeCodexImageGenerationOutput(item),
+        engineId: this.engineId
+      });
+      this.startedCodexToolItemIds.delete(toolItemKey);
+      return;
+    }
+
     if (isMcpToolCallThreadItem(item)) {
       if (method === "item/started") {
         this.emitEvent("tool.started", {
@@ -2315,7 +2574,10 @@ export class CodexAppServerRuntimePort
         outputSummary: summarizeCollabOutput(item),
         engineId: this.engineId
       });
+      return;
     }
+
+    this.warnUnhandledItemLifecycle(method, sessionId, turnId, item);
   }
 
   private handleRawResponseItemCompleted(
@@ -2384,11 +2646,101 @@ export class CodexAppServerRuntimePort
         status: mapCodexResponseItemStatus(item.status),
         engineId: this.engineId
       });
+      return;
     }
+
+    if (item.type === "custom_tool_call") {
+      const toolCallId = codexRawCustomToolCallId(turnId, item.call_id);
+      this.rawCustomToolNameByTurnAndCall.set(
+        this.rawCustomToolKey(turnId, item.call_id),
+        item.name
+      );
+      this.emitEvent("tool.started", {
+        sessionId,
+        turnId,
+        toolCallId,
+        toolName: item.name,
+        inputSummary: item.input.trim().length > 0 ? item.input : undefined,
+        engineId: this.engineId
+      });
+      return;
+    }
+
+    if (item.type === "custom_tool_call_output") {
+      const toolCallId = codexRawCustomToolCallId(turnId, item.call_id);
+      const rawCustomToolKey = this.rawCustomToolKey(turnId, item.call_id);
+      const toolName =
+        this.rawCustomToolNameByTurnAndCall.get(rawCustomToolKey) ??
+        optionalString(item.name);
+      if (!this.rawCustomToolNameByTurnAndCall.has(rawCustomToolKey) && toolName) {
+        this.emitEvent("tool.started", {
+          sessionId,
+          turnId,
+          toolCallId,
+          toolName,
+          engineId: this.engineId
+        });
+      }
+      this.emitEvent("tool.completed", {
+        sessionId,
+        turnId,
+        toolCallId,
+        status: mapCodexResponseItemStatus(undefined),
+        outputSummary: summarizeCodexFunctionOutputBody(item.output),
+        engineId: this.engineId
+      });
+      this.rawCustomToolNameByTurnAndCall.delete(rawCustomToolKey);
+      return;
+    }
+
+    this.warnUnhandledRawResponseItem(sessionId, turnId, item);
+  }
+
+  private warnUnhandledItemLifecycle(
+    method: "item/started" | "item/completed",
+    sessionId: string,
+    turnId: string,
+    item: ThreadItem
+  ): void {
+    const itemType = isRecord(item) && typeof item.type === "string" ? item.type : "unknown";
+    const key = `${method}:${itemType}`;
+    if (this.warnedUnhandledItemLifecycle.has(key)) {
+      return;
+    }
+    this.warnedUnhandledItemLifecycle.add(key);
+    console.warn("[another-workbench] Ignored unsupported Codex ThreadItem.", {
+      method,
+      sessionId,
+      turnId,
+      itemType,
+      itemId: optionalString((item as Record<string, unknown>).id)
+    });
+  }
+
+  private warnUnhandledRawResponseItem(
+    sessionId: string,
+    turnId: string,
+    item: ResponseItem
+  ): void {
+    const itemType = isRecord(item) && typeof item.type === "string" ? item.type : "unknown";
+    if (this.warnedUnhandledRawResponseItems.has(itemType)) {
+      return;
+    }
+    this.warnedUnhandledRawResponseItems.add(itemType);
+    console.warn("[another-workbench] Ignored unsupported Codex raw ResponseItem.", {
+      method: "rawResponseItem/completed",
+      sessionId,
+      turnId,
+      itemType
+    });
   }
 
   private processActivityKey(sessionId: string, turnId: string): string {
     return `${sessionId}:${turnId}`;
+  }
+
+  private codexToolItemKey(turnId: string, itemId: string): string {
+    return `${turnId}\u0000${itemId}`;
   }
 
   private getProcessActivitySummaryState(
@@ -2482,6 +2834,70 @@ export class CodexAppServerRuntimePort
       return undefined;
     }
     return this.sessionIdByThreadId.get(rawThreadId);
+  }
+
+  private setActiveTurnForThread(threadId: string, turnId: string): void {
+    this.activeTurnIdByThreadId.set(threadId, turnId);
+  }
+
+  private clearActiveTurnForThread(threadId: string, turnId: string): void {
+    if (this.activeTurnIdByThreadId.get(threadId) === turnId) {
+      this.activeTurnIdByThreadId.delete(threadId);
+    }
+  }
+
+  private hookTurnKey(threadId: string, runId: string): string {
+    return `${threadId}\u0000${runId}`;
+  }
+
+  private setHookTurnForThreadRun(
+    threadId: string,
+    runId: string,
+    turnId: string
+  ): void {
+    this.hookTurnIdByThreadAndRun.set(this.hookTurnKey(threadId, runId), turnId);
+  }
+
+  private clearHookTurnForThreadRun(threadId: string, runId: string): void {
+    this.hookTurnIdByThreadAndRun.delete(this.hookTurnKey(threadId, runId));
+  }
+
+  private rawCustomToolKey(turnId: string, callId: string): string {
+    return `${turnId}\u0000${callId}`;
+  }
+
+  private resolveHookActivityTurnId(input: {
+    threadId: string | undefined;
+    rawTurnId: unknown;
+    run: CodexHookRunRpc;
+  }): string | undefined {
+    if (typeof input.rawTurnId === "string" && input.rawTurnId.length > 0) {
+      return input.rawTurnId;
+    }
+    const existingTurnId = input.threadId
+      ? this.hookTurnIdByThreadAndRun.get(
+          this.hookTurnKey(input.threadId, input.run.id)
+        )
+      : undefined;
+    if (existingTurnId) {
+      return existingTurnId;
+    }
+    const activeTurnId = input.threadId
+      ? this.activeTurnIdByThreadId.get(input.threadId)
+      : undefined;
+    if (activeTurnId) {
+      return activeTurnId;
+    }
+    console.warn(
+      "[another-workbench] Ignoring Codex hook activity without an active turn.",
+      {
+        threadId: input.threadId,
+        hookRunId: input.run.id,
+        eventName: input.run.eventName,
+        scope: input.run.scope
+      }
+    );
+    return undefined;
   }
 
   private async rpc(method: string, params?: Record<string, unknown>): Promise<unknown> {

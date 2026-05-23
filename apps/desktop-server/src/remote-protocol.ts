@@ -708,6 +708,20 @@ export const createRemoteRpcHandler = (
               ok: true,
               result: await shellService.runFileAction(request.params)
             });
+          case "codex.hookActivity.get":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "CODEX_HOOK_ACTIVITY_UNAVAILABLE",
+                "Codex hook activity APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: await shellService.getCodexHookActivity(request.params)
+            });
           case "codex.turnChanges.get":
             if (!shellService) {
               return toErrorResponse(

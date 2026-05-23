@@ -121,4 +121,61 @@ describe("ProcessActivityView", () => {
     expect(markup).not.toContain("(no output yet)");
     expect((markup.match(/query: mini PC low power CPUs/g) ?? []).length).toBe(1);
   });
+
+  it("renders image activity output as an image preview", () => {
+    const markup = renderToStaticMarkup(
+      <ProcessActivityView
+        toolCalls={[
+          {
+            toolCallId: "image-1",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            toolName: "imageGeneration",
+            status: "completed",
+            inputSummary: "A quiet dashboard screenshot",
+            outputSummary:
+              "![Generated image](file:///D:/workspace/generated.png)\nprompt: A quiet dashboard screenshot",
+            startedAt: "2026-04-18T00:00:01.000Z",
+            completedAt: "2026-04-18T00:00:02.000Z"
+          }
+        ]}
+        terminalStreams={[]}
+        onPreviewImage={() => undefined}
+      />
+    );
+
+    expect(markup).toContain("Image generation A quiet dashboard screenshot");
+    expect(markup).toContain("awb-inline-image-button");
+    expect(markup).toContain(
+      'src="file:///D:/workspace/generated.png"'
+    );
+    expect(markup).toContain("prompt: A quiet dashboard screenshot");
+    expect(markup).not.toContain("![Generated image]");
+  });
+
+  it("keeps right parentheses inside process image URLs", () => {
+    const markup = renderToStaticMarkup(
+      <ProcessActivityView
+        toolCalls={[
+          {
+            toolCallId: "image-1",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            toolName: "imageView",
+            status: "completed",
+            inputSummary: "I:/images/image (1).png",
+            outputSummary:
+              "![Viewed image](file:///I:/images/image%20(1).png)\npath: I:/images/image (1).png",
+            startedAt: "2026-04-18T00:00:01.000Z",
+            completedAt: "2026-04-18T00:00:02.000Z"
+          }
+        ]}
+        terminalStreams={[]}
+        onPreviewImage={() => undefined}
+      />
+    );
+
+    expect(markup).toContain('src="file:///I:/images/image%20(1).png"');
+    expect(markup).toContain("path: I:/images/image (1).png");
+  });
 });

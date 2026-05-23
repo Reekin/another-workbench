@@ -28,6 +28,12 @@ const appRoot = resolve(currentDir, "..");
 const bundledPreloadPath = join(currentDir, "preload.cjs");
 const bundledRendererIndexPath = join(appRoot, "dist-web", "index.html");
 const defaultDevServerUrl = "http://127.0.0.1:4173/";
+const iconFileNames =
+  process.platform === "win32"
+    ? ["icon.ico", "icon.png"]
+    : process.platform === "darwin"
+      ? ["icon.icns", "icon.png"]
+      : ["icon.png"];
 
 type WindowRecoveryState = {
   isQuitting: boolean;
@@ -168,6 +174,19 @@ const readRendererHealthScript = `
   };
 })()
 `;
+
+const resolveAppIconPath = (): string | undefined => {
+  const iconRoots = [join(appRoot, "dist-web", "icons"), join(appRoot, "public", "icons")];
+  for (const root of iconRoots) {
+    for (const fileName of iconFileNames) {
+      const iconPath = join(root, fileName);
+      if (existsSync(iconPath)) {
+        return iconPath;
+      }
+    }
+  }
+  return undefined;
+};
 
 const checkRendererHealth = (
   window: BrowserWindow,
@@ -389,6 +408,7 @@ const installAppDiagnostics = (logger: ElectronDiagnosticsLogger): void => {
 };
 
 const createMainWindow = (): BrowserWindow => {
+  const iconPath = resolveAppIconPath();
   const window = new BrowserWindow({
     width: 1440,
     height: 960,
@@ -396,6 +416,7 @@ const createMainWindow = (): BrowserWindow => {
     minHeight: 720,
     backgroundColor: "#f4f6fb",
     show: false,
+    ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -465,6 +486,11 @@ const loadRendererTarget = async (window: BrowserWindow): Promise<void> => {
 const boot = async (): Promise<void> => {
   installAppDiagnostics(diagnostics);
   await app.whenReady();
+  app.setAppUserModelId("com.another-workbench.desktop");
+  const appIconPath = resolveAppIconPath();
+  if (process.platform === "darwin" && appIconPath) {
+    app.dock?.setIcon(appIconPath);
+  }
 
   if (!existsSync(bundledPreloadPath)) {
     throw new Error(`Missing bundled preload asset: ${bundledPreloadPath}`);

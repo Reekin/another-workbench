@@ -18,6 +18,7 @@ import type {
   EngineDefinitionRpc,
   EngineSurfaceRpc,
   ExtractedFileReference,
+  RuntimeInteraction,
   SchedulerTaskDocumentRpc,
   SchedulerTaskScheduleRpc,
   Turn,
@@ -105,6 +106,16 @@ type TranscriptPaneProps = {
     sessionId: string;
     requestId: string;
     action: "approve" | "deny" | "defer";
+    decision?: string | Record<string, unknown>;
+    payload?: Record<string, unknown>;
+  }) => Promise<void>;
+  onRespondInteraction?: (input: {
+    sessionId: string;
+    requestId: string;
+    action: "accept" | "decline" | "cancel" | "submit" | "defer";
+    response?: Record<string, unknown>;
+    content?: unknown;
+    answers?: Record<string, string[]>;
   }) => Promise<void>;
 };
 
@@ -462,7 +473,8 @@ const TranscriptPane = memo(
     onToggleProcess,
     onActivateResourceLink,
     onPreviewImage,
-    onRespondApproval
+    onRespondApproval,
+    onRespondInteraction
   }: TranscriptPaneProps): ReactElement => (
     <section className="awb-transcript" ref={transcriptRef}>
       <div className="awb-transcript__content" ref={transcriptContentRef}>
@@ -588,6 +600,7 @@ const TranscriptPane = memo(
                       onActivateResourceLink={onActivateResourceLink}
                       onPreviewImage={onPreviewImage}
                       onRespondApproval={onRespondApproval}
+                      onRespondInteraction={onRespondInteraction}
                     />
                   )}
                 </div>
@@ -601,6 +614,7 @@ const TranscriptPane = memo(
                     onActivateResourceLink={onActivateResourceLink}
                     onPreviewImage={onPreviewImage}
                     onRespondApproval={onRespondApproval}
+                    onRespondInteraction={onRespondInteraction}
                   />
                 </div>
               )}
@@ -2040,6 +2054,16 @@ export const ChatShellApp = ({
         : [],
     [activeSessionId, state.entities.approvalRequests]
   );
+  const activeSessionInteractions = useMemo(
+    () =>
+      activeSessionId
+        ? Object.values(state.entities.runtimeInteractions).filter(
+            (interaction): interaction is RuntimeInteraction =>
+              interaction.sessionId === activeSessionId && interaction.status === "pending"
+          )
+        : [],
+    [activeSessionId, state.entities.runtimeInteractions]
+  );
 
   const fileBrowser = useFileBrowserController({
     transport,
@@ -2241,11 +2265,27 @@ export const ChatShellApp = ({
     sessionId: string;
     requestId: string;
     action: "approve" | "deny" | "defer";
+    decision?: string | Record<string, unknown>;
+    payload?: Record<string, unknown>;
   }): Promise<void> => {
     if (!transport) {
       return;
     }
     await transport.approval.respond(input);
+  }, [transport]);
+
+  const onRespondInteraction = useCallback(async (input: {
+    sessionId: string;
+    requestId: string;
+    action: "accept" | "decline" | "cancel" | "submit" | "defer";
+    response?: Record<string, unknown>;
+    content?: unknown;
+    answers?: Record<string, string[]>;
+  }): Promise<void> => {
+    if (!transport) {
+      return;
+    }
+    await transport.interaction.respond(input);
   }, [transport]);
 
   const onToggleProcess = useCallback((turnId: string, defaultExpanded: boolean): void => {
@@ -2789,6 +2829,7 @@ export const ChatShellApp = ({
               onActivateResourceLink={onActivateResourceLink}
               onPreviewImage={onPreviewImage}
               onRespondApproval={transport ? onRespondApproval : undefined}
+              onRespondInteraction={transport ? onRespondInteraction : undefined}
             />
           </div>
 
@@ -2802,6 +2843,7 @@ export const ChatShellApp = ({
             activeWorkspaceRootPath={activeWorkspace?.rootPath}
             turns={turns}
             approvals={activeSessionApprovals}
+            interactions={activeSessionInteractions}
             takeoverPresets={takeoverPresets}
             takeoverState={takeoverState}
             isTakeoverMenuOpen={isTakeoverMenuOpen}
@@ -2816,6 +2858,7 @@ export const ChatShellApp = ({
             onSelectTakeoverPreset={onSelectTakeoverPreset}
             onOpenTakeoverContextEditor={onOpenTakeoverContextEditor}
             onRespondApproval={transport ? onRespondApproval : undefined}
+            onRespondInteraction={transport ? onRespondInteraction : undefined}
           />
         </main>
 

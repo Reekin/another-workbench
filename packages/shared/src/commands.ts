@@ -22,6 +22,7 @@ export const commandTypes = [
   "steerTurn",
   "interruptTurn",
   "respondApproval",
+  "respondInteraction",
   "disposeSession"
 ] as const;
 
@@ -103,7 +104,21 @@ const zRespondApprovalCommand = z.object({
   sessionId: zSessionId,
   requestId: zRequestId,
   action: z.enum(["approve", "deny", "defer"]),
+  decision: z.union([z.string().min(1), zJsonRecord]).optional(),
+  payload: zJsonRecord.optional(),
   note: z.string().optional(),
+  cwd: z.string().min(1).optional()
+});
+
+const zRespondInteractionCommand = z.object({
+  type: z.literal("respondInteraction"),
+  sessionId: zSessionId,
+  requestId: zRequestId,
+  action: z.enum(["accept", "decline", "cancel", "submit", "defer"]),
+  response: zJsonRecord.optional(),
+  content: z.unknown().optional(),
+  answers: z.record(z.array(z.string())).optional(),
+  meta: zJsonRecord.optional(),
   cwd: z.string().min(1).optional()
 });
 
@@ -123,6 +138,7 @@ export const zCommandSchema = z.discriminatedUnion("type", [
   zSteerTurnCommand,
   zInterruptTurnCommand,
   zRespondApprovalCommand,
+  zRespondInteractionCommand,
   zDisposeSessionCommand
 ]);
 

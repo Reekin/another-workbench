@@ -13,6 +13,7 @@ import {
   upsertConversation,
   upsertMessageBlock,
   upsertParticipant,
+  upsertRuntimeInteraction,
   upsertSession,
   upsertSessionRelation,
   upsertTerminalStream,
@@ -52,7 +53,8 @@ type TurnCollectionKey =
   | "messageIds"
   | "toolCallIds"
   | "terminalIds"
-  | "approvalRequestIds";
+  | "approvalRequestIds"
+  | "interactionRequestIds";
 
 const withEventType = (
   state: RendererStoreState,
@@ -127,7 +129,8 @@ const ensureTurnExists = (
     messageIds: [],
     toolCallIds: [],
     terminalIds: [],
-    approvalRequestIds: []
+    approvalRequestIds: [],
+    interactionRequestIds: []
   });
 };
 
@@ -141,12 +144,13 @@ const appendTurnCollection = (
 ): RendererStoreState => {
   const ensured = ensureTurnExists(state, turnId, sessionId, timestamp);
   const turn = ensured.entities.turns[turnId];
-  if (!turn || turn[key].includes(valueId)) {
+  const currentIds = turn?.[key] ?? [];
+  if (!turn || currentIds.includes(valueId)) {
     return ensured;
   }
   return upsertTurn(ensured, {
     ...turn,
-    [key]: [...turn[key], valueId]
+    [key]: [...currentIds, valueId]
   });
 };
 
@@ -217,6 +221,9 @@ const hydrateFromSnapshot = (
   for (const approval of snapshot.approvalRequests) {
     state = upsertApprovalRequest(state, approval);
   }
+  for (const interaction of snapshot.runtimeInteractions ?? []) {
+    state = upsertRuntimeInteraction(state, interaction);
+  }
   for (const participant of snapshot.participants) {
     state = upsertParticipant(state, participant);
   }
@@ -262,6 +269,9 @@ const mergeSnapshotIntoState = (
   }
   for (const approval of snapshot.approvalRequests) {
     state = upsertApprovalRequest(state, approval);
+  }
+  for (const interaction of snapshot.runtimeInteractions ?? []) {
+    state = upsertRuntimeInteraction(state, interaction);
   }
   for (const participant of snapshot.participants) {
     state = upsertParticipant(state, participant);
@@ -452,6 +462,11 @@ const disposeSessionState = (
       ([, approval]) => approval.sessionId !== sessionId
     )
   );
+  const nextRuntimeInteractions = Object.fromEntries(
+    Object.entries(state.entities.runtimeInteractions).filter(
+      ([, interaction]) => interaction.sessionId !== sessionId
+    )
+  );
   const nextSessionRelations = Object.fromEntries(
     Object.entries(state.entities.sessionRelations).filter(
       ([, relation]) =>
@@ -500,6 +515,7 @@ const disposeSessionState = (
     toolCalls: nextToolCalls,
     terminalStreams: nextTerminalStreams,
     approvalRequests: nextApprovalRequests,
+    runtimeInteractions: nextRuntimeInteractions,
     participants: nextParticipants,
     sessionRelations: nextSessionRelations
   };
@@ -641,7 +657,8 @@ const applyRuntimeEvent = (
           messageIds: [],
           toolCallIds: [],
           terminalIds: [],
-          approvalRequestIds: []
+          approvalRequestIds: [],
+          interactionRequestIds: []
         }
       );
       return setSessionLastTurn(withTurn, event.sessionId, event.turnId, timestamp);
@@ -665,7 +682,8 @@ const applyRuntimeEvent = (
           messageIds: existing?.messageIds ?? [],
           toolCallIds: existing?.toolCallIds ?? [],
           terminalIds: existing?.terminalIds ?? [],
-          approvalRequestIds: existing?.approvalRequestIds ?? []
+          approvalRequestIds: existing?.approvalRequestIds ?? [],
+          interactionRequestIds: existing?.interactionRequestIds ?? []
         }
       );
       return setSessionLastTurn(withTurn, event.sessionId, event.turnId, timestamp);
@@ -959,6 +977,8 @@ const applyRuntimeEvent = (
           status: "pending",
           title: event.title,
           details: event.details,
+          availableActions: event.availableActions,
+          metadata: event.metadata,
           actor: {
             participantId: event.participantId,
             engineId: event.engineId
@@ -1008,6 +1028,79 @@ const applyRuntimeEvent = (
         event.requestId,
         timestamp
       );
+    }
+    case "interaction.requested": {
+      const withInteraction = upsertRuntimeInteraction(
+        withEventType(state, event),
+        {
+          requestId: event.requestId,
+          sessionId: event.sessionId,
+          turnId: event.turnId,
+          interactionKind: event.interactionKind,
+          status: "pending",
+          title: event.title,
+          details: event.details,
+          payload: event.payload,
+          actor: {
+            participantId: event.participantId,
+            engineId: event.engineId
+          },
+          requestedAt: timestamp
+        }
+      );
+      return event.turnId
+        ? appendTurnCollection(
+            withInteraction,
+            event.turnId,
+            event.sessionId,
+            "interactionRequestIds",
+            event.requestId,
+            timestamp
+          )
+        : withInteraction;
+    }
+    case "interaction.resolved": {
+      const current = state.entities.runtimeInteractions[event.requestId];
+      const status =
+        event.action === "accept"
+          ? "accepted"
+          : event.action === "submit"
+            ? "submitted"
+            : event.action === "decline"
+              ? "declined"
+              : event.action === "cancel"
+                ? "cancelled"
+                : "deferred";
+      const withInteraction = upsertRuntimeInteraction(
+        withEventType(state, event),
+        {
+          requestId: event.requestId,
+          sessionId: event.sessionId,
+          turnId: event.turnId,
+          interactionKind: current?.interactionKind ?? "tool_user_input",
+          status,
+          title: current?.title ?? "Input requested",
+          details: current?.details,
+          payload: current?.payload ?? {},
+          response: event.response,
+          actor: current?.actor ?? {
+            participantId: event.participantId,
+            engineId: event.engineId
+          },
+          requestedAt: current?.requestedAt ?? timestamp,
+          resolvedAt: timestamp
+        }
+      );
+      return event.turnId
+        ? appendTurnCollection(
+            withInteraction,
+            event.turnId,
+            event.sessionId,
+            "interactionRequestIds",
+            event.requestId,
+            timestamp
+          )
+        : withInteraction;
     }
     case "participant.updated": {
       const withParticipant = upsertParticipant(
@@ -1088,7 +1181,8 @@ const applyRuntimeEvent = (
         messageIds: turn?.messageIds ?? [messageId],
         toolCallIds: turn?.toolCallIds ?? [],
         terminalIds: turn?.terminalIds ?? [],
-        approvalRequestIds: turn?.approvalRequestIds ?? []
+        approvalRequestIds: turn?.approvalRequestIds ?? [],
+        interactionRequestIds: turn?.interactionRequestIds ?? []
       });
       const existingSession = withTurn.entities.sessions[event.sessionId];
       if (!existingSession) {

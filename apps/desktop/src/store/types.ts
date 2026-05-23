@@ -6,6 +6,7 @@ import type {
   DomainSnapshot,
   EventEnvelope,
   MessageBlock,
+  RuntimeInteraction,
   RuntimeEvent,
   SessionRelation,
   TerminalStream,
@@ -24,6 +25,7 @@ export type RendererEntities = {
   toolCalls: IdMap<ToolCall>;
   terminalStreams: IdMap<TerminalStream>;
   approvalRequests: IdMap<ApprovalRequest>;
+  runtimeInteractions: IdMap<RuntimeInteraction>;
   participants: IdMap<AgentParticipant>;
   sessionRelations: IdMap<SessionRelation>;
 };

@@ -9,6 +9,7 @@ export const acpRuntimeRequestMethods = [
   "turn.steer",
   "turn.interrupt",
   "approval.respond",
+  "interaction.respond",
   "session.dispose"
 ] as const;
 
@@ -34,6 +35,8 @@ export const acpRuntimeEventNames = [
   "terminal.completed",
   "approval.requested",
   "approval.resolved",
+  "interaction.requested",
+  "interaction.resolved",
   "participant.updated",
   "runtime.error"
 ] as const;

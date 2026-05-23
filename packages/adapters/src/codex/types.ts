@@ -9,6 +9,7 @@ export const codexRuntimeRequestMethods = [
   "turn/steer",
   "turn/interrupt",
   "approval/respond",
+  "interaction/respond",
   "session/dispose"
 ] as const;
 
@@ -34,6 +35,8 @@ export const codexRuntimeEventMethods = [
   "terminal.completed",
   "approval.requested",
   "approval.resolved",
+  "interaction.requested",
+  "interaction.resolved",
   "conversationGraph.updated",
   "participant.updated",
   "runtime.error"

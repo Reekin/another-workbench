@@ -5,6 +5,7 @@ import type {
   Conversation,
   DomainSnapshot,
   MessageBlock,
+  RuntimeInteraction,
   SessionRelation,
   TerminalStream,
   ToolCall,
@@ -24,6 +25,7 @@ export type DomainIndexes = {
   toolCallById: Map<ToolCall["toolCallId"], ToolCall>;
   terminalById: Map<TerminalStream["terminalId"], TerminalStream>;
   approvalById: Map<ApprovalRequest["requestId"], ApprovalRequest>;
+  runtimeInteractionById: Map<RuntimeInteraction["requestId"], RuntimeInteraction>;
   participantById: Map<AgentParticipant["participantId"], AgentParticipant>;
   parentSessionIdByChild: Map<ChatSession["sessionId"], ChatSession["sessionId"]>;
   childSessionIdsByParent: Map<ChatSession["sessionId"], ChatSession["sessionId"][]>;
@@ -51,6 +53,12 @@ export const buildDomainIndexes = (snapshot: DomainSnapshot): DomainIndexes => {
   );
   const approvalById = new Map(
     snapshot.approvalRequests.map((approval) => [approval.requestId, approval])
+  );
+  const runtimeInteractionById = new Map(
+    (snapshot.runtimeInteractions ?? []).map((interaction) => [
+      interaction.requestId,
+      interaction
+    ])
   );
   const participantById = new Map(
     snapshot.participants.map((participant) => [
@@ -95,6 +103,7 @@ export const buildDomainIndexes = (snapshot: DomainSnapshot): DomainIndexes => {
     toolCallById,
     terminalById,
     approvalById,
+    runtimeInteractionById,
     participantById,
     parentSessionIdByChild,
     childSessionIdsByParent
@@ -121,4 +130,3 @@ export const sortSessionRelationsByCreatedAt = (
 
 export const parseSnapshot = (value: unknown): DomainSnapshot =>
   parseDomainSnapshot(value);
-

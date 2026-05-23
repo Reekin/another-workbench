@@ -224,6 +224,7 @@ export class RuntimeOrchestrator {
       case "interruptTurn":
         return this.forwardSessionCommand(envelope.command.sessionId, envelope);
       case "respondApproval":
+      case "respondInteraction":
         return this.forwardSessionCommand(envelope.command.sessionId, envelope);
       default: {
         const exhaustive: never = envelope.command;

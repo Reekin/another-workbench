@@ -39,7 +39,8 @@ export const zMessageBlockKind = z.enum([
   "plain_text",
   "tool_ref",
   "terminal_ref",
-  "approval_ref"
+  "approval_ref",
+  "interaction_ref"
 ]);
 
 export const zToolCallStatus = z.enum(["running", "completed", "failed", "cancelled"]);
@@ -49,6 +50,20 @@ export const zTerminalStatus = z.enum(["running", "completed", "failed", "cancel
 export const zApprovalStatus = z.enum(["pending", "approved", "denied", "deferred"]);
 
 export const zApprovalKind = z.enum(["command", "file_change", "tool", "custom"]);
+
+export const zRuntimeInteractionStatus = z.enum([
+  "pending",
+  "accepted",
+  "declined",
+  "cancelled",
+  "submitted",
+  "deferred"
+]);
+
+export const zRuntimeInteractionKind = z.enum([
+  "mcp_elicitation",
+  "tool_user_input"
+]);
 
 export const zParticipantRole = z.enum(["primary", "secondary", "observer"]);
 
@@ -109,7 +124,8 @@ export const zTurnSchema = z.object({
   messageIds: z.array(zMessageId).default([]),
   toolCallIds: z.array(zToolCallId).default([]),
   terminalIds: z.array(zTerminalId).default([]),
-  approvalRequestIds: z.array(zRequestId).default([])
+  approvalRequestIds: z.array(zRequestId).default([]),
+  interactionRequestIds: z.array(zRequestId).default([]).optional()
 });
 
 const zMessageBlockActorRef = zActorRef.optional();
@@ -172,7 +188,26 @@ export const zApprovalRequestSchema = z.object({
   title: z.string().min(1),
   details: z.string().optional(),
   note: z.string().optional(),
+  availableActions: z.array(z.string().min(1)).default([]).optional(),
+  metadata: zJsonRecord.optional(),
   actor: zApprovalActorRef,
+  requestedAt: zIsoDateTime,
+  resolvedAt: zIsoDateTime.optional()
+});
+
+const zRuntimeInteractionActorRef = zActorRef.optional();
+
+export const zRuntimeInteractionSchema = z.object({
+  requestId: zRequestId,
+  sessionId: zSessionId,
+  turnId: zTurnId.optional(),
+  interactionKind: zRuntimeInteractionKind,
+  status: zRuntimeInteractionStatus,
+  title: z.string().min(1),
+  details: z.string().optional(),
+  payload: zJsonRecord.default({}),
+  response: zJsonRecord.optional(),
+  actor: zRuntimeInteractionActorRef,
   requestedAt: zIsoDateTime,
   resolvedAt: zIsoDateTime.optional()
 });
@@ -205,6 +240,7 @@ export const zDomainSnapshotSchema = z.object({
   toolCalls: z.array(zToolCallSchema).default([]),
   terminalStreams: z.array(zTerminalStreamSchema).default([]),
   approvalRequests: z.array(zApprovalRequestSchema).default([]),
+  runtimeInteractions: z.array(zRuntimeInteractionSchema).optional(),
   participants: z.array(zAgentParticipantSchema).default([]),
   sessionRelations: z.array(zSessionRelationSchema).default([])
 });
@@ -218,6 +254,8 @@ export type ToolCallStatus = z.infer<typeof zToolCallStatus>;
 export type TerminalStatus = z.infer<typeof zTerminalStatus>;
 export type ApprovalStatus = z.infer<typeof zApprovalStatus>;
 export type ApprovalKind = z.infer<typeof zApprovalKind>;
+export type RuntimeInteractionStatus = z.infer<typeof zRuntimeInteractionStatus>;
+export type RuntimeInteractionKind = z.infer<typeof zRuntimeInteractionKind>;
 export type ParticipantRole = z.infer<typeof zParticipantRole>;
 export type SessionRelationType = z.infer<typeof zSessionRelationType>;
 export type ContextUsage = z.infer<typeof zContextUsageSchema>;
@@ -229,6 +267,7 @@ export type MessageBlock = z.infer<typeof zMessageBlockSchema>;
 export type ToolCall = z.infer<typeof zToolCallSchema>;
 export type TerminalStream = z.infer<typeof zTerminalStreamSchema>;
 export type ApprovalRequest = z.infer<typeof zApprovalRequestSchema>;
+export type RuntimeInteraction = z.infer<typeof zRuntimeInteractionSchema>;
 export type AgentParticipant = z.infer<typeof zAgentParticipantSchema>;
 export type SessionRelation = z.infer<typeof zSessionRelationSchema>;
 export type DomainSnapshot = z.infer<typeof zDomainSnapshotSchema>;
@@ -246,6 +285,8 @@ export const parseTerminalStream = (value: unknown): TerminalStream =>
   zTerminalStreamSchema.parse(value);
 export const parseApprovalRequest = (value: unknown): ApprovalRequest =>
   zApprovalRequestSchema.parse(value);
+export const parseRuntimeInteraction = (value: unknown): RuntimeInteraction =>
+  zRuntimeInteractionSchema.parse(value);
 export const parseAgentParticipant = (value: unknown): AgentParticipant =>
   zAgentParticipantSchema.parse(value);
 export const parseSessionRelation = (value: unknown): SessionRelation =>

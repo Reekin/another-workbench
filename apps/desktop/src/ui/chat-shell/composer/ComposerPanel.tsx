@@ -10,6 +10,7 @@ import type {
 import type {
   ApprovalRequest,
   ContextUsage,
+  RuntimeInteraction,
   TakeoverPresetSummaryRpc,
   TakeoverSessionStateRpc
 } from "@another-workbench/shared";
@@ -19,6 +20,10 @@ import {
   ApprovalFlowView,
   type ApprovalResponseInput
 } from "../ApprovalFlowView.js";
+import {
+  InteractionFlowView,
+  type InteractionResponseInput
+} from "../InteractionFlowView.js";
 import { ComposerQueue } from "./ComposerQueue.js";
 import { ComposerStatusBar } from "./ComposerStatusBar.js";
 import { ComposerSuggestions } from "./ComposerSuggestions.js";
@@ -85,6 +90,7 @@ export const ComposerPanel = ({
   status,
   statusNotice,
   pendingApprovals = [],
+  pendingInteractions = [],
   contextUsage,
   takeoverPresets = [],
   takeoverState,
@@ -121,7 +127,8 @@ export const ComposerPanel = ({
   onDeleteQueuedMessage,
   onSendQueuedMessageNow,
   onSteerQueuedMessageNow,
-  onRespondApproval
+  onRespondApproval,
+  onRespondInteraction
 }: {
   isDropTarget: boolean;
   fileInputRef: RefObject<HTMLInputElement | null>;
@@ -134,6 +141,7 @@ export const ComposerPanel = ({
   status: ComposerStatusModel;
   statusNotice?: ComposerStatusNotice;
   pendingApprovals?: ApprovalRequest[];
+  pendingInteractions?: RuntimeInteraction[];
   contextUsage?: ContextUsage;
   takeoverPresets?: TakeoverPresetSummaryRpc[];
   takeoverState?: TakeoverSessionStateRpc;
@@ -173,6 +181,7 @@ export const ComposerPanel = ({
   onSendQueuedMessageNow: (messageId: string) => Promise<void>;
   onSteerQueuedMessageNow: (messageId: string) => Promise<void>;
   onRespondApproval?: (input: ApprovalResponseInput) => Promise<void>;
+  onRespondInteraction?: (input: InteractionResponseInput) => Promise<void>;
 }): ReactElement => {
   const activeTakeoverPresetId =
     takeoverState?.presetId ?? takeoverState?.manualPresetId;
@@ -283,6 +292,14 @@ export const ComposerPanel = ({
         <ApprovalFlowView
           approvals={pendingApprovals}
           onRespond={onRespondApproval}
+        />
+      </section>
+    ) : null}
+    {pendingInteractions.length > 0 ? (
+      <section className="awb-composer-approvals" aria-label="Pending interactions">
+        <InteractionFlowView
+          interactions={pendingInteractions}
+          onRespond={onRespondInteraction}
         />
       </section>
     ) : null}

@@ -1,5 +1,6 @@
 export * from "./ChatShellApp.js";
 export * from "./ApprovalFlowView.js";
+export * from "./InteractionFlowView.js";
 export * from "./MessageMarkdownView.js";
 export * from "./ParticipantIdentityBadge.js";
 export * from "./ProcessActivityView.js";

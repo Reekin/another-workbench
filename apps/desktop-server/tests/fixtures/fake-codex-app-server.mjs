@@ -5,8 +5,10 @@ let nextThreadNumber = 1;
 let nextTurnNumber = 1;
 let nextApprovalRequestId = 0;
 let nextDynamicToolRequestId = 1000;
+let nextInteractionRequestId = 2000;
 const pendingApprovalByRequestId = new Map();
 const pendingDynamicToolByRequestId = new Map();
+const pendingInteractionByRequestId = new Map();
 let lastThreadStartParams = null;
 const threadStartParamsByThreadId = new Map();
 
@@ -249,6 +251,138 @@ const emitCollabPath = ({ threadId, turnId }) => {
     params: {
       threadId,
       status: { type: "idle" }
+    }
+  });
+  send({
+    method: "turn/completed",
+    params: {
+      threadId,
+      turn: {
+        id: turnId,
+        status: "completed"
+      }
+    }
+  });
+};
+
+const emitToolUserInputRequest = ({ threadId, turnId }) => {
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "active" }
+    }
+  });
+  send({
+    method: "turn/started",
+    params: {
+      threadId,
+      turn: { id: turnId }
+    }
+  });
+  const requestId = nextInteractionRequestId++;
+  pendingInteractionByRequestId.set(requestId, { threadId, turnId });
+  send({
+    id: requestId,
+    method: "item/tool/requestUserInput",
+    params: {
+      threadId,
+      turnId,
+      itemId: `tool-${turnId}`,
+      questions: [
+        {
+          id: "confirm",
+          question: "Confirm value"
+        }
+      ]
+    }
+  });
+};
+
+const emitMcpElicitationRequest = ({ threadId }) => {
+  const requestId = nextInteractionRequestId++;
+  pendingInteractionByRequestId.set(requestId, { threadId });
+  send({
+    id: requestId,
+    method: "mcpServer/elicitation/request",
+    params: {
+      threadId,
+      turnId: null,
+      serverName: "browser",
+      mode: "form",
+      message: "Authorize out-of-band MCP prompt",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          confirmed: {
+            type: "boolean"
+          }
+        }
+      },
+      _meta: {
+        codex_approval_kind: "mcp_tool_call"
+      }
+    }
+  });
+};
+
+const emitMcpToolCallPath = ({ threadId, turnId }) => {
+  const item = {
+    type: "mcpToolCall",
+    id: `mcp-${turnId}`,
+    server: "browser",
+    tool: "open",
+    status: "completed",
+    arguments: { url: "https://example.com" },
+    result: {
+      content: [
+        {
+          type: "text",
+          text: "opened"
+        }
+      ],
+      structuredContent: null,
+      _meta: {
+        trace: "ok"
+      }
+    },
+    error: null,
+    durationMs: 5
+  };
+  send({
+    method: "turn/started",
+    params: {
+      threadId,
+      turn: { id: turnId }
+    }
+  });
+  send({
+    method: "item/started",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        ...item,
+        status: "inProgress",
+        result: null
+      }
+    }
+  });
+  send({
+    method: "item/mcpToolCall/progress",
+    params: {
+      threadId,
+      turnId,
+      itemId: item.id,
+      message: "opening page"
+    }
+  });
+  send({
+    method: "item/completed",
+    params: {
+      threadId,
+      turnId,
+      item
     }
   });
   send({
@@ -940,6 +1074,92 @@ const handleRequest = (payload) => {
         });
 
         queueMicrotask(() => {
+          if (prompt.includes("permissions-approval")) {
+            send({
+              method: "thread/status/changed",
+              params: {
+                threadId,
+                status: { type: "active" }
+              }
+            });
+            send({
+              method: "turn/started",
+              params: {
+                threadId,
+                turn: { id: turnId }
+              }
+            });
+            const requestId = nextApprovalRequestId++;
+            pendingApprovalByRequestId.set(requestId, { threadId, turnId });
+            send({
+              id: requestId,
+              method: "item/permissions/requestApproval",
+              params: {
+                threadId,
+                turnId,
+                itemId: `perm-${turnId}`,
+                cwd: "D:/workspace",
+                permissions: {
+                  network: {
+                    domains: ["example.com"]
+                  },
+                  fileSystem: {
+                    entries: [
+                      {
+                        path: "D:/workspace",
+                        access: "read"
+                      }
+                    ]
+                  }
+                }
+              }
+            });
+            return;
+          }
+
+          if (prompt.includes("object-approval")) {
+            send({
+              method: "thread/status/changed",
+              params: {
+                threadId,
+                status: { type: "active" }
+              }
+            });
+            send({
+              method: "turn/started",
+              params: {
+                threadId,
+                turn: { id: turnId }
+              }
+            });
+            const requestId = nextApprovalRequestId++;
+            pendingApprovalByRequestId.set(requestId, { threadId, turnId });
+            send({
+              id: requestId,
+              method: "item/commandExecution/requestApproval",
+              params: {
+                threadId,
+                turnId,
+                itemId: `cmd-${turnId}`,
+                reason: "Need network policy amendment",
+                command: "curl https://example.com",
+                availableDecisions: [
+                  {
+                    applyNetworkPolicyAmendment: {
+                      network_policy_amendment: {
+                        host: "example.com",
+                        action: "allow"
+                      }
+                    }
+                  },
+                  "decline",
+                  "cancel"
+                ]
+              }
+            });
+            return;
+          }
+
           if (prompt.includes("approval")) {
             send({
               method: "thread/status/changed",
@@ -989,6 +1209,21 @@ const handleRequest = (payload) => {
 
           if (prompt.includes("subagent")) {
             emitCollabPath({ threadId, turnId });
+            return;
+          }
+
+          if (prompt.includes("user-input")) {
+            emitToolUserInputRequest({ threadId, turnId });
+            return;
+          }
+
+          if (prompt.includes("mcp-elicitation-null")) {
+            emitMcpElicitationRequest({ threadId });
+            return;
+          }
+
+          if (prompt.includes("mcp-tool")) {
+            emitMcpToolCallPath({ threadId, turnId });
             return;
           }
 
@@ -1140,6 +1375,31 @@ const handleRequest = (payload) => {
 
     const approval = pendingApprovalByRequestId.get(payload.id);
     if (!approval) {
+      const interaction = pendingInteractionByRequestId.get(payload.id);
+      if (!interaction) {
+        return;
+      }
+      pendingInteractionByRequestId.delete(payload.id);
+      queueMicrotask(() => {
+        send({
+          method: "serverRequest/resolved",
+          params: {
+            requestId: payload.id
+          }
+        });
+        if (interaction.turnId) {
+          send({
+            method: "turn/completed",
+            params: {
+              threadId: interaction.threadId,
+              turn: {
+                id: interaction.turnId,
+                status: "completed"
+              }
+            }
+          });
+        }
+      });
       return;
     }
     pendingApprovalByRequestId.delete(payload.id);

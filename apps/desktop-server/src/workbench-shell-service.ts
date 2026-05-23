@@ -1028,7 +1028,8 @@ export class WorkbenchShellService {
       command.type === "forkSession" ||
       command.type === "steerTurn" ||
       command.type === "interruptTurn" ||
-      command.type === "respondApproval";
+      command.type === "respondApproval" ||
+      command.type === "respondInteraction";
     await this.ensureInteractiveSessionLoaded(command.sessionId, {
       requiresFullHydration
     });
@@ -1108,6 +1109,9 @@ export class WorkbenchShellService {
       terminalStreams: hydrated.terminalStreams,
       approvalRequests: snapshot.approvalRequests.filter(
         (approval) => approval.sessionId === sessionId
+      ),
+      runtimeInteractions: (snapshot.runtimeInteractions ?? []).filter(
+        (interaction) => interaction.sessionId === sessionId
       ),
       participants,
       sessionRelations,
@@ -1208,6 +1212,9 @@ export class WorkbenchShellService {
       ),
       approvalRequests: snapshot.approvalRequests.filter(
         (approval) => approval.sessionId === sessionId
+      ),
+      runtimeInteractions: (snapshot.runtimeInteractions ?? []).filter(
+        (interaction) => interaction.sessionId === sessionId
       ),
       participants: snapshot.participants.filter(
         (participant) => participant.conversationId === conversation.conversationId

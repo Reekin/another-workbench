@@ -115,7 +115,19 @@ export type ApprovalRespondInput = {
   sessionId: string;
   requestId: string;
   action: "approve" | "deny" | "defer";
+  decision?: string | Record<string, unknown>;
+  payload?: Record<string, unknown>;
   note?: string;
+};
+
+export type InteractionRespondInput = {
+  sessionId: string;
+  requestId: string;
+  action: "accept" | "decline" | "cancel" | "submit" | "defer";
+  response?: Record<string, unknown>;
+  content?: unknown;
+  answers?: Record<string, string[]>;
+  meta?: Record<string, unknown>;
 };
 
 export type EventSubscribeInput = {
@@ -360,6 +372,9 @@ export type DesktopTransport = {
   };
   approval: {
     respond: (input: ApprovalRespondInput) => Promise<CommandReceipt>;
+  };
+  interaction: {
+    respond: (input: InteractionRespondInput) => Promise<CommandReceipt>;
   };
   events: {
     subscribe: (
@@ -962,7 +977,22 @@ export const createDesktopTransport = (
           sessionId: input.sessionId,
           requestId: input.requestId,
           action: input.action,
+          decision: input.decision,
+          payload: input.payload,
           note: input.note
+        })
+    },
+    interaction: {
+      respond: (input: InteractionRespondInput) =>
+        sendCommand({
+          type: "respondInteraction",
+          sessionId: input.sessionId,
+          requestId: input.requestId,
+          action: input.action,
+          response: input.response,
+          content: input.content,
+          answers: input.answers,
+          meta: input.meta
         })
     },
     events: {

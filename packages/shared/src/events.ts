@@ -40,6 +40,8 @@ export const eventTypes = [
   "terminal.completed",
   "approval.requested",
   "approval.resolved",
+  "interaction.requested",
+  "interaction.resolved",
   "conversationGraph.updated",
   "participant.updated",
   "runtime.error"
@@ -216,6 +218,8 @@ const zApprovalRequestedEvent = z
     approvalKind: z.enum(["command", "file_change", "tool", "custom"]),
     title: z.string().min(1),
     details: z.string().optional(),
+    availableActions: z.array(z.string().min(1)).default([]).optional(),
+    metadata: zJsonRecord.optional(),
     ...zActorFields
   });
 
@@ -226,6 +230,30 @@ const zApprovalResolvedEvent = z
     turnId: zTurnId,
     requestId: zRequestId,
     action: z.enum(["approve", "deny", "defer"]),
+    ...zActorFields
+  });
+
+const zInteractionRequestedEvent = z
+  .object({
+    type: z.literal("interaction.requested"),
+    sessionId: zSessionId,
+    turnId: zTurnId.optional(),
+    requestId: zRequestId,
+    interactionKind: z.enum(["mcp_elicitation", "tool_user_input"]),
+    title: z.string().min(1),
+    details: z.string().optional(),
+    payload: zJsonRecord.default({}),
+    ...zActorFields
+  });
+
+const zInteractionResolvedEvent = z
+  .object({
+    type: z.literal("interaction.resolved"),
+    sessionId: zSessionId,
+    turnId: zTurnId.optional(),
+    requestId: zRequestId,
+    action: z.enum(["accept", "decline", "cancel", "submit", "defer"]),
+    response: zJsonRecord.optional(),
     ...zActorFields
   });
 
@@ -266,7 +294,9 @@ const actorScopedEventTypes = new Set<EventType>([
   "terminal.output",
   "terminal.completed",
   "approval.requested",
-  "approval.resolved"
+  "approval.resolved",
+  "interaction.requested",
+  "interaction.resolved"
 ]);
 
 export const zEventSchema = z
@@ -290,6 +320,8 @@ export const zEventSchema = z
     zTerminalCompletedEvent,
     zApprovalRequestedEvent,
     zApprovalResolvedEvent,
+    zInteractionRequestedEvent,
+    zInteractionResolvedEvent,
     zConversationGraphUpdatedEvent,
     zParticipantUpdatedEvent,
     zRuntimeErrorEvent

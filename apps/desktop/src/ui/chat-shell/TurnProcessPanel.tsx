@@ -6,6 +6,10 @@ import type { ParticipantDirectory } from "./participant-directory.js";
 import type { TurnTranscriptRow } from "./transcript-view-model.js";
 import { ApprovalFlowView, type ApprovalAction } from "./ApprovalFlowView.js";
 import {
+  InteractionFlowView,
+  type InteractionResponseInput
+} from "./InteractionFlowView.js";
+import {
   buildProcessActivityEntries,
   ProcessActivityItemView,
   ProcessActivityView,
@@ -22,7 +26,10 @@ export type TurnProcessPanelProps = {
     sessionId: string;
     requestId: string;
     action: ApprovalAction;
+    decision?: string | Record<string, unknown>;
+    payload?: Record<string, unknown>;
   }) => Promise<void>;
+  onRespondInteraction?: (input: InteractionResponseInput) => Promise<void>;
 };
 
 const compareIsoDateAsc = (left?: string, right?: string): number => {
@@ -88,8 +95,10 @@ export const TurnProcessPanel = ({
   participantDirectory,
   onActivateResourceLink,
   onPreviewImage,
-  onRespondApproval
+  onRespondApproval,
+  onRespondInteraction
 }: TurnProcessPanelProps): ReactElement => {
+  const interactions = row.interactions ?? [];
   const historyItems =
     hiddenRows.length > 0 ? buildTurnHistoryItems(row, hiddenRows) : [];
   const renderStandaloneActivity = historyItems.length === 0;
@@ -141,6 +150,20 @@ export const TurnProcessPanel = ({
             approvals={row.approvals}
             participantDirectory={participantDirectory}
             onRespond={onRespondApproval}
+          />
+        </section>
+      )}
+
+      {interactions.length > 0 && (
+        <section className="awb-turn-process__section">
+          <header className="awb-turn-process__section-header">
+            <h4>Interaction requests</h4>
+            <span>{interactions.length}</span>
+          </header>
+          <InteractionFlowView
+            interactions={interactions}
+            participantDirectory={participantDirectory}
+            onRespond={onRespondInteraction}
           />
         </section>
       )}

@@ -26,6 +26,7 @@ const codexMethodByCommandType: Record<
   steerTurn: "turn/steer",
   interruptTurn: "turn/interrupt",
   respondApproval: "approval/respond",
+  respondInteraction: "interaction/respond",
   disposeSession: "session/dispose"
 };
 
@@ -49,6 +50,8 @@ const codexEventTypeByMethod: Record<string, RuntimeEvent["type"]> = {
   "terminal.completed": "terminal.completed",
   "approval.requested": "approval.requested",
   "approval.resolved": "approval.resolved",
+  "interaction.requested": "interaction.requested",
+  "interaction.resolved": "interaction.resolved",
   "conversationGraph.updated": "conversationGraph.updated",
   "participant.updated": "participant.updated",
   "runtime.error": "runtime.error"

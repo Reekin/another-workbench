@@ -96,6 +96,25 @@ describe("renderer refresh signals", () => {
     });
   });
 
+  it("refreshes takeover state when a tool call completes", () => {
+    const signals = advance([
+      {
+        type: "tool.completed",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        toolCallId: "tool-smart-takeover",
+        status: "completed",
+        outputSummary: "SmartTakeover enabled for session session-1."
+      }
+    ]);
+
+    expect(signals).toEqual({
+      sessionBrowser: 0,
+      chatTree: 0,
+      takeover: 1
+    });
+  });
+
   it("preserves relevant invalidations even when a streaming event arrives last", () => {
     let state = createInitialRendererStoreState();
 

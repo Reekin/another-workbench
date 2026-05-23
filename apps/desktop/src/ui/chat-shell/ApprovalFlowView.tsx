@@ -13,6 +13,8 @@ export type ApprovalResponseInput = {
   sessionId: string;
   requestId: string;
   action: ApprovalAction;
+  decision?: string | Record<string, unknown>;
+  payload?: Record<string, unknown>;
 };
 
 export type ApprovalFlowViewProps = {
@@ -24,6 +26,68 @@ export type ApprovalFlowViewProps = {
 const defaultDirectory = buildParticipantDirectory([]);
 
 const canRespond = (approval: ApprovalRequest): boolean => approval.status === "pending";
+
+const decisionLabel = (decision: unknown): string | undefined => {
+  if (typeof decision === "string" && decision.trim().length > 0) {
+    return decision.trim();
+  }
+  if (decision && typeof decision === "object" && !Array.isArray(decision)) {
+    const [key] = Object.keys(decision);
+    return key;
+  }
+  return undefined;
+};
+
+const decisionFromLabel = (
+  approval: ApprovalRequest,
+  label: string
+): string | Record<string, unknown> => {
+  const rawDecisions = Array.isArray(approval.metadata?.availableDecisions)
+    ? approval.metadata.availableDecisions
+    : [];
+  const match = rawDecisions.find((decision) => decisionLabel(decision) === label);
+  return match && typeof match === "object" && !Array.isArray(match)
+    ? (match as Record<string, unknown>)
+    : label;
+};
+
+const decisionButtonLabel = (label: string): string => {
+  if (label === "accept") {
+    return "Approve";
+  }
+  if (label === "acceptForSession") {
+    return "Approve for Session";
+  }
+  if (label === "decline") {
+    return "Deny";
+  }
+  if (label === "cancel") {
+    return "Later";
+  }
+  return label.replace(/([a-z])([A-Z])/g, "$1 $2");
+};
+
+const actionForDecisionLabel = (label: string): ApprovalAction => {
+  if (label === "decline") {
+    return "deny";
+  }
+  if (label === "cancel") {
+    return "defer";
+  }
+  return "approve";
+};
+
+const decisionLabelsFor = (approval: ApprovalRequest): string[] => {
+  const labels =
+    approval.availableActions && approval.availableActions.length > 0
+      ? approval.availableActions
+      : Array.isArray(approval.metadata?.availableDecisions)
+        ? approval.metadata.availableDecisions
+            .map(decisionLabel)
+            .filter((label): label is string => Boolean(label))
+        : [];
+  return [...new Set(labels)];
+};
 
 export const ApprovalFlowView = ({
   approvals,
@@ -55,7 +119,8 @@ export const ApprovalFlowView = ({
 
   const onAction = async (
     approval: ApprovalRequest,
-    action: ApprovalAction
+    action: ApprovalAction,
+    decision?: string | Record<string, unknown>
   ): Promise<void> => {
     if (!onRespond || !canRespond(approval)) {
       return;
@@ -67,7 +132,8 @@ export const ApprovalFlowView = ({
       await onRespond({
         sessionId: approval.sessionId,
         requestId: approval.requestId,
-        action
+        action,
+        decision
       });
     } catch (error) {
       setError(approval.requestId, (error as Error).message);
@@ -86,6 +152,7 @@ export const ApprovalFlowView = ({
         const inFlight = inFlightByRequestId[approval.requestId] ?? false;
         const requestError = errorByRequestId[approval.requestId];
         const disabled = !onRespond || !canRespond(approval) || inFlight;
+        const decisionLabels = decisionLabelsFor(approval);
         const identity = resolveParticipantIdentity(
           participantDirectory,
           approval.actor,
@@ -104,27 +171,48 @@ export const ApprovalFlowView = ({
             <p className="awb-approval-item__kind">{approval.approvalKind}</p>
             {approval.details && <p className="awb-approval-item__details">{approval.details}</p>}
             <div className="awb-approval-item__actions">
-              <button
-                type="button"
-                disabled={disabled}
-                onClick={() => void onAction(approval, "approve")}
-              >
-                Approve
-              </button>
-              <button
-                type="button"
-                disabled={disabled}
-                onClick={() => void onAction(approval, "deny")}
-              >
-                Deny
-              </button>
-              <button
-                type="button"
-                disabled={disabled}
-                onClick={() => void onAction(approval, "defer")}
-              >
-                Later
-              </button>
+              {decisionLabels.length > 0 ? (
+                decisionLabels.map((decision) => (
+                  <button
+                    key={decision}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() =>
+                      void onAction(
+                        approval,
+                        actionForDecisionLabel(decision),
+                        decisionFromLabel(approval, decision)
+                      )
+                    }
+                  >
+                    {decisionButtonLabel(decision)}
+                  </button>
+                ))
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => void onAction(approval, "approve", "accept")}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => void onAction(approval, "deny", "decline")}
+                  >
+                    Deny
+                  </button>
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => void onAction(approval, "defer")}
+                  >
+                    Later
+                  </button>
+                </>
+              )}
             </div>
             {requestError && <p className="awb-approval-item__error">{requestError}</p>}
           </article>

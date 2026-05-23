@@ -6,6 +6,7 @@ import {
   parseChatSession,
   parseConversation,
   parseMessageBlock,
+  parseRuntimeInteraction,
   parseRuntimeEvent,
   parseToolCall,
   parseTurn
@@ -45,6 +46,7 @@ type TurnRecordInput = {
   toolCallIds?: string[];
   terminalIds?: string[];
   approvalRequestIds?: string[];
+  interactionRequestIds?: string[];
 };
 
 export type DomainProjectorOptions = {
@@ -358,7 +360,8 @@ export class DomainProjector {
           messageIds: existing?.messageIds,
           toolCallIds: existing?.toolCallIds,
           terminalIds: existing?.terminalIds,
-          approvalRequestIds: existing?.approvalRequestIds
+          approvalRequestIds: existing?.approvalRequestIds,
+          interactionRequestIds: existing?.interactionRequestIds
         });
         this.setSessionStatus(
           event.sessionId,
@@ -450,7 +453,8 @@ export class DomainProjector {
               messageIds: turn.messageIds,
               toolCallIds: turn.toolCallIds,
               terminalIds: turn.terminalIds,
-              approvalRequestIds: turn.approvalRequestIds
+              approvalRequestIds: turn.approvalRequestIds,
+              interactionRequestIds: turn.interactionRequestIds
             });
           }
         }
@@ -587,6 +591,8 @@ export class DomainProjector {
             status: "pending",
             title: event.title,
             details: event.details,
+            availableActions: event.availableActions,
+            metadata: event.metadata,
             actor,
             requestedAt: timestamp
           })
@@ -620,6 +626,68 @@ export class DomainProjector {
           })
         );
         this.appendTurnCollection(event.turnId, "approvalRequestIds", event.requestId, timestamp);
+        return;
+      }
+      case "interaction.requested": {
+        const actor = actorFromEvent(event);
+        if (event.turnId) {
+          this.markTurnStreaming(event.turnId, event.sessionId, timestamp, actor);
+        }
+        this.store.upsertRuntimeInteraction(
+          parseRuntimeInteraction({
+            requestId: event.requestId,
+            sessionId: event.sessionId,
+            turnId: event.turnId,
+            interactionKind: event.interactionKind,
+            status: "pending",
+            title: event.title,
+            details: event.details,
+            payload: event.payload,
+            actor,
+            requestedAt: timestamp
+          })
+        );
+        if (event.turnId) {
+          this.appendTurnCollection(event.turnId, "interactionRequestIds", event.requestId, timestamp);
+        }
+        this.setSessionStatus(event.sessionId, "awaiting_approval", timestamp, event.turnId);
+        return;
+      }
+      case "interaction.resolved": {
+        const actor = actorFromEvent(event);
+        if (event.turnId) {
+          this.markTurnStreaming(event.turnId, event.sessionId, timestamp, actor);
+        }
+        const existing = this.store.getRuntimeInteraction(event.requestId);
+        const status =
+          event.action === "accept"
+            ? "accepted"
+            : event.action === "submit"
+              ? "submitted"
+              : event.action === "decline"
+                ? "declined"
+                : event.action === "cancel"
+                  ? "cancelled"
+                  : "deferred";
+        this.store.upsertRuntimeInteraction(
+          parseRuntimeInteraction({
+            requestId: event.requestId,
+            sessionId: event.sessionId,
+            turnId: event.turnId,
+            interactionKind: existing?.interactionKind ?? "tool_user_input",
+            status,
+            title: existing?.title ?? "Input requested",
+            details: existing?.details,
+            payload: existing?.payload ?? {},
+            response: event.response,
+            actor: existing?.actor ?? actor,
+            requestedAt: existing?.requestedAt ?? timestamp,
+            resolvedAt: timestamp
+          })
+        );
+        if (event.turnId) {
+          this.appendTurnCollection(event.turnId, "interactionRequestIds", event.requestId, timestamp);
+        }
         return;
       }
       case "runtime.error": {
@@ -663,7 +731,8 @@ export class DomainProjector {
             messageIds: existingTurn?.messageIds,
             toolCallIds: existingTurn?.toolCallIds,
             terminalIds: existingTurn?.terminalIds,
-            approvalRequestIds: existingTurn?.approvalRequestIds
+            approvalRequestIds: existingTurn?.approvalRequestIds,
+            interactionRequestIds: existingTurn?.interactionRequestIds
           });
         }
         if (event.sessionId) {
@@ -714,7 +783,9 @@ export class DomainProjector {
       messageIds: input.messageIds ?? existing?.messageIds ?? [],
       toolCallIds: input.toolCallIds ?? existing?.toolCallIds ?? [],
       terminalIds: input.terminalIds ?? existing?.terminalIds ?? [],
-      approvalRequestIds: input.approvalRequestIds ?? existing?.approvalRequestIds ?? []
+      approvalRequestIds: input.approvalRequestIds ?? existing?.approvalRequestIds ?? [],
+      interactionRequestIds:
+        input.interactionRequestIds ?? existing?.interactionRequestIds ?? []
     });
     this.store.upsertTurn(turn);
     return turn;
@@ -773,7 +844,8 @@ export class DomainProjector {
       messageIds: existing?.messageIds,
       toolCallIds: existing?.toolCallIds,
       terminalIds: existing?.terminalIds,
-      approvalRequestIds: existing?.approvalRequestIds
+      approvalRequestIds: existing?.approvalRequestIds,
+      interactionRequestIds: existing?.interactionRequestIds
     });
     this.upsertSessionRecord({
       sessionId,
@@ -785,12 +857,17 @@ export class DomainProjector {
 
   private appendTurnCollection(
     turnId: string,
-    key: "messageIds" | "toolCallIds" | "terminalIds" | "approvalRequestIds",
+    key:
+      | "messageIds"
+      | "toolCallIds"
+      | "terminalIds"
+      | "approvalRequestIds"
+      | "interactionRequestIds",
     valueId: string,
     timestamp: string
   ): void {
     const turn = this.store.getTurn(turnId);
-    if (!turn || turn[key].includes(valueId)) {
+    if (!turn || (turn[key] ?? []).includes(valueId)) {
       return;
     }
 
@@ -809,7 +886,11 @@ export class DomainProjector {
       approvalRequestIds:
         key === "approvalRequestIds"
           ? [...turn.approvalRequestIds, valueId]
-          : turn.approvalRequestIds
+          : turn.approvalRequestIds,
+      interactionRequestIds:
+        key === "interactionRequestIds"
+          ? [...(turn.interactionRequestIds ?? []), valueId]
+          : turn.interactionRequestIds
     });
     this.upsertSessionRecord({
       sessionId: turn.sessionId,

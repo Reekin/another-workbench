@@ -605,6 +605,577 @@ describe("Codex app-server runtime port", () => {
     );
   });
 
+  it("grants requested permission profile when approving permissions requests", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "awb-codex-permissions-"));
+    const requestLogPath = join(tempDir, "requests.jsonl");
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+    port.subscribe((event) => {
+      events.push({
+        method: event.method,
+        params: event.params
+      });
+    });
+
+    try {
+      await port.start({
+        env: {
+          FAKE_CODEX_REQUEST_LOG: requestLogPath
+        }
+      });
+      await port.request({
+        id: "turn-permissions",
+        method: "turn/start",
+        params: {
+          sessionId: "session-1",
+          content: "please trigger permissions-approval"
+        }
+      });
+
+      await waitFor(() =>
+        events.some((event) => event.method === "approval.requested")
+      );
+
+      const requestId = events.find((event) => event.method === "approval.requested")
+        ?.params.requestId;
+
+      await port.request({
+        id: "approve-permissions",
+        method: "approval/respond",
+        params: {
+          sessionId: "session-1",
+          requestId,
+          action: "approve"
+        }
+      });
+
+      await waitFor(() =>
+        events.some((event) => event.method === "approval.resolved")
+      );
+
+      const responsePayload = readRequestLog(requestLogPath).find(
+        (request) => String(request.id) === String(requestId) && request.result
+      );
+      expect(responsePayload).toEqual(
+        expect.objectContaining({
+          result: {
+            permissions: {
+              network: {
+                domains: ["example.com"]
+              },
+              fileSystem: {
+                entries: [
+                  {
+                    path: "D:/workspace",
+                    access: "read"
+                  }
+                ]
+              }
+            },
+            scope: "turn"
+          }
+        })
+      );
+    } finally {
+      rmSync(tempDir, {
+        recursive: true,
+        force: true
+      });
+    }
+  });
+
+  it("writes object-valued command approval decisions unchanged", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "awb-codex-object-approval-"));
+    const requestLogPath = join(tempDir, "requests.jsonl");
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+    port.subscribe((event) => {
+      events.push({
+        method: event.method,
+        params: event.params
+      });
+    });
+
+    try {
+      await port.start({
+        env: {
+          FAKE_CODEX_REQUEST_LOG: requestLogPath
+        }
+      });
+      await port.request({
+        id: "turn-object-approval",
+        method: "turn/start",
+        params: {
+          sessionId: "session-1",
+          content: "please trigger object-approval"
+        }
+      });
+
+      await waitFor(() =>
+        events.some((event) => event.method === "approval.requested")
+      );
+
+      const requestId = events.find((event) => event.method === "approval.requested")
+        ?.params.requestId;
+      const decision = {
+        applyNetworkPolicyAmendment: {
+          network_policy_amendment: {
+            host: "example.com",
+            action: "allow"
+          }
+        }
+      };
+
+      await port.request({
+        id: "approve-object-decision",
+        method: "approval/respond",
+        params: {
+          sessionId: "session-1",
+          requestId,
+          action: "approve",
+          decision
+        }
+      });
+
+      await waitFor(() =>
+        readRequestLog(requestLogPath).some(
+          (request) => String(request.id) === String(requestId) && request.result
+        )
+      );
+
+      const responsePayload = readRequestLog(requestLogPath).find(
+        (request) => String(request.id) === String(requestId) && request.result
+      );
+      expect(responsePayload).toEqual(
+        expect.objectContaining({
+          result: {
+            decision
+          }
+        })
+      );
+      expect(
+        events.find((event) => event.method === "approval.requested")?.params
+      ).toEqual(
+        expect.objectContaining({
+          availableActions: expect.arrayContaining(["applyNetworkPolicyAmendment"]),
+          metadata: expect.objectContaining({
+            availableDecisions: expect.arrayContaining([decision])
+          })
+        })
+      );
+    } finally {
+      rmSync(tempDir, {
+        recursive: true,
+        force: true
+      });
+    }
+  });
+
+  it("falls back to an available object approval decision when explicit strings are invalid", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "awb-codex-object-approval-"));
+    const requestLogPath = join(tempDir, "requests.jsonl");
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+    port.subscribe((event) => {
+      events.push({
+        method: event.method,
+        params: event.params
+      });
+    });
+
+    try {
+      await port.start({
+        env: {
+          FAKE_CODEX_REQUEST_LOG: requestLogPath
+        }
+      });
+      await port.request({
+        id: "turn-object-approval-invalid-string",
+        method: "turn/start",
+        params: {
+          sessionId: "session-1",
+          content: "please trigger object-approval"
+        }
+      });
+
+      await waitFor(() =>
+        events.some((event) => event.method === "approval.requested")
+      );
+
+      const requestId = events.find((event) => event.method === "approval.requested")
+        ?.params.requestId;
+      const decision = {
+        applyNetworkPolicyAmendment: {
+          network_policy_amendment: {
+            host: "example.com",
+            action: "allow"
+          }
+        }
+      };
+
+      await port.request({
+        id: "approve-object-invalid-string",
+        method: "approval/respond",
+        params: {
+          sessionId: "session-1",
+          requestId,
+          action: "approve",
+          decision: "accept"
+        }
+      });
+
+      await waitFor(() =>
+        readRequestLog(requestLogPath).some(
+          (request) => String(request.id) === String(requestId) && request.result
+        )
+      );
+
+      const responsePayload = readRequestLog(requestLogPath).find(
+        (request) => String(request.id) === String(requestId) && request.result
+      );
+      expect(responsePayload).toEqual(
+        expect.objectContaining({
+          result: {
+            decision
+          }
+        })
+      );
+    } finally {
+      rmSync(tempDir, {
+        recursive: true,
+        force: true
+      });
+    }
+  });
+
+  it("round-trips tool user input requests through runtime interactions", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+    port.subscribe((event) => {
+      events.push({
+        method: event.method,
+        params: event.params
+      });
+    });
+
+    await port.start();
+    await port.request({
+      id: "turn-user-input",
+      method: "turn/start",
+      params: {
+        sessionId: "session-1",
+        content: "please trigger user-input"
+      }
+    });
+
+    await waitFor(() =>
+      events.some((event) => event.method === "interaction.requested")
+    );
+
+    const requestId = events.find((event) => event.method === "interaction.requested")
+      ?.params.requestId;
+
+    await port.request({
+      id: "interaction-1",
+      method: "interaction/respond",
+      params: {
+        sessionId: "session-1",
+        requestId,
+        action: "submit",
+        answers: {
+          confirm: ["yes"]
+        }
+      }
+    });
+
+    await waitFor(() =>
+      events.some((event) => event.method === "interaction.resolved")
+    );
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "interaction.requested",
+          params: expect.objectContaining({
+            interactionKind: "tool_user_input"
+          })
+        }),
+        expect.objectContaining({
+          method: "interaction.resolved",
+          params: expect.objectContaining({
+            action: "submit",
+            response: {
+              answers: {
+                confirm: {
+                  answers: ["yes"]
+                }
+              }
+            }
+          })
+        })
+      ])
+    );
+  });
+
+  it("normalizes tool user input decline and cancel actions to submit answers", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "awb-codex-user-input-"));
+    const requestLogPath = join(tempDir, "requests.jsonl");
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+    port.subscribe((event) => {
+      events.push({
+        method: event.method,
+        params: event.params
+      });
+    });
+
+    try {
+      await port.start({
+        env: {
+          FAKE_CODEX_REQUEST_LOG: requestLogPath
+        }
+      });
+      await port.request({
+        id: "turn-user-input-cancel",
+        method: "turn/start",
+        params: {
+          sessionId: "session-1",
+          content: "please trigger user-input"
+        }
+      });
+
+      await waitFor(() =>
+        events.some((event) => event.method === "interaction.requested")
+      );
+
+      const requestId = events.find((event) => event.method === "interaction.requested")
+        ?.params.requestId;
+
+      await port.request({
+        id: "interaction-cancel",
+        method: "interaction/respond",
+        params: {
+          sessionId: "session-1",
+          requestId,
+          action: "cancel",
+          answers: {
+            confirm: ["no"]
+          }
+        }
+      });
+
+      await waitFor(() =>
+        events.some((event) => event.method === "interaction.resolved")
+      );
+
+      const responsePayload = readRequestLog(requestLogPath).find(
+        (request) => String(request.id) === String(requestId) && request.result
+      );
+      expect(responsePayload).toEqual(
+        expect.objectContaining({
+          result: {
+            answers: {
+              confirm: {
+                answers: ["no"]
+              }
+            }
+          }
+        })
+      );
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "interaction.resolved",
+            params: expect.objectContaining({
+              action: "submit"
+            })
+          })
+        ])
+      );
+    } finally {
+      rmSync(tempDir, {
+        recursive: true,
+        force: true
+      });
+    }
+  });
+
+  it("keeps out-of-band MCP elicitation session-scoped when turnId is null", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+    port.subscribe((event) => {
+      events.push({
+        method: event.method,
+        params: event.params
+      });
+    });
+
+    await port.start();
+    await port.request({
+      id: "turn-mcp-elicitation-null",
+      method: "turn/start",
+      params: {
+        sessionId: "session-1",
+        content: "please trigger mcp-elicitation-null"
+      }
+    });
+
+    await waitFor(() =>
+      events.some((event) => event.method === "interaction.requested")
+    );
+
+    const requested = events.find((event) => event.method === "interaction.requested");
+    const requestId = requested?.params.requestId;
+
+    expect(requested?.params).toEqual(
+      expect.objectContaining({
+        interactionKind: "mcp_elicitation",
+        sessionId: "session-1"
+      })
+    );
+    expect(requested?.params).not.toHaveProperty("turnId");
+    expect(
+      events.some(
+        (event) =>
+          event.method === "turn.started" && event.params.turnId === requestId
+      )
+    ).toBe(false);
+
+    await port.request({
+      id: "interaction-mcp-null",
+      method: "interaction/respond",
+      params: {
+        sessionId: "session-1",
+        requestId,
+        action: "accept",
+        content: {
+          confirmed: true
+        }
+      }
+    });
+
+    await waitFor(() =>
+      events.some((event) => event.method === "interaction.resolved")
+    );
+
+    const resolved = events.find((event) => event.method === "interaction.resolved");
+    expect(resolved?.params).toEqual(
+      expect.objectContaining({
+        action: "accept",
+        response: {
+          action: "accept",
+          content: {
+            confirmed: true
+          },
+          _meta: null
+        }
+      })
+    );
+    expect(resolved?.params).not.toHaveProperty("turnId");
+
+    const sessionUpdates = events.filter(
+      (event) => event.method === "session.updated"
+    );
+    expect(sessionUpdates.at(-1)?.params).toEqual(
+      expect.objectContaining({
+        sessionId: "session-1",
+        status: "idle"
+      })
+    );
+  });
+
+  it("maps mcp tool lifecycle and progress notifications", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+    port.subscribe((event) => {
+      events.push({
+        method: event.method,
+        params: event.params
+      });
+    });
+
+    await port.start();
+    await port.request({
+      id: "turn-mcp",
+      method: "turn/start",
+      params: {
+        sessionId: "session-1",
+        content: "please trigger mcp-tool"
+      }
+    });
+
+    await waitFor(() =>
+      events.some((event) => event.method === "turn.completed")
+    );
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "tool.started",
+          params: expect.objectContaining({
+            toolName: "mcp.browser.open",
+            inputSummary: expect.stringContaining("https://example.com")
+          })
+        }),
+        expect.objectContaining({
+          method: "tool.delta",
+          params: expect.objectContaining({
+            delta: "opening page"
+          })
+        }),
+        expect.objectContaining({
+          method: "tool.completed",
+          params: expect.objectContaining({
+            status: "completed",
+            outputSummary: "opened"
+          })
+        })
+      ])
+    );
+  });
+
   it("does not override codex sandbox and approval defaults unless explicitly selected", async () => {
     const port = createCodexAppServerRuntimePort({
       commandPath: process.execPath,

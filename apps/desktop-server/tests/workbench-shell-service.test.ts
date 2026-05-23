@@ -355,6 +355,54 @@ describe("WorkbenchShellService", () => {
     expect(executeCommand).not.toHaveBeenCalled();
   });
 
+  it("blocks interaction responses when a partial session cannot be fully hydrated", async () => {
+    const executeCommand = vi.fn();
+    const ensureSessionLoaded = vi.fn().mockResolvedValue(false);
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        getSession: () => ({
+          sessionId: "session-1",
+          conversationId: "conversation-1",
+          engineId: "codex",
+          status: "awaiting_approval",
+          createdAt: "2026-04-19T00:00:00.000Z",
+          updatedAt: "2026-04-19T00:00:00.000Z"
+        }),
+        executeCommand
+      } as never,
+      sessionCatalog: {} as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never,
+      sessionReconciliation: {
+        ensureSessionLoaded
+      } as never
+    });
+    (
+      service as unknown as {
+        partiallyHydratedSessionIds: Set<string>;
+      }
+    ).partiallyHydratedSessionIds.add("session-1");
+
+    await expect(
+      service.executeCommand({
+        commandId: "cmd-respond-interaction",
+        command: {
+          type: "respondInteraction",
+          sessionId: "session-1",
+          requestId: "interaction-1",
+          action: "submit",
+          answers: {
+            confirm: ["yes"]
+          }
+        }
+      })
+    ).rejects.toThrow("Session could not be fully loaded: session-1");
+    expect(ensureSessionLoaded).toHaveBeenCalledWith("session-1", {
+      force: true
+    });
+    expect(executeCommand).not.toHaveBeenCalled();
+  });
+
   it("delegates workspace directory picking to the host callback when available", async () => {
     const pickWorkspaceDirectory = vi.fn().mockResolvedValue({
       canceled: false,

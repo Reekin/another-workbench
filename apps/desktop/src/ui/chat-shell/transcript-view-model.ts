@@ -2,6 +2,7 @@ import type {
   ApprovalRequest,
   MessageBlock,
   MessageRole,
+  RuntimeInteraction,
   TerminalStream,
   ToolCall,
   Turn
@@ -74,6 +75,7 @@ type TranscriptEntityIndexes = {
   toolCallsByTurnId: Record<string, ToolCall[]>;
   terminalStreamsByTurnId: Record<string, TerminalStream[]>;
   approvalRequestsByTurnId: Record<string, ApprovalRequest[]>;
+  runtimeInteractionsByTurnId: Record<string, RuntimeInteraction[]>;
 };
 
 type ProcessTranscriptEntry =
@@ -95,6 +97,12 @@ type ProcessTranscriptEntry =
       id: string;
       startedAt?: string;
       approval: ApprovalRequest;
+    }
+  | {
+      kind: "interaction";
+      id: string;
+      startedAt?: string;
+      interaction: RuntimeInteraction;
     };
 
 const buildTranscriptEntityIndexes = (
@@ -107,6 +115,12 @@ const buildTranscriptEntityIndexes = (
   ),
   approvalRequestsByTurnId: groupByTurnId(
     Object.values(state.entities.approvalRequests)
+  ),
+  runtimeInteractionsByTurnId: groupByTurnId(
+    Object.values(state.entities.runtimeInteractions).filter(
+      (interaction): interaction is RuntimeInteraction & { turnId: string } =>
+        typeof interaction.turnId === "string"
+    )
   )
 });
 
@@ -166,6 +180,29 @@ const selectApprovalRequestsForTurn = (
     .filter((item): item is ApprovalRequest => Boolean(item));
   const orderedIds = new Set(turn.approvalRequestIds);
   const fallback = (indexes.approvalRequestsByTurnId[turn.turnId] ?? []).filter(
+    (item) => !orderedIds.has(item.requestId)
+  );
+  const sortedFallback = [...fallback].sort((left, right) => {
+    const byDate = compareIsoDateAsc(left.requestedAt, right.requestedAt);
+    if (byDate !== 0) {
+      return byDate;
+    }
+    return left.requestId.localeCompare(right.requestId);
+  });
+  return [...byTurnOrder, ...sortedFallback];
+};
+
+const selectRuntimeInteractionsForTurn = (
+  state: RendererStoreState,
+  turn: Turn,
+  indexes: TranscriptEntityIndexes
+): RuntimeInteraction[] => {
+  const requestIds = turn.interactionRequestIds ?? [];
+  const byTurnOrder = requestIds
+    .map((requestId) => state.entities.runtimeInteractions[requestId])
+    .filter((item): item is RuntimeInteraction => Boolean(item));
+  const orderedIds = new Set(requestIds);
+  const fallback = (indexes.runtimeInteractionsByTurnId[turn.turnId] ?? []).filter(
     (item) => !orderedIds.has(item.requestId)
   );
   const sortedFallback = [...fallback].sort((left, right) => {
@@ -266,7 +303,8 @@ const splitBlocksByMessage = (
 const buildProcessTranscriptEntries = (
   toolCalls: ToolCall[],
   terminalStreams: TerminalStream[],
-  approvals: ApprovalRequest[]
+  approvals: ApprovalRequest[],
+  interactions: RuntimeInteraction[]
 ): ProcessTranscriptEntry[] => {
   const terminalStreamsByToolCallId = new Map<string, TerminalStream[]>();
   const unlinkedTerminalStreams: TerminalStream[] = [];
@@ -309,8 +347,14 @@ const buildProcessTranscriptEntries = (
     startedAt: approval.requestedAt,
     approval
   }));
+  const interactionEntries = interactions.map((interaction) => ({
+    kind: "interaction" as const,
+    id: `interaction:${interaction.requestId}`,
+    startedAt: interaction.requestedAt,
+    interaction
+  }));
 
-  return [...toolEntries, ...terminalEntries, ...approvalEntries].sort((left, right) => {
+  return [...toolEntries, ...terminalEntries, ...approvalEntries, ...interactionEntries].sort((left, right) => {
     const byDate = compareIsoDateAsc(left.startedAt, right.startedAt);
     if (byDate !== 0) {
       return byDate;
@@ -326,14 +370,16 @@ const resolveTurnIdentity = (
   blocks: MessageBlock[],
   toolCalls: ToolCall[],
   terminalStreams: TerminalStream[],
-  approvals: ApprovalRequest[]
+  approvals: ApprovalRequest[],
+  interactions: RuntimeInteraction[]
 ): ParticipantIdentity => {
   const actor =
     turn.actor ??
     blocks.find((block) => block.actor)?.actor ??
     toolCalls.find((toolCall) => toolCall.actor)?.actor ??
     terminalStreams.find((stream) => stream.actor)?.actor ??
-    approvals.find((approval) => approval.actor)?.actor;
+    approvals.find((approval) => approval.actor)?.actor ??
+    interactions.find((interaction) => interaction.actor)?.actor;
 
   return resolveParticipantIdentity(participantDirectory, actor, messageRole);
 };
@@ -351,6 +397,7 @@ export type TurnTranscriptRow = {
   toolCalls: ToolCall[];
   terminalStreams: TerminalStream[];
   approvals: ApprovalRequest[];
+  interactions: RuntimeInteraction[];
   hasProcessDetails: boolean;
   defaultProcessExpanded: boolean;
 };
@@ -361,6 +408,7 @@ const buildRunningTurnRows = (
   toolCalls: ToolCall[],
   terminalStreams: TerminalStream[],
   approvals: ApprovalRequest[],
+  interactions: RuntimeInteraction[],
   participantDirectory: ParticipantDirectory,
   hasProcessDetails: boolean
 ): TurnTranscriptRow[] => {
@@ -374,7 +422,8 @@ const buildRunningTurnRows = (
   const processEntries = buildProcessTranscriptEntries(
     toolCalls,
     terminalStreams,
-    approvals
+    approvals,
+    interactions
   ).map((entry, index) => ({
     ...entry,
     index
@@ -401,7 +450,8 @@ const buildRunningTurnRows = (
           blocks,
           toolCalls,
           terminalStreams,
-          approvals
+          approvals,
+          interactions
         ),
         messageRole: "assistant",
         isFinalResponseRow: false,
@@ -410,6 +460,7 @@ const buildRunningTurnRows = (
         toolCalls,
         terminalStreams,
         approvals,
+        interactions,
         hasProcessDetails,
         defaultProcessExpanded: true
       }
@@ -431,7 +482,8 @@ const buildRunningTurnRows = (
           entry.group.blocks,
           isAssistantLike ? toolCalls : [],
           isAssistantLike ? terminalStreams : [],
-          isAssistantLike ? approvals : []
+          isAssistantLike ? approvals : [],
+          isAssistantLike ? interactions : []
         ),
         messageRole: entry.group.role,
         isFinalResponseRow: false,
@@ -440,6 +492,7 @@ const buildRunningTurnRows = (
         toolCalls: [],
         terminalStreams: [],
         approvals: [],
+        interactions: [],
         hasProcessDetails: false,
         defaultProcessExpanded: false
       };
@@ -454,6 +507,7 @@ const buildRunningTurnRows = (
           ? [entry.terminalStream]
           : [];
     const processApprovals = entry.kind === "approval" ? [entry.approval] : [];
+    const processInteractions = entry.kind === "interaction" ? [entry.interaction] : [];
     return {
       rowId: `${turn.turnId}:process:${index}:${entry.id}`,
       rowKind: "process" as const,
@@ -466,7 +520,8 @@ const buildRunningTurnRows = (
         processBlocks,
         processToolCalls,
         processTerminalStreams,
-        processApprovals
+        processApprovals,
+        processInteractions
       ),
       messageRole: "assistant" as const,
       isFinalResponseRow: false,
@@ -475,6 +530,7 @@ const buildRunningTurnRows = (
       toolCalls: processToolCalls,
       terminalStreams: processTerminalStreams,
       approvals: processApprovals,
+      interactions: processInteractions,
       hasProcessDetails: true,
       defaultProcessExpanded: true
     };
@@ -492,10 +548,14 @@ export const buildTurnTranscriptRows = (
     const toolCalls = selectToolCallsForTurn(state, turn, indexes);
     const terminalStreams = selectTerminalStreamsForTurn(state, turn, indexes);
     const approvals = selectApprovalRequestsForTurn(state, turn, indexes);
+    const interactions = selectRuntimeInteractionsForTurn(state, turn, indexes);
 
     const blockGroups = splitBlocksByRole(blocks, turn.finalMessageId);
     const hasProcessDetails =
-      toolCalls.length > 0 || terminalStreams.length > 0 || approvals.length > 0;
+      toolCalls.length > 0 ||
+      terminalStreams.length > 0 ||
+      approvals.length > 0 ||
+      interactions.length > 0;
 
     if (turn.status !== "completed") {
       return buildRunningTurnRows(
@@ -504,6 +564,7 @@ export const buildTurnTranscriptRows = (
         toolCalls,
         terminalStreams,
         approvals,
+        interactions,
         participantDirectory,
         hasProcessDetails
       );
@@ -523,7 +584,8 @@ export const buildTurnTranscriptRows = (
             blocks,
             toolCalls,
             terminalStreams,
-            approvals
+            approvals,
+            interactions
           ),
           messageRole: "assistant" as const,
           isFinalResponseRow: false,
@@ -532,6 +594,7 @@ export const buildTurnTranscriptRows = (
           toolCalls,
           terminalStreams,
           approvals,
+          interactions,
           hasProcessDetails,
           defaultProcessExpanded: turn.status !== "completed"
         }
@@ -567,7 +630,8 @@ export const buildTurnTranscriptRows = (
           group.blocks,
           isAssistantLike ? toolCalls : [],
           isAssistantLike ? terminalStreams : [],
-          isAssistantLike ? approvals : []
+          isAssistantLike ? approvals : [],
+          isAssistantLike ? interactions : []
         ),
         messageRole: group.role,
         isFinalResponseRow,
@@ -576,6 +640,7 @@ export const buildTurnTranscriptRows = (
         toolCalls: isAssistantLike ? toolCalls : [],
         terminalStreams: isAssistantLike ? terminalStreams : [],
         approvals: isAssistantLike ? approvals : [],
+        interactions: isAssistantLike ? interactions : [],
         hasProcessDetails: isAssistantLike && hasProcessDetails,
         defaultProcessExpanded: isAssistantLike && turn.status !== "completed"
       };
@@ -602,7 +667,8 @@ export const buildTurnTranscriptRows = (
           [],
           toolCalls,
           terminalStreams,
-          approvals
+          approvals,
+          interactions
         ),
         messageRole: "assistant" as const,
         isFinalResponseRow: false,
@@ -611,6 +677,7 @@ export const buildTurnTranscriptRows = (
         toolCalls,
         terminalStreams,
         approvals,
+        interactions,
         hasProcessDetails,
         defaultProcessExpanded: false
       }

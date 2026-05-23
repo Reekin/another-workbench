@@ -4,6 +4,7 @@ import type {
   ChatSession,
   Conversation,
   MessageBlock,
+  RuntimeInteraction,
   SessionRelation,
   TerminalStream,
   ToolCall,
@@ -41,6 +42,7 @@ export const createEmptyEntities = (): RendererEntities => ({
   toolCalls: {},
   terminalStreams: {},
   approvalRequests: {},
+  runtimeInteractions: {},
   participants: {},
   sessionRelations: {}
 });
@@ -170,6 +172,21 @@ export const upsertApprovalRequest = (
       state.entities.approvalRequests,
       approvalRequest.requestId,
       approvalRequest
+    )
+  }
+});
+
+export const upsertRuntimeInteraction = (
+  state: RendererStoreState,
+  runtimeInteraction: RuntimeInteraction
+): RendererStoreState => ({
+  ...state,
+  entities: {
+    ...state.entities,
+    runtimeInteractions: put(
+      state.entities.runtimeInteractions,
+      runtimeInteraction.requestId,
+      runtimeInteraction
     )
   }
 });

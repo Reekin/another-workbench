@@ -98,11 +98,27 @@ type PendingApproval = {
     | "item/permissions/requestApproval";
   title: string;
   details?: string;
-  availableDecisions?: string[];
+  availableDecisions?: unknown[];
+  requestedPermissions?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
 };
 
 type PendingApprovalResolution = {
   action: "approve" | "deny" | "defer";
+};
+
+type PendingInteraction = {
+  requestId: string;
+  rawRequestId: string | number;
+  sessionId: string;
+  turnId?: string;
+  kind: "mcp_elicitation" | "tool_user_input";
+  title: string;
+};
+
+type PendingInteractionResolution = {
+  action: "accept" | "decline" | "cancel" | "submit" | "defer";
+  response?: Record<string, unknown>;
 };
 
 type ProcessActivitySummaryState = {
@@ -204,27 +220,83 @@ const mapSessionStatus = (
   }
 };
 
+const stableStringify = (value: unknown): string | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  try {
+    return JSON.stringify(value, (_key, current: unknown) => {
+      if (!isRecord(current)) {
+        return current;
+      }
+      return Object.fromEntries(
+        Object.entries(current).sort(([left], [right]) =>
+          left.localeCompare(right)
+        )
+      );
+    });
+  } catch {
+    return undefined;
+  }
+};
+
+const isSameApprovalDecision = (left: unknown, right: unknown): boolean => {
+  if (typeof left === "string" && typeof right === "string") {
+    return left.trim() === right.trim();
+  }
+  if (isRecord(left) && isRecord(right)) {
+    return stableStringify(left) === stableStringify(right);
+  }
+  return false;
+};
+
 const resolveApprovalDecision = (
   approval: PendingApproval,
-  action: "approve" | "deny" | "defer"
-): string => {
-  const available = new Set(approval.availableDecisions ?? []);
+  action: "approve" | "deny" | "defer",
+  requestedDecision?: unknown
+): unknown => {
+  const availableDecisions = approval.availableDecisions ?? [];
+  const hasAvailableDecisions = availableDecisions.length > 0;
+  const availableStrings = new Set(
+    availableDecisions.filter(
+      (decision): decision is string => typeof decision === "string"
+    )
+  );
+  const availableObjects = availableDecisions.filter(isRecord);
+
+  if (typeof requestedDecision === "string" && requestedDecision.trim().length > 0) {
+    const decision = requestedDecision.trim();
+    if (!hasAvailableDecisions || availableStrings.has(decision)) {
+      return decision;
+    }
+  }
+  if (isRecord(requestedDecision)) {
+    const matchedDecision = availableObjects.find((decision) =>
+      isSameApprovalDecision(decision, requestedDecision)
+    );
+    if (!hasAvailableDecisions || matchedDecision) {
+      return matchedDecision ?? requestedDecision;
+    }
+  }
 
   if (action === "approve") {
-    if (available.has("accept")) {
+    if (availableStrings.has("accept")) {
       return "accept";
     }
-    if (available.has("acceptForSession")) {
+    if (availableStrings.has("acceptForSession")) {
       return "acceptForSession";
+    }
+    if (availableObjects.length > 0) {
+      return availableObjects[0];
     }
     return "accept";
   }
 
   if (action === "deny") {
-    if (available.has("decline")) {
+    if (availableStrings.has("decline")) {
       return "decline";
     }
-    if (available.has("cancel")) {
+    if (availableStrings.has("cancel")) {
       return "cancel";
     }
     return "decline";
@@ -238,6 +310,50 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const optionalString = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+
+const toJsonRecord = (value: unknown): Record<string, unknown> | undefined =>
+  isRecord(value) ? value : undefined;
+
+const toGrantedPermissionProfile = (
+  value: Record<string, unknown> | undefined
+): Record<string, unknown> => {
+  if (!value) {
+    return {};
+  }
+  const granted: Record<string, unknown> = {};
+  if (isRecord(value.network)) {
+    granted.network = value.network;
+  }
+  if (isRecord(value.fileSystem)) {
+    granted.fileSystem = value.fileSystem;
+  }
+  return granted;
+};
+
+const stringifySummary = (value: unknown): string | undefined => {
+  if (typeof value === "string") {
+    return value.trim().length > 0 ? value : undefined;
+  }
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+};
+
+const approvalDecisionLabel = (decision: unknown): string | undefined => {
+  if (typeof decision === "string" && decision.trim().length > 0) {
+    return decision.trim();
+  }
+  if (isRecord(decision)) {
+    const [key] = Object.keys(decision);
+    return key;
+  }
+  return undefined;
+};
 
 const normalizeCodexRevision = (
   value: CodexRevisionInput
@@ -308,6 +424,11 @@ const isDynamicToolCallThreadItem = (
   item: ThreadItem | Record<string, unknown>
 ): item is Extract<ThreadItem, { type: "dynamicToolCall" }> =>
   isRecord(item) && item.type === "dynamicToolCall" && typeof item.id === "string";
+
+const isMcpToolCallThreadItem = (
+  item: ThreadItem | Record<string, unknown>
+): item is Extract<ThreadItem, { type: "mcpToolCall" }> =>
+  isRecord(item) && item.type === "mcpToolCall" && typeof item.id === "string";
 
 const discoveredCodexSessionId = (threadId: string): string => `codex-thread:${threadId}`;
 
@@ -420,6 +541,61 @@ const summarizeDynamicToolOutput = (
     .join("\n");
 };
 
+const mcpToolLabel = (item: Extract<ThreadItem, { type: "mcpToolCall" }>): string => {
+  const raw = item as Record<string, unknown>;
+  const server = optionalString(raw.server) ?? "server";
+  const tool = optionalString(raw.tool) ?? "tool";
+  return `mcp.${server}.${tool}`;
+};
+
+const summarizeMcpToolInput = (
+  item: Extract<ThreadItem, { type: "mcpToolCall" }>
+): string | undefined => {
+  const raw = item as Record<string, unknown>;
+  const args = raw.arguments;
+  const argumentSummary = stringifySummary(args);
+  return argumentSummary ? `${mcpToolLabel(item)} ${argumentSummary}` : mcpToolLabel(item);
+};
+
+const summarizeMcpContent = (value: unknown): string | undefined => {
+  if (!Array.isArray(value)) {
+    return stringifySummary(value);
+  }
+  const parts = value
+    .map((entry) => {
+      if (!isRecord(entry)) {
+        return stringifySummary(entry);
+      }
+      if (typeof entry.text === "string") {
+        return entry.text;
+      }
+      if (typeof entry.url === "string") {
+        return entry.url;
+      }
+      return stringifySummary(entry);
+    })
+    .filter((entry): entry is string => Boolean(entry && entry.trim().length > 0));
+  return parts.length > 0 ? parts.join("\n") : undefined;
+};
+
+const summarizeMcpToolOutput = (
+  item: Extract<ThreadItem, { type: "mcpToolCall" }>
+): string | undefined => {
+  const raw = item as Record<string, unknown>;
+  if (isRecord(raw.error) && typeof raw.error.message === "string") {
+    return raw.error.message;
+  }
+  const result = isRecord(raw.result) ? raw.result : undefined;
+  if (!result) {
+    return undefined;
+  }
+  return (
+    summarizeMcpContent(result.content) ??
+    stringifySummary(result.structuredContent) ??
+    stringifySummary(result)
+  );
+};
+
 const readNonNegativeInteger = (
   record: Record<string, unknown>,
   key: string
@@ -503,6 +679,11 @@ export class CodexAppServerRuntimePort
   private readonly pendingApprovalResolutionsById = new Map<
     string,
     PendingApprovalResolution
+  >();
+  private readonly pendingInteractionsById = new Map<string, PendingInteraction>();
+  private readonly pendingInteractionResolutionsById = new Map<
+    string,
+    PendingInteractionResolution
   >();
   private readonly processActivitySummariesByTurn = new Map<
     string,
@@ -640,6 +821,15 @@ export class CodexAppServerRuntimePort
         };
       case "approval/respond":
         await this.handleApprovalResponse(payload);
+        return {
+          id: payload.id,
+          ok: true,
+          result: {
+            accepted: true
+          }
+        };
+      case "interaction/respond":
+        await this.handleInteractionResponse(payload);
         return {
           id: payload.id,
           ok: true,
@@ -973,15 +1163,38 @@ export class CodexAppServerRuntimePort
       | "approve"
       | "deny"
       | "defer";
+    const responsePayload = isRecord(payload.params.payload)
+      ? payload.params.payload
+      : undefined;
+    const requestedScope =
+      payload.params.decision === "session" ||
+      responsePayload?.scope === "session"
+        ? "session"
+        : "turn";
 
     const result =
       approval.method === "item/permissions/requestApproval"
         ? {
-            permissions: {},
-            scope: action === "approve" ? "session" : "turn"
+            permissions:
+              action === "approve"
+                ? toGrantedPermissionProfile(
+                    toJsonRecord(responsePayload?.permissions) ??
+                      approval.requestedPermissions
+                  )
+                : {},
+            scope: action === "approve" ? requestedScope : "turn",
+            ...(action === "approve" &&
+            requestedScope === "turn" &&
+            responsePayload?.strictAutoReview === true
+              ? { strictAutoReview: true }
+              : {})
           }
         : {
-            decision: resolveApprovalDecision(approval, action)
+            decision: resolveApprovalDecision(
+              approval,
+              action,
+              payload.params.decision ?? responsePayload?.decision
+            )
           };
 
     this.write({
@@ -989,6 +1202,108 @@ export class CodexAppServerRuntimePort
       result
     });
     this.pendingApprovalResolutionsById.set(requestId, { action });
+  }
+
+  private async handleInteractionResponse(payload: CodexRuntimeRequest): Promise<void> {
+    const requestId = String(payload.params.requestId ?? "");
+    const interaction = this.pendingInteractionsById.get(requestId);
+    if (!interaction) {
+      return;
+    }
+
+    const action = String(payload.params.action ?? "defer") as
+      | "accept"
+      | "decline"
+      | "cancel"
+      | "submit"
+      | "defer";
+    const responsePayload = isRecord(payload.params.response)
+      ? payload.params.response
+      : undefined;
+    const resolvedAction =
+      interaction.kind === "tool_user_input" ? "submit" : action;
+
+    const result =
+      interaction.kind === "tool_user_input"
+        ? {
+            answers: this.buildToolUserInputAnswers(payload.params.answers, responsePayload)
+          }
+        : this.buildMcpElicitationResponse(resolvedAction, payload.params, responsePayload);
+
+    this.write({
+      id: interaction.rawRequestId,
+      result
+    });
+    this.pendingInteractionResolutionsById.set(requestId, {
+      action: resolvedAction,
+      response: isRecord(result) ? result : undefined
+    });
+  }
+
+  private buildToolUserInputAnswers(
+    answersInput: unknown,
+    responsePayload: Record<string, unknown> | undefined
+  ): Record<string, { answers: string[] }> {
+    const source = isRecord(responsePayload?.answers)
+      ? responsePayload.answers
+      : isRecord(answersInput)
+        ? answersInput
+        : {};
+    const answers: Record<string, { answers: string[] }> = {};
+    for (const [questionId, value] of Object.entries(source)) {
+      if (Array.isArray(value)) {
+        answers[questionId] = {
+          answers: value.filter((entry): entry is string => typeof entry === "string")
+        };
+        continue;
+      }
+      if (isRecord(value) && Array.isArray(value.answers)) {
+        answers[questionId] = {
+          answers: value.answers.filter((entry): entry is string => typeof entry === "string")
+        };
+      }
+    }
+    return answers;
+  }
+
+  private buildMcpElicitationResponse(
+    action: "accept" | "decline" | "cancel" | "submit" | "defer",
+    params: Record<string, unknown>,
+    responsePayload: Record<string, unknown> | undefined
+  ): Record<string, unknown> {
+    const responseAction =
+      action === "accept" || action === "submit"
+        ? "accept"
+        : action === "decline"
+          ? "decline"
+          : "cancel";
+    const meta =
+      responsePayload?._meta ??
+      responsePayload?.meta ??
+      params.meta ??
+      null;
+    return {
+      action: responseAction,
+      content:
+        responseAction === "accept"
+          ? responsePayload?.content ?? params.content ?? null
+          : null,
+      _meta: meta
+    };
+  }
+
+  private hasPendingSessionRequest(sessionId: string): boolean {
+    for (const approval of this.pendingApprovalsById.values()) {
+      if (approval.sessionId === sessionId) {
+        return true;
+      }
+    }
+    for (const interaction of this.pendingInteractionsById.values()) {
+      if (interaction.sessionId === sessionId) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private async ensureThreadForSession(
@@ -1136,15 +1451,22 @@ export class CodexAppServerRuntimePort
               : "Approve command execution";
         const details = [
           typeof params.reason === "string" ? params.reason : undefined,
-          typeof params.command === "string" ? params.command : undefined
+          typeof params.command === "string" ? params.command : undefined,
+          method === "item/permissions/requestApproval"
+            ? stringifySummary({
+                cwd: params.cwd,
+                permissions: params.permissions
+              })
+            : undefined
         ]
           .filter((value): value is string => Boolean(value))
           .join("\n\n");
         const availableDecisions = Array.isArray(params.availableDecisions)
-          ? params.availableDecisions.filter(
-              (value): value is string => typeof value === "string"
-            )
+          ? params.availableDecisions
           : undefined;
+        const availableActions = availableDecisions
+          ?.map(approvalDecisionLabel)
+          .filter((value): value is string => Boolean(value));
 
         this.pendingApprovalsById.set(requestId, {
           requestId,
@@ -1155,7 +1477,14 @@ export class CodexAppServerRuntimePort
           method,
           title,
           details: details || undefined,
-          availableDecisions
+          availableDecisions,
+          requestedPermissions: toJsonRecord(params.permissions),
+          metadata: {
+            protocolMethod: method,
+            cwd: params.cwd,
+            permissions: params.permissions,
+            availableDecisions
+          }
         });
 
         this.emitEvent("session.updated", {
@@ -1176,6 +1505,93 @@ export class CodexAppServerRuntimePort
                 : "command",
           title,
           details: details || undefined,
+          availableActions,
+          metadata: {
+            protocolMethod: method,
+            cwd: params.cwd,
+            permissions: params.permissions,
+            availableDecisions
+          },
+          engineId: this.engineId
+        });
+        return;
+      }
+      case "item/tool/requestUserInput": {
+        const turnId = String(params.turnId ?? "");
+        const itemId = String(params.itemId ?? requestId);
+        const questions = Array.isArray(params.questions) ? params.questions : [];
+        const details = questions
+          .map((question) =>
+            isRecord(question) && typeof question.question === "string"
+              ? question.question
+              : undefined
+          )
+          .filter((value): value is string => Boolean(value))
+          .join("\n\n");
+
+        this.pendingInteractionsById.set(requestId, {
+          requestId,
+          rawRequestId,
+          sessionId,
+          turnId,
+          kind: "tool_user_input",
+          title: "Input requested"
+        });
+        this.emitEvent("session.updated", {
+          conversationId:
+            this.resolveConversationIdBySessionId?.(sessionId) ?? sessionId,
+          sessionId,
+          status: "awaiting_approval"
+        });
+        this.emitEvent("interaction.requested", {
+          sessionId,
+          ...(turnId ? { turnId } : {}),
+          requestId,
+          interactionKind: "tool_user_input",
+          title: "Input requested",
+          details: details || undefined,
+          payload: {
+            protocolMethod: method,
+            itemId,
+            questions
+          },
+          engineId: this.engineId
+        });
+        return;
+      }
+      case "mcpServer/elicitation/request": {
+        const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
+        const serverName = optionalString(params.serverName);
+        const title = serverName
+          ? `MCP request from ${serverName}`
+          : "MCP request";
+        const details = typeof params.message === "string" ? params.message : undefined;
+
+        this.pendingInteractionsById.set(requestId, {
+          requestId,
+          rawRequestId,
+          sessionId,
+          turnId,
+          kind: "mcp_elicitation",
+          title
+        });
+        this.emitEvent("session.updated", {
+          conversationId:
+            this.resolveConversationIdBySessionId?.(sessionId) ?? sessionId,
+          sessionId,
+          status: "awaiting_approval"
+        });
+        this.emitEvent("interaction.requested", {
+          sessionId,
+          ...(turnId ? { turnId } : {}),
+          requestId,
+          interactionKind: "mcp_elicitation",
+          title,
+          details,
+          payload: {
+            protocolMethod: method,
+            ...params
+          },
           engineId: this.engineId
         });
         return;
@@ -1495,6 +1911,23 @@ export class CodexAppServerRuntimePort
         });
         return;
       }
+      case "item/mcpToolCall/progress": {
+        const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
+        const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
+        const toolCallId = typeof params.itemId === "string" ? params.itemId : undefined;
+        const delta = typeof params.message === "string" ? params.message : "";
+        if (!sessionId || !turnId || !toolCallId || !delta) {
+          return;
+        }
+        this.emitEvent("tool.delta", {
+          sessionId,
+          turnId,
+          toolCallId,
+          delta,
+          engineId: this.engineId
+        });
+        return;
+      }
       case "item/commandExecution/outputDelta": {
         const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
         const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
@@ -1568,20 +2001,47 @@ export class CodexAppServerRuntimePort
 
     const approval = this.pendingApprovalsById.get(requestId);
     const resolution = this.pendingApprovalResolutionsById.get(requestId);
-    if (!approval || !resolution) {
+    if (approval) {
+      this.pendingApprovalsById.delete(requestId);
+      this.pendingApprovalResolutionsById.delete(requestId);
+
+      this.emitEvent("approval.resolved", {
+        sessionId: approval.sessionId,
+        turnId: approval.turnId,
+        requestId,
+        action: resolution?.action ?? "defer",
+        engineId: this.engineId
+      });
       return;
     }
 
-    this.pendingApprovalsById.delete(requestId);
-    this.pendingApprovalResolutionsById.delete(requestId);
+    const interaction = this.pendingInteractionsById.get(requestId);
+    const interactionResolution = this.pendingInteractionResolutionsById.get(requestId);
+    if (!interaction) {
+      return;
+    }
 
-    this.emitEvent("approval.resolved", {
-      sessionId: approval.sessionId,
-      turnId: approval.turnId,
+    this.pendingInteractionsById.delete(requestId);
+    this.pendingInteractionResolutionsById.delete(requestId);
+
+    this.emitEvent("interaction.resolved", {
+      sessionId: interaction.sessionId,
+      ...(interaction.turnId ? { turnId: interaction.turnId } : {}),
       requestId,
-      action: resolution.action,
+      action: interactionResolution?.action ?? "defer",
+      response: interactionResolution?.response,
       engineId: this.engineId
     });
+
+    if (!interaction.turnId && !this.hasPendingSessionRequest(interaction.sessionId)) {
+      this.emitEvent("session.updated", {
+        conversationId:
+          this.resolveConversationIdBySessionId?.(interaction.sessionId) ??
+          interaction.sessionId,
+        sessionId: interaction.sessionId,
+        status: "idle"
+      });
+    }
   }
 
   private handleItemLifecycle(
@@ -1749,6 +2209,31 @@ export class CodexAppServerRuntimePort
         toolCallId: item.id,
         status: "completed",
         outputSummary: "compaction finished",
+        engineId: this.engineId
+      });
+      return;
+    }
+
+    if (isMcpToolCallThreadItem(item)) {
+      if (method === "item/started") {
+        this.emitEvent("tool.started", {
+          sessionId,
+          turnId,
+          toolCallId: item.id,
+          toolName: mcpToolLabel(item),
+          inputSummary: summarizeMcpToolInput(item),
+          engineId: this.engineId
+        });
+        return;
+      }
+
+      const raw = item as Record<string, unknown>;
+      this.emitEvent("tool.completed", {
+        sessionId,
+        turnId,
+        toolCallId: item.id,
+        status: raw.status === "failed" ? "failed" : "completed",
+        outputSummary: summarizeMcpToolOutput(item),
         engineId: this.engineId
       });
       return;

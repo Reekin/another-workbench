@@ -2,6 +2,7 @@ import type { ReactElement } from "react";
 import type {
   ApprovalRequest,
   ChatSession,
+  RuntimeInteraction,
   TakeoverPresetSummaryRpc,
   TakeoverSessionStateRpc,
   Turn
@@ -10,6 +11,7 @@ import type { DesktopTransport } from "../../../transport/desktop-transport.js";
 import type { ImageLightboxState } from "../ImageLightbox.js";
 import type { ComposerStatusNotice } from "../composer-status.js";
 import type { ApprovalResponseInput } from "../ApprovalFlowView.js";
+import type { InteractionResponseInput } from "../InteractionFlowView.js";
 import { useComposerController } from "../use-composer-controller.js";
 import { ComposerPanel } from "./ComposerPanel.js";
 
@@ -23,6 +25,7 @@ export type ComposerContainerProps = {
   activeWorkspaceRootPath?: string;
   turns: Turn[];
   approvals: ApprovalRequest[];
+  interactions: RuntimeInteraction[];
   takeoverPresets: TakeoverPresetSummaryRpc[];
   takeoverState?: TakeoverSessionStateRpc;
   isTakeoverMenuOpen: boolean;
@@ -37,6 +40,7 @@ export type ComposerContainerProps = {
   onSelectTakeoverPreset: (presetId?: string) => Promise<void>;
   onOpenTakeoverContextEditor: () => void;
   onRespondApproval?: (input: ApprovalResponseInput) => Promise<void>;
+  onRespondInteraction?: (input: InteractionResponseInput) => Promise<void>;
 };
 
 export const ComposerContainer = ({
@@ -49,6 +53,7 @@ export const ComposerContainer = ({
   activeWorkspaceRootPath,
   turns,
   approvals,
+  interactions,
   takeoverPresets,
   takeoverState,
   isTakeoverMenuOpen,
@@ -62,7 +67,8 @@ export const ComposerContainer = ({
   onToggleTakeoverMenu,
   onSelectTakeoverPreset,
   onOpenTakeoverContextEditor,
-  onRespondApproval
+  onRespondApproval,
+  onRespondInteraction
 }: ComposerContainerProps): ReactElement => {
   const composer = useComposerController({
     transport,
@@ -96,6 +102,9 @@ export const ComposerContainer = ({
       status={composer.status}
       statusNotice={statusNotice}
       pendingApprovals={approvals.filter((approval) => approval.status === "pending")}
+      pendingInteractions={interactions.filter(
+        (interaction) => interaction.status === "pending"
+      )}
       contextUsage={activeSession?.contextUsage}
       takeoverPresets={takeoverPresets}
       takeoverState={takeoverState}
@@ -138,6 +147,7 @@ export const ComposerContainer = ({
       onSendQueuedMessageNow={composer.onSendQueuedMessageNow}
       onSteerQueuedMessageNow={composer.onSteerQueuedMessageNow}
       onRespondApproval={onRespondApproval}
+      onRespondInteraction={onRespondInteraction}
     />
   );
 };

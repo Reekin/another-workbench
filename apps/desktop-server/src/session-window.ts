@@ -5,6 +5,7 @@ import type {
   Conversation,
   DomainSnapshot,
   MessageBlock,
+  RuntimeInteraction,
   SessionRelation,
   TerminalStream,
   ToolCall,
@@ -31,6 +32,7 @@ type BuildSessionWindowInput = {
   toolCalls: ToolCall[];
   terminalStreams: TerminalStream[];
   approvalRequests: ApprovalRequest[];
+  runtimeInteractions: RuntimeInteraction[];
   participants: AgentParticipant[];
   sessionRelations: SessionRelation[];
   limit: number;
@@ -75,6 +77,25 @@ const sortTurnsAsc = (turns: Turn[]): Turn[] =>
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(Math.max(value, min), max);
 
+const runtimeInteractionsForWindow = (
+  interactions: RuntimeInteraction[],
+  sessionId: string,
+  turnIds: Set<string>,
+  interactionRequestIds: Set<string>
+): RuntimeInteraction[] =>
+  interactions.filter((interaction) => {
+    if (interaction.sessionId !== sessionId) {
+      return false;
+    }
+    if (interaction.turnId) {
+      return (
+        turnIds.has(interaction.turnId) ||
+        interactionRequestIds.has(interaction.requestId)
+      );
+    }
+    return interaction.status === "pending";
+  });
+
 export const buildSessionWindowSnapshot = (
   input: BuildSessionWindowInput
 ): SessionWindowSnapshot => {
@@ -90,6 +111,12 @@ export const buildSessionWindowSnapshot = (
         toolCalls: [],
         terminalStreams: [],
         approvalRequests: [],
+        runtimeInteractions: runtimeInteractionsForWindow(
+          input.runtimeInteractions,
+          input.sessionId,
+          new Set(),
+          new Set()
+        ),
         participants: input.participants,
         sessionRelations: input.sessionRelations
       },
@@ -130,6 +157,9 @@ export const buildSessionWindowSnapshot = (
   const approvalRequestIds = new Set(
     windowTurns.flatMap((turn) => turn.approvalRequestIds)
   );
+  const interactionRequestIds = new Set(
+    windowTurns.flatMap((turn) => turn.interactionRequestIds ?? [])
+  );
 
   return {
     sessionId: input.sessionId,
@@ -155,6 +185,12 @@ export const buildSessionWindowSnapshot = (
         (approval) =>
           turnIds.has(approval.turnId) || approvalRequestIds.has(approval.requestId)
       ),
+      runtimeInteractions: runtimeInteractionsForWindow(
+        input.runtimeInteractions,
+        input.sessionId,
+        turnIds,
+        interactionRequestIds
+      ),
       participants: input.participants,
       sessionRelations: input.sessionRelations
     }
@@ -171,6 +207,9 @@ export const buildSessionWindowSnapshotFromPage = (
   const terminalIds = new Set(windowTurns.flatMap((turn) => turn.terminalIds));
   const approvalRequestIds = new Set(
     windowTurns.flatMap((turn) => turn.approvalRequestIds)
+  );
+  const interactionRequestIds = new Set(
+    windowTurns.flatMap((turn) => turn.interactionRequestIds ?? [])
   );
 
   return {
@@ -198,6 +237,12 @@ export const buildSessionWindowSnapshotFromPage = (
       approvalRequests: input.approvalRequests.filter(
         (approval) =>
           turnIds.has(approval.turnId) || approvalRequestIds.has(approval.requestId)
+      ),
+      runtimeInteractions: runtimeInteractionsForWindow(
+        input.runtimeInteractions,
+        input.sessionId,
+        turnIds,
+        interactionRequestIds
       ),
       participants: input.participants,
       sessionRelations: input.sessionRelations

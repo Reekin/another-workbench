@@ -5,6 +5,7 @@ import type {
   Conversation,
   DomainSnapshot,
   MessageBlock,
+  RuntimeInteraction,
   SessionRelation,
   TerminalStream,
   ToolCall,
@@ -17,6 +18,7 @@ import {
   parseConversation,
   parseDomainSnapshot,
   parseMessageBlock,
+  parseRuntimeInteraction,
   parseSessionRelation,
   parseTerminalStream,
   parseToolCall,
@@ -55,6 +57,11 @@ export type ListTerminalStreamsOptions = {
 };
 
 export type ListApprovalRequestsOptions = {
+  sessionId?: string;
+  turnId?: string;
+};
+
+export type ListRuntimeInteractionsOptions = {
   sessionId?: string;
   turnId?: string;
 };
@@ -156,6 +163,7 @@ export class DomainStore {
   private readonly toolCalls = new Map<string, ToolCall>();
   private readonly terminalStreams = new Map<string, TerminalStream>();
   private readonly approvalRequests = new Map<string, ApprovalRequest>();
+  private readonly runtimeInteractions = new Map<string, RuntimeInteraction>();
   private readonly participants = new Map<string, AgentParticipant>();
   private readonly sessionRelations = new Map<string, SessionRelation>();
 
@@ -166,6 +174,7 @@ export class DomainStore {
   private readonly toolCallIdsByTurn = new Map<string, string[]>();
   private readonly terminalIdsByTurn = new Map<string, string[]>();
   private readonly approvalRequestIdsByTurn = new Map<string, string[]>();
+  private readonly interactionRequestIdsByTurn = new Map<string, string[]>();
   private readonly participantIdsByConversation = new Map<string, string[]>();
   private readonly parentSessionIdByChild = new Map<string, string>();
   private readonly childSessionIdsByParent = new Map<string, string[]>();
@@ -184,6 +193,7 @@ export class DomainStore {
     this.toolCalls.clear();
     this.terminalStreams.clear();
     this.approvalRequests.clear();
+    this.runtimeInteractions.clear();
     this.participants.clear();
     this.sessionRelations.clear();
 
@@ -194,6 +204,7 @@ export class DomainStore {
     this.toolCallIdsByTurn.clear();
     this.terminalIdsByTurn.clear();
     this.approvalRequestIdsByTurn.clear();
+    this.interactionRequestIdsByTurn.clear();
     this.participantIdsByConversation.clear();
     this.parentSessionIdByChild.clear();
     this.childSessionIdsByParent.clear();
@@ -223,6 +234,9 @@ export class DomainStore {
     }
     for (const approvalRequest of parsedSnapshot.approvalRequests) {
       this.upsertApprovalRequest(approvalRequest);
+    }
+    for (const interaction of parsedSnapshot.runtimeInteractions ?? []) {
+      this.upsertRuntimeInteraction(interaction);
     }
     for (const participant of parsedSnapshot.participants) {
       this.upsertParticipant(participant);
@@ -266,6 +280,11 @@ export class DomainStore {
         this.approvalRequests.values(),
         (approval) => approval.requestedAt,
         (approval) => approval.requestId
+      ),
+      runtimeInteractions: sortByIsoAsc(
+        this.runtimeInteractions.values(),
+        (interaction) => interaction.requestedAt,
+        (interaction) => interaction.requestId
       ),
       participants: [...this.participants.values()].sort((left, right) =>
         left.participantId.localeCompare(right.participantId)
@@ -311,6 +330,9 @@ export class DomainStore {
       approvalRequests: turns.flatMap((turn) =>
         this.listApprovalRequests({ turnId: turn.turnId })
       ),
+      runtimeInteractions: sessions.flatMap((session) =>
+        this.listRuntimeInteractions({ sessionId: session.sessionId })
+      ),
       participants: this.listParticipants({ conversationId }),
       sessionRelations
     };
@@ -339,6 +361,7 @@ export class DomainStore {
       approvalRequests: turns.flatMap((turn) =>
         this.listApprovalRequests({ turnId: turn.turnId })
       ),
+      runtimeInteractions: this.listRuntimeInteractions({ sessionId }),
       participants: this.listParticipants({
         conversationId: session.conversationId,
         engineId: session.engineId
@@ -682,6 +705,70 @@ export class DomainStore {
     return true;
   }
 
+  public getRuntimeInteraction(requestId: string): RuntimeInteraction | undefined {
+    return this.runtimeInteractions.get(requestId);
+  }
+
+  public listRuntimeInteractions(
+    options: ListRuntimeInteractionsOptions = {}
+  ): RuntimeInteraction[] {
+    const interactions =
+      options.turnId !== undefined
+        ? mapIdsToValues(
+            this.interactionRequestIdsByTurn.get(options.turnId),
+            (requestId) => this.runtimeInteractions.get(requestId)
+          )
+        : options.sessionId !== undefined
+          ? [...this.runtimeInteractions.values()].filter(
+              (interaction) => interaction.sessionId === options.sessionId
+            )
+          : [...this.runtimeInteractions.values()];
+
+    return sortByIsoAsc(
+      interactions,
+      (interaction) => interaction.requestedAt,
+      (interaction) => interaction.requestId
+    );
+  }
+
+  public upsertRuntimeInteraction(
+    runtimeInteraction: RuntimeInteraction | unknown
+  ): RuntimeInteraction {
+    const parsedInteraction = parseRuntimeInteraction(runtimeInteraction);
+    const existing = this.runtimeInteractions.get(parsedInteraction.requestId);
+    if (existing && existing.turnId !== parsedInteraction.turnId) {
+      removeIndexedValue(
+        this.interactionRequestIdsByTurn,
+        existing.turnId,
+        existing.requestId
+      );
+    }
+
+    this.runtimeInteractions.set(parsedInteraction.requestId, parsedInteraction);
+    if (parsedInteraction.turnId) {
+      addUniqueValue(
+        this.interactionRequestIdsByTurn,
+        parsedInteraction.turnId,
+        parsedInteraction.requestId
+      );
+    }
+    return parsedInteraction;
+  }
+
+  public deleteRuntimeInteraction(requestId: string): boolean {
+    const existing = this.runtimeInteractions.get(requestId);
+    if (!existing) {
+      return false;
+    }
+    this.runtimeInteractions.delete(requestId);
+    removeIndexedValue(
+      this.interactionRequestIdsByTurn,
+      existing.turnId,
+      existing.requestId
+    );
+    return true;
+  }
+
   public getParticipant(participantId: string): AgentParticipant | undefined {
     return this.participants.get(participantId);
   }
@@ -844,6 +931,10 @@ export class DomainStore {
 
     for (const relation of this.listSessionRelations({ sessionId })) {
       this.deleteSessionRelation(relation.relationId);
+    }
+
+    for (const interaction of this.listRuntimeInteractions({ sessionId })) {
+      this.deleteRuntimeInteraction(interaction.requestId);
     }
 
     for (const turn of this.listTurns({ sessionId })) {

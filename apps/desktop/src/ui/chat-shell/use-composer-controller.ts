@@ -265,12 +265,16 @@ export const useComposerController = (
     supportsSteer: capabilities.supportsSteer
   });
 
+  const hasComposedInput =
+    draft.trim().length > 0 ||
+    selectedSkills.length > 0 ||
+    attachments.length > 0;
+  const isTakeoverBlockingPrimarySend =
+    Boolean(input.isTakeoverManaged) && intent !== "steer";
   const canSubmit =
-    (draft.trim().length > 0 ||
-      selectedSkills.length > 0 ||
-      attachments.length > 0) &&
+    hasComposedInput &&
     Boolean(input.transport && input.activeSessionId) &&
-    !input.isTakeoverManaged &&
+    !isTakeoverBlockingPrimarySend &&
     !input.isOpeningSelectedSession &&
     !isDispatching;
   const canQueue =

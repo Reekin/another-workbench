@@ -1524,15 +1524,28 @@ button {
   position: relative;
   display: flex;
   gap: 8px;
-  align-items: center;
+  align-items: flex-end;
   justify-content: flex-end;
   flex-wrap: wrap;
+}
+
+.awb-composer__buttons > span > button {
+  box-sizing: border-box;
+  height: 36px;
+}
+
+.awb-composer__buttons > button,
+.awb-composer-takeover > button {
+  box-sizing: border-box;
+  height: 29px;
+  min-height: 0;
+  padding-block: 4px;
 }
 
 .awb-composer-takeover {
   position: relative;
   display: inline-flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 6px;
   margin-right: 14px;
 }
@@ -1546,7 +1559,7 @@ button {
 .awb-composer-takeover__button {
   display: inline-grid;
   grid-template-columns: auto minmax(0, 1fr);
-  align-items: baseline;
+  align-items: center;
   gap: 7px;
   max-width: 240px;
 }

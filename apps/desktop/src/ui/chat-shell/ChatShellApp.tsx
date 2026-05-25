@@ -78,12 +78,18 @@ type SettingsLauncherProps = {
   currentEngineId: string;
   transport?: DesktopTransport;
   onEngineSaved: (engineId: string) => void;
+  onTakeoverPresetsChanged: (presets: TakeoverPresetSummaryRpc[]) => void;
   onStatusNotice: (notice: ComposerStatusNotice) => void;
 };
 
 type SettingsTab = "general" | "takeover";
 
 const takeoverPresetNamePattern = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+const createDefaultTakeoverPresetPrompt = (presetId: string): string => `# ${presetId}
+
+Use this takeover preset to describe the role, inspection scope, and verdict standard.
+`;
 
 type TranscriptPaneProps = {
   transcriptRef: RefObject<HTMLElement | null>;
@@ -677,6 +683,7 @@ const SettingsLauncher = ({
   currentEngineId,
   transport,
   onEngineSaved,
+  onTakeoverPresetsChanged,
   onStatusNotice
 }: SettingsLauncherProps): ReactElement => {
   const [isOpen, setIsOpen] = useState(false);
@@ -746,6 +753,7 @@ const SettingsLauncher = ({
         const result = await transport.takeoverPresets.list();
         setTakeoverRootPath(result.rootPath);
         setTakeoverPresets(result.presets);
+        onTakeoverPresetsChanged(result.presets);
         const requestedPresetId =
           selectPresetId !== undefined ? selectPresetId : selectedTakeoverPresetId;
         const nextPresetId =
@@ -771,7 +779,13 @@ const SettingsLauncher = ({
         setIsLoadingTakeoverPresets(false);
       }
     },
-    [onStatusNotice, readTakeoverPreset, selectedTakeoverPresetId, transport]
+    [
+      onStatusNotice,
+      onTakeoverPresetsChanged,
+      readTakeoverPreset,
+      selectedTakeoverPresetId,
+      transport
+    ]
   );
 
   useEffect(() => {
@@ -833,14 +847,41 @@ const SettingsLauncher = ({
     }
   };
 
-  const onNewTakeoverPreset = (): void => {
-    const presetId = "custom-preset";
-    setSelectedTakeoverPresetId("");
-    setDraftTakeoverPresetId(presetId);
-    setDraftTakeoverPrompt(`# ${presetId}
-
-Use this takeover preset to describe the role, inspection scope, and verdict standard.
-`);
+  const onNewTakeoverPreset = async (): Promise<void> => {
+    if (!transport) {
+      return;
+    }
+    const existingPresetIds = new Set(
+      takeoverPresets.map((preset) => preset.presetId)
+    );
+    const basePresetId = "custom-preset";
+    let presetId = basePresetId;
+    let index = 2;
+    while (existingPresetIds.has(presetId)) {
+      presetId = `${basePresetId}-${index}`;
+      index += 1;
+    }
+    setIsSavingTakeoverPreset(true);
+    try {
+      const preset = await transport.takeoverPresets.upsert({
+        presetId,
+        prompt: createDefaultTakeoverPresetPrompt(presetId)
+      });
+      await loadTakeoverPresets(preset.presetId);
+      onStatusNotice({
+        message: `Takeover preset created: ${preset.presetId}`,
+        source: "settings"
+      });
+    } catch (error) {
+      onStatusNotice({
+        message: `Preset create failed: ${(error as Error).message}`,
+        persistent: true,
+        source: "settings",
+        ...statusNoticeErrorDetails(error)
+      });
+    } finally {
+      setIsSavingTakeoverPreset(false);
+    }
   };
 
   const onSaveTakeoverPreset = async (): Promise<void> => {
@@ -989,7 +1030,8 @@ Use this takeover preset to describe the role, inspection scope, and verdict sta
                       <button
                         type="button"
                         className="awb-secondary-button awb-secondary-button--small"
-                        onClick={onNewTakeoverPreset}
+                        onClick={() => void onNewTakeoverPreset()}
+                        disabled={isLoadingTakeoverPresets || isSavingTakeoverPreset}
                       >
                         New
                       </button>
@@ -1749,6 +1791,8 @@ export const ChatShellApp = ({
   const [takeoverState, setTakeoverState] = useState<
     TakeoverSessionStateRpc | undefined
   >();
+  const [takeoverContextCacheBySessionId, setTakeoverContextCacheBySessionId] =
+    useState<Record<string, Record<string, string>>>({});
   const [isTakeoverMenuOpen, setIsTakeoverMenuOpen] = useState(false);
   const [isTakeoverContextEditorOpen, setIsTakeoverContextEditorOpen] =
     useState(false);
@@ -1841,6 +1885,39 @@ export const ChatShellApp = ({
   const activeSession = activeSessionId
     ? state.entities.sessions[activeSessionId]
     : undefined;
+  const cacheTakeoverContext = useCallback(
+    (sessionId?: string, presetId?: string, context?: string): void => {
+      if (!sessionId || !presetId) {
+        return;
+      }
+      const trimmedContext = context?.trim();
+      setTakeoverContextCacheBySessionId((current) => {
+        const currentSessionCache = current[sessionId] ?? {};
+        if (!trimmedContext) {
+          if (!(presetId in currentSessionCache)) {
+            return current;
+          }
+          const nextSessionCache = { ...currentSessionCache };
+          delete nextSessionCache[presetId];
+          return {
+            ...current,
+            [sessionId]: nextSessionCache
+          };
+        }
+        if (currentSessionCache[presetId] === trimmedContext) {
+          return current;
+        }
+        return {
+          ...current,
+          [sessionId]: {
+            ...currentSessionCache,
+            [presetId]: trimmedContext
+          }
+        };
+      });
+    },
+    []
+  );
 
   useEffect(() => {
     setIsTakeoverMenuOpen(false);
@@ -1901,6 +1978,19 @@ export const ChatShellApp = ({
       disposed = true;
     };
   }, [activeSessionId, setStatusNotice, state.refreshSignals.takeover, transport]);
+
+  useEffect(() => {
+    const presetId = takeoverState?.presetId ?? takeoverState?.manualPresetId;
+    if (typeof takeoverState?.context === "string") {
+      cacheTakeoverContext(activeSessionId, presetId, takeoverState.context);
+    }
+  }, [
+    activeSessionId,
+    cacheTakeoverContext,
+    takeoverState?.context,
+    takeoverState?.manualPresetId,
+    takeoverState?.presetId
+  ]);
 
   useRendererDiagnostics({
     transport,
@@ -2371,10 +2461,20 @@ export const ChatShellApp = ({
         return;
       }
       try {
+        const currentPresetId =
+          takeoverState?.presetId ?? takeoverState?.manualPresetId;
+        cacheTakeoverContext(
+          activeSessionId,
+          currentPresetId,
+          takeoverState?.context
+        );
+        const cachedContext = presetId
+          ? takeoverContextCacheBySessionId[activeSessionId]?.[presetId]
+          : undefined;
         const nextState = await transport.takeover.setManual({
           sessionId: activeSessionId,
           presetId,
-          context: presetId ? takeoverState?.context : undefined
+          context: cachedContext
         });
         setTakeoverState(nextState);
         setIsTakeoverMenuOpen(false);
@@ -2394,7 +2494,17 @@ export const ChatShellApp = ({
         });
       }
     },
-    [activeSessionId, refreshSessionBrowser, setStatusNotice, takeoverState?.context, transport]
+    [
+      activeSessionId,
+      cacheTakeoverContext,
+      refreshSessionBrowser,
+      setStatusNotice,
+      takeoverContextCacheBySessionId,
+      takeoverState?.context,
+      takeoverState?.manualPresetId,
+      takeoverState?.presetId,
+      transport
+    ]
   );
 
   const onOpenTakeoverContextEditor = useCallback((): void => {
@@ -2434,6 +2544,7 @@ export const ChatShellApp = ({
           ? draftTakeoverContext.trim()
           : undefined
       });
+      cacheTakeoverContext(activeSessionId, presetId, draftTakeoverContext);
       setTakeoverState(nextState);
       setIsTakeoverContextEditorOpen(false);
       await refreshSessionBrowser({ mode: "visible" });
@@ -2455,6 +2566,7 @@ export const ChatShellApp = ({
     }
   }, [
     activeSessionId,
+    cacheTakeoverContext,
     draftTakeoverContext,
     refreshSessionBrowser,
     setStatusNotice,
@@ -2802,6 +2914,7 @@ export const ChatShellApp = ({
               currentEngineId={selectedEngineId}
               transport={transport}
               onEngineSaved={setSelectedEngineId}
+              onTakeoverPresetsChanged={setTakeoverPresets}
               onStatusNotice={setStatusNotice}
             />
           </footer>

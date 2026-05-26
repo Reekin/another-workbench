@@ -1608,6 +1608,11 @@ export const zWorkbenchEventPushSchema = z.object({
   envelope: zEventEnvelopeSchema
 });
 
+export const zWorkbenchEventPushBatchSchema = z.object({
+  channel: z.literal("workbench.events.batch"),
+  pushes: z.array(zWorkbenchEventPushSchema).min(1)
+});
+
 export type WorkbenchSettingsRpc = z.infer<typeof zWorkbenchSettingsSchema>;
 export type TakeoverPresetSummaryRpc = z.infer<
   typeof zTakeoverPresetSummarySchema
@@ -1624,6 +1629,7 @@ export type WorkbenchEventSubscriptionFilter = z.infer<
 export type WorkbenchRpcRequest = z.infer<typeof zWorkbenchRpcRequestSchema>;
 export type WorkbenchRpcResponse = z.infer<typeof zWorkbenchRpcResponseSchema>;
 export type WorkbenchEventPush = z.infer<typeof zWorkbenchEventPushSchema>;
+export type WorkbenchEventPushBatch = z.infer<typeof zWorkbenchEventPushBatchSchema>;
 export type WorkspaceRecordRpc = z.infer<typeof zWorkspaceRecordSchema>;
 export type ProviderSessionHandle = z.infer<typeof zProviderSessionHandleSchema>;
 export type SessionBrowserNodeRpc = z.infer<typeof zSessionBrowserNodeSchema>;
@@ -1712,3 +1718,6 @@ export const safeParseWorkbenchRpcResponse = (value: unknown) =>
 
 export const safeParseWorkbenchEventPush = (value: unknown) =>
   zWorkbenchEventPushSchema.safeParse(value);
+
+export const safeParseWorkbenchEventPushBatch = (value: unknown) =>
+  zWorkbenchEventPushBatchSchema.safeParse(value);

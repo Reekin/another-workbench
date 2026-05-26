@@ -1,5 +1,6 @@
 import {
   createIngestEnvelopeAction,
+  createIngestEnvelopesAction,
   createHydrateSnapshotAction,
   createIngestEventAction
 } from "./intake.js";
@@ -27,6 +28,7 @@ export type RendererStore = {
   disposeSession: (sessionId: string) => RendererStoreState;
   ingestEvent: (event: RuntimeEvent) => RendererStoreState;
   ingestEnvelope: (envelope: EventEnvelope) => RendererStoreState;
+  ingestEnvelopes: (envelopes: EventEnvelope[]) => RendererStoreState;
 };
 
 export const createRendererStore = (
@@ -69,6 +71,8 @@ export const createRendererStore = (
     ingestEvent: (event: RuntimeEvent) =>
       dispatch(createIngestEventAction(event)),
     ingestEnvelope: (envelope: EventEnvelope) =>
-      dispatch(createIngestEnvelopeAction(envelope))
+      dispatch(createIngestEnvelopeAction(envelope)),
+    ingestEnvelopes: (envelopes: EventEnvelope[]) =>
+      dispatch(createIngestEnvelopesAction(envelopes))
   };
 };

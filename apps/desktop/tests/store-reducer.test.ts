@@ -195,6 +195,70 @@ describe("desktop store reducer", () => {
     expect(conversation.participantEngineIds).toContain("agent-a");
   });
 
+  it("coalesces adjacent stream deltas during batch ingestion while preserving cursor metadata", () => {
+    const initial = createInitialRendererStoreState();
+    const state = rendererStoreReducer(initial, {
+      type: "store/ingestEnvelopes",
+      envelopes: [
+        toEnvelope("evt-session", "1", {
+          type: "session.created",
+          conversationId: "conversation-a",
+          sessionId: "session-a",
+          engineId: "agent-a",
+          status: "running"
+        }),
+        toEnvelope("evt-turn", "2", {
+          type: "turn.started",
+          sessionId: "session-a",
+          turnId: "turn-a"
+        }),
+        toEnvelope("evt-message-1", "3", {
+          type: "message.delta",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          messageId: "message-a",
+          delta: "hel"
+        }),
+        toEnvelope("evt-message-2", "4", {
+          type: "message.delta",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          messageId: "message-a",
+          delta: "lo"
+        }),
+        toEnvelope("evt-terminal-1", "5", {
+          type: "terminal.output",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          terminalId: "terminal-a",
+          chunk: "out"
+        }),
+        toEnvelope("evt-terminal-2", "6", {
+          type: "terminal.output",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          terminalId: "terminal-a",
+          chunk: "put"
+        })
+      ]
+    });
+
+    expect(state.entities.messageBlocks["message-a:md"]?.text).toBe("hello");
+    expect(state.entities.terminalStreams["terminal-a"]?.outputText).toBe("output");
+    expect(state.eventStream.lastEventId).toBe("evt-terminal-2");
+    expect(state.eventStream.lastCursor).toBe("6");
+    expect(state.eventStream.recentEventIds).toEqual([
+      "evt-session",
+      "evt-turn",
+      "evt-message-1",
+      "evt-message-2",
+      "evt-terminal-1",
+      "evt-terminal-2"
+    ]);
+    expect(state.eventStream.seenEventIds["evt-message-1"]).toBe(true);
+    expect(state.eventStream.seenEventIds["evt-terminal-1"]).toBe(true);
+  });
+
   it("updates session titles from session update events", () => {
     let state = createInitialRendererStoreState();
 

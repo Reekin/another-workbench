@@ -47,9 +47,10 @@ const invalidatesTakeover = (event: RuntimeEvent): boolean => {
     case "session.created":
     case "session.updated":
     case "session.disposed":
-    case "tool.completed":
     case "runtime.error":
       return true;
+    case "tool.completed":
+      return typeof event.outputSummary === "string" && /takeover/i.test(event.outputSummary);
     default:
       return false;
   }

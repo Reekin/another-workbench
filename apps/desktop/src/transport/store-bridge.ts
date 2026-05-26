@@ -40,6 +40,9 @@ export const connectDesktopTransportToStore = async (
     subscriptionId: input.subscriptionId,
     fromCursor,
     filter: input.filter,
+    onEnvelopes: (envelopes) => {
+      input.store.ingestEnvelopes(envelopes);
+    },
     onEnvelope: (envelope) => {
       input.store.ingestEnvelope(envelope);
     }

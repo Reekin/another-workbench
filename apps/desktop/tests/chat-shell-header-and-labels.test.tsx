@@ -16,6 +16,7 @@ import {
   ChatShellApp,
   formatRelativeCompletedTurnAge,
   getWorkspaceSessionPage,
+  resolveCurrentTakeoverState,
   truncateSessionHeading
 } from "../src/ui/chat-shell/ChatShellApp.js";
 
@@ -55,6 +56,21 @@ describe("ChatShellApp header and transcript labels", () => {
       pageIndex: 2,
       totalPages: 3
     });
+  });
+
+  it("guards takeover state to the active session", () => {
+    const takeoverState = {
+      sessionId: "session-a",
+      role: "managed",
+      active: true,
+      presetId: "review"
+    } as const;
+
+    expect(resolveCurrentTakeoverState(takeoverState, "session-a")).toBe(
+      takeoverState
+    );
+    expect(resolveCurrentTakeoverState(takeoverState, "session-b")).toBeUndefined();
+    expect(resolveCurrentTakeoverState(takeoverState, undefined)).toBeUndefined();
   });
 
   it("shows only the final assistant timestamp for multiple assistant blocks in one turn", () => {

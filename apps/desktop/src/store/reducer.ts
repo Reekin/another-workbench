@@ -1208,9 +1208,19 @@ const markEnvelopeInEventStream = (
   state: RendererStoreState,
   envelope: EventEnvelope
 ): RendererStoreState => {
+  return markEnvelopesInEventStream(state, [envelope]);
+};
+
+const markEnvelopesInEventStream = (
+  state: RendererStoreState,
+  envelopes: EventEnvelope[]
+): RendererStoreState => {
+  if (envelopes.length === 0) {
+    return state;
+  }
   const recentEventIds = [
     ...(state.eventStream.recentEventIds ?? []),
-    envelope.eventId
+    ...envelopes.map((envelope) => envelope.eventId)
   ];
   const overflow = Math.max(0, recentEventIds.length - maxSeenEventIds);
   const trimmedRecentEventIds =
@@ -1223,16 +1233,146 @@ const markEnvelopeInEventStream = (
     {}
   );
 
+  const lastEnvelope = envelopes[envelopes.length - 1]!;
   return {
     ...state,
     eventStream: {
-      lastEventId: envelope.eventId,
-      lastCursor: envelope.cursor,
-      lastOccurredAt: envelope.occurredAt,
+      lastEventId: lastEnvelope.eventId,
+      lastCursor: lastEnvelope.cursor,
+      lastOccurredAt: lastEnvelope.occurredAt,
       recentEventIds: trimmedRecentEventIds,
       seenEventIds
     }
   };
+};
+
+const sameOptional = (left: unknown, right: unknown): boolean => left === right;
+
+const mergeRuntimeEvents = (
+  previous: RuntimeEvent,
+  next: RuntimeEvent
+): RuntimeEvent | undefined => {
+  if (previous.type !== next.type) {
+    return undefined;
+  }
+  switch (next.type) {
+    case "message.delta":
+      if (
+        previous.type === "message.delta" &&
+        previous.sessionId === next.sessionId &&
+        previous.turnId === next.turnId &&
+        previous.messageId === next.messageId &&
+        sameOptional(previous.engineId, next.engineId) &&
+        sameOptional(previous.participantId, next.participantId) &&
+        sameOptional(previous.phase, next.phase)
+      ) {
+        return {
+          ...next,
+          delta: `${previous.delta}${next.delta}`
+        };
+      }
+      return undefined;
+    case "tool.delta":
+      if (
+        previous.type === "tool.delta" &&
+        previous.sessionId === next.sessionId &&
+        previous.turnId === next.turnId &&
+        previous.toolCallId === next.toolCallId &&
+        sameOptional(previous.engineId, next.engineId) &&
+        sameOptional(previous.participantId, next.participantId)
+      ) {
+        return {
+          ...next,
+          delta: `${previous.delta}${next.delta}`
+        };
+      }
+      return undefined;
+    case "terminal.output":
+      if (
+        previous.type === "terminal.output" &&
+        previous.sessionId === next.sessionId &&
+        previous.turnId === next.turnId &&
+        previous.terminalId === next.terminalId &&
+        sameOptional(previous.engineId, next.engineId) &&
+        sameOptional(previous.participantId, next.participantId)
+      ) {
+        return {
+          ...next,
+          chunk: `${previous.chunk}${next.chunk}`
+        };
+      }
+      return undefined;
+    default:
+      return undefined;
+  }
+};
+
+const coalesceEnvelopesForIngestion = (
+  envelopes: EventEnvelope[]
+): EventEnvelope[] => {
+  const coalesced: EventEnvelope[] = [];
+  for (const envelope of envelopes) {
+    const previous = coalesced[coalesced.length - 1];
+    if (!previous) {
+      coalesced.push(envelope);
+      continue;
+    }
+    const mergedEvent = mergeRuntimeEvents(previous.event, envelope.event);
+    if (!mergedEvent) {
+      coalesced.push(envelope);
+      continue;
+    }
+    coalesced[coalesced.length - 1] = {
+      ...envelope,
+      event: mergedEvent
+    };
+  }
+  return coalesced;
+};
+
+const ingestEnvelope = (
+  state: RendererStoreState,
+  envelope: EventEnvelope
+): RendererStoreState => {
+  if (state.eventStream.seenEventIds[envelope.eventId]) {
+    return state;
+  }
+  const next = applyRuntimeEvent(
+    state,
+    envelope.event,
+    envelope.occurredAt
+  );
+  return markEnvelopeInEventStream(next, envelope);
+};
+
+const ingestEnvelopeBatch = (
+  state: RendererStoreState,
+  envelopes: EventEnvelope[]
+): RendererStoreState => {
+  const pending: EventEnvelope[] = [];
+  const seenInBatch = new Set<string>();
+  for (const envelope of envelopes) {
+    if (
+      state.eventStream.seenEventIds[envelope.eventId] ||
+      seenInBatch.has(envelope.eventId)
+    ) {
+      continue;
+    }
+    seenInBatch.add(envelope.eventId);
+    pending.push(envelope);
+  }
+  if (pending.length === 0) {
+    return state;
+  }
+  let nextState = state;
+  for (const envelope of coalesceEnvelopesForIngestion(pending)) {
+    nextState = applyRuntimeEvent(
+      nextState,
+      envelope.event,
+      envelope.occurredAt
+    );
+  }
+  return markEnvelopesInEventStream(nextState, pending);
 };
 
 export const rendererStoreReducer = (
@@ -1267,17 +1407,10 @@ export const rendererStoreReducer = (
       return disposeSessionState(state, action.sessionId);
     case "store/ingestEvent":
       return applyRuntimeEvent(state, action.event);
-    case "store/ingestEnvelope": {
-      if (state.eventStream.seenEventIds[action.envelope.eventId]) {
-        return state;
-      }
-      const next = applyRuntimeEvent(
-        state,
-        action.envelope.event,
-        action.envelope.occurredAt
-      );
-      return markEnvelopeInEventStream(next, action.envelope);
-    }
+    case "store/ingestEnvelope":
+      return ingestEnvelope(state, action.envelope);
+    case "store/ingestEnvelopes":
+      return ingestEnvelopeBatch(state, action.envelopes);
     case "store/setActiveConversation":
       return {
         ...state,

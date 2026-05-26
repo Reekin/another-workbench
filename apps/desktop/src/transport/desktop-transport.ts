@@ -33,6 +33,7 @@ import type {
   TakeoverSessionStateRpc,
   WorkspaceFileSearchResultRpc,
   WorkbenchClientApi,
+  EventEnvelope,
   WorkbenchEventPush,
   WorkbenchEventSubscriptionFilter,
   WorkbenchSettingsRpc,
@@ -49,6 +50,8 @@ const createOpaqueId = (): string =>
 
 type Clock = () => string;
 type IdFactory = () => string;
+type CancelScheduledWork = () => void;
+type EventDrainScheduler = (callback: () => void) => CancelScheduledWork;
 
 export type CommandReceipt = {
   commandId: string;
@@ -136,6 +139,7 @@ export type EventSubscribeInput = {
   fromCursor?: string;
   subscriptionId?: string;
   onEnvelope: (push: WorkbenchEventPush["envelope"]) => void;
+  onEnvelopes?: (envelopes: WorkbenchEventPush["envelope"][]) => void;
   onPush?: (push: WorkbenchEventPush) => void;
 };
 
@@ -392,6 +396,28 @@ export type DesktopTransport = {
 export type DesktopTransportOptions = {
   createId?: IdFactory;
   now?: Clock;
+  eventBatchMaxSize?: number;
+  eventDrainBudgetMs?: number;
+  scheduleEventDrain?: EventDrainScheduler;
+};
+
+const defaultEventBatchMaxSize = 500;
+const defaultEventDrainBudgetMs = 8;
+
+const scheduleDefaultEventDrain: EventDrainScheduler = (callback) => {
+  if (typeof globalThis.requestAnimationFrame === "function") {
+    const id = globalThis.requestAnimationFrame(() => callback());
+    return () => globalThis.cancelAnimationFrame?.(id);
+  }
+  const id = globalThis.setTimeout(callback, 0);
+  return () => globalThis.clearTimeout(id);
+};
+
+const monotonicNow = (): number => {
+  if (globalThis.performance?.now) {
+    return globalThis.performance.now();
+  }
+  return Date.now();
 };
 
 const toTransportError = (
@@ -415,6 +441,9 @@ export const createDesktopTransport = (
 ): DesktopTransport => {
   const createId = options.createId ?? createOpaqueId;
   const now = options.now ?? (() => new Date().toISOString());
+  const eventBatchMaxSize = options.eventBatchMaxSize ?? defaultEventBatchMaxSize;
+  const eventDrainBudgetMs = options.eventDrainBudgetMs ?? defaultEventDrainBudgetMs;
+  const scheduleEventDrain = options.scheduleEventDrain ?? scheduleDefaultEventDrain;
   const writeDiagnosticDirect = async (
     input: DiagnosticsWriteInputRpc
   ): Promise<DiagnosticsWriteResultRpc | undefined> => {
@@ -1005,6 +1034,62 @@ export const createDesktopTransport = (
     },
     events: {
       subscribe: async (input: EventSubscribeInput) => {
+        let disposed = false;
+        let cancelScheduledDrain: CancelScheduledWork | undefined;
+        const envelopeQueue: EventEnvelope[] = [];
+        const deliverEnvelopes = (envelopes: EventEnvelope[]): void => {
+          if (envelopes.length === 0) {
+            return;
+          }
+          if (input.onEnvelopes) {
+            input.onEnvelopes(envelopes);
+            return;
+          }
+          for (const envelope of envelopes) {
+            input.onEnvelope(envelope);
+          }
+        };
+        const drainQueuedEnvelopes = (): void => {
+          cancelScheduledDrain = undefined;
+          if (disposed || envelopeQueue.length === 0) {
+            return;
+          }
+          const startedAt = monotonicNow();
+          const batch: EventEnvelope[] = [];
+          while (envelopeQueue.length > 0 && batch.length < eventBatchMaxSize) {
+            if (
+              batch.length > 0 &&
+              monotonicNow() - startedAt >= eventDrainBudgetMs
+            ) {
+              break;
+            }
+            const envelope = envelopeQueue.shift();
+            if (envelope) {
+              batch.push(envelope);
+            }
+          }
+          deliverEnvelopes(batch);
+          if (envelopeQueue.length > 0) {
+            scheduleDrain();
+          }
+        };
+        const scheduleDrain = (): void => {
+          if (disposed || cancelScheduledDrain) {
+            return;
+          }
+          cancelScheduledDrain = scheduleEventDrain(drainQueuedEnvelopes);
+        };
+        const flushQueuedEnvelopes = (): void => {
+          if (cancelScheduledDrain) {
+            cancelScheduledDrain();
+            cancelScheduledDrain = undefined;
+          }
+          if (envelopeQueue.length === 0) {
+            return;
+          }
+          const pending = envelopeQueue.splice(0, envelopeQueue.length);
+          deliverEnvelopes(pending);
+        };
         const flushIntervalId = globalThis.setInterval(
           () => flushEventPushStats("interval"),
           5_000
@@ -1027,15 +1112,23 @@ export const createDesktopTransport = (
               flushEventPushStats("threshold");
             }
             input.onPush?.(push);
-            input.onEnvelope(push.envelope);
+            envelopeQueue.push(push.envelope);
+            scheduleDrain();
           }
         );
         return {
           subscriptionId: subscription.subscriptionId,
           unsubscribe: async () => {
+            try {
+              await subscription.unsubscribe();
+            } catch (error) {
+              flushQueuedEnvelopes();
+              throw error;
+            }
+            flushQueuedEnvelopes();
             globalThis.clearInterval(flushIntervalId);
             flushEventPushStats("unsubscribe");
-            await subscription.unsubscribe();
+            disposed = true;
           }
         };
       },

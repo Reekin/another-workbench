@@ -98,7 +98,27 @@ describe("renderer refresh signals", () => {
     });
   });
 
-  it("refreshes takeover state when a tool call completes", () => {
+  it("does not refresh takeover state for unrelated tool completions", () => {
+    const signals = advance([
+      {
+        type: "tool.completed",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        toolCallId: "tool-shell",
+        status: "completed",
+        outputSummary: "command completed"
+      }
+    ]);
+
+    expect(signals).toEqual({
+      sessionBrowser: 0,
+      chatTree: 0,
+      engineExtensions: 0,
+      takeover: 0
+    });
+  });
+
+  it("refreshes takeover state when a SmartTakeover tool call completes", () => {
     const signals = advance([
       {
         type: "tool.completed",

@@ -71,5 +71,6 @@ export type RendererStoreAction =
   | { type: "store/disposeSession"; sessionId: string }
   | { type: "store/ingestEvent"; event: RuntimeEvent }
   | { type: "store/ingestEnvelope"; envelope: EventEnvelope }
+  | { type: "store/ingestEnvelopes"; envelopes: EventEnvelope[] }
   | { type: "store/setActiveConversation"; conversationId?: string }
   | { type: "store/setActiveSession"; sessionId?: string };

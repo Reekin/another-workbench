@@ -47,6 +47,13 @@ export const createIngestEnvelopeAction = (
   envelope
 });
 
+export const createIngestEnvelopesAction = (
+  envelopes: EventEnvelope[]
+): RendererStoreAction => ({
+  type: "store/ingestEnvelopes",
+  envelopes
+});
+
 export const parseHydrateSnapshotAction = (
   payload: unknown
 ): RendererStoreAction => ({

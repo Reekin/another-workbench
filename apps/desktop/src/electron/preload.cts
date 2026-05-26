@@ -7,6 +7,7 @@ import type {
   WorkbenchRpcResponse
 } from "@another-workbench/shared";
 import {
+  safeParseWorkbenchEventPushBatch,
   safeParseWorkbenchEventPush,
   safeParseWorkbenchRpcResponse
 } from "@another-workbench/shared";
@@ -17,18 +18,34 @@ import {
 
 const handlersBySubscriptionId = new Map<string, Set<WorkbenchEventHandler>>();
 
-ipcRenderer.on(WORKBENCH_IPC_EVENTS_PUSH_CHANNEL, (_event, payload: unknown) => {
-  const parsed = safeParseWorkbenchEventPush(payload);
-  if (!parsed.success) {
-    return;
-  }
-  const push = parsed.data;
+const deliverPush = (push: WorkbenchEventPush): void => {
   const handlers = handlersBySubscriptionId.get(push.subscriptionId);
   if (!handlers || handlers.size === 0) {
     return;
   }
   for (const handler of handlers) {
     handler(push);
+  }
+};
+
+ipcRenderer.on(WORKBENCH_IPC_EVENTS_PUSH_CHANNEL, (_event, payload: unknown) => {
+  const channel =
+    typeof payload === "object" && payload !== null
+      ? (payload as { channel?: unknown }).channel
+      : undefined;
+  if (channel === "workbench.events.batch") {
+    const parsedBatch = safeParseWorkbenchEventPushBatch(payload);
+    if (!parsedBatch.success) {
+      return;
+    }
+    for (const push of parsedBatch.data.pushes) {
+      deliverPush(push);
+    }
+    return;
+  }
+  const parsed = safeParseWorkbenchEventPush(payload);
+  if (parsed.success) {
+    deliverPush(parsed.data);
   }
 });
 
@@ -74,15 +91,8 @@ const subscribe: WorkbenchClientApi["subscribe"] = async (params, handler) => {
   return {
     subscriptionId,
     unsubscribe: async () => {
-      const existing = handlersBySubscriptionId.get(subscriptionId);
-      if (existing) {
-        existing.delete(handler);
-        if (existing.size === 0) {
-          handlersBySubscriptionId.delete(subscriptionId);
-        }
-      }
-
-      // Tell main it can stop pushing for this subscription.
+      // Keep the handler registered while main drains any queued pushes for this
+      // subscription as part of the unsubscribe RPC.
       ensureOk(
         await request({
           id: `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
@@ -91,6 +101,14 @@ const subscribe: WorkbenchClientApi["subscribe"] = async (params, handler) => {
         }),
         "events.unsubscribe"
       );
+
+      const existing = handlersBySubscriptionId.get(subscriptionId);
+      if (existing) {
+        existing.delete(handler);
+        if (existing.size === 0) {
+          handlersBySubscriptionId.delete(subscriptionId);
+        }
+      }
     }
   };
 };

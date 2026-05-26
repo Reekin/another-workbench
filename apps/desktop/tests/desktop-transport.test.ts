@@ -25,9 +25,14 @@ type PreloadMock = {
 
 const createPreloadMock = (config?: {
   onRequest?: (request: WorkbenchRpcRequest) => Promise<WorkbenchRpcResponse>;
+  onUnsubscribe?: (emitPush: (push: WorkbenchEventPush) => void) => Promise<void> | void;
 }): PreloadMock => {
   let subscribedHandler: ((push: WorkbenchEventPush) => void) | undefined;
-  const unsubscribe = vi.fn(async () => {});
+  const unsubscribe = vi.fn(async () => {
+    await config?.onUnsubscribe?.((push) => {
+      subscribedHandler?.(push);
+    });
+  });
   const request = vi.fn(async (payload: WorkbenchRpcRequest) => {
     if (config?.onRequest) {
       return config.onRequest(payload);
@@ -135,6 +140,18 @@ const createPreloadMock = (config?: {
           logged: true,
           entryId: "error-1",
           logPath: "I:\\logs\\errors-2026-04-26.jsonl"
+        }
+      } as const;
+    }
+    if (payload.method === "diagnostics.write") {
+      return {
+        id: payload.id,
+        method: "diagnostics.write",
+        ok: true,
+        result: {
+          logged: true,
+          entryId: "diagnostic-1",
+          logPath: "I:\\logs\\perf-2026-04-26.jsonl"
         }
       } as const;
     }
@@ -726,7 +743,12 @@ describe("Desktop transport facade", () => {
 
   it("bridges event envelopes into renderer store ingestion", async () => {
     const preload = createPreloadMock();
-    const transport = createDesktopTransport(preload.api);
+    const transport = createDesktopTransport(preload.api, {
+      scheduleEventDrain: (callback) => {
+        callback();
+        return () => undefined;
+      }
+    });
     const store = createRendererStore();
 
     await connectDesktopTransportToStore({
@@ -943,7 +965,12 @@ describe("Desktop transport facade", () => {
 
   it("skips snapshot hydration when store already has domain state and reuses lastCursor for subscription", async () => {
     const preload = createPreloadMock();
-    const transport = createDesktopTransport(preload.api);
+    const transport = createDesktopTransport(preload.api, {
+      scheduleEventDrain: (callback) => {
+        callback();
+        return () => undefined;
+      }
+    });
     const store = createRendererStore();
     store.ingestEnvelope({
       eventId: "evt-10",
@@ -986,5 +1013,128 @@ describe("Desktop transport facade", () => {
     const finalState = store.getState();
     expect(finalState.entities.turns["turn-replay-1"]?.status).toBe("completed");
     expect(finalState.eventStream.lastCursor).toBe("cursor-12");
+  });
+
+  it("drains live event pushes in scheduled batches", async () => {
+    const scheduled: Array<() => void> = [];
+    const preload = createPreloadMock();
+    const transport = createDesktopTransport(preload.api, {
+      eventBatchMaxSize: 10,
+      scheduleEventDrain: (callback) => {
+        scheduled.push(callback);
+        return () => undefined;
+      }
+    });
+    const store = createRendererStore();
+    const actions: string[] = [];
+    store.subscribe((_state, action) => {
+      actions.push(action.type);
+    });
+
+    await connectDesktopTransportToStore({
+      transport,
+      store,
+      fromCursor: "cursor-0"
+    });
+
+    for (let index = 1; index <= 3; index += 1) {
+      preload.emitPush({
+        channel: "workbench.events",
+        subscriptionId: "sub-1",
+        envelope: {
+          eventId: `evt-${index}`,
+          cursor: `cursor-${index}`,
+          occurredAt: "2026-04-17T00:00:01.000Z",
+          event: {
+            type: "message.delta",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            messageId: "message-1",
+            delta: String(index)
+          }
+        }
+      });
+    }
+
+    expect(store.getState().eventStream.lastCursor).toBeUndefined();
+    expect(scheduled).toHaveLength(1);
+
+    scheduled.shift()?.();
+
+    expect(store.getState().eventStream.lastCursor).toBe("cursor-3");
+    expect(store.getState().entities.messageBlocks["message-1:md"]?.text).toBe("123");
+    expect(actions).toEqual(["store/hydrateSnapshot", "store/ingestEnvelopes"]);
+  });
+
+  it("flushes queued event pushes after upstream unsubscribe drains pending batches", async () => {
+    const scheduled: Array<() => void> = [];
+    const cancelled = new Set<() => void>();
+    const preload = createPreloadMock({
+      onUnsubscribe: (emitPush) => {
+        emitPush({
+          channel: "workbench.events",
+          subscriptionId: "sub-1",
+          envelope: {
+            eventId: "evt-unsubscribe-2",
+            cursor: "cursor-2",
+            occurredAt: "2026-04-17T00:00:02.000Z",
+            event: {
+              type: "message.delta",
+              sessionId: "session-1",
+              turnId: "turn-1",
+              messageId: "message-1",
+              delta: "2"
+            }
+          }
+        });
+      }
+    });
+    const transport = createDesktopTransport(preload.api, {
+      eventBatchMaxSize: 10,
+      scheduleEventDrain: (callback) => {
+        scheduled.push(callback);
+        return () => {
+          cancelled.add(callback);
+        };
+      }
+    });
+    const store = createRendererStore();
+    const actions: string[] = [];
+    store.subscribe((_state, action) => {
+      actions.push(action.type);
+    });
+
+    const subscription = await connectDesktopTransportToStore({
+      transport,
+      store,
+      fromCursor: "cursor-0"
+    });
+
+    preload.emitPush({
+      channel: "workbench.events",
+      subscriptionId: "sub-1",
+      envelope: {
+        eventId: "evt-unsubscribe-1",
+        cursor: "cursor-1",
+        occurredAt: "2026-04-17T00:00:01.000Z",
+        event: {
+          type: "message.delta",
+          sessionId: "session-1",
+          turnId: "turn-1",
+          messageId: "message-1",
+          delta: "1"
+        }
+      }
+    });
+
+    expect(scheduled).toHaveLength(1);
+    expect(store.getState().eventStream.lastCursor).toBeUndefined();
+
+    await subscription.unsubscribe();
+
+    expect(cancelled.has(scheduled[0]!)).toBe(true);
+    expect(store.getState().eventStream.lastCursor).toBe("cursor-2");
+    expect(store.getState().entities.messageBlocks["message-1:md"]?.text).toBe("12");
+    expect(actions).toEqual(["store/hydrateSnapshot", "store/ingestEnvelopes"]);
   });
 });

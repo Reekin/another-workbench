@@ -70,7 +70,18 @@ import { useChatTreeController } from "./use-chat-tree-controller.js";
 import { useRendererDiagnostics } from "./use-renderer-diagnostics.js";
 import { buildEngineInspectorViewModel } from "./engine-summary.js";
 import { ComposerContainer } from "./composer/ComposerContainer.js";
+import {
+  beginTakeoverStateRequest,
+  canCommitTakeoverStateRequest,
+  createTakeoverStateRequestState,
+  finishTakeoverStateRequest,
+  invalidateTakeoverStateRequestsForSession,
+  resetTakeoverStateRequests,
+  resolveCurrentTakeoverState
+} from "./takeover-state-controller.js";
 import "./chat-shell.css";
+
+export { resolveCurrentTakeoverState } from "./takeover-state-controller.js";
 
 type SettingsLauncherProps = {
   engines: EngineDefinitionRpc[];
@@ -1791,6 +1802,7 @@ export const ChatShellApp = ({
   const [takeoverState, setTakeoverState] = useState<
     TakeoverSessionStateRpc | undefined
   >();
+  const takeoverStateRequestRef = useRef(createTakeoverStateRequestState());
   const [takeoverContextCacheBySessionId, setTakeoverContextCacheBySessionId] =
     useState<Record<string, Record<string, string>>>({});
   const [isTakeoverMenuOpen, setIsTakeoverMenuOpen] = useState(false);
@@ -1843,6 +1855,71 @@ export const ChatShellApp = ({
     [writeStatusNoticeLog]
   );
 
+  const requestTakeoverState = useCallback(
+    (sessionId: string): void => {
+      if (!transport) {
+        return;
+      }
+
+      const run = (): void => {
+        const generation = beginTakeoverStateRequest(
+          takeoverStateRequestRef.current,
+          sessionId
+        );
+        if (generation === undefined) {
+          return;
+        }
+        void transport.takeover
+          .getState(sessionId)
+          .then((stateResult) => {
+            if (
+              canCommitTakeoverStateRequest(
+                takeoverStateRequestRef.current,
+                sessionId,
+                generation
+              )
+            ) {
+              setTakeoverState(resolveCurrentTakeoverState(stateResult, sessionId));
+            }
+          })
+          .catch((error) => {
+            if (
+              canCommitTakeoverStateRequest(
+                takeoverStateRequestRef.current,
+                sessionId,
+                generation
+              )
+            ) {
+              setStatusNotice({
+                message: `Takeover state load failed: ${(error as Error).message}`,
+                source: "takeover",
+                ...statusNoticeErrorDetails(error)
+              });
+            }
+          })
+          .finally(() => {
+            if (
+              finishTakeoverStateRequest(
+                takeoverStateRequestRef.current,
+                sessionId,
+                generation
+              )
+            ) {
+              run();
+            }
+          });
+      };
+
+      run();
+    },
+    [setStatusNotice, transport]
+  );
+
+  useEffect(() => {
+    resetTakeoverStateRequests(takeoverStateRequestRef.current);
+    setTakeoverState(undefined);
+  }, [transport]);
+
   const {
     workspaceTree,
     refreshSessionBrowser,
@@ -1869,6 +1946,14 @@ export const ChatShellApp = ({
       ? findSessionNode(workspaceTree, state.activeSessionId)
       : undefined);
   const activeSessionId = state.activeSessionId ?? activeSessionNode?.sessionId;
+  const activeSessionIdRef = useRef(activeSessionId);
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
+  const currentTakeoverState = resolveCurrentTakeoverState(
+    takeoverState,
+    activeSessionId
+  );
   const displayedSessionId =
     openingSessionId ?? browserSelectedSessionId ?? activeSessionId;
   const activeSessionWindow =
@@ -1954,42 +2039,28 @@ export const ChatShellApp = ({
 
   useEffect(() => {
     if (!transport || !activeSessionId) {
+      resetTakeoverStateRequests(takeoverStateRequestRef.current);
       setTakeoverState(undefined);
       return;
     }
-    let disposed = false;
-    void transport.takeover
-      .getState(activeSessionId)
-      .then((stateResult) => {
-        if (!disposed) {
-          setTakeoverState(stateResult);
-        }
-      })
-      .catch((error) => {
-        if (!disposed) {
-          setStatusNotice({
-            message: `Takeover state load failed: ${(error as Error).message}`,
-            source: "takeover",
-            ...statusNoticeErrorDetails(error)
-          });
-        }
-      });
-    return () => {
-      disposed = true;
-    };
-  }, [activeSessionId, setStatusNotice, state.refreshSignals.takeover, transport]);
+    setTakeoverState((current) =>
+      resolveCurrentTakeoverState(current, activeSessionId)
+    );
+    requestTakeoverState(activeSessionId);
+  }, [activeSessionId, requestTakeoverState, state.refreshSignals.takeover, transport]);
 
   useEffect(() => {
-    const presetId = takeoverState?.presetId ?? takeoverState?.manualPresetId;
-    if (typeof takeoverState?.context === "string") {
-      cacheTakeoverContext(activeSessionId, presetId, takeoverState.context);
+    const presetId =
+      currentTakeoverState?.presetId ?? currentTakeoverState?.manualPresetId;
+    if (typeof currentTakeoverState?.context === "string") {
+      cacheTakeoverContext(activeSessionId, presetId, currentTakeoverState.context);
     }
   }, [
     activeSessionId,
     cacheTakeoverContext,
-    takeoverState?.context,
-    takeoverState?.manualPresetId,
-    takeoverState?.presetId
+    currentTakeoverState?.context,
+    currentTakeoverState?.manualPresetId,
+    currentTakeoverState?.presetId
   ]);
 
   useRendererDiagnostics({
@@ -2462,11 +2533,11 @@ export const ChatShellApp = ({
       }
       try {
         const currentPresetId =
-          takeoverState?.presetId ?? takeoverState?.manualPresetId;
+          currentTakeoverState?.presetId ?? currentTakeoverState?.manualPresetId;
         cacheTakeoverContext(
           activeSessionId,
           currentPresetId,
-          takeoverState?.context
+          currentTakeoverState?.context
         );
         const cachedContext = presetId
           ? takeoverContextCacheBySessionId[activeSessionId]?.[presetId]
@@ -2476,7 +2547,14 @@ export const ChatShellApp = ({
           presetId,
           context: cachedContext
         });
-        setTakeoverState(nextState);
+        if (activeSessionIdRef.current !== activeSessionId) {
+          return;
+        }
+        invalidateTakeoverStateRequestsForSession(
+          takeoverStateRequestRef.current,
+          activeSessionId
+        );
+        setTakeoverState(resolveCurrentTakeoverState(nextState, activeSessionId));
         setIsTakeoverMenuOpen(false);
         await refreshSessionBrowser({ mode: "visible" });
         setStatusNotice({
@@ -2497,20 +2575,20 @@ export const ChatShellApp = ({
     [
       activeSessionId,
       cacheTakeoverContext,
+      currentTakeoverState?.context,
+      currentTakeoverState?.manualPresetId,
+      currentTakeoverState?.presetId,
       refreshSessionBrowser,
       setStatusNotice,
       takeoverContextCacheBySessionId,
-      takeoverState?.context,
-      takeoverState?.manualPresetId,
-      takeoverState?.presetId,
       transport
     ]
   );
 
   const onOpenTakeoverContextEditor = useCallback((): void => {
-    setDraftTakeoverContext(takeoverState?.context ?? "");
+    setDraftTakeoverContext(currentTakeoverState?.context ?? "");
     setIsTakeoverContextEditorOpen(true);
-  }, [takeoverState?.context]);
+  }, [currentTakeoverState?.context]);
 
   const onCloseTakeoverContextEditor = useCallback((): void => {
     if (isSavingTakeoverContext) {
@@ -2520,12 +2598,13 @@ export const ChatShellApp = ({
   }, [isSavingTakeoverContext]);
 
   const onSaveTakeoverContext = useCallback(async (): Promise<void> => {
-    const presetId = takeoverState?.presetId ?? takeoverState?.manualPresetId;
+    const presetId =
+      currentTakeoverState?.presetId ?? currentTakeoverState?.manualPresetId;
     if (!transport || !activeSessionId || !presetId) {
       setIsTakeoverContextEditorOpen(false);
       return;
     }
-    const willRestartReview = takeoverState?.active === true;
+    const willRestartReview = currentTakeoverState?.active === true;
     if (
       willRestartReview &&
       typeof window !== "undefined" &&
@@ -2544,8 +2623,15 @@ export const ChatShellApp = ({
           ? draftTakeoverContext.trim()
           : undefined
       });
+      if (activeSessionIdRef.current !== activeSessionId) {
+        return;
+      }
+      invalidateTakeoverStateRequestsForSession(
+        takeoverStateRequestRef.current,
+        activeSessionId
+      );
       cacheTakeoverContext(activeSessionId, presetId, draftTakeoverContext);
-      setTakeoverState(nextState);
+      setTakeoverState(resolveCurrentTakeoverState(nextState, activeSessionId));
       setIsTakeoverContextEditorOpen(false);
       await refreshSessionBrowser({ mode: "visible" });
       setStatusNotice({
@@ -2567,12 +2653,12 @@ export const ChatShellApp = ({
   }, [
     activeSessionId,
     cacheTakeoverContext,
+    currentTakeoverState?.active,
+    currentTakeoverState?.manualPresetId,
+    currentTakeoverState?.presetId,
     draftTakeoverContext,
     refreshSessionBrowser,
     setStatusNotice,
-    takeoverState?.active,
-    takeoverState?.manualPresetId,
-    takeoverState?.presetId,
     transport
   ]);
 
@@ -2746,7 +2832,7 @@ export const ChatShellApp = ({
           </button>
         </header>
         <div className="awb-modal__body awb-takeover-context">
-          {takeoverState?.active ? (
+          {currentTakeoverState?.active ? (
             <p className="awb-takeover-context__notice">
               Takeover is responding. Saving context will interrupt this review
               and start a new one.
@@ -2777,7 +2863,7 @@ export const ChatShellApp = ({
             onClick={() => void onSaveTakeoverContext()}
             disabled={isSavingTakeoverContext}
           >
-            {takeoverState?.active ? "Restart review" : "Save context"}
+            {currentTakeoverState?.active ? "Restart review" : "Save context"}
           </button>
         </footer>
       </section>
@@ -2963,7 +3049,7 @@ export const ChatShellApp = ({
             approvals={activeSessionApprovals}
             interactions={activeSessionInteractions}
             takeoverPresets={takeoverPresets}
-            takeoverState={takeoverState}
+            takeoverState={currentTakeoverState}
             isTakeoverMenuOpen={isTakeoverMenuOpen}
             isOpeningSelectedSession={isOpeningSelectedSession}
             statusNotice={statusNotice}

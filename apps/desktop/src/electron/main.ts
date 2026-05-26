@@ -519,6 +519,11 @@ const boot = async (): Promise<void> => {
       if (!window.isDestroyed()) {
         window.webContents.send(WORKBENCH_IPC_EVENTS_PUSH_CHANNEL, push);
       }
+    },
+    onPushBatch: (batch) => {
+      if (!window.isDestroyed()) {
+        window.webContents.send(WORKBENCH_IPC_EVENTS_PUSH_CHANNEL, batch);
+      }
     }
   });
 

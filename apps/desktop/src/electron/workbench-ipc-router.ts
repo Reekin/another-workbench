@@ -3,6 +3,7 @@ import {
   type WorkbenchShellService
 } from "@another-workbench/desktop-server";
 import type {
+  WorkbenchEventPushBatch,
   WorkbenchEventPush,
   WorkbenchRpcRequest,
   WorkbenchRpcResponse
@@ -14,6 +15,9 @@ type SubscriptionRecord = {
   unsubscribe: () => void;
 };
 
+type CancelScheduledPushDrain = () => void;
+type PushDrainScheduler = (callback: () => void) => CancelScheduledPushDrain;
+
 export type WorkbenchIpcRouter = {
   handleRequest: (rawRequest: unknown) => Promise<WorkbenchRpcResponse>;
   dispose: () => Promise<void>;
@@ -22,7 +26,17 @@ export type WorkbenchIpcRouter = {
 export type CreateWorkbenchIpcRouterOptions = {
   service: WorkbenchShellService;
   onPush: (push: WorkbenchEventPush) => void;
+  onPushBatch?: (batch: WorkbenchEventPushBatch) => void;
   createSubscriptionId?: () => string;
+  pushBatchMaxSize?: number;
+  schedulePushDrain?: PushDrainScheduler;
+};
+
+const defaultPushBatchMaxSize = 500;
+
+const scheduleDefaultPushDrain: PushDrainScheduler = (callback) => {
+  const timeoutId = setTimeout(callback, 0);
+  return () => clearTimeout(timeoutId);
 };
 
 const createOpaqueSubscriptionId = (): string =>
@@ -55,8 +69,85 @@ export const createWorkbenchIpcRouter = (
   const rpc = createRemoteRpcHandler(options.service, {
     createSubscriptionId
   });
+  const pushBatchMaxSize = options.pushBatchMaxSize ?? defaultPushBatchMaxSize;
+  const schedulePushDrain = options.schedulePushDrain ?? scheduleDefaultPushDrain;
 
   const subscriptions = new Map<string, SubscriptionRecord>();
+  const pushQueue: WorkbenchEventPush[] = [];
+  let cancelScheduledPushDrain: CancelScheduledPushDrain | undefined;
+
+  const deliverPushes = (pushes: WorkbenchEventPush[]): void => {
+    if (pushes.length === 0) {
+      return;
+    }
+    if (options.onPushBatch) {
+      options.onPushBatch({
+        channel: "workbench.events.batch",
+        pushes
+      });
+      return;
+    }
+    for (const push of pushes) {
+      options.onPush(push);
+    }
+  };
+
+  const schedulePushQueueDrain = (): void => {
+    if (cancelScheduledPushDrain || pushQueue.length === 0) {
+      return;
+    }
+    cancelScheduledPushDrain = schedulePushDrain(() => {
+      cancelScheduledPushDrain = undefined;
+      const pushes = pushQueue.splice(0, pushBatchMaxSize);
+      deliverPushes(pushes);
+      schedulePushQueueDrain();
+    });
+  };
+
+  const enqueuePush = (push: WorkbenchEventPush): void => {
+    pushQueue.push(push);
+    schedulePushQueueDrain();
+  };
+
+  const flushPushQueue = (subscriptionId?: string): void => {
+    if (cancelScheduledPushDrain) {
+      cancelScheduledPushDrain();
+      cancelScheduledPushDrain = undefined;
+    }
+    if (!subscriptionId) {
+      while (pushQueue.length > 0) {
+        deliverPushes(pushQueue.splice(0, pushBatchMaxSize));
+      }
+      return;
+    }
+    // Targeted unsubscribe drain is scoped to the subscription being torn down.
+    // It does not promise global FIFO across multiple subscriptions; consumers
+    // that share a single cursor should use the desktop shell's single
+    // full-domain subscription rather than merging independent subscriptions.
+    const pendingForSubscription: WorkbenchEventPush[] = [];
+    const retainedPushes: WorkbenchEventPush[] = [];
+    for (const push of pushQueue) {
+      if (push.subscriptionId === subscriptionId) {
+        pendingForSubscription.push(push);
+      } else {
+        retainedPushes.push(push);
+      }
+    }
+    pushQueue.splice(0, pushQueue.length, ...retainedPushes);
+    while (pendingForSubscription.length > 0) {
+      deliverPushes(pendingForSubscription.splice(0, pushBatchMaxSize));
+    }
+    schedulePushQueueDrain();
+  };
+
+  const unsubscribeRecord = (record: SubscriptionRecord): void => {
+    try {
+      record.unsubscribe();
+    } finally {
+      subscriptions.delete(record.subscriptionId);
+      flushPushQueue(record.subscriptionId);
+    }
+  };
 
   const handleSubscribe = async (
     request: Extract<WorkbenchRpcRequest, { method: "events.subscribe" }>
@@ -77,7 +168,7 @@ export const createWorkbenchIpcRouter = (
 
     const unsubscribe = options.service.subscribeFromCursor(
       (envelope) => {
-        options.onPush(rpc.createEventPush(subscriptionId, envelope));
+        enqueuePush(rpc.createEventPush(subscriptionId, envelope));
       },
       {
         fromCursor: request.params.fromCursor,
@@ -103,8 +194,7 @@ export const createWorkbenchIpcRouter = (
   ): Promise<WorkbenchRpcResponse> => {
     const record = subscriptions.get(request.params.subscriptionId);
     if (record) {
-      record.unsubscribe();
-      subscriptions.delete(record.subscriptionId);
+      unsubscribeRecord(record);
     }
     return parseWorkbenchRpcResponse({
       id: request.id,
@@ -148,9 +238,10 @@ export const createWorkbenchIpcRouter = (
 
     dispose: async () => {
       for (const record of subscriptions.values()) {
-        record.unsubscribe();
+        unsubscribeRecord(record);
       }
       subscriptions.clear();
+      flushPushQueue();
       await options.service.dispose();
     }
   };

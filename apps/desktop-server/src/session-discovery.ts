@@ -424,6 +424,7 @@ export type SessionDiscoveryProvider = {
     input: {
       limit: number;
       cursor?: string;
+      anchorTurnId?: string;
       isCancelled?: () => boolean;
     }
   ) => Promise<HydratedSessionWindowSnapshot | undefined>;
@@ -950,6 +951,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
     input: {
       limit: number;
       cursor?: string;
+      anchorTurnId?: string;
       isCancelled?: () => boolean;
     }
   ): Promise<HydratedSessionWindowSnapshot | undefined> {
@@ -957,11 +959,20 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
     if (!threadId) {
       return undefined;
     }
+    const anchorTurnId = input.cursor ? undefined : input.anchorTurnId;
+    const cursor =
+      input.cursor ??
+      (anchorTurnId
+        ? JSON.stringify({
+            turnId: anchorTurnId,
+            includeAnchor: true
+          })
+        : null);
     const [thread, turnsPage] = await Promise.all([
       this.codexRuntimePort.readThread(threadId, false),
       this.codexRuntimePort.listThreadTurns({
         threadId,
-        cursor: input.cursor ?? null,
+        cursor,
         limit: input.limit,
         sortDirection: "desc",
         itemsView: "full"
@@ -1310,6 +1321,7 @@ export class SessionReconciliationService {
     input: {
       limit: number;
       cursor?: string;
+      anchorTurnId?: string;
       isCancelled?: () => boolean;
     }
   ): Promise<HydratedSessionWindowSnapshot | undefined> {
@@ -1322,7 +1334,10 @@ export class SessionReconciliationService {
     if (!provider?.hydrateSessionWindow) {
       return undefined;
     }
-    const hydrationKey = `${sessionId}\u0000${input.cursor ?? ""}\u0000${input.limit}`;
+    const anchorTurnId = input.cursor ? undefined : input.anchorTurnId;
+    const hydrationKey = `${sessionId}\u0000${input.cursor ?? ""}\u0000${
+      anchorTurnId ?? ""
+    }\u0000${input.limit}`;
     const consumer: HydrationConsumer = {
       isCancelled: input.isCancelled
     };
@@ -1341,6 +1356,7 @@ export class SessionReconciliationService {
         .hydrateSessionWindow(entry, {
           limit: input.limit,
           cursor: input.cursor,
+          anchorTurnId,
           isCancelled: () => areAllHydrationConsumersCancelled(consumers)
         })
         .then(async (hydrated) => {

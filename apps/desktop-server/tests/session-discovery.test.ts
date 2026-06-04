@@ -319,6 +319,74 @@ describe("Session discovery and reconciliation", () => {
     );
   });
 
+  it("anchors lightweight Codex window hydration to the selected chat tree turn", async () => {
+    const readThread = vi.fn().mockResolvedValue(createThread({ id: "thread-page" }));
+    const listThreadTurns = vi.fn().mockResolvedValue({
+      data: [
+        {
+          id: "turn-selected",
+          status: "completed",
+          error: null,
+          items: [],
+          startedAt: 1_776_420_060,
+          completedAt: 1_776_420_061,
+          itemsView: "full"
+        }
+      ],
+      nextCursor: null,
+      backwardsCursor: null
+    });
+    const attachThreadToSession = vi.fn();
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        readThread,
+        listThreadTurns,
+        attachThreadToSession
+      } as never
+    });
+
+    const hydrated = await provider.hydrateSessionWindow?.(
+      {
+        sessionId: "codex-thread:thread-page",
+        workspaceId: "workspace-1",
+        conversationId: "conversation-1",
+        engineId: "codex",
+        providerKind: "codex-thread",
+        providerSessionId: "thread-page",
+        title: "Thread page",
+        createdAt: "2026-04-19T00:00:00.000Z",
+        updatedAt: "2026-04-19T00:01:00.000Z",
+        unreadState: "read",
+        source: "reconciled"
+      },
+      {
+        limit: 8,
+        anchorTurnId: "turn-selected"
+      }
+    );
+
+    expect(hydrated).toEqual(
+      expect.objectContaining({
+        hasNewer: false,
+        turns: [
+          expect.objectContaining({
+            turnId: "turn-selected"
+          })
+        ]
+      })
+    );
+    expect(listThreadTurns).toHaveBeenCalledWith({
+      threadId: "thread-page",
+      cursor: JSON.stringify({
+        turnId: "turn-selected",
+        includeAnchor: true
+      }),
+      limit: 8,
+      sortDirection: "desc",
+      itemsView: "full"
+    });
+  });
+
   it("uses turn-level rollout timestamps for paged turns that start with compaction", async () => {
     const baseDir = await createTempDir();
     const rolloutPath = join(baseDir, "rollout-paged-compaction.jsonl");

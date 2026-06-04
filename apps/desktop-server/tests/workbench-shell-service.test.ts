@@ -663,6 +663,13 @@ describe("WorkbenchShellService", () => {
     const setLastActiveSelection = vi.fn().mockResolvedValue(undefined);
     const markSessionRead = vi.fn().mockResolvedValue(undefined);
     const ensureSessionLoaded = vi.fn().mockResolvedValue(true);
+    const getChatTree = vi.fn().mockResolvedValue({
+      sessionId: "session-1",
+      engineId: "codex",
+      supportsJump: true,
+      visibleTurnIds: ["turn-2"],
+      nodes: []
+    });
     const hydrateSessionWindow = vi.fn().mockResolvedValue({
       workspaceId: "workspace-1",
       conversation: buildSessionSnapshot().conversations[0],
@@ -698,7 +705,9 @@ describe("WorkbenchShellService", () => {
         markSessionRead
       } as never,
       sessionActions: {} as never,
-      chatTreeProvider: {} as never,
+      chatTreeProvider: {
+        get: getChatTree
+      } as never,
       sessionReconciliation: {
         ensureSessionLoaded,
         hydrateSessionWindow
@@ -719,9 +728,11 @@ describe("WorkbenchShellService", () => {
       "session-1",
       expect.objectContaining({
         limit: expect.any(Number),
+        anchorTurnId: "turn-2",
         isCancelled: expect.any(Function)
       })
     );
+    expect(getChatTree).toHaveBeenCalledWith("session-1");
     expect(ensureSessionLoaded).not.toHaveBeenCalled();
     expect(setLastActiveSelection).toHaveBeenCalledWith({
       workspaceId: "workspace-1",

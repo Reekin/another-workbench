@@ -662,9 +662,14 @@ export class WorkbenchShellService {
       .some((session) => session.sessionId === sessionId);
     const alreadyFullyLoaded =
       alreadyLoaded && !this.partiallyHydratedSessionIds.has(sessionId);
+    const anchorTurnId = await this.resolveProviderAnchorTurnId(sessionId);
+    if (isCancelled()) {
+      throw new Error("Open session cancelled.");
+    }
     if (!alreadyFullyLoaded) {
       const hydratedPage = await this.hydrateSessionWindow(sessionId, {
         limit: defaultSessionWindowLimit,
+        anchorTurnId,
         isCancelled
       });
       if (isCancelled()) {
@@ -703,10 +708,6 @@ export class WorkbenchShellService {
       throw new Error("Open session cancelled.");
     }
     await this.activateOpenedSession(sessionId, { isCancelled });
-    const anchorTurnId = await this.resolveProviderAnchorTurnId(sessionId);
-    if (isCancelled()) {
-      throw new Error("Open session cancelled.");
-    }
     return {
       page: this.buildSessionWindow(sessionId, {
         limit: defaultSessionWindowLimit,
@@ -1096,6 +1097,7 @@ export class WorkbenchShellService {
     input: {
       limit: number;
       cursor?: string;
+      anchorTurnId?: string;
       isCancelled?: () => boolean;
     }
   ): Promise<SessionWindowSnapshot | undefined> {

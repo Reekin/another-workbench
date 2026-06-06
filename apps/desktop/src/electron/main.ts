@@ -1,5 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
-import { createWorkbenchRuntimeService } from "@another-workbench/desktop-server";
+import {
+  createWorkbenchRuntimeService,
+  parseSchedulerRunHeadlessArgs,
+  runSchedulerHeadlessCli
+} from "@another-workbench/desktop-server";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -485,6 +489,15 @@ const loadRendererTarget = async (window: BrowserWindow): Promise<void> => {
 
 const boot = async (): Promise<void> => {
   installAppDiagnostics(diagnostics);
+  const schedulerRunArgs = parseSchedulerRunHeadlessArgs(process.argv);
+  if (schedulerRunArgs) {
+    const exitCode = await runSchedulerHeadlessCli({
+      args: schedulerRunArgs,
+      createService: createWorkbenchRuntimeService
+    });
+    app.exit(exitCode);
+    return;
+  }
   await app.whenReady();
   app.setAppUserModelId("com.another-workbench.desktop");
   const appIconPath = resolveAppIconPath();

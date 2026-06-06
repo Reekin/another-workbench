@@ -24,6 +24,8 @@ export * from "./smart-takeover-tool.js";
 export * from "./smart-takeover-service.js";
 export * from "./takeover-preset-store.js";
 export * from "./scheduler-store.js";
+export * from "./scheduler-workbench-bridge.js";
+export * from "./scheduler-run-headless.js";
 export * from "./file-preview-service.js";
 export * from "./workspace-file-search-service.js";
 export * from "./workspace-registry.js";

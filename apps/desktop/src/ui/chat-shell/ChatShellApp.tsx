@@ -1265,7 +1265,10 @@ const draftFromTask = (task: SchedulerTaskDocumentRpc): ScheduleDraft => {
     daysOfMonth: schedule.kind === "monthly" ? schedule.daysOfMonth : [1],
     startDate: task.startDate ?? localTodayDateValue(),
     endDate: task.endDate ?? "",
-    prompt: task.source?.prompt ?? ""
+    prompt:
+      "kind" in task.action && task.action.kind === "another-workbench.prompt"
+        ? task.action.prompt
+        : task.source?.prompt ?? ""
   };
 };
 
@@ -1544,8 +1547,8 @@ const ScheduleWorkspaceModal = ({
             <div className="awb-scheduler__bar">
               <div>
                 <span>Tasks</span>
-                <code title={rootPath || "~/.scheduler"}>
-                  {rootPath || "~/.scheduler"}
+                <code title={rootPath || "~/.another-workbench/scheduler/tasks"}>
+                  {rootPath || "~/.another-workbench/scheduler/tasks"}
                 </code>
               </div>
               <button

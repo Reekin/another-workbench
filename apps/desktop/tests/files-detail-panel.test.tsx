@@ -72,4 +72,60 @@ describe("FilesDetailPanel", () => {
     expect(html).toContain("chat.ts");
     expect(html).toContain("export const chat = true;");
   });
+
+  it("cache-busts local image previews with modified time and size", () => {
+    const renderImagePreview = (modifiedAtMs: number): string => renderToStaticMarkup(
+      <FilesDetailPanel
+        workspaceLabel="agent-wrappers"
+        hasWorkspace
+        query="diagram"
+        onQueryChange={() => undefined}
+        isSearching={false}
+        searchResults={[]}
+        selectedFile={{
+          path: "I:\\repo\\assets\\diagram.png",
+          displayPath: "I:\\repo\\assets\\diagram.png",
+          fileUrl: "file:///I:/repo/assets/diagram.png",
+          label: "diagram.png",
+          fileName: "diagram.png",
+          extension: "png",
+          isImage: true,
+          source: "markdown_image"
+        }}
+        preview={{
+          kind: "image",
+          target: {
+            path: "I:\\repo\\assets\\diagram.png",
+            displayPath: "I:\\repo\\assets\\diagram.png",
+            fileUrl: "file:///I:/repo/assets/diagram.png",
+            label: "diagram.png",
+            fileName: "diagram.png",
+            extension: "png",
+            isImage: true,
+            source: "markdown_image"
+          },
+          exists: true,
+          fileSizeBytes: 1200,
+          modifiedAtMs,
+          mimeType: "image/png",
+          imageUrl: "file:///I:/repo/assets/diagram.png"
+        }}
+        isLoadingPreview={false}
+        onSelectFile={() => undefined}
+        onRunFileAction={() => undefined}
+        onOpenImage={() => undefined}
+      />
+    );
+    const firstHtml = renderImagePreview(111);
+    const secondHtml = renderImagePreview(222);
+
+    expect(firstHtml).toContain("diagram.png");
+    expect(firstHtml).toContain(
+      'src="file:///I:/repo/assets/diagram.png?awb_image_cache=I%3A%5Crepo%5Cassets%5Cdiagram.png%3A111%3A1200"'
+    );
+    expect(secondHtml).toContain(
+      'src="file:///I:/repo/assets/diagram.png?awb_image_cache=I%3A%5Crepo%5Cassets%5Cdiagram.png%3A222%3A1200"'
+    );
+    expect(firstHtml).not.toBe(secondHtml);
+  });
 });

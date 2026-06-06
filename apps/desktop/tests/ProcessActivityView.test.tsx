@@ -1,6 +1,32 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ProcessActivityView } from "../src/ui/chat-shell/ProcessActivityView.js";
+import {
+  ProcessActivityItemView,
+  ProcessActivityView,
+  type ProcessActivityEntry
+} from "../src/ui/chat-shell/ProcessActivityView.js";
+
+const findElementByClassName = (
+  node: unknown,
+  className: string
+): { props: Record<string, unknown> } | undefined => {
+  if (!node || typeof node !== "object") {
+    return undefined;
+  }
+  const props = (node as { props?: Record<string, unknown> }).props;
+  if (props?.className === className) {
+    return { props };
+  }
+  const children = props?.children;
+  const childNodes = Array.isArray(children) ? children : [children];
+  for (const child of childNodes) {
+    const match = findElementByClassName(child, className);
+    if (match) {
+      return match;
+    }
+  }
+  return undefined;
+};
 
 describe("ProcessActivityView", () => {
   it("renders a linked tool and terminal stream as one expandable activity", () => {
@@ -147,10 +173,34 @@ describe("ProcessActivityView", () => {
     expect(markup).toContain("Image generation A quiet dashboard screenshot");
     expect(markup).toContain("awb-inline-image-button");
     expect(markup).toContain(
-      'src="file:///D:/workspace/generated.png"'
+      'src="file:///D:/workspace/generated.png?awb_image_cache=tool%3Aimage-1"'
     );
     expect(markup).toContain("prompt: A quiet dashboard screenshot");
     expect(markup).not.toContain("![Generated image]");
+  });
+
+  it("passes the cache-busted image URL to the preview callback", () => {
+    const onPreviewImage = vi.fn();
+    const entry: ProcessActivityEntry = {
+      id: "tool:image-1",
+      label: "View image",
+      summary: "View image",
+      status: "completed",
+      inputText: "I:/images/current.png",
+      outputText:
+        "![Viewed image](file:///I:/images/current.png?awb_file_mtime=111&awb_file_size=4)\npath: I:/images/current.png",
+      terminalStreams: []
+    };
+
+    const element = ProcessActivityItemView({ entry, onPreviewImage });
+    const button = findElementByClassName(element, "awb-inline-image-button");
+    expect(button).toBeDefined();
+    (button?.props.onClick as () => void)();
+
+    expect(onPreviewImage).toHaveBeenCalledWith({
+      src: "file:///I:/images/current.png?awb_file_mtime=111&awb_file_size=4&awb_image_cache=tool%3Aimage-1",
+      alt: "Viewed image"
+    });
   });
 
   it("keeps right parentheses inside process image URLs", () => {
@@ -175,7 +225,10 @@ describe("ProcessActivityView", () => {
       />
     );
 
-    expect(markup).toContain('src="file:///I:/images/image%20(1).png"');
-    expect(markup).toContain("path: I:/images/image (1).png");
+    expect(markup).toContain(
+      'src="file:///I:/images/image%20(1).png?awb_image_cache=tool%3Aimage-1"'
+    );
+    expect(markup).toContain("I:/images/image (1).png");
+    expect(markup).not.toContain("path: I:/images/image (1).png");
   });
 });

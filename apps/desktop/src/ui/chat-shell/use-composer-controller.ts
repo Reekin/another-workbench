@@ -19,6 +19,7 @@ import type {
 import type { DesktopTransport } from "../../transport/desktop-transport.js";
 import {
   createComposerAttachments,
+  mergeComposerAttachments,
   releaseComposerAttachments,
   type ComposerAttachment
 } from "./composer-attachments.js";
@@ -831,19 +832,10 @@ export const useComposerController = (
     if (nextAttachments.length === 0) {
       return;
     }
-    const seen = new Set(attachmentsRef.current.map((item) => item.dedupeKey));
-    const unique = nextAttachments.filter((item) => {
-      if (seen.has(item.dedupeKey)) {
-        return false;
-      }
-      seen.add(item.dedupeKey);
-      return true;
-    });
-    const skipped = nextAttachments.filter((item) => !unique.includes(item));
-    releaseComposerAttachments(skipped);
-    const merged = [...attachmentsRef.current, ...unique];
-    attachmentsRef.current = merged;
-    setAttachments(merged);
+    const result = mergeComposerAttachments(attachmentsRef.current, nextAttachments);
+    releaseComposerAttachments([...result.replaced, ...result.skipped]);
+    attachmentsRef.current = result.attachments;
+    setAttachments(result.attachments);
   };
 
   const onComposerInputChange = (

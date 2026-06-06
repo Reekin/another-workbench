@@ -123,7 +123,9 @@ describe("MessageMarkdownView", () => {
     );
 
     expect(html).toContain("<img");
-    expect(html).toContain('src="file:///C:/Users/TestUser/Pictures/cat.png"');
+    expect(html).toContain(
+      'src="file:///C:/Users/TestUser/Pictures/cat.png?awb_image_cache=message-3%3Amd%3Amarkdown%3A0"'
+    );
   });
 
   it("preserves local file links in markdown", () => {
@@ -202,7 +204,9 @@ describe("MessageMarkdownView", () => {
 
     expect(html).toContain("<button");
     expect(html).toContain('class="awb-inline-image-button"');
-    expect(html).toContain('src="file:///C:/repo/assets/diagram.png"');
+    expect(html).toContain(
+      'src="file:///C:/repo/assets/diagram.png?awb_image_cache=message-3c%3Amd%3Amarkdown%3A0"'
+    );
   });
 
   it("preserves data-url images in markdown", () => {

@@ -32,6 +32,31 @@ describe("composer attachment helpers", () => {
     expect(attachment.sizeLabel).toBe("5 B");
   });
 
+  it("uses the native file path as the preview source for picker images", async () => {
+    const file = new File([Uint8Array.from([137, 80, 78, 71])], "diagram.png", {
+      type: "image/png",
+      lastModified: 1234567890
+    });
+    Object.defineProperty(file, "path", {
+      configurable: true,
+      value: "I:\\gpt-projects\\agent-wrappers\\another-workbench\\diagram.png"
+    });
+
+    const attachment = await createComposerAttachment(file, "picker");
+
+    expect(attachment.attachment.uri).toContain(
+      "file:///D:/workspace/another-workbench/diagram.png?"
+    );
+    expect(attachment.attachment.uri).toContain("awb_file_mtime=1234567890");
+    expect(attachment.attachment.uri).toContain("awb_file_size=4");
+    expect(attachment.previewUrl).toContain(
+      "file:///D:/workspace/another-workbench/diagram.png?"
+    );
+    expect(attachment.previewUrl).toContain("awb_image_cache=");
+    expect(attachment.previewUrl).not.toContain("blob:");
+    expect(attachment.releasePreviewUrl).toBe(false);
+  });
+
   it("builds data URIs and fallback names for pasted images", async () => {
     const file = new File([Uint8Array.from([137, 80, 78, 71])], "", {
       type: "image/png"
@@ -68,7 +93,7 @@ describe("composer attachment helpers", () => {
     expect(attachments.every((attachment) => attachment.previewUrl)).toBe(true);
   });
 
-  it("deduplicates merged attachments by dedupe key", () => {
+  it("replaces merged attachments by dedupe key", () => {
     const existing: ComposerAttachment = {
       attachment: {
         attachmentId: "existing",
@@ -106,8 +131,9 @@ describe("composer attachment helpers", () => {
 
     const result = mergeComposerAttachments([existing], [duplicate, next]);
 
-    expect(result.attachments).toEqual([existing, next]);
-    expect(result.skipped).toEqual([duplicate]);
+    expect(result.attachments).toEqual([duplicate, next]);
+    expect(result.replaced).toEqual([existing]);
+    expect(result.skipped).toEqual([]);
   });
 
   it("releases only preview URLs that require cleanup", () => {

@@ -1,6 +1,7 @@
 import type { ReactElement } from "react";
 import type { TerminalStream, ToolCall } from "@another-workbench/shared";
 import type { ImageLightboxState } from "./ImageLightbox.js";
+import { buildLocalImagePreviewSrc } from "./local-image-preview.js";
 import { normalizeTerminalOutput } from "./terminal-output.js";
 
 export type ProcessActivityViewProps = {
@@ -220,6 +221,9 @@ export const ProcessActivityItemView = ({
   const inputText = entry.inputText?.trim();
   const outputText = rawOutputText && rawOutputText !== inputText ? rawOutputText : undefined;
   const imageOutput = splitProcessImageOutput(outputText);
+  const imagePreviewSrc = buildLocalImagePreviewSrc(imageOutput?.src, entry.id);
+  const imageText =
+    imageOutput?.text === `path: ${inputText}` ? undefined : imageOutput?.text;
   return (
     <details
       key={entry.id}
@@ -247,23 +251,23 @@ export const ProcessActivityItemView = ({
                 className="awb-inline-image-button"
                 onClick={() =>
                   onPreviewImage({
-                    src: imageOutput.src,
+                    src: imagePreviewSrc ?? imageOutput.src,
                     alt: imageOutput.alt
                   })
                 }
               >
-                <img src={imageOutput.src} alt={imageOutput.alt} />
+                <img src={imagePreviewSrc} alt={imageOutput.alt} />
               </button>
             ) : (
               <img
                 className="awb-process-activity__image"
-                src={imageOutput.src}
+                src={imagePreviewSrc}
                 alt={imageOutput.alt}
               />
             )}
-            {imageOutput.text ? (
+            {imageText ? (
               <pre className="awb-process-activity__output">
-                {imageOutput.text}
+                {imageText}
               </pre>
             ) : null}
           </div>

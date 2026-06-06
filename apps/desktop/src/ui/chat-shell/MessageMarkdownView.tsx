@@ -17,6 +17,7 @@ import {
   createFileReferenceFromPath,
   fileTargetToPath
 } from "@another-workbench/shared";
+import { buildLocalImagePreviewSrc } from "./local-image-preview.js";
 
 export type MessageMarkdownViewProps = {
   block: MessageBlock;
@@ -354,12 +355,14 @@ const buildMermaidRenderId = (blockId: string, index: number, source: string): s
 
 type MarkdownRendererProps = {
   text: string;
+  cacheKey: string;
   onActivateResourceLink?: (reference: ExtractedFileReference) => void;
   onPreviewImage?: (input: { src: string; alt: string }) => void;
 };
 
 const MarkdownRenderer = memo(({
   text,
+  cacheKey,
   onActivateResourceLink,
   onPreviewImage
 }: MarkdownRendererProps): ReactElement => (
@@ -415,16 +418,19 @@ const MarkdownRenderer = memo(({
         );
       },
       img: ({ src, alt, ...props }) => {
+        const previewSrc = buildLocalImagePreviewSrc(src, cacheKey);
         if (!src || !onPreviewImage) {
-          return <img src={src} alt={alt ?? ""} {...props} />;
+          return <img src={previewSrc} alt={alt ?? ""} {...props} />;
         }
         return (
           <button
             type="button"
             className="awb-inline-image-button"
-            onClick={() => onPreviewImage({ src, alt: alt ?? "Image preview" })}
+            onClick={() =>
+              onPreviewImage({ src: previewSrc ?? src, alt: alt ?? "Image preview" })
+            }
           >
-            <img src={src} alt={alt ?? ""} {...props} />
+            <img src={previewSrc} alt={alt ?? ""} {...props} />
           </button>
         );
       }
@@ -558,6 +564,7 @@ export const MessageMarkdownView = memo(({
                   <MarkdownRenderer
                     key={`${block.blockId}:markdown:${index}`}
                     text={segment.text}
+                    cacheKey={`${block.blockId}:markdown:${index}`}
                     onActivateResourceLink={onActivateResourceLink}
                     onPreviewImage={onPreviewImage}
                   />
@@ -592,6 +599,7 @@ export const MessageMarkdownView = memo(({
                     <div className="awb-code-comment__title">
                       <MarkdownRenderer
                         text={segment.directive.title}
+                        cacheKey={`${block.blockId}:directive:${index}:title`}
                         onActivateResourceLink={onActivateResourceLink}
                         onPreviewImage={onPreviewImage}
                       />
@@ -601,6 +609,7 @@ export const MessageMarkdownView = memo(({
                     <div className="awb-code-comment__body">
                       <MarkdownRenderer
                         text={segment.directive.body}
+                        cacheKey={`${block.blockId}:directive:${index}:body`}
                         onActivateResourceLink={onActivateResourceLink}
                         onPreviewImage={onPreviewImage}
                       />

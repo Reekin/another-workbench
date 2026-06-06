@@ -425,6 +425,7 @@ const zFilePreviewSchema = z.discriminatedUnion("kind", [
     target: zFileReferenceSchema,
     exists: z.boolean(),
     fileSizeBytes: z.number().int().nonnegative().optional(),
+    modifiedAtMs: z.number().nonnegative().optional(),
     mimeType: z.string().min(1).optional(),
     imageUrl: z.string().min(1)
   }),

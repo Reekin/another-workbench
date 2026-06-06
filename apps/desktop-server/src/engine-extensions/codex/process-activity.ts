@@ -1,5 +1,6 @@
 import type { ResponseItem } from "../../codex-app-server-generated/ResponseItem.js";
 import type { ThreadItem } from "../../codex-app-server-generated/v2/ThreadItem.js";
+import { statSync } from "node:fs";
 import { filePathToFileUri } from "@another-workbench/shared";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -86,19 +87,36 @@ const isSmallBase64ImagePayload = (value: string): boolean =>
 const imageMarkdown = (alt: string, src: string): string =>
   `![${escapeMarkdownImageAlt(alt)}](${src})`;
 
+const versionedFileImageUri = (path: string): string => {
+  const fileUri = filePathToFileUri(path);
+  try {
+    const stats = statSync(path);
+    const url = new URL(fileUri);
+    url.searchParams.set("awb_file_mtime", String(stats.mtimeMs));
+    url.searchParams.set("awb_file_size", String(stats.size));
+    return url.toString();
+  } catch {
+    return fileUri;
+  }
+};
+
 export const summarizeCodexImageViewInput = (
   item: Extract<ThreadItem, { type: "imageView" }>
 ): string => item.path;
 
 export const summarizeCodexImageViewOutput = (
   item: Extract<ThreadItem, { type: "imageView" }>
-): string => [imageMarkdown("Viewed image", filePathToFileUri(item.path)), `path: ${item.path}`].join("\n");
+): string =>
+  [
+    imageMarkdown("Viewed image", versionedFileImageUri(item.path)),
+    `path: ${item.path}`
+  ].join("\n");
 
 const codexImageGenerationSource = (
   item: Extract<ThreadItem, { type: "imageGeneration" }>
 ): string | undefined => {
   if (item.savedPath) {
-    return filePathToFileUri(item.savedPath);
+    return versionedFileImageUri(item.savedPath);
   }
   const result = item.result.trim();
   if (!result) {

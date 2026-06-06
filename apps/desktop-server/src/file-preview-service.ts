@@ -133,6 +133,7 @@ export class FilePreviewService {
         target,
         exists: true,
         fileSizeBytes: fileStats.size,
+        modifiedAtMs: fileStats.mtimeMs,
         mimeType: `image/${extension === "svg" ? "svg+xml" : extension}`,
         imageUrl: target.fileUrl
       };

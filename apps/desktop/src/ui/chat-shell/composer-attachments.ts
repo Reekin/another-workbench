@@ -3,6 +3,7 @@ import {
   isImageMimeType,
   type Attachment
 } from "@another-workbench/shared";
+import { buildLocalImagePreviewSrc } from "./local-image-preview.js";
 
 export type ComposerAttachmentOrigin = "picker" | "drop" | "paste";
 
@@ -20,6 +21,7 @@ export type ComposerAttachment = {
 
 export type MergeComposerAttachmentsResult = {
   attachments: ComposerAttachment[];
+  replaced: ComposerAttachment[];
   skipped: ComposerAttachment[];
 };
 
@@ -41,6 +43,17 @@ const encodeBase64 = (bytes: Uint8Array): string => {
 const blobToDataUri = async (blob: Blob, mimeType: string): Promise<string> => {
   const bytes = new Uint8Array(await blob.arrayBuffer());
   return `data:${mimeType};base64,${encodeBase64(bytes)}`;
+};
+
+const buildVersionedFileUri = (
+  nativeFilePath: string,
+  file: File
+): string => {
+  const fileUri = filePathToFileUri(nativeFilePath);
+  const url = new URL(fileUri);
+  url.searchParams.set("awb_file_mtime", String(file.lastModified));
+  url.searchParams.set("awb_file_size", String(file.size));
+  return url.toString();
 };
 
 const resolveFileExtension = (mimeType: string): string => {
@@ -111,11 +124,16 @@ export const createComposerAttachment = async (
   const isImage = isImageMimeType(mimeType);
   const nativeFilePath = origin !== "paste" ? resolveNativeFilePath(normalized) : undefined;
   const uri = nativeFilePath
-    ? filePathToFileUri(nativeFilePath)
+    ? isImage
+      ? buildVersionedFileUri(nativeFilePath, normalized)
+      : filePathToFileUri(nativeFilePath)
     : await blobToDataUri(normalized, mimeType);
   const previewUrl = isImage
     ? nativeFilePath
-      ? URL.createObjectURL(normalized)
+      ? (buildLocalImagePreviewSrc(
+          uri,
+          `${nativeFilePath}:${normalized.lastModified}:${normalized.size}`
+        ) ?? uri)
       : uri
     : undefined;
 
@@ -131,7 +149,7 @@ export const createComposerAttachment = async (
     isImage,
     mimeType,
     previewUrl,
-    releasePreviewUrl: Boolean(previewUrl && nativeFilePath),
+    releasePreviewUrl: false,
     size: normalized.size,
     sizeLabel: formatComposerAttachmentSize(normalized.size)
   };
@@ -152,20 +170,26 @@ export const mergeComposerAttachments = (
   incoming: ComposerAttachment[]
 ): MergeComposerAttachmentsResult => {
   const attachments = [...existing];
+  const replaced: ComposerAttachment[] = [];
   const skipped: ComposerAttachment[] = [];
-  const seen = new Set(existing.map((attachment) => attachment.dedupeKey));
+  const attachmentIndexByKey = new Map(
+    attachments.map((attachment, index) => [attachment.dedupeKey, index] as const)
+  );
 
   for (const attachment of incoming) {
-    if (seen.has(attachment.dedupeKey)) {
-      skipped.push(attachment);
+    const existingIndex = attachmentIndexByKey.get(attachment.dedupeKey);
+    if (existingIndex !== undefined) {
+      replaced.push(attachments[existingIndex]!);
+      attachments[existingIndex] = attachment;
       continue;
     }
-    seen.add(attachment.dedupeKey);
+    attachmentIndexByKey.set(attachment.dedupeKey, attachments.length);
     attachments.push(attachment);
   }
 
   return {
     attachments,
+    replaced,
     skipped
   };
 };

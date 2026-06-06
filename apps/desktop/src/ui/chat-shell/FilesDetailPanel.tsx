@@ -11,6 +11,7 @@ import type {
   FilePreviewRpc,
   WorkspaceFileSearchResultRpc
 } from "@another-workbench/shared";
+import { buildLocalImagePreviewSrc } from "./local-image-preview.js";
 
 type FileSelection = ExtractedFileReference | WorkspaceFileSearchResultRpc;
 
@@ -55,21 +56,26 @@ const renderPreviewBody = (
   }
 
   switch (preview.kind) {
-    case "image":
+    case "image": {
+      const imageSrc = buildLocalImagePreviewSrc(
+        preview.imageUrl,
+        `${preview.target.path}:${preview.modifiedAtMs ?? "unknown"}:${preview.fileSizeBytes ?? "unknown"}`
+      );
       return (
         <button
           type="button"
           className="awb-files-panel__image-preview"
           onClick={() =>
             onOpenImage({
-              src: preview.imageUrl,
+              src: imageSrc ?? preview.imageUrl,
               alt: preview.target.label
             })
           }
         >
-          <img src={preview.imageUrl} alt={preview.target.label} />
+          <img src={imageSrc} alt={preview.target.label} />
         </button>
       );
+    }
     case "text":
     case "code":
       return (

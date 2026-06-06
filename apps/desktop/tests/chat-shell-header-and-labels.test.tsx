@@ -17,7 +17,8 @@ import {
   formatRelativeCompletedTurnAge,
   getWorkspaceSessionPage,
   resolveCurrentTakeoverState,
-  truncateSessionHeading
+  truncateSessionHeading,
+  workspaceMenuActionLabel
 } from "../src/ui/chat-shell/ChatShellApp.js";
 
 describe("ChatShellApp header and transcript labels", () => {
@@ -56,6 +57,14 @@ describe("ChatShellApp header and transcript labels", () => {
       pageIndex: 2,
       totalPages: 3
     });
+  });
+
+  it("labels workspace context menu actions", () => {
+    expect(workspaceMenuActionLabel("schedule")).toBe("Schedule");
+    expect(workspaceMenuActionLabel("open_directory")).toBe(
+      "Open workspace directory"
+    );
+    expect(workspaceMenuActionLabel("remove_workspace")).toBe("Remove workspace");
   });
 
   it("guards takeover state to the active session", () => {

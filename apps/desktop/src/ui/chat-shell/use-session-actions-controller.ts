@@ -18,6 +18,17 @@ type StatusNoticeSetter = (
   notice: ComposerStatusNotice | undefined
 ) => void;
 
+export const shouldDismissFloatingMenuForContextMenu = (
+  event: MouseEvent
+): boolean => {
+  const target = event.target;
+  return !(
+    typeof Element !== "undefined" &&
+    target instanceof Element &&
+    target.closest(".awb-session-menu")
+  );
+};
+
 export const useSessionActionsController = (input: {
   transport?: DesktopTransport;
   workspaceTree: WorkspaceBrowserNodeRpc[];
@@ -39,8 +50,17 @@ export const useSessionActionsController = (input: {
 
   useEffect(() => {
     const handleWindowClick = () => setSessionMenu(undefined);
+    const handleWindowContextMenu = (event: MouseEvent) => {
+      if (shouldDismissFloatingMenuForContextMenu(event)) {
+        setSessionMenu(undefined);
+      }
+    };
     window.addEventListener("click", handleWindowClick);
-    return () => window.removeEventListener("click", handleWindowClick);
+    window.addEventListener("contextmenu", handleWindowContextMenu, true);
+    return () => {
+      window.removeEventListener("click", handleWindowClick);
+      window.removeEventListener("contextmenu", handleWindowContextMenu, true);
+    };
   }, []);
 
   return {

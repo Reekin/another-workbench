@@ -59,6 +59,7 @@ import { useTranscriptViewportController } from "./use-transcript-viewport-contr
 import { useWorkspaceBrowserController } from "./use-workspace-browser-controller.js";
 import { useSessionOpenController } from "./use-session-open-controller.js";
 import {
+  shouldDismissFloatingMenuForContextMenu,
   useSessionActionsController,
   type SessionMenuState
 } from "./use-session-actions-controller.js";
@@ -143,7 +144,7 @@ type RenderedTurnGroup = {
   visibleRow: TranscriptRow;
   hiddenRows: TranscriptRow[];
 };
-type WorkspaceMenuAction = "open_directory" | "schedule";
+type WorkspaceMenuAction = "open_directory" | "remove_workspace" | "schedule";
 type WorkspaceMenuState = {
   workspaceId: string;
   label: string;
@@ -335,6 +336,19 @@ const resolveStatusDotLabel = (
 const sessionActionLabel = (
   action: SessionMenuState["actions"][number]
 ): string => action.label;
+
+export const workspaceMenuActionLabel = (
+  action: WorkspaceMenuAction
+): string => {
+  switch (action) {
+    case "open_directory":
+      return workspaceDirectoryActionLabel;
+    case "remove_workspace":
+      return "Remove workspace";
+    case "schedule":
+      return "Schedule";
+  }
+};
 
 const summarizeProcessToggle = (input: {
   hiddenMessageCount?: number;
@@ -1935,8 +1949,17 @@ export const ChatShellApp = ({
 
   useEffect(() => {
     const handleWindowClick = () => setWorkspaceMenu(undefined);
+    const handleWindowContextMenu = (event: MouseEvent) => {
+      if (shouldDismissFloatingMenuForContextMenu(event)) {
+        setWorkspaceMenu(undefined);
+      }
+    };
     window.addEventListener("click", handleWindowClick);
-    return () => window.removeEventListener("click", handleWindowClick);
+    window.addEventListener("contextmenu", handleWindowContextMenu, true);
+    return () => {
+      window.removeEventListener("click", handleWindowClick);
+      window.removeEventListener("contextmenu", handleWindowContextMenu, true);
+    };
   }, []);
 
   const activeWorkspace = workspaceTree.find((workspace) => workspace.isActive);
@@ -2481,7 +2504,7 @@ export const ChatShellApp = ({
         rootPath: workspace.rootPath,
         x: event.clientX,
         y: event.clientY,
-        actions: ["schedule", "open_directory"]
+        actions: ["schedule", "open_directory", "remove_workspace"]
       });
     },
     []
@@ -2501,6 +2524,39 @@ export const ChatShellApp = ({
         });
         return;
       }
+      if (action === "remove_workspace") {
+        if (!transport) {
+          return;
+        }
+        const confirmed = window.confirm(
+          `Remove workspace "${workspaceMenuState.label}" from Another Workbench? Files on disk will not be deleted.`
+        );
+        if (!confirmed) {
+          return;
+        }
+        try {
+          const result = await transport.workspace.remove({
+            workspaceId: workspaceMenuState.workspaceId
+          });
+          await refreshSessionBrowser({
+            mode: "all"
+          });
+          setStatusNotice({
+            message: result.removed
+              ? `Removed workspace ${workspaceMenuState.label}`
+              : `Workspace ${workspaceMenuState.label} was already removed.`,
+            source: "workspace-action"
+          });
+        } catch (error) {
+          setStatusNotice({
+            message: `Remove workspace failed: ${(error as Error).message}`,
+            persistent: true,
+            source: "workspace-action",
+            ...statusNoticeErrorDetails(error)
+          });
+        }
+        return;
+      }
       if (action !== "open_directory") {
         return;
       }
@@ -2513,7 +2569,7 @@ export const ChatShellApp = ({
         onStatusNotice: setStatusNotice
       });
     },
-    [transport, setStatusNotice]
+    [refreshSessionBrowser, transport, setStatusNotice]
   );
 
   const onSetWorkspaceSessionPage = useCallback(
@@ -2798,7 +2854,7 @@ export const ChatShellApp = ({
           type="button"
           onClick={() => void onRunWorkspaceMenuAction(workspaceMenu, action)}
         >
-          {action === "open_directory" ? workspaceDirectoryActionLabel : "Schedule"}
+          {workspaceMenuActionLabel(action)}
         </button>
       ))}
     </div>

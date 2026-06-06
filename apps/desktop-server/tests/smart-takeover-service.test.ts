@@ -230,12 +230,11 @@ describe("SmartTakeoverService", () => {
 
     expect(smartTakeover?.inputSchema).not.toHaveProperty("required");
     expect(smartTakeover?.description).toContain(
-      "Call this at the beginning of a complex task"
+      "Before starting takeover"
     );
     expect(smartTakeover?.description).toContain(
-      "briefly state the assigned work, goals, acceptance points"
+      "action=\"help\""
     );
-    expect(smartTakeover?.description).toContain("acceptance-check scope");
     expect(presetIdDescription).toContain("Available presets:");
     expect(presetIdDescription).toContain("Required when action is start");
     expect(presetIdDescription).toContain("not needed for help or stop");
@@ -244,20 +243,55 @@ describe("SmartTakeoverService", () => {
     );
     expect(presetIdDescription).toContain("- review: Delegated reviewer");
     expect(presetIdDescription).toContain("- team_review: Team-specific reviewer");
-    expect(contextDescription).toContain("Briefly and concisely state");
-    expect(contextDescription).toContain("assigned work");
-    expect(contextDescription).toContain("goals to achieve");
-    expect(contextDescription).toContain("acceptance points");
-    expect(contextDescription).toContain("key directories");
-    expect(contextDescription).toContain("technical documentation");
-    expect(contextDescription).toContain("roadmap if any");
-    expect(contextDescription).toContain("throughout the entire task cycle");
-    expect(contextDescription).toContain("scope of acceptance checks");
-    expect(contextDescription).toContain("partial or step-by-step details");
-    expect(contextDescription).toContain("do not tell the reviewer what to do");
-    expect(contextDescription).toContain(
-      "Do not call SmartTakeover again just to update context after an incomplete verdict"
-    );
+    expect(contextDescription).toContain("Before starting takeover");
+    expect(contextDescription).toContain("action=\"help\"");
+  });
+
+  it("includes SmartTakeover context examples in help", async () => {
+    const baseDir = await createTempDir();
+    const presetStore = new TakeoverPresetStore({ baseDir });
+    const service = new SmartTakeoverService({
+      runtimeService: {
+        getSession: () => undefined
+      } as never,
+      presetStore
+    });
+    const smartTakeoverTool = service
+      .createHostTools()
+      .find((tool) => tool.name === "SmartTakeover");
+
+    const result = await smartTakeoverTool?.handle({
+      definition: smartTakeoverTool,
+      arguments: {
+        action: "help"
+      },
+      context: {
+        engineId: "codex",
+        sessionId: "session-parent",
+        providerSessionId: "thread-session-parent"
+      }
+    } as never);
+
+    expect(result).toMatchObject({
+      success: true,
+      contentItems: [
+        expect.objectContaining({
+          text: expect.stringContaining("Context format:")
+        })
+      ]
+    });
+    const text = result?.contentItems[0]?.type === "inputText"
+      ? result.contentItems[0].text
+      : "";
+    expect(text).toContain("Bad context example:");
+    expect(text).toContain("Good context example:");
+    expect(text).toContain("Latest task_05 implementation summary:");
+    expect(text).toContain("Review focus requested:");
+    expect(text).toContain("This is bad because");
+    expect(text).toContain("Project: I:\\GameDev\\Projects\\Experiment\\AGame");
+    expect(text).toContain("ROADMAP.md in the Unity project defines task order");
+    expect(text).toContain("This is good because");
+    expect(text).toContain("without local progress details or reviewer instructions");
   });
 
   it("recognizes hydrated takeover sessions from session metadata", async () => {

@@ -215,7 +215,6 @@ describe("SmartTakeoverService", () => {
       sessionId: "session-parent"
     });
     const smartTakeover = definitions.find((tool) => tool.name === "SmartTakeover");
-    const toolDescription = smartTakeover?.description ?? "";
     const schema = smartTakeover?.inputSchema as {
       properties?: {
         presetId?: {
@@ -235,12 +234,6 @@ describe("SmartTakeoverService", () => {
     );
     expect(presetIdDescription).toContain("- review: Delegated reviewer");
     expect(presetIdDescription).toContain("- team_review: Team-specific reviewer");
-    expect(toolDescription).toContain(
-      "Start it once at the beginning of complex feature work or long-running tasks"
-    );
-    expect(toolDescription).toContain(
-      "without calling SmartTakeover again just to refresh context"
-    );
     expect(contextDescription).toContain("Stable task-level context");
     expect(contextDescription).toContain(
       "Do not call SmartTakeover again just to update context after an incomplete verdict"

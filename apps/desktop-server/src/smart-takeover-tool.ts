@@ -96,7 +96,7 @@ export const createSmartTakeoverHostTool = (
   namespace: smartTakeoverToolNamespace,
   name: smartTakeoverToolName,
   description:
-    "Let another agent act as the user to supervise this session. Start it once at the beginning of complex feature work or long-running tasks, passing stable task-level context that remains true for the whole task. It will automatically check your work after you finish responding and give feedback; continue from that feedback without calling SmartTakeover again just to refresh context.",
+    "Let another agent act as the user to supervise this session. It will automatically check your work after you finish responding and give feedback. Use near completion of complex feature work or long-running tasks with many work items that need repeated review and iteration.",
   inputSchema: createSmartTakeoverInputSchemaResolver(options),
   deferLoading: false,
   isAvailable: options.isAvailable,

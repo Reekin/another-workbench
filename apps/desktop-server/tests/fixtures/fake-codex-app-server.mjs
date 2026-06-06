@@ -1531,6 +1531,72 @@ const emitTakeoverVerdictRequest = ({ threadId, turnId, prompt }) => {
   });
 };
 
+const emitReadSessionRequest = ({ threadId, turnId }) => {
+  const toolCallId = `read-session-${turnId}`;
+  const requestId = nextDynamicToolRequestId++;
+  const threadStartParams = threadStartParamsByThreadId.get(threadId);
+  const dynamicTool = (threadStartParams?.dynamicTools ?? []).find(
+    (tool) =>
+      tool?.namespace === "another_workbench" && tool?.name === "read_session"
+  );
+  const args = {
+    sessionId: "session-read-target"
+  };
+
+  send({
+    method: "thread/status/changed",
+    params: {
+      threadId,
+      status: { type: "active" }
+    }
+  });
+  send({
+    method: "turn/started",
+    params: {
+      threadId,
+      turn: { id: turnId }
+    }
+  });
+  send({
+    method: "item/started",
+    params: {
+      threadId,
+      turnId,
+      item: {
+        type: "dynamicToolCall",
+        id: toolCallId,
+        namespace: dynamicTool?.namespace ?? "another_workbench",
+        tool: dynamicTool?.name ?? "read_session",
+        arguments: args,
+        status: "inProgress",
+        contentItems: null,
+        success: null,
+        durationMs: null
+      }
+    }
+  });
+  pendingDynamicToolByRequestId.set(requestId, {
+    threadId,
+    turnId,
+    toolCallId,
+    namespace: dynamicTool?.namespace ?? "another_workbench",
+    tool: dynamicTool?.name ?? "read_session",
+    arguments: args
+  });
+  send({
+    id: requestId,
+    method: "item/tool/call",
+    params: {
+      threadId,
+      turnId,
+      callId: toolCallId,
+      namespace: dynamicTool?.namespace ?? "another_workbench",
+      tool: dynamicTool?.name ?? "read_session",
+      arguments: args
+    }
+  });
+};
+
 const emitDynamicToolResolution = ({ dynamicTool, response }) => {
   const success = response?.success !== false;
   send({
@@ -1745,6 +1811,11 @@ const handleRequest = (payload) => {
 
           if (prompt.includes("smart-takeover")) {
             emitSmartTakeoverRequest({ threadId, turnId });
+            return;
+          }
+
+          if (prompt.includes("read-session-tool")) {
+            emitReadSessionRequest({ threadId, turnId });
             return;
           }
 

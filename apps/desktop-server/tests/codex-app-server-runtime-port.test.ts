@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createCodexAppServerRuntimePort } from "../src/codex-app-server-runtime-port.js";
+import type { DomainSnapshot } from "@another-workbench/shared";
 import {
   clearCodexTurnChangesStore,
   getRecordedCodexTurnChanges
@@ -13,6 +14,7 @@ import {
   getRecordedCodexHookActivity
 } from "../src/engine-extensions/codex/hook-activity-store.js";
 import { HostToolRegistry } from "../src/host-tools.js";
+import { createReadSessionHostTool } from "../src/read-session-host-tool.js";
 import {
   createSmartTakeoverHostTool,
   type SmartTakeoverRequest
@@ -44,6 +46,74 @@ const readRequestLog = (path: string): Array<Record<string, unknown>> =>
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+const readSessionSnapshot: DomainSnapshot = {
+  conversations: [
+    {
+      conversationId: "conversation-1",
+      participantEngineIds: ["codex"],
+      activeSessionId: "session-read-target",
+      sessionIds: ["session-read-target"],
+      createdAt: "2026-06-06T00:00:00.000Z",
+      updatedAt: "2026-06-06T00:01:00.000Z"
+    }
+  ],
+  sessions: [
+    {
+      sessionId: "session-read-target",
+      conversationId: "conversation-1",
+      engineId: "codex",
+      status: "idle",
+      createdAt: "2026-06-06T00:00:00.000Z",
+      updatedAt: "2026-06-06T00:01:00.000Z"
+    }
+  ],
+  turns: [
+    {
+      turnId: "turn-read-target",
+      sessionId: "session-read-target",
+      status: "completed",
+      finishReason: "completed",
+      startedAt: "2026-06-06T00:00:10.000Z",
+      completedAt: "2026-06-06T00:00:20.000Z",
+      finalMessageId: "assistant-read-final",
+      messageIds: ["user-read", "assistant-read-final"],
+      toolCallIds: [],
+      terminalIds: [],
+      approvalRequestIds: [],
+      interactionRequestIds: []
+    }
+  ],
+  messageBlocks: [
+    {
+      blockId: "user-read-block",
+      messageId: "user-read",
+      sessionId: "session-read-target",
+      turnId: "turn-read-target",
+      role: "user",
+      kind: "plain_text",
+      text: "Read this target session.",
+      startedAt: "2026-06-06T00:00:10.000Z"
+    },
+    {
+      blockId: "assistant-read-final-block",
+      messageId: "assistant-read-final",
+      sessionId: "session-read-target",
+      turnId: "turn-read-target",
+      role: "assistant",
+      kind: "markdown",
+      phase: "final_answer",
+      text: "Session final from dynamic read tool.",
+      startedAt: "2026-06-06T00:00:20.000Z"
+    }
+  ],
+  toolCalls: [],
+  terminalStreams: [],
+  approvalRequests: [],
+  runtimeInteractions: [],
+  participants: [],
+  sessionRelations: []
+};
 
 describe("Codex app-server runtime port", () => {
   const disposers: Array<() => Promise<void>> = [];
@@ -1718,6 +1788,68 @@ describe("Codex app-server runtime port", () => {
           params: expect.objectContaining({
             sessionId: "session-smart",
             outputSummary: expect.stringContaining("session session-smart")
+          })
+        })
+      ])
+    );
+  });
+
+  it("invokes read_session through the Codex dynamic tool path", async () => {
+    const hostTools = new HostToolRegistry([
+      createReadSessionHostTool({
+        getSnapshot: () => readSessionSnapshot
+      })
+    ]);
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1",
+      hostTools
+    });
+    disposers.push(() => port.stop());
+
+    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+    port.subscribe((event) => {
+      events.push({
+        method: event.method,
+        params: event.params
+      });
+    });
+
+    await port.start();
+    await port.request({
+      id: "turn-read-session-tool",
+      method: "turn/start",
+      params: {
+        sessionId: "session-reader",
+        content: "please trigger read-session-tool"
+      }
+    });
+
+    await waitFor(() =>
+      events.some(
+        (event) =>
+          event.method === "tool.completed" &&
+          event.params.sessionId === "session-reader"
+      )
+    );
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "tool.started",
+          params: expect.objectContaining({
+            sessionId: "session-reader",
+            toolName: "another_workbench.read_session"
+          })
+        }),
+        expect.objectContaining({
+          method: "tool.completed",
+          params: expect.objectContaining({
+            sessionId: "session-reader",
+            outputSummary: expect.stringContaining(
+              "Session final from dynamic read tool."
+            )
           })
         })
       ])

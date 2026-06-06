@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createWorkbenchRuntimeService } from "../src/prod-service.js";
 
@@ -10,12 +13,12 @@ const piFixturePath = fileURLToPath(
 );
 
 const waitFor = async (
-  predicate: () => boolean,
+  predicate: () => boolean | Promise<boolean>,
   timeoutMs = 3_000
 ): Promise<void> => {
   const startedAt = Date.now();
   for (;;) {
-    if (predicate()) {
+    if (await predicate()) {
       return;
     }
     if (Date.now() - startedAt > timeoutMs) {
@@ -25,15 +28,30 @@ const waitFor = async (
   }
 };
 
+const readRequestLog = async (path: string): Promise<Array<Record<string, unknown>>> =>
+  (await readFile(path, "utf8"))
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+
 describe("prod runtime service", () => {
   const disposers: Array<() => Promise<void>> = [];
+  const tempDirs: string[] = [];
 
   afterEach(async () => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     while (disposers.length > 0) {
       const dispose = disposers.pop();
       if (dispose) {
         await dispose();
+      }
+    }
+    while (tempDirs.length > 0) {
+      const dir = tempDirs.pop();
+      if (dir) {
+        await rm(dir, { recursive: true, force: true });
       }
     }
   });
@@ -191,6 +209,85 @@ describe("prod runtime service", () => {
         process.env.FAKE_CODEX_AUTH_BASE_URL = previousFakeBaseUrl;
       }
     }
+  });
+
+  it("registers read_session as a Codex dynamic host tool", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "awb-read-session-prod-"));
+    tempDirs.push(tempDir);
+    const requestLogPath = join(tempDir, "requests.jsonl");
+    vi.stubEnv("FAKE_CODEX_REQUEST_LOG", requestLogPath);
+    const service = createWorkbenchRuntimeService({
+      codexCommandPath: process.execPath,
+      codexCommandArgs: [codexFixturePath],
+      piAcpCommandPath: process.execPath,
+      piAcpCommandArgs: [piFixturePath]
+    });
+    disposers.push(() => service.dispose());
+
+    await service.executeCommand({
+      commandId: "create-read-session-tool-session",
+      command: {
+        type: "createSession",
+        engineId: "codex",
+        conversationId: "conversation-read-session-tool"
+      }
+    });
+
+    const sessionId = service.listSessions({
+      conversationId: "conversation-read-session-tool",
+      includeArchived: true
+    })[0]?.sessionId;
+    expect(sessionId).toBeDefined();
+
+    await service.executeCommand({
+      commandId: "send-read-session-tool",
+      command: {
+        type: "sendUserMessage",
+        sessionId: sessionId!,
+        messageId: "msg-read-session-tool",
+        content: "hello dynamic tools",
+        attachments: []
+      }
+    });
+
+    await waitFor(async () => {
+      try {
+        const requests = await readRequestLog(requestLogPath);
+        return requests.some((request) => request.method === "thread/start");
+      } catch {
+        return false;
+      }
+    });
+
+    const threadStart = (await readRequestLog(requestLogPath)).find(
+      (request) => request.method === "thread/start"
+    );
+    expect(threadStart?.params).toEqual(
+      expect.objectContaining({
+        dynamicTools: expect.arrayContaining([
+          expect.objectContaining({
+            namespace: "another_workbench",
+            name: "read_session",
+            inputSchema: expect.objectContaining({
+              properties: expect.objectContaining({
+                sessionId: expect.objectContaining({
+                  minLength: 1
+                }),
+                limit: expect.objectContaining({
+                  default: 50,
+                  maximum: 200
+                }),
+                maxChars: expect.objectContaining({
+                  default: 60000,
+                  maximum: 200000
+                })
+              }),
+              required: ["sessionId"]
+            })
+          })
+        ])
+      })
+    );
   });
 
   it("exposes pi-acp as a real ACP-backed agent with streamed transcript and tool output", async () => {

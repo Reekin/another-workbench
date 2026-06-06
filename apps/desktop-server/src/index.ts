@@ -20,6 +20,8 @@ export * from "./file-action-service.js";
 export * from "./error-log-service.js";
 export * from "./diagnostic-log-service.js";
 export * from "./host-tools.js";
+export * from "./read-session-host-tool.js";
+export * from "./read-session-transcript.js";
 export * from "./smart-takeover-tool.js";
 export * from "./smart-takeover-service.js";
 export * from "./takeover-preset-store.js";

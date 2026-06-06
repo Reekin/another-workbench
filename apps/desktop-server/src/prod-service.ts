@@ -28,6 +28,7 @@ import { FileActionService } from "./file-action-service.js";
 import { ErrorLogService } from "./error-log-service.js";
 import { DiagnosticLogService } from "./diagnostic-log-service.js";
 import { HostToolRegistry } from "./host-tools.js";
+import { createReadSessionHostTool } from "./read-session-host-tool.js";
 import { SmartTakeoverService } from "./smart-takeover-service.js";
 import { TakeoverPresetStore } from "./takeover-preset-store.js";
 import {
@@ -211,6 +212,7 @@ export const createWorkbenchRuntimeService = (
     presetStore: takeoverPresetStore,
     now: options.now
   });
+  hostTools.register(createReadSessionHostTool(runtimeService));
   for (const tool of smartTakeoverService.createHostTools()) {
     hostTools.register(tool);
   }

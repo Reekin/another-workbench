@@ -48,7 +48,8 @@ export type SubmitTakeoverVerdictToolOptions = {
   isAvailable?: HostToolRegistration["isAvailable"];
 };
 
-const defaultPresetIdDescription = "Preset prompt name from ~/.another-workbench/takeover.";
+const defaultPresetIdDescription =
+  "Preset prompt name from ~/.another-workbench/takeover. Required when action is start or omitted to start takeover; not needed for help or stop.";
 
 const createSmartTakeoverInputSchema = (presetIdDescription: string) => ({
   type: "object",
@@ -72,7 +73,7 @@ const createSmartTakeoverInputSchema = (presetIdDescription: string) => ({
     context: {
       type: "string",
       description:
-        "Stable task-level context to pass to the takeover agent, such as goals, files, risks, or acceptance notes for this review. This should be information that remains true for the whole task. Do not call SmartTakeover again just to update context after an incomplete verdict; continue the task from the feedback while keeping the original context."
+        "Global task context to pass to the takeover agent at the beginning of the task, such as goals, files, risks, acceptance notes, and review standards. This should be information that remains true for the whole task lifecycle. Do not call SmartTakeover again just to update context after an incomplete verdict; continue the task from the feedback while keeping the original context."
     }
   },
   additionalProperties: false
@@ -96,7 +97,7 @@ export const createSmartTakeoverHostTool = (
   namespace: smartTakeoverToolNamespace,
   name: smartTakeoverToolName,
   description:
-    "Let another agent act as the user to supervise this session. It will automatically check your work after you finish responding and give feedback. Use near completion of complex feature work or long-running tasks with many work items that need repeated review and iteration.",
+    "Let another agent act as the user to supervise this session. Call this at the beginning of a complex task or long-running task, passing stable context that applies for the whole task lifecycle. It will automatically check your work after you finish responding and give feedback.",
   inputSchema: createSmartTakeoverInputSchemaResolver(options),
   deferLoading: false,
   isAvailable: options.isAvailable,

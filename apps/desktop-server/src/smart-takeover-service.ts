@@ -82,6 +82,9 @@ const textResult = (text: string, success = true): HostToolResult => ({
   success
 });
 
+const alreadyManagedStartMessage = (sessionId: string): string =>
+  `SmartTakeover start failed: session ${sessionId} is already managed. To change presetId or context, call SmartTakeover with action="stop" first, then call action="start" again. Usually a task should call SmartTakeover only once at the beginning; the original global context is reused for later reviews and does not need to be updated. Think carefully about whether restarting takeover is really necessary.`;
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -490,10 +493,7 @@ export class SmartTakeoverService {
     request: SmartTakeoverRequest
   ): Promise<HostToolResult> {
     const args = parseTakeoverArgs(request.arguments);
-    if (
-      args.action === "help" ||
-      (!args.action && !args.presetId)
-    ) {
+    if (args.action === "help" || (!args.action && !args.presetId)) {
       return textResult(await this.buildHelp(args.helpTopic));
     }
     try {
@@ -509,17 +509,30 @@ export class SmartTakeoverService {
         );
       }
 
+      if (!args.presetId) {
+        return textResult(
+          "SmartTakeover start failed: presetId is required. Choose one of the available takeover presets and pass its presetId explicitly.",
+          false
+        );
+      }
+
       const existingConfig = this.takeoverConfigByParentSessionId.get(
         request.parentSessionId
       );
-      const presetId = args.presetId ?? "review";
       if (
         existingConfig &&
-        existingConfig.presetId === presetId &&
+        existingConfig.presetId === args.presetId &&
         existingConfig.args.context === args.context
       ) {
         return textResult(
           `SmartTakeover is already enabled for session ${request.parentSessionId}. It will run after the current response is complete.`
+        );
+      }
+
+      if (existingConfig) {
+        return textResult(
+          alreadyManagedStartMessage(request.parentSessionId),
+          false
         );
       }
       return textResult(
@@ -925,9 +938,9 @@ export class SmartTakeoverService {
     const { rootPath, presets } = await this.presetStore.list();
     const presetLines = this.renderPresetLines(presets);
     const sections: Record<NonNullable<TakeoverToolArgs["helpTopic"]>, string> = {
-      overview: `SmartTakeover enables takeover mode for this session. After your current response finishes, Another Workbench starts a takeover agent in the same workspace. The takeover agent acts as the user's delegated reviewer or progress manager and reports back through SubmitTakeoverVerdict.
+      overview: `SmartTakeover enables takeover mode for this session. Call it at the beginning of a complex or long-running task with a presetId and stable context for the whole task lifecycle. After your current response finishes, Another Workbench starts a takeover agent in the same workspace. The takeover agent acts as the user's delegated reviewer or progress manager and reports back through SubmitTakeoverVerdict.
 
-Use action="start" when you need a virtual user to inspect a checkpoint, review your changes, or decide whether a long-running task should continue. Pass context when this review needs specific goals, focus files, known risks, or acceptance notes. Use action="stop" when you are the managed agent and repeated review feedback does not contain necessary iteration, or takeover is no longer useful for this task.`,
+Use action="start" once at task start when you need a virtual user to inspect checkpoints, review your changes, or decide whether a long-running task should continue. Pass context when this review needs specific goals, focus files, known risks, or acceptance notes. Do not call start again just to update context; the first global context remains the review baseline. Use action="stop" when you are the managed agent and repeated review feedback does not contain necessary iteration, or takeover is no longer useful for this task.`,
       presets: `Preset prompts are read from ${rootPath}. Each preset can be a directory containing prompt.md or another .md file, or a direct .md file.
 
 Available presets:
@@ -952,7 +965,7 @@ ${sections.result}`;
   private async buildPresetIdInputDescription(): Promise<string> {
     const { rootPath, presets } = await this.presetStore.list();
     return [
-      `Preset prompt name from ${rootPath}.`,
+      `Preset prompt name from ${rootPath}. Required when action is start or omitted to start takeover; not needed for help or stop.`,
       "",
       "Available presets:",
       this.renderPresetDescriptionLines(presets)

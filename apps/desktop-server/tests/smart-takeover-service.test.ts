@@ -228,13 +228,20 @@ describe("SmartTakeoverService", () => {
     const presetIdDescription = schema.properties?.presetId?.description ?? "";
     const contextDescription = schema.properties?.context?.description ?? "";
 
+    expect(smartTakeover?.inputSchema).not.toHaveProperty("required");
+    expect(smartTakeover?.description).toContain(
+      "Call this at the beginning of a complex task"
+    );
     expect(presetIdDescription).toContain("Available presets:");
+    expect(presetIdDescription).toContain("Required when action is start");
+    expect(presetIdDescription).toContain("not needed for help or stop");
     expect(presetIdDescription).toContain(
       "- progress: Delegated reviewer for checking the development progress"
     );
     expect(presetIdDescription).toContain("- review: Delegated reviewer");
     expect(presetIdDescription).toContain("- team_review: Team-specific reviewer");
-    expect(contextDescription).toContain("Stable task-level context");
+    expect(contextDescription).toContain("Global task context");
+    expect(contextDescription).toContain("whole task lifecycle");
     expect(contextDescription).toContain(
       "Do not call SmartTakeover again just to update context after an incomplete verdict"
     );
@@ -660,7 +667,93 @@ describe("SmartTakeoverService", () => {
     });
   });
 
-  it("returns an already enabled message when SmartTakeover is called again", async () => {
+  it("requires presetId for start while allowing help without presetId", async () => {
+    const harness = await createManualTakeoverHarness();
+    const smartTakeoverTool = harness.service
+      .createHostTools()
+      .find((tool) => tool.name === "SmartTakeover");
+
+    const startResult = await smartTakeoverTool?.handle({
+      definition: smartTakeoverTool,
+      arguments: {
+        action: "start"
+      },
+      context: {
+        engineId: "codex",
+        sessionId: "session-parent",
+        providerSessionId: "thread-session-parent"
+      }
+    } as never);
+    expect(startResult).toMatchObject({
+      success: false,
+      contentItems: [
+        expect.objectContaining({
+          text: expect.stringContaining("presetId is required")
+        })
+      ]
+    });
+
+    const helpResult = await smartTakeoverTool?.handle({
+      definition: smartTakeoverTool,
+      arguments: {
+        action: "help"
+      },
+      context: {
+        engineId: "codex",
+        sessionId: "session-parent",
+        providerSessionId: "thread-session-parent"
+      }
+    } as never);
+    expect(helpResult).toMatchObject({
+      success: true,
+      contentItems: [
+        expect.objectContaining({
+          text: expect.stringContaining("Available presets:")
+        })
+      ]
+    });
+  });
+
+  it("returns a successful no-op for identical SmartTakeover start", async () => {
+    const harness = await createManualTakeoverHarness();
+    const parent = harness.sessions.get("session-parent");
+    if (parent) {
+      parent.status = "running";
+    }
+    await harness.service.setManualTakeover({
+      sessionId: "session-parent",
+      presetId: "review",
+      context: "Stable task context."
+    });
+    const smartTakeoverTool = harness.service
+      .createHostTools()
+      .find((tool) => tool.name === "SmartTakeover");
+
+    const result = await smartTakeoverTool?.handle({
+      definition: smartTakeoverTool,
+      arguments: {
+        action: "start",
+        presetId: "review",
+        context: "Stable task context."
+      },
+      context: {
+        engineId: "codex",
+        sessionId: "session-parent",
+        providerSessionId: "thread-session-parent"
+      }
+    } as never);
+
+    expect(result).toMatchObject({
+      success: true,
+      contentItems: [
+        expect.objectContaining({
+          text: expect.stringContaining("SmartTakeover is already enabled")
+        })
+      ]
+    });
+  });
+
+  it("rejects SmartTakeover start when takeover is already enabled even with new config", async () => {
     const harness = await createManualTakeoverHarness();
     const parent = harness.sessions.get("session-parent");
     if (parent) {
@@ -678,7 +771,8 @@ describe("SmartTakeoverService", () => {
       definition: smartTakeoverTool,
       arguments: {
         action: "start",
-        presetId: "review"
+        presetId: "progress",
+        context: "Replace the takeover context mid-task."
       },
       context: {
         engineId: "codex",
@@ -688,13 +782,28 @@ describe("SmartTakeoverService", () => {
     } as never);
 
     expect(result).toMatchObject({
-      success: true,
+      success: false,
       contentItems: [
         expect.objectContaining({
-          text: expect.stringContaining("SmartTakeover is already enabled")
+          text: expect.stringContaining("already managed")
         })
       ]
     });
+    expect(result?.contentItems[0]).toEqual(
+      expect.objectContaining({
+        text: expect.stringContaining("call SmartTakeover with action=\"stop\" first")
+      })
+    );
+    expect(result?.contentItems[0]).toEqual(
+      expect.objectContaining({
+        text: expect.stringContaining("call SmartTakeover only once at the beginning")
+      })
+    );
+    expect(result?.contentItems[0]).toEqual(
+      expect.objectContaining({
+        text: expect.stringContaining("original global context is reused")
+      })
+    );
   });
 
   it("allows the managed agent to stop takeover through SmartTakeover", async () => {

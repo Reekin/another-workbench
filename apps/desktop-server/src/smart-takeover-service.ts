@@ -260,6 +260,7 @@ export class SmartTakeoverService {
         isAvailable: (context) =>
           !this.isActiveTakeoverRun(context.sessionId) &&
           !this.isActiveParentRun(context.sessionId),
+        presetIdDescription: () => this.buildPresetIdInputDescription(),
         onRequest: (request) => this.handleSmartTakeover(request)
       }),
       createSubmitTakeoverVerdictHostTool({
@@ -915,7 +916,7 @@ export class SmartTakeoverService {
   ): Promise<string> {
     const { rootPath, presets } = await this.presetStore.list();
     const presetLines = this.renderPresetLines(presets);
-    const sections: Record<string, string> = {
+    const sections: Record<NonNullable<TakeoverToolArgs["helpTopic"]>, string> = {
       overview: `SmartTakeover enables takeover mode for this session. After your current response finishes, Another Workbench starts a takeover agent in the same workspace. The takeover agent acts as the user's delegated reviewer or progress manager and reports back through SubmitTakeoverVerdict.
 
 Use action="start" when you need a virtual user to inspect a checkpoint, review your changes, or decide whether a long-running task should continue. Pass context when this review needs specific goals, focus files, known risks, or acceptance notes. Use action="stop" when you are the managed agent and repeated review feedback does not contain necessary iteration, or takeover is no longer useful for this task.`,
@@ -940,6 +941,16 @@ ${sections.loop}
 ${sections.result}`;
   }
 
+  private async buildPresetIdInputDescription(): Promise<string> {
+    const { rootPath, presets } = await this.presetStore.list();
+    return [
+      `Preset prompt name from ${rootPath}.`,
+      "",
+      "Available presets:",
+      this.renderPresetDescriptionLines(presets)
+    ].join("\n");
+  }
+
   private renderPresetLines(presets: TakeoverPresetSummaryRpc[]): string {
     if (presets.length === 0) {
       return "- none";
@@ -947,8 +958,17 @@ ${sections.result}`;
     return presets
       .map(
         (preset) =>
-          `- ${preset.presetId}: ${preset.displayName} (${preset.kind}, ${preset.promptPath})`
+          `- ${preset.presetId}: ${preset.desc ?? preset.displayName} (${preset.kind}, ${preset.promptPath})`
       )
+      .join("\n");
+  }
+
+  private renderPresetDescriptionLines(presets: TakeoverPresetSummaryRpc[]): string {
+    if (presets.length === 0) {
+      return "- none";
+    }
+    return presets
+      .map((preset) => `- ${preset.presetId}: ${preset.desc ?? preset.displayName}`)
       .join("\n");
   }
 

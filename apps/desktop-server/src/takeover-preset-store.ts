@@ -1,6 +1,15 @@
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   TakeoverPresetDocumentRpc,
   TakeoverPresetSummaryRpc
@@ -22,66 +31,13 @@ const presetIdPattern = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 const defaultBaseDir = (): string => join(homedir(), ".another-workbench");
 
-const legacyBuiltinPresets: Record<string, string> = {
-  review: `# Review Takeover
+const builtinPresetIds = ["review", "progress"] as const;
+type BuiltinPresetId = (typeof builtinPresetIds)[number];
 
-You are the takeover reviewer for the parent agent session.
-
-Act as the user's delegated reviewer. Inspect the current workspace and the parent session context. If the work has correctness, regression, maintainability, security, or test coverage issues, request concrete changes. If the work is ready, approve it.
-
-Use the SubmitTakeoverVerdict tool exactly once:
-- verdict: "incomplete" when the parent agent must continue working
-- verdict: "complete" when the work is ready for the user
-- response: your complete virtual-user reply to the parent agent
-
-Your feedback should be specific enough for the parent agent to act without guessing.
-`,
-  progress: `# Progress Takeover
-
-You are the takeover progress manager for the parent agent session.
-
-Compare the current state against the stated roadmap, brief, and acceptance criteria. Identify what is complete, what is missing, and the next concrete work needed. If the task is not complete, send it back with a focused continuation request. If the task is complete, approve it.
-
-Use the SubmitTakeoverVerdict tool exactly once:
-- verdict: "incomplete" when the parent agent must keep developing
-- verdict: "complete" when the stated goal is complete
-- response: your complete virtual-user reply to the parent agent
-
-Keep the verdict grounded in observable workspace state and acceptance criteria.
-`
-};
-
-const builtinPresets: Record<string, string> = {
-  review: `# Review Takeover
-
-You are the user's delegated reviewer for this session.
-
-Inspect the current workspace and the latest agent output. If the work has correctness, regression, maintainability, security, or test coverage issues, request concrete changes as the user. If the work is ready, approve it.
-
-Use the SubmitTakeoverVerdict tool exactly once:
-- verdict: "incomplete" when the agent must continue working from your response
-- verdict: "complete" when the work is ready for the user
-- response: your complete user-facing reply to send back to the agent
-
-Your feedback should be specific enough for the agent to act without guessing.
-`,
-  progress: `# Progress Takeover
-
-You are the user's delegated progress manager for this session.
-
-Compare the current state against the stated roadmap, task context, and acceptance criteria. Identify what is complete, what is missing, and the next concrete work needed. If the task is not complete, send it back with a focused continuation request. If the task is complete, approve it.
-
-Use the SubmitTakeoverVerdict tool exactly once:
-- verdict: "incomplete" when the agent must keep developing from your response
-- verdict: "complete" when the stated goal is complete
-- response: your complete user-facing reply to send back to the agent
-
-Keep the verdict grounded in observable workspace state and acceptance criteria.
-`
-};
-
-const normalizePresetPrompt = (prompt: string): string =>
-  prompt.replace(/\r\n/g, "\n").trimEnd();
+const builtinPresetPromptPath = (presetId: BuiltinPresetId): string =>
+  fileURLToPath(
+    new URL(`./resources/takeover-presets/${presetId}/prompt.md`, import.meta.url)
+  );
 
 const displayNameFor = (presetId: string): string =>
   presetId
@@ -89,6 +45,13 @@ const displayNameFor = (presetId: string): string =>
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ") || presetId;
+
+const readPresetDesc = async (promptPath: string): Promise<string | undefined> => {
+  const prompt = await readFile(promptPath, "utf8");
+  const firstLine = prompt.replace(/^\uFEFF/, "").split(/\r?\n/, 1)[0]?.trim();
+  const match = firstLine?.match(/^desc:\s*(.+)$/i);
+  return match?.[1]?.trim() || undefined;
+};
 
 const validatePresetId = (presetId: string): void => {
   if (!presetIdPattern.test(presetId)) {
@@ -139,6 +102,7 @@ export class TakeoverPresetStore {
         presets.push({
           presetId,
           displayName: displayNameFor(presetId),
+          desc: await readPresetDesc(promptPath),
           promptPath,
           kind: "file",
           updatedAt: fileStat.mtime.toISOString()
@@ -183,6 +147,7 @@ export class TakeoverPresetStore {
     return {
       presetId: input.presetId,
       displayName: input.displayName ?? displayNameFor(input.presetId),
+      desc: await readPresetDesc(promptPath),
       promptPath,
       kind: "directory",
       updatedAt: fileStat.mtime.toISOString(),
@@ -208,27 +173,36 @@ export class TakeoverPresetStore {
 
   private async ensureDefaults(): Promise<void> {
     await mkdir(this.rootPath, { recursive: true });
-    for (const [presetId, prompt] of Object.entries(builtinPresets)) {
+    for (const presetId of builtinPresetIds) {
       validatePresetId(presetId);
+      if (await this.hasPresetPrompt(presetId)) {
+        continue;
+      }
       const directoryPath = this.resolvePresetDirectory(presetId);
       const promptPath = join(directoryPath, "prompt.md");
-      try {
-        await stat(promptPath);
-        const legacyPrompt = legacyBuiltinPresets[presetId];
-        if (!legacyPrompt) {
-          continue;
-        }
-        const existingPrompt = await readFile(promptPath, "utf8");
-        if (
-          normalizePresetPrompt(existingPrompt) ===
-          normalizePresetPrompt(legacyPrompt)
-        ) {
-          await writeFile(promptPath, prompt, "utf8");
-        }
-      } catch {
-        await mkdir(directoryPath, { recursive: true });
-        await writeFile(promptPath, prompt, "utf8");
+      await mkdir(directoryPath, { recursive: true });
+      await copyFile(builtinPresetPromptPath(presetId), promptPath);
+    }
+  }
+
+  private async hasPresetPrompt(presetId: string): Promise<boolean> {
+    const directPromptPath = join(this.rootPath, `${presetId}.md`);
+    try {
+      if ((await stat(directPromptPath)).isFile()) {
+        return true;
       }
+    } catch {
+      // Missing direct-file presets are expected for directory-backed presets.
+    }
+
+    try {
+      const directoryPath = this.resolvePresetDirectory(presetId);
+      const files = await readdir(directoryPath, { withFileTypes: true });
+      return files.some(
+        (entry) => entry.isFile() && extname(entry.name).toLowerCase() === ".md"
+      );
+    } catch {
+      return false;
     }
   }
 
@@ -261,6 +235,7 @@ export class TakeoverPresetStore {
     return {
       presetId,
       displayName: displayNameFor(presetId),
+      desc: await readPresetDesc(promptPath),
       promptPath,
       kind: "directory",
       updatedAt: fileStat.mtime.toISOString()

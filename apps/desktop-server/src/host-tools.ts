@@ -8,6 +8,10 @@ export type HostToolDefinition = {
   deferLoading?: boolean;
 };
 
+export type HostToolInputSchemaResolver = (
+  context?: HostToolAvailabilityContext
+) => JsonValue | Promise<JsonValue>;
+
 export type HostToolInvocationContext = {
   engineId: string;
   sessionId: string;
@@ -46,13 +50,33 @@ export type HostToolHandler = (
   invocation: HostToolInvocation
 ) => HostToolResult | Promise<HostToolResult>;
 
-export type HostToolRegistration = HostToolDefinition & {
+export type HostToolRegistration = Omit<HostToolDefinition, "inputSchema"> & {
+  inputSchema: JsonValue | HostToolInputSchemaResolver;
   isAvailable?: (context: HostToolAvailabilityContext) => boolean;
   handle: HostToolHandler;
 };
 
 const hostToolKey = (namespace: string | undefined, name: string): string =>
   `${namespace ?? ""}:${name}`;
+
+export const resolveHostToolDefinition = async (
+  tool: HostToolRegistration,
+  context?: HostToolAvailabilityContext
+): Promise<HostToolDefinition> => {
+  const {
+    handle: _handle,
+    isAvailable: _isAvailable,
+    inputSchema,
+    ...definition
+  } = tool;
+  return {
+    ...definition,
+    inputSchema:
+      typeof inputSchema === "function"
+        ? await inputSchema(context)
+        : inputSchema
+  };
+};
 
 export class HostToolRegistry {
   private readonly toolsByKey = new Map<string, HostToolRegistration>();
@@ -84,14 +108,17 @@ export class HostToolRegistry {
     return tool;
   }
 
-  public listDefinitions(
+  public async listDefinitions(
     context?: HostToolAvailabilityContext
-  ): HostToolDefinition[] {
-    return [...this.toolsByKey.values()]
-      .filter((tool) => !context || tool.isAvailable?.(context) !== false)
-      .map(({ handle: _handle, isAvailable: _isAvailable, ...definition }) => ({
-        ...definition
-      }));
+  ): Promise<HostToolDefinition[]> {
+    const definitions: HostToolDefinition[] = [];
+    for (const tool of this.toolsByKey.values()) {
+      if (context && tool.isAvailable?.(context) === false) {
+        continue;
+      }
+      definitions.push(await resolveHostToolDefinition(tool, context));
+    }
+    return definitions;
   }
 
   public isEmpty(): boolean {

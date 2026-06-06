@@ -74,6 +74,7 @@ import {
   summarizeCodexReasoningThreadItem,
   summarizeCodexWebSearchAction
 } from "./engine-extensions/codex/process-activity.js";
+import { resolveHostToolDefinition } from "./host-tools.js";
 import type {
   HostToolContentItem,
   HostToolRegistry,
@@ -1468,7 +1469,7 @@ export class CodexAppServerRuntimePort
       ephemeral: false,
       experimentalRawEvents: false
     };
-    const dynamicTools = this.hostTools?.listDefinitions({
+    const dynamicTools = await this.hostTools?.listDefinitions({
       engineId: this.engineId,
       sessionId
     });
@@ -1835,7 +1836,10 @@ export class CodexAppServerRuntimePort
     }
 
     const result = await tool.handle({
-      definition: tool,
+      definition: await resolveHostToolDefinition(tool, {
+        engineId: this.engineId,
+        sessionId
+      }),
       arguments: (params.arguments ?? null) as JsonValue,
       context: {
         engineId: this.engineId,

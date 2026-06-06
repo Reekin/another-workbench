@@ -108,6 +108,7 @@ const zTakeoverPresetIdSchema = z
 const zTakeoverPresetSummarySchema = z.object({
   presetId: zTakeoverPresetIdSchema,
   displayName: z.string().min(1),
+  desc: z.string().min(1).optional(),
   promptPath: z.string().min(1),
   kind: z.enum(["directory", "file"]),
   updatedAt: z.string().min(1).optional()

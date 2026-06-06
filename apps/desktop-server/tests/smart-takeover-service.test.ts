@@ -194,6 +194,51 @@ afterEach(async () => {
 });
 
 describe("SmartTakeoverService", () => {
+  it("lists available preset ids and descriptions in the SmartTakeover schema", async () => {
+    const baseDir = await createTempDir();
+    const presetStore = new TakeoverPresetStore({ baseDir });
+    await presetStore.upsert({
+      presetId: "team_review",
+      prompt: "desc: Team-specific reviewer\n\n# Team Review"
+    });
+    const service = new SmartTakeoverService({
+      runtimeService: {
+        getSession: () => undefined
+      } as never,
+      presetStore
+    });
+    const hostTools = new HostToolRegistry(service.createHostTools());
+
+    const definitions = await hostTools.listDefinitions({
+      engineId: "codex",
+      sessionId: "session-parent"
+    });
+    const smartTakeover = definitions.find((tool) => tool.name === "SmartTakeover");
+    const schema = smartTakeover?.inputSchema as {
+      properties?: {
+        presetId?: {
+          description?: string;
+        };
+        context?: {
+          description?: string;
+        };
+      };
+    };
+    const presetIdDescription = schema.properties?.presetId?.description ?? "";
+    const contextDescription = schema.properties?.context?.description ?? "";
+
+    expect(presetIdDescription).toContain("Available presets:");
+    expect(presetIdDescription).toContain(
+      "- progress: Progress manager for roadmap status, missing work, next steps, and acceptance criteria."
+    );
+    expect(presetIdDescription).toContain("- review: Delegated reviewer");
+    expect(presetIdDescription).toContain("- team_review: Team-specific reviewer");
+    expect(contextDescription).toContain("Stable task-level context");
+    expect(contextDescription).toContain(
+      "Do not call SmartTakeover again just to update context after an incomplete verdict"
+    );
+  });
+
   it("recognizes hydrated takeover sessions from session metadata", async () => {
     const baseDir = await createTempDir();
     const service = new SmartTakeoverService({

@@ -13,7 +13,7 @@
     "./browser": "./src/browser.ts"
   },
   "scripts": {
-    "build": "pnpm exec tsc -b tsconfig.json --pretty false",
+    "build": "pnpm exec tsc -b tsconfig.json --pretty false && node ./scripts/copy-resources.mjs",
     "typecheck": "pnpm exec tsc -b tsconfig.json --pretty false",
     "lint": "node -e \"console.log('lint placeholder: @another-workbench/desktop-server')\"",
     "scheduler:run": "tsx ./src/scheduler-run-cli.ts",

@@ -1,5 +1,6 @@
 import type {
   HostToolInvocation,
+  HostToolInputSchemaResolver,
   HostToolRegistration,
   HostToolResult
 } from "./host-tools.js";
@@ -25,6 +26,7 @@ export type SmartTakeoverToolOptions = {
     request: SmartTakeoverRequest
   ) => void | HostToolResult | Promise<void | HostToolResult>;
   isAvailable?: HostToolRegistration["isAvailable"];
+  presetIdDescription?: string | (() => string | Promise<string>);
 };
 
 export type TakeoverVerdictRequest = {
@@ -46,6 +48,48 @@ export type SubmitTakeoverVerdictToolOptions = {
   isAvailable?: HostToolRegistration["isAvailable"];
 };
 
+const defaultPresetIdDescription = "Preset prompt name from ~/.another-workbench/takeover.";
+
+const createSmartTakeoverInputSchema = (presetIdDescription: string) => ({
+  type: "object",
+  properties: {
+    action: {
+      type: "string",
+      enum: ["help", "start", "stop"],
+      description:
+        "Use help for detailed usage, start to enable takeover, stop to disable takeover for this session."
+    },
+    presetId: {
+      type: "string",
+      description: presetIdDescription
+    },
+    helpTopic: {
+      type: "string",
+      enum: ["overview", "presets", "loop", "result"],
+      description:
+        "Optional help section when action is help."
+    },
+    context: {
+      type: "string",
+      description:
+        "Stable task-level context to pass to the takeover agent, such as goals, files, risks, or acceptance notes for this review. This should be information that remains true for the whole task. Do not call SmartTakeover again just to update context after an incomplete verdict; continue the task from the feedback while keeping the original context."
+    }
+  },
+  additionalProperties: false
+});
+
+const createSmartTakeoverInputSchemaResolver = (
+  options: SmartTakeoverToolOptions
+): HostToolInputSchemaResolver => async () => {
+  const description =
+    typeof options.presetIdDescription === "function"
+      ? await options.presetIdDescription()
+      : options.presetIdDescription;
+  return createSmartTakeoverInputSchema(
+    description ?? defaultPresetIdDescription
+  );
+};
+
 export const createSmartTakeoverHostTool = (
   options: SmartTakeoverToolOptions = {}
 ): HostToolRegistration => ({
@@ -53,32 +97,7 @@ export const createSmartTakeoverHostTool = (
   name: smartTakeoverToolName,
   description:
     "Let another agent act as the user to supervise this session. It will automatically check your work after you finish responding and give feedback. Use near completion of complex feature work or long-running tasks with many work items that need repeated review and iteration.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      action: {
-        type: "string",
-        enum: ["help", "start", "stop"],
-        description:
-          "Use help for detailed usage, start to enable takeover, stop to disable takeover for this session."
-      },
-      helpTopic: {
-        type: "string",
-        enum: ["overview", "presets", "loop", "result"],
-        description: "Optional help section when action is help."
-      },
-      presetId: {
-        type: "string",
-        description: "Preset prompt name from ~/.another-workbench/takeover."
-      },
-      context: {
-        type: "string",
-        description:
-          "Task context to pass to the takeover agent, such as goals, files, risks, or acceptance notes for this review."
-      }
-    },
-    additionalProperties: false
-  },
+  inputSchema: createSmartTakeoverInputSchemaResolver(options),
   deferLoading: false,
   isAvailable: options.isAvailable,
   handle: async (invocation): Promise<HostToolResult> => {

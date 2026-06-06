@@ -176,6 +176,14 @@ const renderMessageText = (blocks: MessageBlock[]): string | undefined => {
   return text.length > 0 ? text : undefined;
 };
 
+const stripPresetDescMetadata = (prompt: string): string => {
+  const normalized = prompt.replace(/^\uFEFF/, "");
+  if (!/^desc:\s*.*(?:\r?\n|$)/i.test(normalized)) {
+    return normalized;
+  }
+  return normalized.replace(/^desc:\s*.*(?:\r?\n|$)/i, "");
+};
+
 const resolveLatestAgentOutput = (
   snapshot: DomainSnapshot,
   sessionId: string
@@ -981,7 +989,8 @@ ${sections.result}`;
     args: TakeoverToolArgs;
     request: SmartTakeoverRequest;
   }): string {
-    const sections = [`Preset instructions:\n${input.presetPrompt.trim()}`];
+    const presetInstructions = stripPresetDescMetadata(input.presetPrompt).trim();
+    const sections = [`Preset instructions:\n${presetInstructions}`];
 
     if (input.args.context?.trim()) {
       sections.push(`Task context:\n${input.args.context.trim()}`);

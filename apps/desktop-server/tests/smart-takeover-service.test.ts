@@ -165,6 +165,7 @@ const createManualTakeoverHarness = async () => {
 
   return {
     service,
+    presetStore,
     commands,
     turns,
     messageBlocks,
@@ -229,7 +230,7 @@ describe("SmartTakeoverService", () => {
 
     expect(presetIdDescription).toContain("Available presets:");
     expect(presetIdDescription).toContain(
-      "- progress: Progress manager for roadmap status, missing work, next steps, and acceptance criteria."
+      "- progress: Delegated reviewer for checking the development progress"
     );
     expect(presetIdDescription).toContain("- review: Delegated reviewer");
     expect(presetIdDescription).toContain("- team_review: Team-specific reviewer");
@@ -523,7 +524,35 @@ describe("SmartTakeoverService", () => {
     expect(harness.commands[0]?.content).toContain(
       "Focus on takeover context propagation."
     );
+    expect(harness.commands[0]?.content).not.toContain(
+      "Delegated reviewer for checking the reasonableness"
+    );
     expect(harness.commands[0]?.content).not.toContain("parent agent");
+  });
+
+  it("omits preset desc metadata from the takeover agent prompt", async () => {
+    const harness = await createManualTakeoverHarness();
+    await harness.presetStore.upsert({
+      presetId: "custom_review",
+      prompt:
+        "desc: Agent-facing preset picker copy that should not reach takeover.\n\n# Custom Review\n\nOnly this instruction should reach the takeover agent."
+    });
+
+    await harness.service.setManualTakeover({
+      sessionId: "session-parent",
+      presetId: "custom_review"
+    });
+    await waitFor(() => harness.service.getSessionState("session-parent").active);
+
+    const initialPrompt = String(harness.commands[0]?.content ?? "");
+    expect(initialPrompt).toContain("# Custom Review");
+    expect(initialPrompt).toContain(
+      "Only this instruction should reach the takeover agent."
+    );
+    expect(initialPrompt).not.toContain(
+      "Agent-facing preset picker copy that should not reach takeover"
+    );
+    expect(initialPrompt).not.toContain("desc:");
   });
 
   it("does not send the takeover prompt when disabled during launch", async () => {

@@ -33,7 +33,7 @@ describe("TakeoverPresetStore", () => {
         expect.objectContaining({
           presetId: "progress",
           kind: "directory",
-          desc: "Progress manager for roadmap status, missing work, next steps, and acceptance criteria."
+          desc: expect.stringContaining("checking the development progress")
         }),
         expect.objectContaining({
           presetId: "review",

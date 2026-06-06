@@ -149,6 +149,7 @@ describe("Codex app-server runtime port", () => {
       await port.interruptThread("thread-1");
       await port.unsubscribeThread("thread-1");
       await port.resumeThread("thread-1");
+      await port.forkThread("thread-1");
       await port.reloadUserConfig();
       await port.reloadMcpServers();
       await port.listSkills({
@@ -175,6 +176,13 @@ describe("Codex app-server runtime port", () => {
             method: "thread/resume",
             params: expect.objectContaining({
               threadId: "thread-1"
+            })
+          }),
+          expect.objectContaining({
+            method: "thread/fork",
+            params: expect.objectContaining({
+              threadId: "thread-1",
+              threadSource: "user"
             })
           }),
           expect.objectContaining({

@@ -201,6 +201,7 @@ const zWorkspaceBrowserNodeSchema = z.object({
 const zSessionActionKindSchema = z.enum([
   "archive",
   "copy_session_id",
+  "fork",
   "open_rollout",
   "refresh",
   "resume"
@@ -213,7 +214,21 @@ const zSessionActionDescriptorSchema = z.object({
   reason: z.string().min(1).optional()
 });
 
-const zSessionActionResultSchema = z.discriminatedUnion("action", [
+const zForkSessionActionResultSchema = z.discriminatedUnion("status", [
+  z.object({
+    action: z.literal("fork"),
+    status: z.literal("forked"),
+    forkedSessionId: zSessionId,
+    providerSessionId: z.string().min(1)
+  }),
+  z.object({
+    action: z.literal("fork"),
+    status: z.literal("unsupported"),
+    message: z.string().min(1)
+  })
+]);
+
+const zSessionActionResultSchema = z.union([
   z.object({
     action: z.literal("archive"),
     archived: z.literal(true)
@@ -222,6 +237,7 @@ const zSessionActionResultSchema = z.discriminatedUnion("action", [
     action: z.literal("copy_session_id"),
     copiedText: z.string().min(1)
   }),
+  zForkSessionActionResultSchema,
   z.object({
     action: z.literal("open_rollout"),
     rolloutPath: z.string().min(1),

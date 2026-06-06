@@ -25,12 +25,15 @@ const createTempDir = async (): Promise<string> => {
 
 const createThread = (input: {
   id: string;
+  forkedFromId?: string | null;
   source?: Thread["source"];
   name?: string | null;
   preview?: string;
   cwd?: string;
 }): Thread => ({
   id: input.id,
+  sessionId: `session-tree-${input.id}`,
+  forkedFromId: input.forkedFromId ?? null,
   preview: input.preview ?? `Preview ${input.id}`,
   ephemeral: false,
   modelProvider: "openai",
@@ -43,6 +46,7 @@ const createThread = (input: {
   cwd: input.cwd ?? "I:/workspace-alpha",
   cliVersion: "1.0.0",
   source: input.source ?? "appServer",
+  threadSource: "user",
   agentNickname: null,
   agentRole: null,
   gitInfo: null,
@@ -143,6 +147,45 @@ describe("Session discovery and reconciliation", () => {
         expect.objectContaining({ sessionId: "codex-thread:thread-child" })
       ],
       relations: []
+    });
+  });
+
+  it("discovers codex fork relations from thread fork parents", async () => {
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        listThreads: vi.fn().mockResolvedValue({
+          data: [
+            createThread({
+              id: "thread-root"
+            }),
+            createThread({
+              id: "thread-fork",
+              forkedFromId: "thread-root"
+            })
+          ],
+          nextCursor: null
+        })
+      } as never
+    });
+
+    await expect(
+      provider.discoverWorkspace({
+        workspaceId: "workspace-1",
+        absolutePath: "I:/workspace-alpha",
+        label: "Alpha"
+      })
+    ).resolves.toEqual({
+      sessions: [
+        expect.objectContaining({ sessionId: "codex-thread:thread-root" }),
+        expect.objectContaining({ sessionId: "codex-thread:thread-fork" })
+      ],
+      relations: [
+        expect.objectContaining({
+          parentSessionId: "codex-thread:thread-root",
+          childSessionId: "codex-thread:thread-fork",
+          relationType: "fork"
+        })
+      ]
     });
   });
 
@@ -1048,6 +1091,107 @@ describe("Session discovery and reconciliation", () => {
       conversationId: "conversation-discovered:session-root-local",
       providerSessionId: "thread-child"
     });
+  });
+
+  it("uses index-backed fork parent aliases when hydrating provider relations", async () => {
+    const baseDir = await createTempDir();
+    const workspaceRegistry = new WorkspaceRegistryService({
+      baseDir
+    });
+    const sessionIndexStore = new SessionIndexStore({
+      baseDir
+    });
+    const runtimeService = new WorkbenchRuntimeService({
+      engines: [
+        {
+          engineId: "codex",
+          displayName: "Codex",
+          capabilities: ["chat"]
+        }
+      ]
+    });
+
+    await workspaceRegistry.registerWorkspace({
+      workspaceId: "workspace-1",
+      absolutePath: "I:/workspace-alpha",
+      label: "Alpha"
+    });
+    await sessionIndexStore.upsertSession({
+      workspaceId: "workspace-1",
+      session: {
+        sessionId: "session-root-local",
+        conversationId: "conversation-1",
+        engineId: "codex",
+        title: "Local Root",
+        createdAt: "2026-04-18T00:00:01Z",
+        updatedAt: "2026-04-18T00:00:02Z"
+      },
+      providerKind: "codex-thread",
+      providerSessionId: "thread-root"
+    });
+    await sessionIndexStore.upsertSession({
+      workspaceId: "workspace-1",
+      session: {
+        sessionId: "codex-thread:thread-child",
+        conversationId: "conversation-discovered:session-root-local",
+        engineId: "codex",
+        title: "Forked Child",
+        createdAt: "2026-04-18T00:00:03Z",
+        updatedAt: "2026-04-18T00:00:04Z"
+      },
+      providerKind: "codex-thread",
+      providerSessionId: "thread-child"
+    });
+    await sessionIndexStore.upsertRelation({
+      workspaceId: "workspace-1",
+      parentSessionId: "session-root-local",
+      childSessionId: "codex-thread:thread-child",
+      relationType: "fork",
+      createdAt: "2026-04-18T00:00:05Z"
+    });
+
+    const hydrateSessionWindow = vi.fn().mockResolvedValue({
+      ...buildHydratedWindow("codex-thread:thread-child"),
+      runtimeBinding: {
+        providerKind: "codex-thread",
+        providerSessionId: "thread-child"
+      },
+      sessionRelations: [
+        {
+          relationId:
+            "relation-discovered:codex-thread:thread-root:codex-thread:thread-child:fork",
+          parentSessionId: "codex-thread:thread-root",
+          childSessionId: "codex-thread:thread-child",
+          relationType: "fork",
+          createdAt: "2026-04-18T00:00:05Z"
+        }
+      ]
+    });
+    const reconciliation = new SessionReconciliationService({
+      workspaceRegistry,
+      sessionIndexStore,
+      runtimeService,
+      providers: [
+        {
+          engineId: "codex",
+          discoverWorkspace: vi.fn(),
+          hydrateSession: vi.fn(),
+          hydrateSessionWindow
+        }
+      ] as never
+    });
+
+    await reconciliation.hydrateSessionWindow("codex-thread:thread-child", {
+      limit: 20
+    });
+
+    expect(runtimeService.getSnapshot().sessionRelations).toEqual([
+      expect.objectContaining({
+        parentSessionId: "session-root-local",
+        childSessionId: "codex-thread:thread-child",
+        relationType: "fork"
+      })
+    ]);
   });
 
   it("keeps hydrated message blocks distinct when different sessions reuse item ids", async () => {

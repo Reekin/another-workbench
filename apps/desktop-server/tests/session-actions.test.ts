@@ -251,6 +251,11 @@ describe("SessionActionsProvider", () => {
       rolloutDisplayPath: "I:\\rollouts\\thread-1.md",
       rolloutFileUrl: "file:///I:/rollouts/thread-1.md"
     });
+    await expect(provider.runAction("session-1", "fork")).resolves.toEqual({
+      action: "fork",
+      status: "unsupported",
+      message: "Fork is not supported for custom sessions."
+    });
     await expect(provider.runAction("session-missing", "archive")).rejects.toThrow(
       "Unknown session: session-missing"
     );

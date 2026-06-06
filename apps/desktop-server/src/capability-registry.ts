@@ -10,6 +10,7 @@ import type { WorkbenchRuntimeService } from "./runtime-service.js";
 export type SessionActionKind =
   | "archive"
   | "copy_session_id"
+  | "fork"
   | "open_rollout"
   | "refresh"
   | "resume";
@@ -24,6 +25,17 @@ export type SessionActionDescriptor = {
 export type SessionActionResult =
   | { action: "archive"; archived: true }
   | { action: "copy_session_id"; copiedText: string }
+  | {
+      action: "fork";
+      status: "forked";
+      forkedSessionId: string;
+      providerSessionId: string;
+    }
+  | {
+      action: "fork";
+      status: "unsupported";
+      message: string;
+    }
   | {
       action: "open_rollout";
       rolloutPath: string;
@@ -383,7 +395,6 @@ export class CapabilityRegistry {
       action: "resume",
       label: "Resume"
     });
-
     const provider = this.getEngineCapabilities(context.engineId)?.sessionActions;
     if (provider?.listAdditionalActions) {
       actions.push(...(await provider.listAdditionalActions(context)));
@@ -482,6 +493,20 @@ export class CapabilityRegistry {
           action,
           resumed: true
         };
+      case "fork": {
+        const result = await provider?.runAction?.({
+          ...context,
+          action
+        });
+        if (result) {
+          return result;
+        }
+        return {
+          action,
+          status: "unsupported",
+          message: `Fork is not supported for ${context.engineId ?? "unknown"} sessions.`
+        };
+      }
       case "open_rollout": {
         const result = await provider?.runAction?.({
           ...context,

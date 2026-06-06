@@ -1950,6 +1950,30 @@ const handleRequest = (payload) => {
         });
         return;
       }
+      case "thread/fork": {
+        const parentThreadId = String(payload.params?.threadId ?? "thread-parent");
+        const threadId = `thread-${nextThreadNumber++}`;
+        send({
+          id: payload.id,
+          result: {
+            thread: {
+              id: threadId,
+              forkedFromId: parentThreadId,
+              turns: []
+            },
+            model: payload.params?.model ?? "gpt-5",
+            modelProvider: payload.params?.modelProvider ?? "openai",
+            serviceTier: payload.params?.serviceTier ?? null,
+            cwd: payload.params?.cwd ?? "D:/workspace",
+            instructionSources: [],
+            approvalPolicy: payload.params?.approvalPolicy ?? "never",
+            approvalsReviewer: null,
+            sandbox: null,
+            reasoningEffort: null
+          }
+        });
+        return;
+      }
       case "skills/list":
         send({
           id: payload.id,

@@ -29,6 +29,7 @@ import { pathToFileURL } from "node:url";
 import type { CodexAppServerRuntimePort } from "./codex-app-server-runtime-port.js";
 import type {
   SessionIndexEntry,
+  SessionRelationIndex,
   SessionIndexStore,
   UpsertSessionIndexInput,
   UpsertSessionRelationInput
@@ -69,9 +70,10 @@ const codexAgentId = "codex";
 const isoFromUnixSeconds = (value: number): string =>
   new Date(value * 1_000).toISOString();
 
-const discoveredCodexSessionId = (threadId: string): string => `codex-thread:${threadId}`;
+export const discoveredCodexSessionId = (threadId: string): string =>
+  `codex-thread:${threadId}`;
 
-const discoveredConversationId = (rootSessionId: string): string =>
+export const discoveredConversationId = (rootSessionId: string): string =>
   `conversation-discovered:${rootSessionId}`;
 
 const trimToUndefined = (value: string | null | undefined): string | undefined => {
@@ -121,8 +123,17 @@ const buildDeterministicTurnTimestamp = (
   itemIndex = 0
 ): string => new Date((thread.createdAt + turnIndex * 60 + itemIndex) * 1_000).toISOString();
 
-const buildRelationId = (parentSessionId: string, childSessionId: string): string =>
-  `relation-discovered:${parentSessionId}:${childSessionId}:subagent`;
+const buildRelationId = (
+  parentSessionId: string,
+  childSessionId: string,
+  relationType: SessionRelation["relationType"]
+): string => `relation-discovered:${parentSessionId}:${childSessionId}:${relationType}`;
+
+const relationKey = (
+  parentSessionId: string,
+  childSessionId: string,
+  relationType: SessionRelation["relationType"]
+): string => `${parentSessionId}:${childSessionId}:${relationType}`;
 
 const lastTimestamp = (timestamps: string[]): string | undefined => {
   let latest: string | undefined;
@@ -375,7 +386,7 @@ export type DiscoveredSessionRecord = {
 export type DiscoveredSessionRelation = {
   parentSessionId: string;
   childSessionId: string;
-  relationType: "subagent";
+  relationType: "fork" | "subagent";
   createdAt: string;
 };
 
@@ -850,18 +861,25 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
     }
     const relations = threads
       .flatMap((thread) => {
-        const parentThreadId = toSubagentParentThreadId(thread.source);
-        if (!parentThreadId) {
-          return [];
-        }
-        return [
-          {
-            parentSessionId: discoveredCodexSessionId(parentThreadId),
+        const relations: DiscoveredSessionRelation[] = [];
+        const subagentParentThreadId = toSubagentParentThreadId(thread.source);
+        if (subagentParentThreadId) {
+          relations.push({
+            parentSessionId: discoveredCodexSessionId(subagentParentThreadId),
             childSessionId: discoveredCodexSessionId(thread.id),
-            relationType: "subagent" as const,
+            relationType: "subagent",
             createdAt: isoFromUnixSeconds(thread.createdAt)
-          }
-        ];
+          });
+        }
+        if (thread.forkedFromId) {
+          relations.push({
+            parentSessionId: discoveredCodexSessionId(thread.forkedFromId),
+            childSessionId: discoveredCodexSessionId(thread.id),
+            relationType: "fork",
+            createdAt: isoFromUnixSeconds(thread.createdAt)
+          });
+        }
+        return relations;
       })
       .filter((relation) =>
         sessions.some((session) => session.sessionId === relation.parentSessionId)
@@ -1093,21 +1111,33 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
   }
 
   private buildHydratedRelations(thread: Thread): SessionRelation[] {
-    const parentThreadId = toSubagentParentThreadId(thread.source);
-    if (!parentThreadId) {
-      return [];
+    const relations: SessionRelation[] = [];
+    const subagentParentThreadId = toSubagentParentThreadId(thread.source);
+    if (subagentParentThreadId) {
+      const parentSessionId = discoveredCodexSessionId(subagentParentThreadId);
+      const childSessionId = discoveredCodexSessionId(thread.id);
+      relations.push(
+        parseSessionRelation({
+          relationId: buildRelationId(parentSessionId, childSessionId, "subagent"),
+          parentSessionId,
+          childSessionId,
+          relationType: "subagent",
+          createdAt: isoFromUnixSeconds(thread.createdAt)
+        })
+      );
     }
-    const parentSessionId = discoveredCodexSessionId(parentThreadId);
-    const childSessionId = discoveredCodexSessionId(thread.id);
-    return [
-      parseSessionRelation({
-        relationId: buildRelationId(parentSessionId, childSessionId),
+    if (thread.forkedFromId) {
+      const parentSessionId = discoveredCodexSessionId(thread.forkedFromId);
+      const childSessionId = discoveredCodexSessionId(thread.id);
+      relations.push(parseSessionRelation({
+        relationId: buildRelationId(parentSessionId, childSessionId, "fork"),
         parentSessionId,
         childSessionId,
-        relationType: "subagent",
+        relationType: "fork",
         createdAt: isoFromUnixSeconds(thread.createdAt)
-      })
-    ];
+      }));
+    }
+    return relations;
   }
 }
 
@@ -1363,19 +1393,25 @@ export class SessionReconciliationService {
           if (!hydrated || areAllHydrationConsumersCancelled(consumers)) {
             return undefined;
           }
-          this.runtimeService.hydrateDiscoveredSession(hydrated, {
-            relatedIndexRelations: this.sessionIndexStore
-              .listRelations(entry.workspaceId)
-              .filter(
-                (relation) =>
-                  relation.parentSessionId === sessionId ||
-                  relation.childSessionId === sessionId
-              )
+          const relatedIndexRelations = this.sessionIndexStore
+            .listRelations(entry.workspaceId)
+            .filter(
+              (relation) =>
+                relation.parentSessionId === sessionId ||
+                relation.childSessionId === sessionId
+            );
+          const normalizedHydrated = this.normalizeHydratedRelations(
+            entry,
+            hydrated,
+            relatedIndexRelations
+          );
+          this.runtimeService.hydrateDiscoveredSession(normalizedHydrated, {
+            relatedIndexRelations
           });
-          await this.upsertHydratedSession(entry, hydrated, {
+          await this.upsertHydratedSession(entry, normalizedHydrated, {
             partial: true
           });
-          return hydrated;
+          return normalizedHydrated;
         })
         .finally(() => this.windowHydrationByKey.delete(hydrationKey))
     };
@@ -1400,17 +1436,99 @@ export class SessionReconciliationService {
     if (!hydrated || input.isCancelled?.()) {
       return false;
     }
-    this.runtimeService.hydrateDiscoveredSession(hydrated, {
-      relatedIndexRelations: this.sessionIndexStore
-        .listRelations(entry.workspaceId)
-        .filter(
-          (relation) =>
-            relation.parentSessionId === entry.sessionId ||
-            relation.childSessionId === entry.sessionId
-        )
+    const relatedIndexRelations = this.sessionIndexStore
+      .listRelations(entry.workspaceId)
+      .filter(
+        (relation) =>
+          relation.parentSessionId === entry.sessionId ||
+          relation.childSessionId === entry.sessionId
+      );
+    const normalizedHydrated = this.normalizeHydratedRelations(
+      entry,
+      hydrated,
+      relatedIndexRelations
+    );
+    this.runtimeService.hydrateDiscoveredSession(normalizedHydrated, {
+      relatedIndexRelations
     });
-    await this.upsertHydratedSession(entry, hydrated);
+    await this.upsertHydratedSession(entry, normalizedHydrated);
     return true;
+  }
+
+  private normalizeHydratedRelations<
+    T extends HydratedSessionSnapshot | HydratedSessionWindowSnapshot
+  >(
+    entry: SessionIndexEntry,
+    hydrated: T,
+    relatedIndexRelations: SessionRelationIndex[]
+  ): T {
+    const relatedRelationKeys = new Set(
+      relatedIndexRelations.map((relation) =>
+        relationKey(
+          relation.parentSessionId,
+          relation.childSessionId,
+          relation.relationType
+        )
+      )
+    );
+    const normalizedRelations = hydrated.sessionRelations
+      .map((relation) => {
+        const parentSessionId = this.normalizeProviderSessionId(
+          relation.parentSessionId,
+          entry
+        );
+        const childSessionId = this.normalizeProviderSessionId(
+          relation.childSessionId,
+          entry
+        );
+        return parseSessionRelation({
+          ...relation,
+          relationId: buildRelationId(
+            parentSessionId,
+            childSessionId,
+            relation.relationType
+          ),
+          parentSessionId,
+          childSessionId
+        });
+      })
+      .filter(
+        (relation) =>
+          !relatedRelationKeys.has(
+            relationKey(
+              relation.parentSessionId,
+              relation.childSessionId,
+              relation.relationType
+            )
+          )
+      );
+    return {
+      ...hydrated,
+      sessionRelations: normalizedRelations
+    };
+  }
+
+  private normalizeProviderSessionId(
+    sessionId: string,
+    entry: SessionIndexEntry
+  ): string {
+    if (!entry.providerKind) {
+      return sessionId;
+    }
+    const prefix = `${entry.providerKind}:`;
+    if (!sessionId.startsWith(prefix)) {
+      return sessionId;
+    }
+    const providerSessionId = sessionId.slice(prefix.length);
+    return (
+      this.sessionIdentity.resolveWorkbenchSessionId(
+        {
+          providerKind: entry.providerKind,
+          providerSessionId
+        },
+        entry.workspaceId
+      ) ?? sessionId
+    );
   }
 
   private async upsertHydratedSession(
@@ -1437,7 +1555,7 @@ export class SessionReconciliationService {
   }
 }
 
-const buildConversationMap = (
+export const buildConversationMap = (
   sessions: DiscoveredSessionRecord[],
   relations: DiscoveredSessionRelation[]
 ): Map<string, string> => {

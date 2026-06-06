@@ -7,6 +7,8 @@ import {
 } from "react";
 
 const STICKY_BOTTOM_THRESHOLD_PX = 96;
+const USER_SCROLL_INPUT_GRACE_MS = 500;
+const TOUCH_SCROLL_DIRECTION_THRESHOLD_PX = 4;
 
 type PendingPrependScroll = {
   sessionId: string;
@@ -64,6 +66,10 @@ export const useTranscriptViewportController = (input: {
   const pendingApplyFrameRef = useRef<number | undefined>(undefined);
   const isApplyingProgrammaticScrollRef = useRef(false);
   const programmaticScrollFrameRef = useRef<number | undefined>(undefined);
+  const userScrollInputExpiresAtRef = useRef(0);
+  const followTailInterruptExpiresAtRef = useRef(0);
+  const touchLastYRef = useRef<number | undefined>(undefined);
+  const isPointerScrollbarDragRef = useRef(false);
 
   displayedSessionIdRef.current = input.displayedSessionId;
   isOpeningSelectedSessionRef.current = input.isOpeningSelectedSession;
@@ -165,24 +171,156 @@ export const useTranscriptViewportController = (input: {
     if (!element) {
       return;
     }
+    userScrollInputExpiresAtRef.current = 0;
+    followTailInterruptExpiresAtRef.current = 0;
+    touchLastYRef.current = undefined;
+    isPointerScrollbarDragRef.current = false;
 
     const updateViewportIntentFromScroll = (): void => {
-      if (isApplyingProgrammaticScrollRef.current) {
+      const now = performance.now();
+      const hasRecentUserScrollInput = userScrollInputExpiresAtRef.current >= now;
+      if (
+        !shouldUpdateViewportIntentFromScroll({
+          isApplyingProgrammaticScroll: isApplyingProgrammaticScrollRef.current,
+          hasRecentUserScrollInput
+        })
+      ) {
         return;
       }
-      viewportIntentRef.current = resolveTranscriptScrollIntent({
+      const nextIntent = resolveTranscriptScrollIntent({
         displayedSessionId: displayedSessionIdRef.current,
         isNearBottom: isTranscriptNearBottom(element)
       });
+      if (
+        shouldPreserveManualIntentDuringScroll({
+          hasRecentFollowTailInterrupt:
+            followTailInterruptExpiresAtRef.current >= now,
+          nextIntentType: nextIntent.type === "bottom" ? "bottom" : "manual"
+        })
+      ) {
+        return;
+      }
+      viewportIntentRef.current = nextIntent;
+    };
+    const markUserScrollInput = (options: { interruptFollowTail?: boolean } = {}): void => {
+      const now = performance.now();
+      userScrollInputExpiresAtRef.current = now + USER_SCROLL_INPUT_GRACE_MS;
+      if (!options.interruptFollowTail) {
+        followTailInterruptExpiresAtRef.current = 0;
+        return;
+      }
+      followTailInterruptExpiresAtRef.current = now + USER_SCROLL_INPUT_GRACE_MS;
+      viewportIntentRef.current = {
+        sessionId: displayedSessionIdRef.current,
+        type: "manual"
+      };
+    };
+    const markWheelScrollInput = (event: WheelEvent): void => {
+      if (event.deltaY === 0) {
+        return;
+      }
+      markUserScrollInput({
+        interruptFollowTail: shouldInterruptFollowTailForWheelScroll(event.deltaY)
+      });
+    };
+    const markTouchScrollStart = (event: TouchEvent): void => {
+      touchLastYRef.current = event.touches[0]?.clientY;
+    };
+    const markTouchScrollInput = (event: TouchEvent): void => {
+      const nextY = event.touches[0]?.clientY;
+      const previousY = touchLastYRef.current;
+      touchLastYRef.current = nextY;
+      if (nextY === undefined || previousY === undefined) {
+        return;
+      }
+      const deltaY = nextY - previousY;
+      if (Math.abs(deltaY) < TOUCH_SCROLL_DIRECTION_THRESHOLD_PX) {
+        return;
+      }
+      markUserScrollInput({
+        interruptFollowTail: shouldInterruptFollowTailForTouchScroll(deltaY)
+      });
+    };
+    const clearTouchScrollInput = (): void => {
+      touchLastYRef.current = undefined;
+    };
+    const markKeyboardScrollInput = (event: KeyboardEvent): void => {
+      if (
+        isInteractiveKeyboardTarget(event.target) ||
+        !isTranscriptScrollInputKey(event.key)
+      ) {
+        return;
+      }
+      markUserScrollInput({
+        interruptFollowTail: shouldInterruptFollowTailForKeyboardScroll({
+          key: event.key,
+          shiftKey: event.shiftKey
+        })
+      });
+    };
+    const markPointerScrollbarDragStart = (event: PointerEvent): void => {
+      if (!isPointerNearVerticalScrollbar(element, event)) {
+        return;
+      }
+      isPointerScrollbarDragRef.current = true;
+      markUserScrollInput({
+        interruptFollowTail: true
+      });
+    };
+    const markPointerDragScrollInput = (event: PointerEvent): void => {
+      if (isPointerScrollbarDragRef.current && event.buttons !== 0) {
+        markUserScrollInput();
+      }
+    };
+    const clearPointerScrollbarDrag = (): void => {
+      isPointerScrollbarDragRef.current = false;
     };
 
     if (!viewportIntentRef.current) {
       updateViewportIntentFromScroll();
     }
+    element.addEventListener("wheel", markWheelScrollInput, {
+      passive: true
+    });
+    element.addEventListener("touchstart", markTouchScrollStart, {
+      passive: true
+    });
+    element.addEventListener("touchmove", markTouchScrollInput, {
+      passive: true
+    });
+    element.addEventListener("touchend", clearTouchScrollInput, {
+      passive: true
+    });
+    element.addEventListener("touchcancel", clearTouchScrollInput, {
+      passive: true
+    });
+    element.addEventListener("pointerdown", markPointerScrollbarDragStart, {
+      passive: true
+    });
+    element.addEventListener("pointermove", markPointerDragScrollInput, {
+      passive: true
+    });
+    element.addEventListener("pointerup", clearPointerScrollbarDrag, {
+      passive: true
+    });
+    element.addEventListener("pointercancel", clearPointerScrollbarDrag, {
+      passive: true
+    });
+    element.addEventListener("keydown", markKeyboardScrollInput);
     element.addEventListener("scroll", updateViewportIntentFromScroll, {
       passive: true
     });
     return () => {
+      element.removeEventListener("wheel", markWheelScrollInput);
+      element.removeEventListener("touchstart", markTouchScrollStart);
+      element.removeEventListener("touchmove", markTouchScrollInput);
+      element.removeEventListener("touchend", clearTouchScrollInput);
+      element.removeEventListener("touchcancel", clearTouchScrollInput);
+      element.removeEventListener("pointerdown", markPointerScrollbarDragStart);
+      element.removeEventListener("pointermove", markPointerDragScrollInput);
+      element.removeEventListener("pointerup", clearPointerScrollbarDrag);
+      element.removeEventListener("pointercancel", clearPointerScrollbarDrag);
+      element.removeEventListener("keydown", markKeyboardScrollInput);
       element.removeEventListener("scroll", updateViewportIntentFromScroll);
     };
   }, [input.displayedSessionId]);
@@ -248,6 +386,8 @@ export const useTranscriptViewportController = (input: {
     },
     clearPendingViewportState: () => {
       viewportIntentRef.current = undefined;
+      userScrollInputExpiresAtRef.current = 0;
+      followTailInterruptExpiresAtRef.current = 0;
     }
   };
 };
@@ -310,6 +450,44 @@ export const resolveTranscriptScrollIntent = (input: {
   };
 };
 
+export const shouldUpdateViewportIntentFromScroll = (input: {
+  isApplyingProgrammaticScroll: boolean;
+  hasRecentUserScrollInput: boolean;
+}): boolean =>
+  !input.isApplyingProgrammaticScroll || input.hasRecentUserScrollInput;
+
+export const shouldPreserveManualIntentDuringScroll = (input: {
+  hasRecentFollowTailInterrupt: boolean;
+  nextIntentType: "bottom" | "manual";
+}): boolean =>
+  input.hasRecentFollowTailInterrupt &&
+  input.nextIntentType === "bottom";
+
+export const isTranscriptScrollInputKey = (key: string): boolean =>
+  key === "ArrowUp" ||
+  key === "ArrowDown" ||
+  key === "PageUp" ||
+  key === "PageDown" ||
+  key === "Home" ||
+  key === "End" ||
+  key === " ";
+
+export const shouldInterruptFollowTailForWheelScroll = (deltaY: number): boolean =>
+  deltaY < 0;
+
+export const shouldInterruptFollowTailForTouchScroll = (
+  touchClientYDelta: number
+): boolean => touchClientYDelta > 0;
+
+export const shouldInterruptFollowTailForKeyboardScroll = (input: {
+  key: string;
+  shiftKey?: boolean;
+}): boolean =>
+  input.key === "ArrowUp" ||
+  input.key === "PageUp" ||
+  input.key === "Home" ||
+  (input.key === " " && input.shiftKey === true);
+
 const queryTurnRow = (
   element: HTMLElement,
   turnId: string
@@ -325,4 +503,37 @@ const queryTurnRow = (
 
 const scrollTranscriptToBottom = (element: HTMLElement): void => {
   element.scrollTop = element.scrollHeight;
+};
+
+const isInteractiveKeyboardTarget = (target: EventTarget | null): boolean => {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  const tagName = target.tagName.toLowerCase();
+  return (
+    tagName === "input" ||
+    tagName === "textarea" ||
+    tagName === "select" ||
+    tagName === "button" ||
+    tagName === "a" ||
+    target.isContentEditable ||
+    target.closest(
+      "button,a,input,textarea,select,[contenteditable='true'],[role='button'],[role='link'],[role='menuitem'],[role='tab']"
+    ) !== null
+  );
+};
+
+const isPointerNearVerticalScrollbar = (
+  element: HTMLElement,
+  event: PointerEvent
+): boolean => {
+  if (event.pointerType !== "mouse") {
+    return false;
+  }
+  const scrollbarWidth = element.offsetWidth - element.clientWidth;
+  if (scrollbarWidth <= 0) {
+    return false;
+  }
+  const bounds = element.getBoundingClientRect();
+  return event.clientX >= bounds.right - scrollbarWidth;
 };

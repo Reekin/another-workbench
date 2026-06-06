@@ -2,8 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   createTranscriptBottomTarget,
   isTranscriptNearBottom,
+  isTranscriptScrollInputKey,
   resolveTranscriptScrollIntent,
-  resolveTranscriptBottomRequest
+  resolveTranscriptBottomRequest,
+  shouldInterruptFollowTailForKeyboardScroll,
+  shouldInterruptFollowTailForTouchScroll,
+  shouldInterruptFollowTailForWheelScroll,
+  shouldPreserveManualIntentDuringScroll,
+  shouldUpdateViewportIntentFromScroll
 } from "../src/ui/chat-shell/use-transcript-viewport-controller.js";
 
 describe("transcript viewport controller", () => {
@@ -86,5 +92,107 @@ describe("transcript viewport controller", () => {
         type: "bottom"
       }
     });
+  });
+
+  it("ignores programmatic scroll events unless they follow recent user scroll input", () => {
+    expect(
+      shouldUpdateViewportIntentFromScroll({
+        isApplyingProgrammaticScroll: false,
+        hasRecentUserScrollInput: false
+      })
+    ).toBe(true);
+    expect(
+      shouldUpdateViewportIntentFromScroll({
+        isApplyingProgrammaticScroll: true,
+        hasRecentUserScrollInput: false
+      })
+    ).toBe(false);
+    expect(
+      shouldUpdateViewportIntentFromScroll({
+        isApplyingProgrammaticScroll: true,
+        hasRecentUserScrollInput: true
+      })
+    ).toBe(true);
+  });
+
+  it("keeps a recent upward user scroll from being overwritten while it is still near bottom", () => {
+    expect(
+      shouldPreserveManualIntentDuringScroll({
+        hasRecentFollowTailInterrupt: true,
+        nextIntentType: "bottom"
+      })
+    ).toBe(true);
+    expect(
+      shouldPreserveManualIntentDuringScroll({
+        hasRecentFollowTailInterrupt: true,
+        nextIntentType: "manual"
+      })
+    ).toBe(false);
+    expect(
+      shouldPreserveManualIntentDuringScroll({
+        hasRecentFollowTailInterrupt: false,
+        nextIntentType: "bottom"
+      })
+    ).toBe(false);
+  });
+
+  it("recognizes keyboard input that can move the transcript viewport", () => {
+    expect(isTranscriptScrollInputKey("ArrowUp")).toBe(true);
+    expect(isTranscriptScrollInputKey("ArrowDown")).toBe(true);
+    expect(isTranscriptScrollInputKey("PageUp")).toBe(true);
+    expect(isTranscriptScrollInputKey("PageDown")).toBe(true);
+    expect(isTranscriptScrollInputKey("Home")).toBe(true);
+    expect(isTranscriptScrollInputKey("End")).toBe(true);
+    expect(isTranscriptScrollInputKey(" ")).toBe(true);
+    expect(isTranscriptScrollInputKey("Enter")).toBe(false);
+    expect(isTranscriptScrollInputKey("Escape")).toBe(false);
+  });
+
+  it("interrupts follow-tail only for inputs that move toward earlier transcript content", () => {
+    expect(shouldInterruptFollowTailForWheelScroll(-1)).toBe(true);
+    expect(shouldInterruptFollowTailForWheelScroll(1)).toBe(false);
+    expect(shouldInterruptFollowTailForTouchScroll(8)).toBe(true);
+    expect(shouldInterruptFollowTailForTouchScroll(-8)).toBe(false);
+    expect(
+      shouldInterruptFollowTailForKeyboardScroll({
+        key: "ArrowUp"
+      })
+    ).toBe(true);
+    expect(
+      shouldInterruptFollowTailForKeyboardScroll({
+        key: "PageUp"
+      })
+    ).toBe(true);
+    expect(
+      shouldInterruptFollowTailForKeyboardScroll({
+        key: "Home"
+      })
+    ).toBe(true);
+    expect(
+      shouldInterruptFollowTailForKeyboardScroll({
+        key: " ",
+        shiftKey: true
+      })
+    ).toBe(true);
+    expect(
+      shouldInterruptFollowTailForKeyboardScroll({
+        key: "ArrowDown"
+      })
+    ).toBe(false);
+    expect(
+      shouldInterruptFollowTailForKeyboardScroll({
+        key: "PageDown"
+      })
+    ).toBe(false);
+    expect(
+      shouldInterruptFollowTailForKeyboardScroll({
+        key: "End"
+      })
+    ).toBe(false);
+    expect(
+      shouldInterruptFollowTailForKeyboardScroll({
+        key: " "
+      })
+    ).toBe(false);
   });
 });

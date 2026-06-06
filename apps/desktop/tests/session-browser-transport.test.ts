@@ -341,6 +341,10 @@ describe("session browser transport contracts", () => {
                 label: "Resume",
                 disabled: true,
                 reason: "Session is already running"
+              },
+              {
+                action: "fork",
+                label: "Fork"
               }
             ]
           }
@@ -401,6 +405,18 @@ describe("session browser transport contracts", () => {
                 resumed: true
               }
             } as const;
+          case "fork":
+            return {
+              id: request.id,
+              method: "sessionBrowser.runAction",
+              ok: true,
+              result: {
+                action: "fork",
+                status: "forked",
+                forkedSessionId: "session-child",
+                providerSessionId: "thread-child"
+              }
+            } as const;
           default:
             throw new Error(`Unexpected action: ${request.params.action satisfies never}`);
         }
@@ -430,15 +446,20 @@ describe("session browser transport contracts", () => {
       sessionId: "session-1",
       action: "resume"
     });
+    const fork = await transport.sessionBrowser.runAction({
+      sessionId: "session-1",
+      action: "fork"
+    });
 
     expect(actions.actions.map((action) => action.action)).toEqual([
       "archive",
       "copy_session_id",
       "open_rollout",
       "refresh",
-      "resume"
+      "resume",
+      "fork"
     ]);
-    expect(actions.actions.at(-1)).toMatchObject({
+    expect(actions.actions.at(-2)).toMatchObject({
       action: "resume",
       disabled: true,
       reason: "Session is already running"
@@ -467,6 +488,12 @@ describe("session browser transport contracts", () => {
       action: "resume",
       resumed: true
     });
+    expect(fork).toEqual({
+      action: "fork",
+      status: "forked",
+      forkedSessionId: "session-child",
+      providerSessionId: "thread-child"
+    });
 
     const runActionRequests = preload.request.mock.calls
       .map(([request]) => request as WorkbenchRpcRequest)
@@ -476,7 +503,8 @@ describe("session browser transport contracts", () => {
       "copy_session_id",
       "open_rollout",
       "refresh",
-      "resume"
+      "resume",
+      "fork"
     ]);
   });
 

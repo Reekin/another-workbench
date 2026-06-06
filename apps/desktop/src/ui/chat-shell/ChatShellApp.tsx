@@ -509,7 +509,13 @@ const TranscriptPane = memo(
     onRespondApproval,
     onRespondInteraction
   }: TranscriptPaneProps): ReactElement => (
-    <section className="awb-transcript" ref={transcriptRef}>
+    <section
+      className="awb-transcript"
+      ref={transcriptRef}
+      role="region"
+      aria-label="Transcript"
+      tabIndex={0}
+    >
       <div className="awb-transcript__content" ref={transcriptContentRef}>
         {renderedTranscriptRows.length === 0 && (
           <div className="awb-transcript__empty">
@@ -2267,6 +2273,7 @@ export const ChatShellApp = ({
       transport,
       workspaceTree,
       refreshSessionBrowser,
+      onOpenSession,
       onResumeSession: reloadSessionWindow,
       onStatusNotice: setStatusNotice
     });

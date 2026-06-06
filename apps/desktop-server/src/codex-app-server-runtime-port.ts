@@ -33,6 +33,8 @@ import type { ChatTreeSetCurrentParams } from "./codex-app-server-generated/v2/C
 import type { ChatTreeSetCurrentResponse } from "./codex-app-server-generated/v2/ChatTreeSetCurrentResponse.js";
 import type { ThreadListParams } from "./codex-app-server-generated/v2/ThreadListParams.js";
 import type { ThreadListResponse } from "./codex-app-server-generated/v2/ThreadListResponse.js";
+import type { ThreadForkParams } from "./codex-app-server-generated/v2/ThreadForkParams.js";
+import type { ThreadForkResponse } from "./codex-app-server-generated/v2/ThreadForkResponse.js";
 import type { ThreadReadParams } from "./codex-app-server-generated/v2/ThreadReadParams.js";
 import type { ThreadReadResponse } from "./codex-app-server-generated/v2/ThreadReadResponse.js";
 import type { ThreadResumeParams } from "./codex-app-server-generated/v2/ThreadResumeParams.js";
@@ -1075,6 +1077,15 @@ export class CodexAppServerRuntimePort
       approvalPolicy: selected.approvalPolicy ?? null,
       sandbox: selected.sandbox ?? null
     } satisfies ThreadResumeParams)) as ThreadResumeResponse;
+    return result.thread;
+  }
+
+  public async forkThread(threadId: string): Promise<Thread> {
+    await this.start(this.startConfig);
+    const result = (await this.rpc("thread/fork", {
+      threadId,
+      threadSource: "user"
+    } satisfies ThreadForkParams)) as ThreadForkResponse;
     return result.thread;
   }
 

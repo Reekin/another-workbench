@@ -36,6 +36,7 @@ export const useSessionActionsController = (input: {
     mode?: "all" | "visible" | "workspace";
     workspaceId?: string;
   }) => Promise<void>;
+  onOpenSession?: (sessionId: string) => Promise<void>;
   onResumeSession?: (sessionId: string) => Promise<void>;
   onStatusNotice: StatusNoticeSetter;
 }): {
@@ -119,6 +120,25 @@ export const useSessionActionsController = (input: {
           await input.onResumeSession?.(sessionId);
           input.onStatusNotice({
             message: "Resume completed.",
+            source: "session-action"
+          });
+          return;
+        }
+        if (result.action === "fork") {
+          if (result.status === "unsupported") {
+            input.onStatusNotice({
+              message: result.message ?? "Fork is not supported for this session.",
+              persistent: true,
+              source: "session-action"
+            });
+            return;
+          }
+          if (!result.forkedSessionId) {
+            throw new Error("Fork response did not include a child session id.");
+          }
+          await input.onOpenSession?.(result.forkedSessionId);
+          input.onStatusNotice({
+            message: "Fork created.",
             source: "session-action"
           });
           return;

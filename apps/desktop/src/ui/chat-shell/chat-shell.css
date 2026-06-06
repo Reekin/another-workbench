@@ -592,6 +592,11 @@ button {
   background: var(--awb-panel);
 }
 
+.awb-transcript:focus-visible {
+  outline: 1px solid rgba(182, 185, 183, 0.34);
+  outline-offset: -2px;
+}
+
 .awb-transcript__content {
   min-width: 0;
   display: flex;

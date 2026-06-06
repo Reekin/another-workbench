@@ -16,6 +16,13 @@ import type { WorkbenchRuntimeService } from "./runtime-service.js";
 
 type Clock = () => string;
 type IdFactory = () => string;
+export type CurrentBranchContext = {
+  currentTurnId?: string;
+  visibleTurnIds?: string[];
+};
+type CurrentBranchResolver = (
+  sessionId: string
+) => CurrentBranchContext | undefined | Promise<CurrentBranchContext | undefined>;
 
 type TakeoverToolArgs = {
   action?: "help" | "start" | "stop";
@@ -65,6 +72,7 @@ export type SmartTakeoverServiceOptions = {
   now?: Clock;
   createId?: IdFactory;
   defaultTimeoutMs?: number;
+  resolveCurrentBranchContext?: CurrentBranchResolver;
 };
 
 const createOpaqueId = (prefix: string): string =>
@@ -234,12 +242,104 @@ const resolveLatestAgentOutput = (
   return undefined;
 };
 
+const renderCompletedTurnOutput = (
+  snapshot: DomainSnapshot,
+  sessionId: string,
+  turn: DomainSnapshot["turns"][number] | undefined
+): string | undefined => {
+  if (!turn || turn.status !== "completed" || !turn.completedAt) {
+    return undefined;
+  }
+  if (turn.finalMessageId) {
+    const finalText = renderMessageText(
+      snapshot.messageBlocks.filter(
+        (block) =>
+          block.sessionId === sessionId &&
+          block.messageId === turn.finalMessageId
+      )
+    );
+    if (finalText) {
+      return finalText;
+    }
+  }
+  for (const messageId of [...turn.messageIds].reverse()) {
+    const fallbackText = renderMessageText(
+      snapshot.messageBlocks.filter(
+        (block) => block.sessionId === sessionId && block.messageId === messageId
+      )
+    );
+    if (fallbackText) {
+      return fallbackText;
+    }
+  }
+  return undefined;
+};
+
+const resolveAgentOutputForTurn = (
+  snapshot: DomainSnapshot,
+  sessionId: string,
+  turnId: string | undefined
+): string | undefined => {
+  if (!turnId) {
+    return undefined;
+  }
+  const turn = snapshot.turns.find(
+    (item) => item.sessionId === sessionId && item.turnId === turnId
+  );
+  return renderCompletedTurnOutput(snapshot, sessionId, turn);
+};
+
+const resolveAgentOutputForBranch = (
+  snapshot: DomainSnapshot,
+  sessionId: string,
+  branchContext: CurrentBranchContext
+): string | undefined => {
+  const currentText = resolveAgentOutputForTurn(
+    snapshot,
+    sessionId,
+    branchContext.currentTurnId
+  );
+  if (currentText) {
+    return currentText;
+  }
+
+  const visibleTurnIds = new Set(
+    (branchContext.visibleTurnIds ?? []).filter((turnId) => turnId.length > 0)
+  );
+  if (visibleTurnIds.size === 0) {
+    return undefined;
+  }
+
+  const turns = snapshot.turns
+    .filter(
+      (turn) =>
+        turn.sessionId === sessionId &&
+        visibleTurnIds.has(turn.turnId) &&
+        turn.status === "completed" &&
+        turn.completedAt
+    )
+    .sort(
+      (left, right) =>
+        compareIsoDesc(left.completedAt, right.completedAt) ||
+        compareIsoDesc(left.startedAt, right.startedAt)
+    );
+
+  for (const turn of turns) {
+    const text = renderCompletedTurnOutput(snapshot, sessionId, turn);
+    if (text) {
+      return text;
+    }
+  }
+  return undefined;
+};
+
 export class SmartTakeoverService {
   private readonly runtimeService: WorkbenchRuntimeService;
   private readonly presetStore: TakeoverPresetStore;
   private readonly now: Clock;
   private readonly createId: IdFactory;
   private readonly defaultTimeoutMs: number;
+  private readonly resolveCurrentBranchContext?: CurrentBranchResolver;
   private readonly runsById = new Map<string, TakeoverRun>();
   private readonly runIdByTakeoverSessionId = new Map<string, string>();
   private readonly runIdByParentSessionId = new Map<string, string>();
@@ -263,6 +363,7 @@ export class SmartTakeoverService {
     this.now = options.now ?? (() => new Date().toISOString());
     this.createId = options.createId ?? (() => createOpaqueId("takeover"));
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 10 * 60 * 1000;
+    this.resolveCurrentBranchContext = options.resolveCurrentBranchContext;
   }
 
   public createHostTools(): HostToolRegistration[] {
@@ -649,11 +750,20 @@ export class SmartTakeoverService {
     if (!shouldContinue()) {
       throw new Error("Takeover launch cancelled.");
     }
+    const hasBranchResolver = Boolean(this.resolveCurrentBranchContext);
+    const branchContext = hasBranchResolver
+      ? await Promise.resolve(
+          this.resolveCurrentBranchContext?.(parentSession.sessionId)
+        ).catch(() => ({}))
+      : undefined;
     const snapshot = this.runtimeService.getSnapshot();
-    const latestAgentOutput = resolveLatestAgentOutput(
-      snapshot,
-      parentSession.sessionId
-    );
+    const agentOutput = hasBranchResolver
+      ? resolveAgentOutputForBranch(
+          snapshot,
+          parentSession.sessionId,
+          branchContext ?? {}
+        )
+      : resolveLatestAgentOutput(snapshot, parentSession.sessionId);
     const conversation = snapshot.conversations.find(
       (item) => item.conversationId === parentSession.conversationId
     );
@@ -740,7 +850,7 @@ export class SmartTakeoverService {
               takeoverSession,
               workspacePath,
               presetPrompt: preset.prompt,
-              latestAgentOutput,
+              agentOutput,
               args,
               request
             }),
@@ -1055,7 +1165,7 @@ ${sections.result}`;
     takeoverSession: ChatSession;
     workspacePath?: string;
     presetPrompt: string;
-    latestAgentOutput?: string;
+    agentOutput?: string;
     args: TakeoverToolArgs;
     request: SmartTakeoverRequest;
   }): string {
@@ -1066,8 +1176,8 @@ ${sections.result}`;
       sections.push(`Task context:\n${input.args.context.trim()}`);
     }
 
-    if (input.latestAgentOutput?.trim()) {
-      sections.push(`Latest agent output:\n${input.latestAgentOutput.trim()}`);
+    if (input.agentOutput?.trim()) {
+      sections.push(`Agent output:\n${input.agentOutput.trim()}`);
     }
 
     sections.push(`Verdict contract:

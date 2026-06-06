@@ -29,13 +29,59 @@ import { ErrorLogService } from "./error-log-service.js";
 import { DiagnosticLogService } from "./diagnostic-log-service.js";
 import { HostToolRegistry } from "./host-tools.js";
 import { createReadSessionHostTool } from "./read-session-host-tool.js";
-import { SmartTakeoverService } from "./smart-takeover-service.js";
+import {
+  SmartTakeoverService,
+  type CurrentBranchContext
+} from "./smart-takeover-service.js";
 import { TakeoverPresetStore } from "./takeover-preset-store.js";
 import {
   createOpenAiSessionTitleGenerator,
   type SessionTitleGenerator
 } from "./title-generation-service.js";
 import type { SkillDescriptorRpc } from "@another-workbench/shared";
+import type { ChatTreeProjection } from "./codex-app-server-generated/v2/ChatTreeProjection.js";
+
+export const resolveCurrentBranchContextFromChatTree = (
+  chatTree: ChatTreeProjection | undefined
+): CurrentBranchContext => {
+  if (!chatTree) {
+    return {};
+  }
+  const nodesById = new Map(chatTree.nodes.map((node) => [node.nodeId, node]));
+  const branchTurnIds: string[] = [];
+  const visitedNodeIds = new Set<string>();
+  let nodeId = chatTree.currentNodeId ?? undefined;
+  while (nodeId && !visitedNodeIds.has(nodeId)) {
+    visitedNodeIds.add(nodeId);
+    const node = nodesById.get(nodeId);
+    if (!node) {
+      branchTurnIds.length = 0;
+      break;
+    }
+    if (node.turnId) {
+      branchTurnIds.push(node.turnId);
+    }
+    nodeId = node.parentNodeId ?? undefined;
+  }
+  branchTurnIds.reverse();
+
+  const currentNode = chatTree.nodes.find(
+    (node) => node.nodeId === chatTree.currentNodeId
+  );
+  const currentNodeTurnId = currentNode?.turnId ?? undefined;
+  if (branchTurnIds.length > 0) {
+    return {
+      currentTurnId: currentNodeTurnId,
+      visibleTurnIds: branchTurnIds
+    };
+  }
+
+  const visibleAnchorTurnId = chatTree.visibleTurnIds.at(-1);
+  return {
+    currentTurnId: visibleAnchorTurnId ?? currentNodeTurnId,
+    visibleTurnIds: chatTree.visibleTurnIds
+  };
+};
 
 export type CreateWorkbenchRuntimeServiceOptions = {
   codexCommandPath?: string;
@@ -210,7 +256,11 @@ export const createWorkbenchRuntimeService = (
   const smartTakeoverService = new SmartTakeoverService({
     runtimeService,
     presetStore: takeoverPresetStore,
-    now: options.now
+    now: options.now,
+    resolveCurrentBranchContext: async (sessionId) => {
+      const chatTree = await codexRuntimePort.readChatTreeForSession(sessionId);
+      return resolveCurrentBranchContextFromChatTree(chatTree?.chatTree);
+    }
   });
   hostTools.register(createReadSessionHostTool(runtimeService));
   for (const tool of smartTakeoverService.createHostTools()) {

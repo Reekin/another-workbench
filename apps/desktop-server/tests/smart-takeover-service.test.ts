@@ -43,7 +43,14 @@ const waitFor = async (
   }
 };
 
-const createManualTakeoverHarness = async () => {
+const createManualTakeoverHarness = async (options: {
+  resolveCurrentBranchContext?: (
+    sessionId: string
+  ) =>
+    | { currentTurnId?: string; visibleTurnIds?: string[] }
+    | undefined
+    | Promise<{ currentTurnId?: string; visibleTurnIds?: string[] } | undefined>;
+} = {}) => {
   const baseDir = await createTempDir();
   const presetStore = new TakeoverPresetStore({ baseDir });
   const sessions = new Map<string, Record<string, unknown>>();
@@ -138,7 +145,8 @@ const createManualTakeoverHarness = async () => {
     runtimeService,
     presetStore,
     defaultTimeoutMs: 1_000,
-    createId: () => `manual-${++idIndex}`
+    createId: () => `manual-${++idIndex}`,
+    resolveCurrentBranchContext: options.resolveCurrentBranchContext
   });
 
   const submitVerdict = async (
@@ -570,7 +578,7 @@ describe("SmartTakeoverService", () => {
         sessionId: "session-takeover-1"
       })
     ]);
-    expect(harness.commands[0]?.content).toContain("Latest agent output:");
+    expect(harness.commands[0]?.content).toContain("Agent output:");
     expect(harness.commands[0]?.content).toContain(
       "I finished the takeover prompt cleanup and updated the tests."
     );
@@ -582,6 +590,259 @@ describe("SmartTakeoverService", () => {
       "Delegated reviewer for checking the reasonableness"
     );
     expect(harness.commands[0]?.content).not.toContain("parent agent");
+  });
+
+  it("uses the current chat tree turn output instead of the latest session output", async () => {
+    const harness = await createManualTakeoverHarness({
+      resolveCurrentBranchContext: () => ({
+        currentTurnId: "turn-selected",
+        visibleTurnIds: ["turn-selected"]
+      })
+    });
+    harness.turns.push(
+      {
+        turnId: "turn-selected",
+        sessionId: "session-parent",
+        status: "completed",
+        startedAt: "2026-05-10T00:00:00Z",
+        completedAt: "2026-05-10T00:00:01Z",
+        finalMessageId: "message-selected-final",
+        messageIds: ["message-selected-final"]
+      },
+      {
+        turnId: "turn-latest",
+        sessionId: "session-parent",
+        status: "completed",
+        startedAt: "2026-05-10T00:01:00Z",
+        completedAt: "2026-05-10T00:01:01Z",
+        finalMessageId: "message-latest-final",
+        messageIds: ["message-latest-final"]
+      }
+    );
+    harness.messageBlocks.push(
+      {
+        blockId: "message-selected-final:md",
+        messageId: "message-selected-final",
+        sessionId: "session-parent",
+        turnId: "turn-selected",
+        role: "assistant",
+        phase: "final_answer",
+        kind: "markdown",
+        text: "Selected chat tree node output.",
+        startedAt: "2026-05-10T00:00:00Z",
+        completedAt: "2026-05-10T00:00:01Z"
+      },
+      {
+        blockId: "message-latest-final:md",
+        messageId: "message-latest-final",
+        sessionId: "session-parent",
+        turnId: "turn-latest",
+        role: "assistant",
+        phase: "final_answer",
+        kind: "markdown",
+        text: "Chronologically latest branch output.",
+        startedAt: "2026-05-10T00:01:00Z",
+        completedAt: "2026-05-10T00:01:01Z"
+      }
+    );
+
+    await harness.service.setManualTakeover({
+      sessionId: "session-parent",
+      presetId: "review"
+    });
+    await waitFor(() => harness.service.getSessionState("session-parent").active);
+
+    const initialPrompt = String(harness.commands[0]?.content ?? "");
+    expect(initialPrompt).toContain("Agent output:");
+    expect(initialPrompt).toContain("Selected chat tree node output.");
+    expect(initialPrompt).not.toContain("Chronologically latest branch output.");
+  });
+
+  it("falls back only within the current branch when the current chat tree turn is incomplete", async () => {
+    const harness = await createManualTakeoverHarness({
+      resolveCurrentBranchContext: () => ({
+        currentTurnId: "turn-streaming",
+        visibleTurnIds: ["turn-previous", "turn-streaming"]
+      })
+    });
+    harness.turns.push(
+      {
+        turnId: "turn-previous",
+        sessionId: "session-parent",
+        status: "completed",
+        startedAt: "2026-05-10T00:00:00Z",
+        completedAt: "2026-05-10T00:00:01Z",
+        finalMessageId: "message-previous-final",
+        messageIds: ["message-previous-final"]
+      },
+      {
+        turnId: "turn-streaming",
+        sessionId: "session-parent",
+        status: "running",
+        startedAt: "2026-05-10T00:01:00Z",
+        finalMessageId: "message-streaming-final",
+        messageIds: ["message-streaming-final"]
+      },
+      {
+        turnId: "turn-hidden-latest",
+        sessionId: "session-parent",
+        status: "completed",
+        startedAt: "2026-05-10T00:02:00Z",
+        completedAt: "2026-05-10T00:02:01Z",
+        finalMessageId: "message-hidden-final",
+        messageIds: ["message-hidden-final"]
+      }
+    );
+    harness.messageBlocks.push(
+      {
+        blockId: "message-previous-final:md",
+        messageId: "message-previous-final",
+        sessionId: "session-parent",
+        turnId: "turn-previous",
+        role: "assistant",
+        phase: "final_answer",
+        kind: "markdown",
+        text: "Previous visible branch output.",
+        startedAt: "2026-05-10T00:00:00Z",
+        completedAt: "2026-05-10T00:00:01Z"
+      },
+      {
+        blockId: "message-streaming-final:md",
+        messageId: "message-streaming-final",
+        sessionId: "session-parent",
+        turnId: "turn-streaming",
+        role: "assistant",
+        phase: "final_answer",
+        kind: "markdown",
+        text: "Partial streaming branch output.",
+        startedAt: "2026-05-10T00:01:00Z"
+      },
+      {
+        blockId: "message-hidden-final:md",
+        messageId: "message-hidden-final",
+        sessionId: "session-parent",
+        turnId: "turn-hidden-latest",
+        role: "assistant",
+        phase: "final_answer",
+        kind: "markdown",
+        text: "Hidden latest sibling branch output.",
+        startedAt: "2026-05-10T00:02:00Z",
+        completedAt: "2026-05-10T00:02:01Z"
+      }
+    );
+
+    await harness.service.setManualTakeover({
+      sessionId: "session-parent",
+      presetId: "review"
+    });
+    await waitFor(() => harness.service.getSessionState("session-parent").active);
+
+    const initialPrompt = String(harness.commands[0]?.content ?? "");
+    expect(initialPrompt).toContain("Agent output:");
+    expect(initialPrompt).toContain("Previous visible branch output.");
+    expect(initialPrompt).not.toContain("Partial streaming branch output.");
+    expect(initialPrompt).not.toContain("Hidden latest sibling branch output.");
+  });
+
+  it("omits agent output when the current branch has no completed renderable output", async () => {
+    const harness = await createManualTakeoverHarness({
+      resolveCurrentBranchContext: () => ({
+        currentTurnId: "turn-streaming",
+        visibleTurnIds: ["turn-streaming"]
+      })
+    });
+    harness.turns.push(
+      {
+        turnId: "turn-streaming",
+        sessionId: "session-parent",
+        status: "running",
+        startedAt: "2026-05-10T00:00:00Z",
+        finalMessageId: "message-streaming-final",
+        messageIds: ["message-streaming-final"]
+      },
+      {
+        turnId: "turn-hidden-latest",
+        sessionId: "session-parent",
+        status: "completed",
+        startedAt: "2026-05-10T00:01:00Z",
+        completedAt: "2026-05-10T00:01:01Z",
+        finalMessageId: "message-hidden-final",
+        messageIds: ["message-hidden-final"]
+      }
+    );
+    harness.messageBlocks.push(
+      {
+        blockId: "message-streaming-final:md",
+        messageId: "message-streaming-final",
+        sessionId: "session-parent",
+        turnId: "turn-streaming",
+        role: "assistant",
+        phase: "final_answer",
+        kind: "markdown",
+        text: "Partial streaming branch output.",
+        startedAt: "2026-05-10T00:00:00Z"
+      },
+      {
+        blockId: "message-hidden-final:md",
+        messageId: "message-hidden-final",
+        sessionId: "session-parent",
+        turnId: "turn-hidden-latest",
+        role: "assistant",
+        phase: "final_answer",
+        kind: "markdown",
+        text: "Hidden latest sibling branch output.",
+        startedAt: "2026-05-10T00:01:00Z",
+        completedAt: "2026-05-10T00:01:01Z"
+      }
+    );
+
+    await harness.service.setManualTakeover({
+      sessionId: "session-parent",
+      presetId: "review"
+    });
+    await waitFor(() => harness.service.getSessionState("session-parent").active);
+
+    const initialPrompt = String(harness.commands[0]?.content ?? "");
+    expect(initialPrompt).not.toContain("Agent output:");
+    expect(initialPrompt).not.toContain("Partial streaming branch output.");
+    expect(initialPrompt).not.toContain("Hidden latest sibling branch output.");
+  });
+
+  it("does not use session-wide latest output when branch context resolution is unavailable", async () => {
+    const harness = await createManualTakeoverHarness({
+      resolveCurrentBranchContext: () => undefined
+    });
+    harness.turns.push({
+      turnId: "turn-hidden-latest",
+      sessionId: "session-parent",
+      status: "completed",
+      startedAt: "2026-05-10T00:01:00Z",
+      completedAt: "2026-05-10T00:01:01Z",
+      finalMessageId: "message-hidden-final",
+      messageIds: ["message-hidden-final"]
+    });
+    harness.messageBlocks.push({
+      blockId: "message-hidden-final:md",
+      messageId: "message-hidden-final",
+      sessionId: "session-parent",
+      turnId: "turn-hidden-latest",
+      role: "assistant",
+      phase: "final_answer",
+      kind: "markdown",
+      text: "Session-wide latest output.",
+      startedAt: "2026-05-10T00:01:00Z",
+      completedAt: "2026-05-10T00:01:01Z"
+    });
+
+    await harness.service.setManualTakeover({
+      sessionId: "session-parent",
+      presetId: "review"
+    });
+    await waitFor(() => harness.service.getSessionState("session-parent").active);
+
+    const initialPrompt = String(harness.commands[0]?.content ?? "");
+    expect(initialPrompt).not.toContain("Agent output:");
+    expect(initialPrompt).not.toContain("Session-wide latest output.");
   });
 
   it("omits preset desc metadata from the takeover agent prompt", async () => {

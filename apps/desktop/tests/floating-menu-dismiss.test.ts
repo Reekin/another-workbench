@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { shouldDismissFloatingMenuForContextMenu } from "../src/ui/chat-shell/use-session-actions-controller.js";
+import {
+  formatSessionCopyStatusNotice,
+  shouldDismissFloatingMenuForContextMenu
+} from "../src/ui/chat-shell/use-session-actions-controller.js";
 
 class FakeElement {
   public constructor(private readonly isInsideMenu: boolean) {}
@@ -35,5 +38,14 @@ describe("floating context menu dismissal", () => {
         target: new FakeElement(false)
       } as unknown as MouseEvent)
     ).toBe(true);
+  });
+
+  it("labels session copy status notices by identifier type", () => {
+    expect(formatSessionCopyStatusNotice("copy_session_id", "thread-1")).toBe(
+      "Copied session id thread-1"
+    );
+    expect(
+      formatSessionCopyStatusNotice("copy_awb_session_id", "session-1")
+    ).toBe("Copied AWB session id session-1");
   });
 });

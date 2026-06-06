@@ -9,6 +9,7 @@ import type { WorkbenchRuntimeService } from "./runtime-service.js";
 
 export type SessionActionKind =
   | "archive"
+  | "copy_awb_session_id"
   | "copy_session_id"
   | "fork"
   | "open_rollout"
@@ -24,6 +25,7 @@ export type SessionActionDescriptor = {
 
 export type SessionActionResult =
   | { action: "archive"; archived: true }
+  | { action: "copy_awb_session_id"; copiedText: string }
   | { action: "copy_session_id"; copiedText: string }
   | {
       action: "fork";
@@ -372,6 +374,10 @@ export class CapabilityRegistry {
       {
         action: "copy_session_id",
         label: "Copy session id"
+      },
+      {
+        action: "copy_awb_session_id",
+        label: "Copy AWB session id"
       }
     ];
     if (!session && !indexEntry) {
@@ -409,12 +415,22 @@ export class CapabilityRegistry {
   ): Promise<SessionActionResult> {
     const context = this.resolveContext(sessionId);
     const { session, indexEntry } = context;
-    if (!session && !indexEntry && action !== "copy_session_id") {
+    if (
+      !session &&
+      !indexEntry &&
+      action !== "copy_session_id" &&
+      action !== "copy_awb_session_id"
+    ) {
       throw new Error(`Unknown session: ${sessionId}`);
     }
 
     const provider = this.getEngineCapabilities(context.engineId)?.sessionActions;
     switch (action) {
+      case "copy_awb_session_id":
+        return {
+          action,
+          copiedText: sessionId
+        };
       case "copy_session_id":
         return {
           action,

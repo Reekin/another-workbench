@@ -245,6 +245,12 @@ describe("CapabilityRegistry", () => {
       action: "copy_session_id",
       copiedText: "thread-1"
     });
+    await expect(
+      registry.runSessionAction("session-codex", "copy_awb_session_id")
+    ).resolves.toEqual({
+      action: "copy_awb_session_id",
+      copiedText: "session-codex"
+    });
     await expect(registry.getConversationGraph("session-codex")).resolves.toEqual({
       sessionId: "session-codex",
       engineId: "codex",

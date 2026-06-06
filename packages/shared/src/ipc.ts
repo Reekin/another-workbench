@@ -200,6 +200,7 @@ const zWorkspaceBrowserNodeSchema = z.object({
 
 const zSessionActionKindSchema = z.enum([
   "archive",
+  "copy_awb_session_id",
   "copy_session_id",
   "fork",
   "open_rollout",
@@ -232,6 +233,10 @@ const zSessionActionResultSchema = z.union([
   z.object({
     action: z.literal("archive"),
     archived: z.literal(true)
+  }),
+  z.object({
+    action: z.literal("copy_awb_session_id"),
+    copiedText: z.string().min(1)
   }),
   z.object({
     action: z.literal("copy_session_id"),

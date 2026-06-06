@@ -326,7 +326,11 @@ describe("session browser transport contracts", () => {
               },
               {
                 action: "copy_session_id",
-                label: "Copy session ID"
+                label: "Copy session id"
+              },
+              {
+                action: "copy_awb_session_id",
+                label: "Copy AWB session id"
               },
               {
                 action: "open_rollout",
@@ -369,6 +373,16 @@ describe("session browser transport contracts", () => {
               ok: true,
               result: {
                 action: "copy_session_id",
+                copiedText: "thread-1"
+              }
+            } as const;
+          case "copy_awb_session_id":
+            return {
+              id: request.id,
+              method: "sessionBrowser.runAction",
+              ok: true,
+              result: {
+                action: "copy_awb_session_id",
                 copiedText: request.params.sessionId
               }
             } as const;
@@ -434,6 +448,10 @@ describe("session browser transport contracts", () => {
       sessionId: "session-1",
       action: "copy_session_id"
     });
+    const copyAwbSessionId = await transport.sessionBrowser.runAction({
+      sessionId: "session-1",
+      action: "copy_awb_session_id"
+    });
     const openRollout = await transport.sessionBrowser.runAction({
       sessionId: "session-1",
       action: "open_rollout"
@@ -454,6 +472,7 @@ describe("session browser transport contracts", () => {
     expect(actions.actions.map((action) => action.action)).toEqual([
       "archive",
       "copy_session_id",
+      "copy_awb_session_id",
       "open_rollout",
       "refresh",
       "resume",
@@ -471,6 +490,10 @@ describe("session browser transport contracts", () => {
     });
     expect(copySessionId).toEqual({
       action: "copy_session_id",
+      copiedText: "thread-1"
+    });
+    expect(copyAwbSessionId).toEqual({
+      action: "copy_awb_session_id",
       copiedText: "session-1"
     });
     expect(openRollout).toEqual({
@@ -501,6 +524,7 @@ describe("session browser transport contracts", () => {
     expect(runActionRequests.map((request) => request.params.action)).toEqual([
       "archive",
       "copy_session_id",
+      "copy_awb_session_id",
       "open_rollout",
       "refresh",
       "resume",

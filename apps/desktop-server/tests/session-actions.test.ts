@@ -40,6 +40,10 @@ describe("SessionActionsProvider", () => {
       {
         action: "copy_session_id",
         label: "Copy session id"
+      },
+      {
+        action: "copy_awb_session_id",
+        label: "Copy AWB session id"
       }
     ]);
 
@@ -47,6 +51,10 @@ describe("SessionActionsProvider", () => {
       {
         action: "copy_session_id",
         label: "Copy session id"
+      },
+      {
+        action: "copy_awb_session_id",
+        label: "Copy AWB session id"
       },
       {
         action: "archive",
@@ -99,6 +107,10 @@ describe("SessionActionsProvider", () => {
         label: "Copy session id"
       },
       {
+        action: "copy_awb_session_id",
+        label: "Copy AWB session id"
+      },
+      {
         action: "archive",
         label: "Archive",
         disabled: false,
@@ -121,6 +133,10 @@ describe("SessionActionsProvider", () => {
     await expect(provider.runAction("session-1", "copy_session_id")).resolves.toEqual({
       action: "copy_session_id",
       copiedText: "provider-session-1"
+    });
+    await expect(provider.runAction("session-1", "copy_awb_session_id")).resolves.toEqual({
+      action: "copy_awb_session_id",
+      copiedText: "session-1"
     });
   });
 

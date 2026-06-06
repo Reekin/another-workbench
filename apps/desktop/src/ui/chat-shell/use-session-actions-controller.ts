@@ -29,6 +29,14 @@ export const shouldDismissFloatingMenuForContextMenu = (
   );
 };
 
+export const formatSessionCopyStatusNotice = (
+  action: "copy_session_id" | "copy_awb_session_id",
+  copiedText: string
+): string =>
+  action === "copy_awb_session_id"
+    ? `Copied AWB session id ${copiedText}`
+    : `Copied session id ${copiedText}`;
+
 export const useSessionActionsController = (input: {
   transport?: DesktopTransport;
   workspaceTree: WorkspaceBrowserNodeRpc[];
@@ -100,10 +108,13 @@ export const useSessionActionsController = (input: {
           mode: "workspace",
           workspaceId: findSessionNode(input.workspaceTree, sessionId)?.workspaceId
         });
-        if (result.action === "copy_session_id") {
+        if (
+          result.action === "copy_session_id" ||
+          result.action === "copy_awb_session_id"
+        ) {
           await navigator.clipboard?.writeText(result.copiedText);
           input.onStatusNotice({
-            message: `Copied ${result.copiedText}`,
+            message: formatSessionCopyStatusNotice(result.action, result.copiedText),
             source: "session-action"
           });
           return;

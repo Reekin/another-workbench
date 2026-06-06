@@ -191,7 +191,13 @@ def main() -> int:
                 menu_text = page.locator(".awb-session-menu").inner_text()
                 has_expected_actions = all(
                     label in menu_text
-                    for label in ("Archive", "Copy session id", "Open rollout", "Reload")
+                    for label in (
+                        "Archive",
+                        "Copy session id",
+                        "Copy AWB session id",
+                        "Open rollout",
+                        "Refresh",
+                    )
                 )
                 record(
                     "TC-07",
@@ -199,13 +205,43 @@ def main() -> int:
                     menu_text=menu_text,
                 )
 
-                page.get_by_role("button", name="Copy session id").click()
-                page.wait_for_timeout(600)
-                copied_status = page.locator(".awb-status").inner_text().strip()
+                page.get_by_role("button", name="Copy AWB session id").click()
+                page.wait_for_function(
+                    "() => document.body.innerText.includes('Copied AWB session id session-')",
+                    timeout=args.timeout_ms,
+                )
+                copied_status = (
+                    page.locator(".awb-composer-status__notice").inner_text().strip()
+                )
+                copied_clipboard_result = page.evaluate(
+                    """
+                    () => navigator.clipboard.readText()
+                      .then((text) => ({ ok: true, text }))
+                      .catch((error) => ({
+                        ok: false,
+                        error: error instanceof Error ? error.message : String(error)
+                      }))
+                    """
+                )
+                clipboard_read_ok = bool(copied_clipboard_result.get("ok"))
+                copied_clipboard = (
+                    str(copied_clipboard_result.get("text", ""))
+                    if clipboard_read_ok
+                    else ""
+                )
+                clipboard_matches = (
+                    copied_clipboard.startswith("session-") if clipboard_read_ok else True
+                )
                 record(
                     "TC-08",
-                    "passed" if copied_status.startswith("Copied session-") else "failed",
+                    "passed"
+                    if copied_status.startswith("Copied AWB session id session-")
+                    and clipboard_matches
+                    else "failed",
                     composer_status=copied_status,
+                    clipboard=copied_clipboard,
+                    clipboard_read_ok=clipboard_read_ok,
+                    clipboard_error=copied_clipboard_result.get("error"),
                 )
 
                 turns_before_process = current_turn_count(page)

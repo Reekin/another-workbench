@@ -73,7 +73,7 @@ const createSmartTakeoverInputSchema = (presetIdDescription: string) => ({
     context: {
       type: "string",
       description:
-        "Global task context to pass to the takeover agent at the beginning of the task, such as goals, files, risks, acceptance notes, and review standards. This should be information that remains true for the whole task lifecycle. Do not call SmartTakeover again just to update context after an incomplete verdict; continue the task from the feedback while keeping the original context."
+        "Task requirement context for the takeover agent. Provide the stable requirement materials the reviewer needs to understand what you were assigned to deliver and what counts as acceptable: task goal, project paths, source-of-truth files/data, durable constraints, scope boundaries, acceptance points, and requirement/design documents or checklists that apply across the task. This is not a prompt telling the reviewer how to work. Do not include review procedure instructions, step-by-step verification commands, progress logs, latest status, or checkpoint/phase-specific details that cannot remain useful from start to finish. Do not call SmartTakeover again just to update context after an incomplete verdict; continue from the feedback while keeping the original task context."
     }
   },
   additionalProperties: false
@@ -97,7 +97,7 @@ export const createSmartTakeoverHostTool = (
   namespace: smartTakeoverToolNamespace,
   name: smartTakeoverToolName,
   description:
-    "Let another agent act as the user to supervise this session. Call this at the beginning of a complex task or long-running task, passing stable context that applies for the whole task lifecycle. It will automatically check your work after you finish responding and give feedback.",
+    "Let another agent act as the user to supervise this session. Call this at the beginning of a complex task or long-running task. The context should provide stable task requirements and acceptance context needed to judge the work; it is not a prompt telling the reviewer how to work or a progress log.",
   inputSchema: createSmartTakeoverInputSchemaResolver(options),
   deferLoading: false,
   isAvailable: options.isAvailable,

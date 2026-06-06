@@ -233,10 +233,9 @@ describe("SmartTakeoverService", () => {
       "Call this at the beginning of a complex task"
     );
     expect(smartTakeover?.description).toContain(
-      "stable task requirements and acceptance context"
+      "briefly state the assigned work, goals, acceptance points"
     );
-    expect(smartTakeover?.description).toContain("not a prompt telling the reviewer how to work");
-    expect(smartTakeover?.description).toContain("progress log");
+    expect(smartTakeover?.description).toContain("acceptance-check scope");
     expect(presetIdDescription).toContain("Available presets:");
     expect(presetIdDescription).toContain("Required when action is start");
     expect(presetIdDescription).toContain("not needed for help or stop");
@@ -245,19 +244,17 @@ describe("SmartTakeoverService", () => {
     );
     expect(presetIdDescription).toContain("- review: Delegated reviewer");
     expect(presetIdDescription).toContain("- team_review: Team-specific reviewer");
-    expect(contextDescription).toContain("Task requirement context");
-    expect(contextDescription).toContain("what you were assigned to deliver");
-    expect(contextDescription).toContain("what counts as acceptable");
-    expect(contextDescription).toContain("source-of-truth files/data");
+    expect(contextDescription).toContain("Briefly and concisely state");
+    expect(contextDescription).toContain("assigned work");
+    expect(contextDescription).toContain("goals to achieve");
     expect(contextDescription).toContain("acceptance points");
-    expect(contextDescription).toContain("requirement/design documents or checklists");
-    expect(contextDescription).toContain("not a prompt telling the reviewer how to work");
-    expect(contextDescription).toContain("review procedure instructions");
-    expect(contextDescription).toContain("step-by-step verification commands");
-    expect(contextDescription).toContain("progress logs");
-    expect(contextDescription).toContain("latest status");
-    expect(contextDescription).toContain("checkpoint/phase-specific details");
-    expect(contextDescription).toContain("cannot remain useful from start to finish");
+    expect(contextDescription).toContain("key directories");
+    expect(contextDescription).toContain("technical documentation");
+    expect(contextDescription).toContain("roadmap if any");
+    expect(contextDescription).toContain("throughout the entire task cycle");
+    expect(contextDescription).toContain("scope of acceptance checks");
+    expect(contextDescription).toContain("partial or step-by-step details");
+    expect(contextDescription).toContain("do not tell the reviewer what to do");
     expect(contextDescription).toContain(
       "Do not call SmartTakeover again just to update context after an incomplete verdict"
     );

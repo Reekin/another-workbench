@@ -73,7 +73,7 @@ const createSmartTakeoverInputSchema = (presetIdDescription: string) => ({
     context: {
       type: "string",
       description:
-        "Task requirement context for the takeover agent. Provide the stable requirement materials the reviewer needs to understand what you were assigned to deliver and what counts as acceptable: task goal, project paths, source-of-truth files/data, durable constraints, scope boundaries, acceptance points, and requirement/design documents or checklists that apply across the task. This is not a prompt telling the reviewer how to work. Do not include review procedure instructions, step-by-step verification commands, progress logs, latest status, or checkpoint/phase-specific details that cannot remain useful from start to finish. Do not call SmartTakeover again just to update context after an incomplete verdict; continue from the feedback while keeping the original task context."
+        "Briefly and concisely state the assigned work, goals to achieve, acceptance points, key directories, technical documentation, and roadmap if any. Only provide information that should stay in focus throughout the entire task cycle; the goal is to let the reviewer understand the scope of acceptance checks. Do not include partial or step-by-step details, and do not tell the reviewer what to do. Do not call SmartTakeover again just to update context after an incomplete verdict; continue from the feedback while keeping the original task context."
     }
   },
   additionalProperties: false
@@ -97,7 +97,7 @@ export const createSmartTakeoverHostTool = (
   namespace: smartTakeoverToolNamespace,
   name: smartTakeoverToolName,
   description:
-    "Let another agent act as the user to supervise this session. Call this at the beginning of a complex task or long-running task. The context should provide stable task requirements and acceptance context needed to judge the work; it is not a prompt telling the reviewer how to work or a progress log.",
+    "Let another agent act as the user to supervise this session. Call this at the beginning of a complex task or long-running task. The context should briefly state the assigned work, goals, acceptance points, key directories, docs, and roadmap so the reviewer understands the acceptance-check scope.",
   inputSchema: createSmartTakeoverInputSchemaResolver(options),
   deferLoading: false,
   isAvailable: options.isAvailable,

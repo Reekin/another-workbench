@@ -403,6 +403,33 @@ describe("WorkbenchShellService", () => {
     expect(executeCommand).not.toHaveBeenCalled();
   });
 
+  it("clears partial hydration state when read-session full hydration succeeds", async () => {
+    const ensureSessionLoaded = vi.fn().mockResolvedValue(true);
+    const service = new WorkbenchShellService({
+      runtimeService: {} as never,
+      sessionCatalog: {} as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never,
+      sessionReconciliation: {
+        ensureSessionLoaded
+      } as never
+    });
+    (
+      service as unknown as {
+        partiallyHydratedSessionIds: Set<string>;
+      }
+    ).partiallyHydratedSessionIds.add("session-1");
+
+    await expect(
+      service.ensureSessionLoadedForRead("session-1", { force: true })
+    ).resolves.toBe(true);
+
+    expect(ensureSessionLoaded).toHaveBeenCalledWith("session-1", {
+      force: true
+    });
+    expect(service.isSessionPartiallyHydrated("session-1")).toBe(false);
+  });
+
   it("delegates workspace directory picking to the host callback when available", async () => {
     const pickWorkspaceDirectory = vi.fn().mockResolvedValue({
       canceled: false,

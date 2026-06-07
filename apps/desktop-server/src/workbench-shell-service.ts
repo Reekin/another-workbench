@@ -417,6 +417,24 @@ export class WorkbenchShellService {
     return this.runtimeService.getSnapshot();
   }
 
+  public isSessionPartiallyHydrated(sessionId: string): boolean {
+    return this.partiallyHydratedSessionIds.has(sessionId);
+  }
+
+  public async ensureSessionLoadedForRead(
+    sessionId: string,
+    input: {
+      force?: boolean;
+    } = {}
+  ): Promise<boolean> {
+    const loaded =
+      (await this.sessionReconciliation?.ensureSessionLoaded(sessionId, input)) ?? false;
+    if (loaded) {
+      this.partiallyHydratedSessionIds.delete(sessionId);
+    }
+    return loaded;
+  }
+
   public getSnapshotResult() {
     return this.runtimeService.getSnapshotResult();
   }

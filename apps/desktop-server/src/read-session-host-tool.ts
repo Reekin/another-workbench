@@ -14,6 +14,11 @@ export const readSessionToolName = "read_session";
 
 export type ReadSessionRuntime = {
   getSnapshot: () => DomainSnapshot;
+  ensureSessionLoaded?: (
+    sessionId: string,
+    options?: { force?: boolean }
+  ) => Promise<boolean> | boolean;
+  isSessionPartiallyHydrated?: (sessionId: string) => boolean;
 };
 
 type ReadSessionArgs = {
@@ -82,6 +87,9 @@ const parseArgs = (value: unknown): ReadSessionArgs => {
   };
 };
 
+const snapshotHasSession = (snapshot: DomainSnapshot, sessionId: string): boolean =>
+  snapshot.sessions.some((session) => session.sessionId === sessionId);
+
 export const createReadSessionHostTool = (
   runtime: ReadSessionRuntime
 ): HostToolRegistration => ({
@@ -120,8 +128,24 @@ export const createReadSessionHostTool = (
   handle: async (invocation) => {
     try {
       const args = parseArgs(invocation.arguments);
+      let snapshot = runtime.getSnapshot();
+      const hadSession = snapshotHasSession(snapshot, args.sessionId);
+      const needsFullHydration =
+        hadSession && runtime.isSessionPartiallyHydrated?.(args.sessionId) === true;
+      if ((!hadSession || needsFullHydration) && runtime.ensureSessionLoaded) {
+        const loaded = await runtime.ensureSessionLoaded(args.sessionId, {
+          force: needsFullHydration
+        });
+        if (loaded) {
+          snapshot = runtime.getSnapshot();
+        } else if (needsFullHydration) {
+          throw new Error(`Session could not be fully loaded: ${args.sessionId}`);
+        }
+      } else if (needsFullHydration) {
+        throw new Error(`Session could not be fully loaded: ${args.sessionId}`);
+      }
       const transcript = buildReadSessionTranscript({
-        snapshot: runtime.getSnapshot(),
+        snapshot,
         sessionId: args.sessionId,
         limit: args.limit,
         maxTextChars: args.maxChars

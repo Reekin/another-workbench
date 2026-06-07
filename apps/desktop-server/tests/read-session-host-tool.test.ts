@@ -148,6 +148,223 @@ describe("createReadSessionHostTool", () => {
     );
   });
 
+  it("reads an already loaded non-partial session without rehydrating", async () => {
+    const loadRequests: Array<{ sessionId: string; force?: boolean }> = [];
+    const tool = createReadSessionHostTool({
+      getSnapshot: () => snapshot,
+      isSessionPartiallyHydrated: () => false,
+      ensureSessionLoaded: async (sessionId, options) => {
+        loadRequests.push({ sessionId, force: options?.force });
+        return false;
+      }
+    });
+
+    const result = await tool.handle({
+      definition: tool,
+      arguments: {
+        sessionId: "session-1"
+      },
+      context: invocationContext
+    });
+
+    expect(loadRequests).toEqual([]);
+    expect(result.success).toBe(true);
+    const text = result.contentItems[0]?.type === "inputText"
+      ? result.contentItems[0].text
+      : "";
+    const parsed = JSON.parse(text) as {
+      sessionId: string;
+      totalTurnCount: number;
+      turns: Array<{ user: string[]; agentFinal?: string }>;
+    };
+    expect(parsed.sessionId).toBe("session-1");
+    expect(parsed.totalTurnCount).toBe(1);
+    expect(parsed.turns[0]).toEqual(
+      expect.objectContaining({
+        user: ["Please summarize this session."],
+        agentFinal: "Session summary is ready."
+      })
+    );
+  });
+
+  it("hydrates index-only sessions before reading the transcript", async () => {
+    let hydrated = false;
+    const unloadedSnapshot: DomainSnapshot = {
+      ...snapshot,
+      sessions: [],
+      turns: [],
+      messageBlocks: []
+    };
+    const loadRequests: Array<{ sessionId: string; force?: boolean }> = [];
+    const tool = createReadSessionHostTool({
+      getSnapshot: () => (hydrated ? snapshot : unloadedSnapshot),
+      ensureSessionLoaded: async (sessionId, options) => {
+        loadRequests.push({ sessionId, force: options?.force });
+        hydrated = true;
+        return true;
+      }
+    });
+
+    const result = await tool.handle({
+      definition: tool,
+      arguments: {
+        sessionId: "session-1"
+      },
+      context: invocationContext
+    });
+
+    expect(loadRequests).toEqual([{ sessionId: "session-1", force: false }]);
+    expect(result.success).toBe(true);
+    const text = result.contentItems[0]?.type === "inputText"
+      ? result.contentItems[0].text
+      : "";
+    const parsed = JSON.parse(text) as {
+      sessionId: string;
+      turns: Array<{ user: string[]; agentFinal?: string }>;
+    };
+    expect(parsed.sessionId).toBe("session-1");
+    expect(parsed.turns[0]).toEqual(
+      expect.objectContaining({
+        user: ["Please summarize this session."],
+        agentFinal: "Session summary is ready."
+      })
+    );
+  });
+
+  it("forces full hydration before reading an already partially loaded session", async () => {
+    let hydrated = false;
+    const partialSessionIds = new Set(["session-1"]);
+    const fullSnapshot: DomainSnapshot = {
+      ...snapshot,
+      turns: [
+        ...snapshot.turns,
+        {
+          turnId: "turn-2",
+          sessionId: "session-1",
+          status: "completed",
+          finishReason: "completed",
+          startedAt: "2026-06-06T00:01:10.000Z",
+          completedAt: "2026-06-06T00:01:20.000Z",
+          finalMessageId: "assistant-final-2",
+          messageIds: ["user-2", "assistant-final-2"],
+          toolCallIds: [],
+          terminalIds: [],
+          approvalRequestIds: [],
+          interactionRequestIds: []
+        }
+      ],
+      messageBlocks: [
+        ...snapshot.messageBlocks,
+        {
+          blockId: "user-2-block",
+          messageId: "user-2",
+          sessionId: "session-1",
+          turnId: "turn-2",
+          role: "user",
+          kind: "plain_text",
+          text: "What happened next?",
+          startedAt: "2026-06-06T00:01:10.000Z"
+        },
+        {
+          blockId: "assistant-final-2-block",
+          messageId: "assistant-final-2",
+          sessionId: "session-1",
+          turnId: "turn-2",
+          role: "assistant",
+          phase: "final_answer",
+          kind: "markdown",
+          text: "The full transcript is now loaded.",
+          startedAt: "2026-06-06T00:01:20.000Z"
+        }
+      ]
+    };
+    const loadRequests: Array<{ sessionId: string; force?: boolean }> = [];
+    const tool = createReadSessionHostTool({
+      getSnapshot: () => (hydrated ? fullSnapshot : snapshot),
+      isSessionPartiallyHydrated: (sessionId) => partialSessionIds.has(sessionId),
+      ensureSessionLoaded: async (sessionId, options) => {
+        loadRequests.push({ sessionId, force: options?.force });
+        hydrated = true;
+        partialSessionIds.delete(sessionId);
+        return true;
+      }
+    });
+
+    const result = await tool.handle({
+      definition: tool,
+      arguments: {
+        sessionId: "session-1"
+      },
+      context: invocationContext
+    });
+
+    expect(loadRequests).toEqual([{ sessionId: "session-1", force: true }]);
+    expect(result.success).toBe(true);
+    const text = result.contentItems[0]?.type === "inputText"
+      ? result.contentItems[0].text
+      : "";
+    const parsed = JSON.parse(text) as {
+      sessionId: string;
+      totalTurnCount: number;
+      truncated: boolean;
+      turns: Array<{ user: string[]; agentFinal?: string }>;
+    };
+    expect(parsed.sessionId).toBe("session-1");
+    expect(parsed.totalTurnCount).toBe(2);
+    expect(parsed.truncated).toBe(false);
+    expect(parsed.turns).toHaveLength(2);
+    expect(parsed.turns[1]).toEqual(
+      expect.objectContaining({
+        user: ["What happened next?"],
+        agentFinal: "The full transcript is now loaded."
+      })
+    );
+
+    const secondResult = await tool.handle({
+      definition: tool,
+      arguments: {
+        sessionId: "session-1"
+      },
+      context: invocationContext
+    });
+
+    expect(secondResult.success).toBe(true);
+    expect(loadRequests).toEqual([{ sessionId: "session-1", force: true }]);
+  });
+
+  it("fails instead of reading a partial transcript when full hydration is unavailable", async () => {
+    const loadRequests: Array<{ sessionId: string; force?: boolean }> = [];
+    const tool = createReadSessionHostTool({
+      getSnapshot: () => snapshot,
+      isSessionPartiallyHydrated: () => true,
+      ensureSessionLoaded: async (sessionId, options) => {
+        loadRequests.push({ sessionId, force: options?.force });
+        return false;
+      }
+    });
+
+    const result = await tool.handle({
+      definition: tool,
+      arguments: {
+        sessionId: "session-1"
+      },
+      context: invocationContext
+    });
+
+    expect(loadRequests).toEqual([{ sessionId: "session-1", force: true }]);
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: false,
+        contentItems: [
+          {
+            type: "inputText",
+            text: "Session could not be fully loaded: session-1"
+          }
+        ]
+      })
+    );
+  });
+
   it("returns failed host-tool results for invalid input and unknown sessions", async () => {
     const tool = createReadSessionHostTool({
       getSnapshot: () => snapshot

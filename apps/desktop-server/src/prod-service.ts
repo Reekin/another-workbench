@@ -262,7 +262,6 @@ export const createWorkbenchRuntimeService = (
       return resolveCurrentBranchContextFromChatTree(chatTree?.chatTree);
     }
   });
-  hostTools.register(createReadSessionHostTool(runtimeService));
   for (const tool of smartTakeoverService.createHostTools()) {
     hostTools.register(tool);
   }
@@ -326,7 +325,7 @@ export const createWorkbenchRuntimeService = (
     capabilityRegistry: capabilities
   });
 
-  return new WorkbenchShellService({
+  const shellService = new WorkbenchShellService({
     runtimeService,
     sessionCatalog,
     capabilities,
@@ -369,6 +368,19 @@ export const createWorkbenchRuntimeService = (
     takeoverPresetStore,
     smartTakeoverService
   });
+  smartTakeoverService.setParentCommandExecutor((input) =>
+    shellService.executeCommand(input)
+  );
+  hostTools.register(
+    createReadSessionHostTool({
+      getSnapshot: () => runtimeService.getSnapshot(),
+      ensureSessionLoaded: (sessionId, options) =>
+        shellService.ensureSessionLoadedForRead(sessionId, options),
+      isSessionPartiallyHydrated: (sessionId) =>
+        shellService.isSessionPartiallyHydrated(sessionId)
+    })
+  );
+  return shellService;
 };
 
 export const createCodexWorkbenchRuntimeService = (

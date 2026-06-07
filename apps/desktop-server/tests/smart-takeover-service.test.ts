@@ -43,6 +43,16 @@ const waitFor = async (
   }
 };
 
+const createDeferred = <T>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+};
+
 const createManualTakeoverHarness = async (options: {
   resolveCurrentBranchContext?: (
     sessionId: string
@@ -50,6 +60,11 @@ const createManualTakeoverHarness = async (options: {
     | { currentTurnId?: string; visibleTurnIds?: string[] }
     | undefined
     | Promise<{ currentTurnId?: string; visibleTurnIds?: string[] } | undefined>;
+  executeCommand?: (input: {
+    commandId?: string;
+    command: Record<string, unknown> & { type: string };
+  }) => Promise<{ commandId: string; commandType: string; accepted: boolean }>;
+  defaultTimeoutMs?: number;
 } = {}) => {
   const baseDir = await createTempDir();
   const presetStore = new TakeoverPresetStore({ baseDir });
@@ -127,6 +142,9 @@ const createManualTakeoverHarness = async (options: {
       command: Record<string, unknown> & { type: string };
     }) => {
       commands.push(input.command);
+      if (options.executeCommand) {
+        return options.executeCommand(input);
+      }
       return {
         commandId: input.commandId ?? `cmd-${commands.length}`,
         commandType: input.command.type,
@@ -144,7 +162,7 @@ const createManualTakeoverHarness = async (options: {
   const service = new SmartTakeoverService({
     runtimeService,
     presetStore,
-    defaultTimeoutMs: 1_000,
+    defaultTimeoutMs: options.defaultTimeoutMs ?? 1_000,
     createId: () => `manual-${++idIndex}`,
     resolveCurrentBranchContext: options.resolveCurrentBranchContext
   });
@@ -152,7 +170,8 @@ const createManualTakeoverHarness = async (options: {
   const submitVerdict = async (
     takeoverSessionId: string,
     verdict: "complete" | "incomplete",
-    response: string
+    response: string,
+    sourceTurnId?: string
   ) => {
     const verdictTool = service
       .createHostTools()
@@ -166,7 +185,8 @@ const createManualTakeoverHarness = async (options: {
       context: {
         engineId: "codex",
         sessionId: takeoverSessionId,
-        providerSessionId: `thread-${takeoverSessionId}`
+        providerSessionId: `thread-${takeoverSessionId}`,
+        providerTurnId: sourceTurnId
       }
     } as never);
   };
@@ -179,6 +199,7 @@ const createManualTakeoverHarness = async (options: {
     messageBlocks,
     sessions,
     submitVerdict,
+    subscriberCount: () => subscribers.size,
     emit: (envelope: EventEnvelope) => {
       for (const subscriber of subscribers) {
         subscriber(envelope);
@@ -337,7 +358,9 @@ describe("SmartTakeoverService", () => {
     const internals = service as unknown as {
       runsById: Map<string, { takeoverSessionId: string }>;
       runIdByTakeoverSessionId: Map<string, string>;
-      pendingVerdictResolvers: Map<string, () => void>;
+      pendingVerdictResolvers: Map<string, (verdict: {
+        complete?: (result: { success: boolean }) => void;
+      }) => void>;
     };
     let runAResolved = false;
     let runBResolved = false;
@@ -345,11 +368,13 @@ describe("SmartTakeoverService", () => {
     internals.runsById.set("run-b", { takeoverSessionId: "session-b" });
     internals.runIdByTakeoverSessionId.set("session-a", "run-a");
     internals.runIdByTakeoverSessionId.set("session-b", "run-b");
-    internals.pendingVerdictResolvers.set("run-a", () => {
+    internals.pendingVerdictResolvers.set("run-a", (verdict) => {
       runAResolved = true;
+      verdict.complete?.({ success: true });
     });
-    internals.pendingVerdictResolvers.set("run-b", () => {
+    internals.pendingVerdictResolvers.set("run-b", (verdict) => {
       runBResolved = true;
+      verdict.complete?.({ success: true });
     });
 
     const verdictTool = service
@@ -386,14 +411,17 @@ describe("SmartTakeoverService", () => {
     const internals = service as unknown as {
       runsById: Map<string, { takeoverSessionId: string }>;
       runIdByTakeoverSessionId: Map<string, string>;
-      pendingVerdictResolvers: Map<string, () => void>;
+      pendingVerdictResolvers: Map<string, (verdict: {
+        complete?: (result: { success: boolean }) => void;
+      }) => void>;
     };
     internals.runsById.set("run-a", { takeoverSessionId: "session-a" });
     internals.runIdByTakeoverSessionId.set("session-a", "run-a");
-    internals.pendingVerdictResolvers.set("run-a", () => {
+    internals.pendingVerdictResolvers.set("run-a", (verdict) => {
       internals.pendingVerdictResolvers.delete("run-a");
       internals.runIdByTakeoverSessionId.delete("session-a");
       internals.runsById.delete("run-a");
+      verdict.complete?.({ success: true });
     });
 
     const verdictTool = service
@@ -1257,6 +1285,431 @@ describe("SmartTakeoverService", () => {
     );
   });
 
+  it("forwards tool verdicts with source turns without waiting for their own turn completion", async () => {
+    const harness = await createManualTakeoverHarness();
+
+    await harness.service.setManualTakeover({
+      sessionId: "session-parent",
+      presetId: "review"
+    });
+    await waitFor(() => harness.service.getSessionState("session-parent").active);
+    const activeState = harness.service.getSessionState("session-parent");
+
+    const result = await harness.submitVerdict(
+      activeState.takeoverSessionId!,
+      "complete",
+      "Source-turn verdict should forward once.",
+      "turn-takeover-tool"
+    );
+
+    expect(result?.success).toBe(true);
+    expect(
+      harness.commands.filter(
+        (command) =>
+          command.type === "sendUserMessage" &&
+          command.sessionId === "session-parent" &&
+          command.content === "Source-turn verdict should forward once."
+      )
+    ).toHaveLength(1);
+    expect(harness.service.getSessionState("session-parent")).toMatchObject({
+      role: "none",
+      active: false
+    });
+  });
+
+  it("does not retry manual takeover feedback when parent feedback is rejected", async () => {
+    const harness = await createManualTakeoverHarness({
+      executeCommand: async (input) => ({
+        commandId: input.commandId ?? "cmd",
+        commandType: input.command.type,
+        accepted: !(
+          input.command.type === "sendUserMessage" &&
+          input.command.sessionId === "session-parent"
+        )
+      })
+    });
+
+    await harness.service.setManualTakeover({
+      sessionId: "session-parent",
+      presetId: "review"
+    });
+    await waitFor(() => harness.service.getSessionState("session-parent").active);
+    const activeState = harness.service.getSessionState("session-parent");
+
+    const result = await harness.submitVerdict(
+      activeState.takeoverSessionId!,
+      "incomplete",
+      "Manual review needs more work."
+    );
+
+    expect(result?.success).toBe(false);
+    expect(harness.service.getSessionState("session-parent")).toMatchObject({
+      role: "none",
+      active: false
+    });
+    expect(
+      harness.commands.filter(
+        (command) =>
+          command.type === "sendUserMessage" &&
+          command.sessionId === "session-parent" &&
+          command.content === "Manual review needs more work."
+      )
+    ).toHaveLength(1);
+
+    harness.emit({
+      eventId: "event-parent-user-turn-ignored",
+      cursor: "cursor-parent-user-turn-ignored",
+      occurredAt: "2026-05-10T00:00:00Z",
+      event: {
+        type: "turn.completed",
+        sessionId: "session-parent",
+        turnId: "user-turn-local-echo",
+        finishReason: "completed"
+      }
+    } as EventEnvelope);
+    harness.emit({
+      eventId: "event-parent-ready-after-rejection",
+      cursor: "cursor-parent-ready-after-rejection",
+      occurredAt: "2026-05-10T00:00:01Z",
+      event: {
+        type: "turn.completed",
+        sessionId: "session-parent",
+        turnId: "turn-parent-ready",
+        finishReason: "completed"
+      }
+    } as EventEnvelope);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(
+      harness.commands.filter(
+        (command) =>
+          command.type === "sendUserMessage" &&
+          command.sessionId === "session-parent" &&
+          command.content === "Manual review needs more work."
+      )
+    ).toHaveLength(1);
+  });
+
+  it("rejects stale verdict submissions after parent feedback is rejected", async () => {
+    const harness = await createManualTakeoverHarness({
+      executeCommand: async (input) => ({
+        commandId: input.commandId ?? "cmd",
+        commandType: input.command.type,
+        accepted: !(
+          input.command.type === "sendUserMessage" &&
+          input.command.sessionId === "session-parent"
+        )
+      })
+    });
+
+    await harness.service.setManualTakeover({
+      sessionId: "session-parent",
+      presetId: "review"
+    });
+    await waitFor(() => harness.service.getSessionState("session-parent").active);
+    const activeState = harness.service.getSessionState("session-parent");
+
+    const result = await harness.submitVerdict(
+      activeState.takeoverSessionId!,
+      "incomplete",
+      "Rejected feedback should close the takeover run."
+    );
+
+    expect(result?.success).toBe(false);
+    expect(harness.service.isActiveTakeoverRun(activeState.takeoverSessionId!)).toBe(
+      false
+    );
+    expect(harness.service.getSessionState("session-parent")).toMatchObject({
+      role: "none",
+      active: false
+    });
+
+    const staleVerdict = await harness.submitVerdict(
+      activeState.takeoverSessionId!,
+      "incomplete",
+      "This should not be accepted."
+    );
+    expect(staleVerdict?.success).toBe(false);
+  });
+
+  it("uses the injected parent command executor for takeover feedback", async () => {
+    const harness = await createManualTakeoverHarness();
+    const parentCommands: Array<Record<string, unknown>> = [];
+    harness.service.setParentCommandExecutor(async (input) => {
+      parentCommands.push(input.command);
+      return {
+        commandId: input.commandId ?? "cmd-parent",
+        commandType: input.command.type,
+        accepted: true
+      };
+    });
+
+    await harness.service.setManualTakeover({
+      sessionId: "session-parent",
+      presetId: "review"
+    });
+    await waitFor(() => harness.service.getSessionState("session-parent").active);
+    const activeState = harness.service.getSessionState("session-parent");
+
+    const result = await harness.submitVerdict(
+      activeState.takeoverSessionId!,
+      "incomplete",
+      "Feedback should go through the injected parent executor."
+    );
+
+    expect(result?.success).toBe(true);
+    expect(parentCommands).toEqual([
+      expect.objectContaining({
+        type: "sendUserMessage",
+        sessionId: "session-parent",
+        content: "Feedback should go through the injected parent executor."
+      })
+    ]);
+    expect(
+      harness.commands.filter(
+        (command) =>
+          command.type === "sendUserMessage" &&
+          command.sessionId === "session-parent" &&
+          command.content === "Feedback should go through the injected parent executor."
+      )
+    ).toHaveLength(0);
+  });
+
+  it("does not retry rejected feedback after same-preset takeover is reconfigured", async () => {
+    const harness = await createManualTakeoverHarness({
+      executeCommand: async (input) => ({
+        commandId: input.commandId ?? "cmd",
+        commandType: input.command.type,
+        accepted: !(
+          input.command.type === "sendUserMessage" &&
+          input.command.sessionId === "session-parent"
+        )
+      })
+    });
+
+    await harness.service.setManualTakeover({
+      sessionId: "session-parent",
+      presetId: "review",
+      context: "old context"
+    });
+    await waitFor(() => harness.service.getSessionState("session-parent").active);
+    const oldState = harness.service.getSessionState("session-parent");
+
+    const result = await harness.submitVerdict(
+      oldState.takeoverSessionId!,
+      "incomplete",
+      "Old feedback must not retry after reconfigure."
+    );
+    expect(result?.success).toBe(false);
+
+    await harness.service.setManualTakeover({
+      sessionId: "session-parent",
+      presetId: "review",
+      context: "new context"
+    });
+
+    await waitFor(
+      () =>
+        harness.service.getSessionState("session-parent").context === "new context" &&
+        harness.service.getSessionState("session-parent").active
+    );
+    expect(harness.subscriberCount()).toBe(1);
+    expect(harness.service.isActiveTakeoverRun(oldState.takeoverSessionId!)).toBe(
+      false
+    );
+
+    harness.emit({
+      eventId: "event-parent-ready-after-reconfigure",
+      cursor: "cursor-parent-ready-after-reconfigure",
+      occurredAt: "2026-05-10T00:00:00Z",
+      event: {
+        type: "turn.completed",
+        sessionId: "session-parent",
+        turnId: "turn-parent-ready-after-reconfigure",
+        finishReason: "completed"
+      }
+    } as EventEnvelope);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(
+      harness.commands.filter(
+        (command) =>
+          command.type === "sendUserMessage" &&
+          command.sessionId === "session-parent" &&
+          command.content === "Old feedback must not retry after reconfigure."
+      )
+    ).toHaveLength(1);
+    await waitFor(() => harness.service.getSessionState("session-parent").active);
+    expect(harness.service.getSessionState("session-parent")).toMatchObject({
+      role: "managed",
+      active: true,
+      context: "new context"
+    });
+  });
+
+  it("ignores old parent feedback receipt when same-preset takeover is reconfigured mid-forward", async () => {
+    const parentFeedback = createDeferred<{
+      commandId: string;
+      commandType: string;
+      accepted: boolean;
+    }>();
+    const harness = await createManualTakeoverHarness({
+      executeCommand: async (input) => {
+        if (
+          input.command.type === "sendUserMessage" &&
+          input.command.sessionId === "session-parent"
+        ) {
+          return parentFeedback.promise;
+        }
+        return {
+          commandId: input.commandId ?? "cmd",
+          commandType: input.command.type,
+          accepted: true
+        };
+      }
+    });
+
+    await harness.service.setManualTakeover({
+      sessionId: "session-parent",
+      presetId: "review",
+      context: "old context"
+    });
+    await waitFor(() => harness.service.getSessionState("session-parent").active);
+    const oldState = harness.service.getSessionState("session-parent");
+
+    const resultPromise = harness.submitVerdict(
+      oldState.takeoverSessionId!,
+      "complete",
+      "Old complete verdict must not clear new config."
+    );
+    await waitFor(() =>
+      harness.commands.some(
+        (command) =>
+          command.type === "sendUserMessage" &&
+          command.sessionId === "session-parent" &&
+          command.content === "Old complete verdict must not clear new config."
+      )
+    );
+
+    await harness.service.setManualTakeover({
+      sessionId: "session-parent",
+      presetId: "review",
+      context: "new context"
+    });
+    await waitFor(
+      () => harness.service.getSessionState("session-parent").context === "new context"
+    );
+
+    parentFeedback.resolve({
+      commandId: "cmd-parent-feedback",
+      commandType: "sendUserMessage",
+      accepted: true
+    });
+
+    await expect(resultPromise).resolves.toMatchObject({
+      success: false
+    });
+    await waitFor(() => harness.service.getSessionState("session-parent").active);
+    expect(harness.service.getSessionState("session-parent")).toMatchObject({
+      role: "managed",
+      active: true,
+      context: "new context"
+    });
+    expect(harness.service.isTakeoverEnabled("session-parent")).toBe(true);
+  });
+
+  it("unsubscribes immediately when takeover turn completion wait is cancelled", async () => {
+    const baseDir = await createTempDir();
+    const subscribers = new Set<(envelope: EventEnvelope) => void>();
+    const service = new SmartTakeoverService({
+      runtimeService: {
+        getSession: () => undefined,
+        getSnapshot: () => ({
+          conversations: [],
+          sessions: [],
+          turns: [],
+          messageBlocks: [],
+          toolCalls: [],
+          terminalStreams: [],
+          approvalRequests: [],
+          participants: [],
+          sessionRelations: []
+        }),
+        getSnapshotResult: () => ({
+          snapshot: {
+            conversations: [],
+            sessions: [],
+            turns: [],
+            messageBlocks: [],
+            toolCalls: [],
+            terminalStreams: [],
+            approvalRequests: [],
+            participants: [],
+            sessionRelations: []
+          },
+          cursor: "cursor-wait-start"
+        }),
+        subscribeFromCursor: (handler: (envelope: EventEnvelope) => void) => {
+          subscribers.add(handler);
+          return () => {
+            subscribers.delete(handler);
+          };
+        }
+      } as never,
+      presetStore: new TakeoverPresetStore({ baseDir })
+    });
+    const config = {
+      configId: "config-1",
+      presetId: "review",
+      args: {
+        action: "start",
+        presetId: "review"
+      },
+      source: "manual"
+    };
+    const run = {
+      runId: "run-1",
+      configId: "config-1",
+      parentSessionId: "session-parent",
+      takeoverSessionId: "session-takeover",
+      presetId: "review",
+      args: {
+        action: "start",
+        presetId: "review"
+      },
+      createdAt: "2026-05-10T00:00:00Z",
+      source: "manual"
+    };
+    const internals = service as unknown as {
+      runsById: Map<string, typeof run>;
+      runIdByParentSessionId: Map<string, string>;
+      takeoverConfigByParentSessionId: Map<string, typeof config>;
+      cancelRun: (runId: string, reason: string) => void;
+      waitForTakeoverTurnCompletion: (input: {
+        run: typeof run;
+        takeoverSessionId: string;
+        turnId: string;
+        timeoutMs: number;
+      }) => Promise<void>;
+    };
+    internals.runsById.set(run.runId, run);
+    internals.runIdByParentSessionId.set(run.parentSessionId, run.runId);
+    internals.takeoverConfigByParentSessionId.set(run.parentSessionId, config);
+
+    const wait = internals.waitForTakeoverTurnCompletion({
+      run,
+      takeoverSessionId: "session-takeover",
+      turnId: "turn-never-completes",
+      timeoutMs: 3_000
+    });
+    await waitFor(() => subscribers.size === 1);
+
+    internals.cancelRun(run.runId, "Takeover was cancelled.");
+
+    await expect(wait).rejects.toThrow("Takeover run was cancelled.");
+    expect(subscribers.size).toBe(0);
+  });
+
   it("cancels manual takeover when disabled", async () => {
     const harness = await createManualTakeoverHarness();
 
@@ -1345,7 +1798,7 @@ describe("SmartTakeoverService", () => {
     runtimeService = new WorkbenchRuntimeService({
       now: (() => {
         let tick = 0;
-        return () => `2026-05-10T00:00:${String(++tick).padStart(2, "0")}Z`;
+        return () => new Date(Date.UTC(2026, 4, 10, 0, 0, ++tick)).toISOString();
       })(),
       createConversationId: () => "conversation-1",
       createRelationId: (() => {
@@ -1460,6 +1913,12 @@ describe("SmartTakeoverService", () => {
       runIdByTakeoverSessionId: Map<string, string>;
       pendingVerdictResolvers: Map<string, unknown>;
     };
+    await waitFor(
+      () =>
+        serviceInternals.runsById.size === 0 &&
+        serviceInternals.runIdByTakeoverSessionId.size === 0 &&
+        serviceInternals.pendingVerdictResolvers.size === 0
+    );
     expect(serviceInternals.runsById.size).toBe(0);
     expect(serviceInternals.runIdByTakeoverSessionId.size).toBe(0);
     expect(serviceInternals.pendingVerdictResolvers.size).toBe(0);

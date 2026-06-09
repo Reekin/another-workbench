@@ -1,34 +1,92 @@
-SmartTakeover enables takeover mode for this session. Call action="help" first, then call action="start" once at the beginning of a complex or long-running task with a presetId and stable task requirement context. After your current response finishes, Another Workbench starts a takeover agent in the same workspace. The takeover agent acts as the user's delegated reviewer or progress manager and reports back through SubmitTakeoverVerdict.
+SmartTakeover enables takeover mode for this session.
 
-Context format:
-Briefly and concisely state the assigned work, goals to achieve, acceptance points, key directories, technical documentation, and roadmap if any. Only provide information that should stay in focus throughout the entire task cycle; the goal is to let the reviewer understand the scope of acceptance checks. Do not include partial or step-by-step details, and do not tell the reviewer what to do. Do not call start again just to update context; the first task context remains the baseline.
+Actions:
+
+* Call action="help" first to read this help.
+* Call action="start" once, and only once, near the beginning of a complex or long-running task.
+* The start call must include a presetId and a stable task requirement context.
+* Do not call action="start" again to update progress, phase state, review findings, or implementation details.
+
+After the current assistant response finishes, Another Workbench starts a takeover agent in the same workspace. The takeover agent acts as the user's delegated reviewer or progress manager and reports back through SubmitTakeoverVerdict.
+
+Context purpose:
+The context is a stable baseline for the entire task lifecycle. It should help the takeover agent understand the long-term task scope, source-of-truth documents, project layout, and durable technical references. The context must remain valid even after phases are completed, roadmap state changes, implementation details change, or the current review target changes.
+
+Context must include only lifecycle-stable information, such as:
+
+* Overall project objective
+* Project root and important stable directories
+* Original/reference package locations
+* Source-of-truth documents, such as ROADMAP.md
+* Stable technical references or documentation locations
+* Stable smoke-test or validation entry points, if they are generally applicable across the project
+
+Context must not include transient, progress-dependent, or reviewer-directive information, such as:
+
+* Current phase, current task, active milestone, current priority, or current review target
+* Latest implementation summary
+* Latest verification results
+* Recently changed files
+* Current blockers, TODOs, or open questions
+* Stage-specific generated evidence files unless they are stable project-level references
+* Claims that a task, phase, or stage is completed, accepted, blocked, or pending
+* Acceptance rules, acceptance principles, or completion criteria phrased as instructions to the reviewer
+* Any instruction to approve, reject, mark complete, advance, keep active, or otherwise change roadmap state
+* Any checklist telling the takeover agent what to inspect in the current review
+* Any step-by-step plan, partial progress note, or tactical instruction
+
+Do not teach or command the reviewer inside the context.
+The context may identify where acceptance requirements are defined, but it must not restate those requirements as reviewer instructions. Avoid phrases such as:
+
+* "Review mode:"
+* "Please check..."
+* "Decide whether..."
+* "If accepted, mark..."
+* "Otherwise return blockers..."
+* "Current focus..."
+* "Current priority..."
+* "Active phase..."
+* "Latest implementation..."
+* "Verification already run..."
+* "Should not be accepted..."
+* "Must not be considered complete..."
+
+Good context style:
+Use stable nouns and project facts. Prefer broad project-level references over copied current roadmap content. For example, say "ROADMAP.md defines task order, task scope, dependencies, acceptance requirements, and completion state" instead of listing the current roadmap phase order, current phase status, or acceptance rules.
 
 Bad context example:
-```
+
+```text
 Project: D:\Dev\Projects\Experiment\AGame
-Original package root: E:\common\AGame
-Takeover preset: progress
 
-Global objective:
-Replicate AGame in the current Unity project by translating original package/runtime semantics into Unity. Current active phase is task_05_juno_figure_runtime_animator. Do not approve or advance task_06 unless task_05 is accepted. task_01-task_04 were previously accepted; task_05 and later tasks must remain unchecked until reviewed.
+Current priority order:
+1. Source evidence and real entry discipline
+2. Juno static figure assembly from real data
+3. Full static room-03 map assembly
+4. Juno animation and movement on the full map
 
-Latest task_05 implementation summary:
-- Juno is loaded through the real chain:
-  terra\data\players\juno.json -> CHA:main#Juno -> FIG:char.player.juno#default
-- Juno actor builds 32 node transforms and 25 original gfx source layers from real figure data.
+Phase 1 evidence and tooling entry points:
+Docs\OriginalEvidence\Phase1Review.md
+Docs\OriginalEvidence\generated\phase1_logic\phase1_logic_manifest.json
+Tools\OriginalEvidence\validate_phase1_evidence.py
 
-Latest verification already run by developer:
-- ./unity-cli.exe compile --wait --json
-  Result: compile_succeeded, error_count=0, warning_count=0
+Key acceptance intent for Phase 1:
+Freeze a complete original-source evidence contract before runtime Unity translation work.
 
-Review focus requested:
-Judge whether task_05_juno_figure_runtime_animator can now be accepted. Please specifically check FigureNodeAnimXfm, event timing, parent:null semantics, onMissingFrame=HIDE, docs wording, and ROADMAP.md state.
+Review mode:
+Use the roadmap and generated evidence to decide whether Phase 1 can be marked completed. If accepted, mark the roadmap Phase 1 as completed; otherwise return blockers and keep Phase 1 active.
+
+Acceptance discipline:
+Stages should not be treated as complete unless they satisfy implementation, review, test, and smoke acceptance. Placeholder implementations or runtime behavior without source evidence should not be accepted as complete.
 ```
-This is bad because it mixes in time-sensitive phase state, latest implementation/verification status, and instructions telling the reviewer what to check.
+
+This is bad because it includes current priority, current phase-specific acceptance intent, phase-specific evidence, reviewer instructions, roadmap state-change instructions, and acceptance guidance phrased as commands to the reviewer.
 
 Good context example:
-```
-Project: I:\GameDev\Projects\Experiment\AGame
+
+```text
+Project:
+I:\GameDev\Projects\Experiment\AGame
 
 Original package:
 E:\common\AGame
@@ -37,24 +95,29 @@ Objective:
 Replicate AGame in the Unity project by translating original package data and original runtime behavior into Unity according to ROADMAP.md.
 
 Source of truth:
-ROADMAP.md in the Unity project defines task order, task scope, dependencies, and completion state.
+ROADMAP.md defines task order, task scope, dependencies, acceptance requirements, and completion state.
 
 Original implementation reference:
-When behavior needs to match the original game, inspect the original package under:
+When behavior needs to match the original game, the original package is located at:
 E:\common\AGame
 
-The bundled runtime implementation is at:
+Bundled runtime reference:
 E:\common\AGame\terra\dist\bundle.js
 
-Shell smoke wrapper:
-Tools\adn-smoke.sh is the project smoke wrapper for package-root based checks.
+Stable evidence and validation areas:
+- Docs\OriginalEvidence
+- Tools\OriginalEvidence
+- Tools\UnityValidation
 
-Important project files:
-- ROADMAP.md
+Unity project areas:
 - Assets\AGame\Runtime
 - Assets\AGame\Editor
 - Assets\AGame\Tests
 - Docs
 - Tools
+
+Smoke and validation:
+Tools\adn-smoke.sh is the project smoke wrapper for package-root based checks.
 ```
-This is good because it states the task, stable goals, acceptance scope, key directories, technical references, and roadmap source without local progress details or reviewer instructions.
+
+This is good because it states stable project facts, the long-term objective, source-of-truth documents, key directories, and stable technical references. It does not include the current phase, latest progress, latest verification, current review target, completion claims, or instructions telling the takeover agent what to approve, reject, inspect, or change.

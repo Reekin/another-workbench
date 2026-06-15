@@ -301,7 +301,12 @@ export type DesktopTransport = {
       };
       metadata?: Record<string, unknown>;
     }) => Promise<{ sessionId: string; conversationId: string }>;
-    open: (sessionId: string) => Promise<{ page: SessionWindowRpc }>;
+    open: (
+      sessionId: string,
+      options?: {
+        forceProviderHydration?: boolean;
+      }
+    ) => Promise<{ page: SessionWindowRpc }>;
     activate: (sessionId: string) => Promise<{ sessionId: string }>;
     loadOlder: (input: {
       sessionId: string;
@@ -858,9 +863,10 @@ export const createDesktopTransport = (
           sessionId
         }),
       create: (input) => rpc.request("sessionBrowser.create", input),
-      open: (sessionId: string) =>
+      open: (sessionId: string, options?: { forceProviderHydration?: boolean }) =>
         rpc.request("sessionBrowser.open", {
-          sessionId
+          sessionId,
+          forceProviderHydration: options?.forceProviderHydration
         }),
       activate: (sessionId: string) =>
         rpc.request("sessionBrowser.activate", {

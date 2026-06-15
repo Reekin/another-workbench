@@ -436,7 +436,11 @@ export const createRemoteRpcHandler = (
               id: request.id,
               method: request.method,
               ok: true,
-              result: await shellService.openSession(request.params.sessionId)
+              result: request.params.forceProviderHydration
+                ? await shellService.openSession(request.params.sessionId, {
+                    forceProviderHydration: true
+                  })
+                : await shellService.openSession(request.params.sessionId)
             });
           case "sessionBrowser.activate":
             if (!shellService) {

@@ -88,6 +88,30 @@ describe("filterTranscriptRowsForChatTree", () => {
     expect(filtered.map((item) => item.turn.turnId)).toEqual(["turn-1", "turn-2"]);
   });
 
+  it("does not show stale rows when the current chat-tree branch is not loaded", () => {
+    const rows = [row("turn-old-1"), row("turn-old-2")];
+
+    const filtered = filterTranscriptRowsForChatTree(rows, {
+      sessionId: "session-1",
+      engineId: "codex",
+      supportsJump: true,
+      currentNodeId: "node-current",
+      visibleTurnIds: ["turn-current"],
+      nodes: [
+        {
+          nodeId: "node-current",
+          label: "current",
+          turnId: "turn-current",
+          order: 1,
+          isCurrent: true
+        }
+      ],
+      fetchedAt: "2026-04-18T00:00:00Z"
+    });
+
+    expect(filtered).toEqual([]);
+  });
+
   it("keeps the user prompt immediately before a visible assistant branch turn", () => {
     const rows = [
       row("turn-user", "user"),

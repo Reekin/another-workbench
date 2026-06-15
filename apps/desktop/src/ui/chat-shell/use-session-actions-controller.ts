@@ -45,7 +45,12 @@ export const useSessionActionsController = (input: {
     workspaceId?: string;
   }) => Promise<void>;
   onOpenSession?: (sessionId: string) => Promise<void>;
-  onResumeSession?: (sessionId: string) => Promise<void>;
+  onResumeSession?: (
+    sessionId: string,
+    options?: {
+      forceProviderHydration?: boolean;
+    }
+  ) => Promise<void>;
   onStatusNotice: StatusNoticeSetter;
 }): {
   sessionMenu: SessionMenuState | undefined;
@@ -128,7 +133,9 @@ export const useSessionActionsController = (input: {
           return;
         }
         if (result.action === "resume") {
-          await input.onResumeSession?.(sessionId);
+          await input.onResumeSession?.(sessionId, {
+            forceProviderHydration: true
+          });
           input.onStatusNotice({
             message: "Resume completed.",
             source: "session-action"

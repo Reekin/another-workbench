@@ -634,7 +634,12 @@ export class WorkbenchShellService {
     return this.skillsProvider.listSkills(input);
   }
 
-  public async openSession(sessionId: string): Promise<{ page: SessionWindowSnapshot }> {
+  public async openSession(
+    sessionId: string,
+    input: {
+      forceProviderHydration?: boolean;
+    } = {}
+  ): Promise<{ page: SessionWindowSnapshot }> {
     const generation = ++this.openSessionGeneration;
     const isCancelled = () => generation !== this.openSessionGeneration;
     const alreadyLoaded = this.runtimeService
@@ -646,7 +651,7 @@ export class WorkbenchShellService {
     if (isCancelled()) {
       throw new Error("Open session cancelled.");
     }
-    if (!alreadyFullyLoaded) {
+    if (input.forceProviderHydration || !alreadyFullyLoaded) {
       const hydratedPage = await this.hydrateSessionWindow(sessionId, {
         limit: defaultSessionWindowLimit,
         anchorTurnId,

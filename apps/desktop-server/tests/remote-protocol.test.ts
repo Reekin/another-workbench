@@ -927,6 +927,14 @@ describe("createRemoteRpcHandler", () => {
         sessionId: "session-1"
       }
     });
+    const forceOpenSessionResponse = await handler.handleRequest({
+      id: "req-open-force",
+      method: "sessionBrowser.open",
+      params: {
+        sessionId: "session-1",
+        forceProviderHydration: true
+      }
+    });
     const activateSessionResponse = await handler.handleRequest({
       id: "req-activate",
       method: "sessionBrowser.activate",
@@ -1027,6 +1035,16 @@ describe("createRemoteRpcHandler", () => {
         }
       }
     });
+    expect(forceOpenSessionResponse).toMatchObject({
+      id: "req-open-force",
+      method: "sessionBrowser.open",
+      ok: true,
+      result: {
+        page: {
+          sessionId: "session-1"
+        }
+      }
+    });
     expect(activateSessionResponse).toMatchObject({
       id: "req-activate",
       method: "sessionBrowser.activate",
@@ -1115,6 +1133,9 @@ describe("createRemoteRpcHandler", () => {
       "workspace-1"
     );
     expect((shellService as any).openSession).toHaveBeenCalledWith("session-1");
+    expect((shellService as any).openSession).toHaveBeenCalledWith("session-1", {
+      forceProviderHydration: true
+    });
     expect((shellService as any).loadOlderSessionTurns).toHaveBeenCalledWith({
       sessionId: "session-1",
       beforeTurnId: "turn-3",

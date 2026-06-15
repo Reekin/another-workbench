@@ -44,7 +44,12 @@ export const useSessionOpenController = (input: {
   }) => Promise<void>;
   onReleasedSession?: (sessionId: string | undefined) => void;
 }): {
-  reloadSessionWindow: (sessionId: string) => Promise<void>;
+  reloadSessionWindow: (
+    sessionId: string,
+    options?: {
+      forceProviderHydration?: boolean;
+    }
+  ) => Promise<void>;
   onLoadOlder: () => Promise<void>;
   onCreateSession: (workspaceId: string, engineId: string) => Promise<void>;
   onOpenSession: (sessionId: string) => Promise<void>;
@@ -120,12 +125,17 @@ export const useSessionOpenController = (input: {
 
   const hydrateOpenedSession = async (
     sessionId: string,
-    requestId: number
+    requestId: number,
+    options: {
+      forceProviderHydration?: boolean;
+    } = {}
   ): Promise<void> => {
     if (!input.transport) {
       return;
     }
-    const result = await input.transport.sessionBrowser.open(sessionId);
+    const result = await input.transport.sessionBrowser.open(sessionId, {
+      forceProviderHydration: options.forceProviderHydration
+    });
     if (openSessionRequestIdRef.current !== requestId) {
       return;
     }
@@ -153,9 +163,14 @@ export const useSessionOpenController = (input: {
   ]);
 
   return {
-    reloadSessionWindow: async (sessionId: string) => {
+    reloadSessionWindow: async (
+      sessionId: string,
+      options: {
+        forceProviderHydration?: boolean;
+      } = {}
+    ) => {
       const requestId = ++openSessionRequestIdRef.current;
-      await hydrateOpenedSession(sessionId, requestId);
+      await hydrateOpenedSession(sessionId, requestId, options);
     },
     onLoadOlder: async () => {
       if (

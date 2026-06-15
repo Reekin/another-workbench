@@ -19,7 +19,12 @@ export const useChatTreeController = (input: {
   refreshSignal: number;
   releasedSessionId?: string;
   onStatusNotice: StatusNoticeSetter;
-  reloadSessionWindow: (sessionId: string) => Promise<void>;
+  reloadSessionWindow: (
+    sessionId: string,
+    options?: {
+      forceProviderHydration?: boolean;
+    }
+  ) => Promise<void>;
 }): {
   chatTree: ChatTreeSnapshotRpc | undefined;
   setChatTree: (next: ChatTreeSnapshotRpc | undefined) => void;
@@ -82,7 +87,9 @@ export const useChatTreeController = (input: {
           nextTree.nodes.find((node) => node.nodeId === nextTree.currentNodeId) ??
           nextTree.nodes.find((node) => node.nodeId === nodeId);
         if (currentNode?.turnId) {
-          await input.reloadSessionWindow(input.displayedSessionId);
+          await input.reloadSessionWindow(input.displayedSessionId, {
+            forceProviderHydration: true
+          });
         }
         input.onStatusNotice({
           message: `Jumped to ${nodeId}`,

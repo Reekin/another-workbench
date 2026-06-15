@@ -134,6 +134,9 @@ describe("session browser transport contracts", () => {
             }
           } as const;
         case "sessionBrowser.open":
+          if (request.params.sessionId === "session-force") {
+            expect(request.params.forceProviderHydration).toBe(true);
+          }
           return {
             id: request.id,
             method: "sessionBrowser.open",
@@ -229,6 +232,9 @@ describe("session browser transport contracts", () => {
     const tree = await transport.sessionBrowser.listTree("workspace-1");
     const reconcile = await transport.sessionBrowser.reconcile("workspace-1");
     const openResult = await transport.sessionBrowser.open("session-child");
+    const forceOpenResult = await transport.sessionBrowser.open("session-force", {
+      forceProviderHydration: true
+    });
     const activateResult = await transport.sessionBrowser.activate("session-child");
     const olderPage = await transport.sessionBrowser.loadOlder({
       sessionId: "session-child",
@@ -272,6 +278,15 @@ describe("session browser transport contracts", () => {
         hasNewer: false
       })
     });
+    expect(forceOpenResult).toEqual({
+      page: expect.objectContaining({
+        sessionId: "session-force",
+        windowStartTurnId: "turn-2",
+        windowEndTurnId: "turn-3",
+        hasOlder: true,
+        hasNewer: false
+      })
+    });
     expect(activateResult).toEqual({
       sessionId: "session-child"
     });
@@ -303,6 +318,7 @@ describe("session browser transport contracts", () => {
       "workspace.remove",
       "sessionBrowser.listTree",
       "sessionBrowser.reconcile",
+      "sessionBrowser.open",
       "sessionBrowser.open",
       "sessionBrowser.activate",
       "sessionBrowser.loadOlder",

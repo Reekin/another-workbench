@@ -754,7 +754,8 @@ const zSessionBrowserOpenRequestSchema = z.object({
   id: zRequestId,
   method: z.literal("sessionBrowser.open"),
   params: z.object({
-    sessionId: zSessionId
+    sessionId: zSessionId,
+    forceProviderHydration: z.boolean().optional()
   })
 });
 

@@ -55,6 +55,5 @@ export const filterTranscriptRowsForChatTree = (
     }
   });
 
-  const filtered = rows.filter((_row, index) => visibleIndexes.has(index));
-  return filtered.length > 0 ? filtered : rows;
+  return rows.filter((_row, index) => visibleIndexes.has(index));
 };

@@ -10,6 +10,7 @@ import type {
   RuntimeEvent,
   SessionRelation,
   TerminalStream,
+  ThreadGoal,
   ToolCall,
   Turn
 } from "@another-workbench/shared";
@@ -27,6 +28,7 @@ export type RendererEntities = {
   approvalRequests: IdMap<ApprovalRequest>;
   runtimeInteractions: IdMap<RuntimeInteraction>;
   participants: IdMap<AgentParticipant>;
+  threadGoals: IdMap<ThreadGoal>;
   sessionRelations: IdMap<SessionRelation>;
 };
 

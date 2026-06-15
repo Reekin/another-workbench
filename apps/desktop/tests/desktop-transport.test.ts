@@ -707,6 +707,73 @@ describe("Desktop transport facade", () => {
     });
   });
 
+  it("maps chat goal commands through runtime.command", async () => {
+    const preload = createPreloadMock();
+    const transport = createDesktopTransport(preload.api, {
+      createId: () => "fixed-id"
+    });
+
+    await expect(
+      transport.chat.setGoal({
+        sessionId: "session-1",
+        objective: "Wire up Codex goals",
+        status: "active",
+        tokenBudget: 9000
+      })
+    ).resolves.toMatchObject({
+      commandType: "setThreadGoal",
+      accepted: true
+    });
+    await expect(
+      transport.chat.setGoal({
+        sessionId: "session-1",
+        status: "paused"
+      })
+    ).resolves.toMatchObject({
+      commandType: "setThreadGoal",
+      accepted: true
+    });
+    await expect(
+      transport.chat.clearGoal({
+        sessionId: "session-1"
+      })
+    ).resolves.toMatchObject({
+      commandType: "clearThreadGoal",
+      accepted: true
+    });
+
+    const setRequest = preload.request.mock.calls[0][0] as WorkbenchRpcRequest;
+    const pauseRequest = preload.request.mock.calls[1][0] as WorkbenchRpcRequest;
+    const clearRequest = preload.request.mock.calls[2][0] as WorkbenchRpcRequest;
+    expect(setRequest.method).toBe("runtime.command");
+    expect(pauseRequest.method).toBe("runtime.command");
+    expect(clearRequest.method).toBe("runtime.command");
+    if (
+      setRequest.method !== "runtime.command" ||
+      pauseRequest.method !== "runtime.command" ||
+      clearRequest.method !== "runtime.command"
+    ) {
+      throw new Error("Expected runtime.command requests.");
+    }
+    expect(setRequest.params.envelope.command).toMatchObject({
+      type: "setThreadGoal",
+      sessionId: "session-1",
+      objective: "Wire up Codex goals",
+      status: "active",
+      tokenBudget: 9000
+    });
+    expect(pauseRequest.params.envelope.command).toMatchObject({
+      type: "setThreadGoal",
+      sessionId: "session-1",
+      status: "paused"
+    });
+    expect(pauseRequest.params.envelope.command).not.toHaveProperty("objective");
+    expect(clearRequest.params.envelope.command).toMatchObject({
+      type: "clearThreadGoal",
+      sessionId: "session-1"
+    });
+  });
+
   it("throws DesktopTransportError when low-level request fails", async () => {
     const preload = createPreloadMock({
       onRequest: async (request) => {

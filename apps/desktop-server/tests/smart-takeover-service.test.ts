@@ -65,6 +65,7 @@ const createManualTakeoverHarness = async (options: {
     command: Record<string, unknown> & { type: string };
   }) => Promise<{ commandId: string; commandType: string; accepted: boolean }>;
   defaultTimeoutMs?: number;
+  threadGoals?: Array<Record<string, unknown>>;
 } = {}) => {
   const baseDir = await createTempDir();
   const presetStore = new TakeoverPresetStore({ baseDir });
@@ -108,7 +109,8 @@ const createManualTakeoverHarness = async (options: {
       terminalStreams: [],
       approvalRequests: [],
       participants: [],
-      sessionRelations: []
+      sessionRelations: [],
+      threadGoals: options.threadGoals ?? []
     }),
     getSnapshotResult: () => ({
       snapshot: runtimeService.getSnapshot(),
@@ -264,6 +266,9 @@ describe("SmartTakeoverService", () => {
     expect(smartTakeover?.description).toContain(
       "action=\"help\""
     );
+    expect(smartTakeover?.description).toContain(
+      "mutually exclusive with Codex goals"
+    );
     expect(presetIdDescription).toContain("Available presets:");
     expect(presetIdDescription).toContain("Required when action is start");
     expect(presetIdDescription).toContain("not needed for help or stop");
@@ -305,7 +310,7 @@ describe("SmartTakeoverService", () => {
       success: true,
       contentItems: [
         expect.objectContaining({
-          text: expect.stringContaining("Context format:")
+          text: expect.stringContaining("Context purpose:")
         })
       ]
     });
@@ -314,13 +319,13 @@ describe("SmartTakeoverService", () => {
       : "";
     expect(text).toContain("Bad context example:");
     expect(text).toContain("Good context example:");
-    expect(text).toContain("Latest task_05 implementation summary:");
-    expect(text).toContain("Review focus requested:");
+    expect(text).toContain("Context must include only lifecycle-stable information");
+    expect(text).toContain("Current phase, current task, active milestone");
     expect(text).toContain("This is bad because");
-    expect(text).toContain("Project: I:\\GameDev\\Projects\\Experiment\\AGame");
-    expect(text).toContain("ROADMAP.md in the Unity project defines task order");
+    expect(text).toContain("Project:\nI:\\GameDev\\Projects\\Experiment\\AGame");
+    expect(text).toContain("ROADMAP.md defines task order");
     expect(text).toContain("This is good because");
-    expect(text).toContain("without local progress details or reviewer instructions");
+    expect(text).toContain("It does not include the current phase");
   });
 
   it("recognizes hydrated takeover sessions from session metadata", async () => {
@@ -1045,6 +1050,79 @@ describe("SmartTakeoverService", () => {
       contentItems: [
         expect.objectContaining({
           text: expect.stringContaining("Available presets:")
+        })
+      ]
+    });
+  });
+
+  it("rejects manual takeover while the session has a goal", async () => {
+    const harness = await createManualTakeoverHarness({
+      threadGoals: [
+        {
+          sessionId: "session-parent",
+          threadId: "thread-parent",
+          objective: "Finish the current goal",
+          status: "active",
+          createdAt: 1700000000000,
+          updatedAt: 1700000001000
+        }
+      ]
+    });
+
+    await expect(
+      harness.service.setManualTakeover({
+        sessionId: "session-parent",
+        presetId: "review"
+      })
+    ).rejects.toThrow("mutually exclusive with goals");
+    expect(harness.service.getSessionState("session-parent")).toMatchObject({
+      role: "none",
+      active: false
+    });
+  });
+
+  it("rejects SmartTakeover start while the session has a goal", async () => {
+    const harness = await createManualTakeoverHarness({
+      threadGoals: [
+        {
+          sessionId: "session-parent",
+          threadId: "thread-parent",
+          objective: "Finish the current goal",
+          status: "active",
+          createdAt: 1700000000000,
+          updatedAt: 1700000001000
+        }
+      ]
+    });
+    const smartTakeoverTool = harness.service
+      .createHostTools()
+      .find((tool) => tool.name === "SmartTakeover");
+
+    expect(
+      smartTakeoverTool?.isAvailable?.({
+        engineId: "codex",
+        sessionId: "session-parent"
+      })
+    ).toBe(false);
+
+    const result = await smartTakeoverTool?.handle({
+      definition: smartTakeoverTool,
+      arguments: {
+        action: "start",
+        presetId: "review"
+      },
+      context: {
+        engineId: "codex",
+        sessionId: "session-parent",
+        providerSessionId: "thread-session-parent"
+      }
+    } as never);
+
+    expect(result).toMatchObject({
+      success: false,
+      contentItems: [
+        expect.objectContaining({
+          text: expect.stringContaining("mutually exclusive with goals")
         })
       ]
     });

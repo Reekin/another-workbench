@@ -27,7 +27,10 @@ type ApprovalContinuation<TEvent> = {
 
 type DemoRuntimeEventType = Exclude<
   EventType,
-  "conversationGraph.updated" | "engineExtension.updated"
+  | "conversationGraph.updated"
+  | "engineExtension.updated"
+  | "thread.goal.updated"
+  | "thread.goal.cleared"
 >;
 
 type DemoRuntimePortOptions<TRequest, TResponse, TEvent> = {

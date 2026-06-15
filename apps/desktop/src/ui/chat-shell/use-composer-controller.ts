@@ -14,6 +14,7 @@ import type {
   ChatInteractionCapabilitiesRpc,
   ChatSession,
   SkillDescriptorRpc,
+  ThreadGoal,
   Turn
 } from "@another-workbench/shared";
 import type { DesktopTransport } from "../../transport/desktop-transport.js";
@@ -118,6 +119,56 @@ const serializeComposerContent = (
   return normalizedText;
 };
 
+export const parseGoalSlashCommand = (
+  text: string
+):
+  | { kind: "set"; objective: string }
+  | { kind: "clear" }
+  | { kind: "pause" }
+  | { kind: "resume" }
+  | { kind: "edit" }
+  | { kind: "empty" }
+  | undefined => {
+  const trimmed = text.trim();
+  const match = /^\/goal(?:\s+([\s\S]*))?$/u.exec(trimmed);
+  if (!match) {
+    return undefined;
+  }
+  const argument = (match[1] ?? "").trim();
+  if (!argument) {
+    return { kind: "empty" };
+  }
+  switch (argument.toLocaleLowerCase()) {
+    case "clear":
+      return { kind: "clear" };
+    case "pause":
+      return { kind: "pause" };
+    case "resume":
+      return { kind: "resume" };
+    case "edit":
+      return { kind: "edit" };
+    default:
+      return { kind: "set", objective: argument };
+  }
+};
+
+export const goalCommandBlockedReason = (
+  command: ReturnType<typeof parseGoalSlashCommand>,
+  threadGoal?: ThreadGoal,
+  isTakeoverManaged = false
+): string | undefined => {
+  if (isTakeoverManaged && command && command.kind !== "clear") {
+    return "Goal commands are unavailable while takeover is enabled. Use /goal clear to stop the current goal.";
+  }
+  if (command?.kind === "set" && threadGoal) {
+    return "A goal is already set. Use /goal clear before setting a new goal.";
+  }
+  if (command?.kind === "edit") {
+    return "Goal editing is not available here yet. Use /goal clear before setting a new goal.";
+  }
+  return undefined;
+};
+
 export const extractComposerSuggestionQuery = (
   text: string,
   cursor: number
@@ -158,6 +209,7 @@ type UseComposerControllerInput = {
   transport?: DesktopTransport;
   activeSession?: ChatSession;
   activeSessionId?: string;
+  threadGoal?: ThreadGoal;
   displayedSessionId?: string;
   selectedEngineId: string;
   activeWorkspaceId?: string;
@@ -661,8 +713,117 @@ export const useComposerController = (
     }
   };
 
+  const dispatchGoalCommand = async (
+    command:
+      | { kind: "set"; objective: string }
+      | { kind: "clear" }
+      | { kind: "pause" }
+      | { kind: "resume" }
+  ): Promise<boolean> => {
+    if (!input.transport || !input.activeSessionId) {
+      return false;
+    }
+    const actionLabel =
+      command.kind === "clear"
+        ? "Clearing goal"
+        : command.kind === "pause"
+          ? "Pausing goal"
+          : command.kind === "resume"
+            ? "Resuming goal"
+            : "Setting goal";
+    setIsDispatching(true);
+    input.onStatusNotice({
+      message: `${actionLabel}…`,
+      persistent: true,
+      source: "send"
+    });
+    try {
+      const receipt =
+        command.kind === "clear"
+          ? await input.transport.chat.clearGoal({
+              sessionId: input.activeSessionId
+            })
+          : await input.transport.chat.setGoal({
+              sessionId: input.activeSessionId,
+              objective: command.kind === "set" ? command.objective : undefined,
+              status:
+                command.kind === "pause"
+                  ? "paused"
+                  : command.kind === "resume"
+                    ? "active"
+                    : "active"
+            });
+      if (!receipt.accepted) {
+        throw new Error("The current runtime rejected the goal request.");
+      }
+      input.onStatusNotice({
+        message:
+          command.kind === "clear"
+            ? "Goal cleared."
+            : command.kind === "pause"
+              ? "Goal paused."
+              : command.kind === "resume"
+                ? "Goal resumed."
+                : "Goal set.",
+        source: "send"
+      });
+      return true;
+    } catch (error) {
+      input.onStatusNotice({
+        message: `Goal failed: ${(error as Error).message}`,
+        persistent: true,
+        source: "send",
+        ...statusNoticeErrorDetails(error)
+      });
+      return false;
+    } finally {
+      setIsDispatching(false);
+    }
+  };
+
   const onPrimaryAction = async (): Promise<void> => {
     if (!canSubmit) {
+      return;
+    }
+    const goalCommand = parseGoalSlashCommand(draft);
+    if (goalCommand?.kind === "empty") {
+      input.onStatusNotice({
+        message: "Add a goal after /goal.",
+        source: "send"
+      });
+      return;
+    }
+    const goalBlockReason = goalCommandBlockedReason(
+      goalCommand,
+      input.threadGoal,
+      input.isTakeoverManaged
+    );
+    if (goalBlockReason) {
+      input.onStatusNotice({
+        message: goalBlockReason,
+        source: "send"
+      });
+      return;
+    }
+    if (goalCommand?.kind === "edit") {
+      return;
+    }
+    if (goalCommand) {
+      if (
+        selectedSkillsRef.current.length > 0 ||
+        attachmentsRef.current.length > 0
+      ) {
+        input.onStatusNotice({
+          message: "Goal commands only use the text after /goal.",
+          source: "send"
+        });
+        return;
+      }
+      const succeeded = await dispatchGoalCommand(goalCommand);
+      if (!succeeded) {
+        return;
+      }
+      onDraftChange("");
       return;
     }
     if (intent === "queue") {

@@ -901,11 +901,13 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
     if (!threadId) {
       return undefined;
     }
+    this.codexRuntimePort.attachThreadToSession(entry.sessionId, threadId);
     const thread = await this.codexRuntimePort.resumeThread(threadId);
     if (input.isCancelled?.()) {
       return undefined;
     }
     this.codexRuntimePort.attachThreadToSession(entry.sessionId, thread.id);
+    await this.refreshThreadGoal(entry.sessionId);
     const workspaceId = entry.workspaceId;
     const conversation = parseConversation({
       conversationId: entry.conversationId,
@@ -1004,6 +1006,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
       turns: turnsPage.data
     };
     this.codexRuntimePort.attachThreadToSession(entry.sessionId, thread.id);
+    await this.refreshThreadGoal(entry.sessionId);
     const workspaceId = entry.workspaceId;
     const conversation = parseConversation({
       conversationId: entry.conversationId,
@@ -1075,6 +1078,12 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
       cursor = response.nextCursor;
     } while (cursor);
     return threads;
+  }
+
+  private async refreshThreadGoal(sessionId: string): Promise<void> {
+    await this.codexRuntimePort
+      .refreshThreadGoalForSession?.(sessionId)
+      .catch(() => undefined);
   }
 
   private async readThreadWithTurnsForDiscovery(thread: Thread): Promise<Thread> {

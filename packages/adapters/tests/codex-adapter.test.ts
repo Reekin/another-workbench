@@ -99,6 +99,52 @@ describe("CodexAdapter", () => {
     expect(runtimePort.requests[0].params.type).toBe("steerTurn");
   });
 
+  it("maps thread goal commands to codex goal runtime methods", async () => {
+    const runtimePort = new FakeCodexRuntimePort();
+    const adapter = new CodexAdapter({
+      runtimePort,
+      fallbackAgentId: "codex-agent"
+    });
+
+    await adapter.initialize();
+    await adapter.executeCommand({
+      commandId: "cmd-goal-set",
+      command: {
+        type: "setThreadGoal",
+        sessionId: "session-1",
+        objective: "Finish the protocol bridge",
+        status: "active",
+        tokenBudget: 12000
+      }
+    });
+    await adapter.executeCommand({
+      commandId: "cmd-goal-clear",
+      command: {
+        type: "clearThreadGoal",
+        sessionId: "session-1"
+      }
+    });
+
+    expect(runtimePort.requests).toHaveLength(2);
+    expect(runtimePort.requests[0]).toMatchObject({
+      method: "thread/goal/set",
+      params: {
+        type: "setThreadGoal",
+        sessionId: "session-1",
+        objective: "Finish the protocol bridge",
+        status: "active",
+        tokenBudget: 12000
+      }
+    });
+    expect(runtimePort.requests[1]).toMatchObject({
+      method: "thread/goal/clear",
+      params: {
+        type: "clearThreadGoal",
+        sessionId: "session-1"
+      }
+    });
+  });
+
   it("maps runtime events to shared envelopes with actor fallback", async () => {
     const runtimePort = new FakeCodexRuntimePort();
     const adapter = new CodexAdapter({
@@ -215,5 +261,55 @@ describe("CodexAdapter", () => {
     });
 
     expect(received).toEqual(["session-a"]);
+  });
+
+  it("maps thread goal runtime events into shared envelopes", async () => {
+    const runtimePort = new FakeCodexRuntimePort();
+    const adapter = new CodexAdapter({
+      runtimePort,
+      fallbackAgentId: "codex-agent"
+    });
+    const received: string[] = [];
+
+    await adapter.initialize();
+    adapter.subscribe((envelope) => {
+      if (
+        envelope.event.type === "thread.goal.updated" ||
+        envelope.event.type === "thread.goal.cleared"
+      ) {
+        received.push(envelope.event.type);
+      }
+    });
+
+    runtimePort.emit({
+      method: "thread.goal.updated",
+      params: {
+        sessionId: "session-a",
+        threadId: "thread-a",
+        goal: {
+          sessionId: "session-a",
+          threadId: "thread-a",
+          objective: "Ship the goal UI",
+          status: "active",
+          tokensUsed: 10,
+          timeUsedSeconds: 2,
+          createdAt: 1700000000000,
+          updatedAt: 1700000001000
+        }
+      },
+      eventId: "evt-goal-updated",
+      cursor: "4"
+    });
+    runtimePort.emit({
+      method: "thread.goal.cleared",
+      params: {
+        sessionId: "session-a",
+        threadId: "thread-a"
+      },
+      eventId: "evt-goal-cleared",
+      cursor: "5"
+    });
+
+    expect(received).toEqual(["thread.goal.updated", "thread.goal.cleared"]);
   });
 });

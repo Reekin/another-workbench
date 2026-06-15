@@ -35,6 +35,11 @@ import type { ThreadListParams } from "./codex-app-server-generated/v2/ThreadLis
 import type { ThreadListResponse } from "./codex-app-server-generated/v2/ThreadListResponse.js";
 import type { ThreadForkParams } from "./codex-app-server-generated/v2/ThreadForkParams.js";
 import type { ThreadForkResponse } from "./codex-app-server-generated/v2/ThreadForkResponse.js";
+import type { ThreadGoal } from "./codex-app-server-generated/v2/ThreadGoal.js";
+import type { ThreadGoalClearParams } from "./codex-app-server-generated/v2/ThreadGoalClearParams.js";
+import type { ThreadGoalGetParams } from "./codex-app-server-generated/v2/ThreadGoalGetParams.js";
+import type { ThreadGoalGetResponse } from "./codex-app-server-generated/v2/ThreadGoalGetResponse.js";
+import type { ThreadGoalSetParams } from "./codex-app-server-generated/v2/ThreadGoalSetParams.js";
 import type { ThreadReadParams } from "./codex-app-server-generated/v2/ThreadReadParams.js";
 import type { ThreadReadResponse } from "./codex-app-server-generated/v2/ThreadReadResponse.js";
 import type { ThreadResumeParams } from "./codex-app-server-generated/v2/ThreadResumeParams.js";
@@ -339,6 +344,16 @@ const resolveApprovalDecision = (
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const isThreadGoalStatus = (
+  value: unknown
+): value is ThreadGoal["status"] =>
+  value === "active" ||
+  value === "paused" ||
+  value === "blocked" ||
+  value === "usageLimited" ||
+  value === "budgetLimited" ||
+  value === "complete";
 
 const optionalString = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
@@ -980,6 +995,24 @@ export class CodexAppServerRuntimePort
             accepted: true
           }
         };
+      case "thread/goal/set":
+        await this.handleThreadGoalSet(payload);
+        return {
+          id: payload.id,
+          ok: true,
+          result: {
+            accepted: true
+          }
+        };
+      case "thread/goal/clear":
+        await this.handleThreadGoalClear(payload);
+        return {
+          id: payload.id,
+          ok: true,
+          result: {
+            accepted: true
+          }
+        };
       case "interaction/respond":
         await this.handleInteractionResponse(payload);
         return {
@@ -1046,6 +1079,37 @@ export class CodexAppServerRuntimePort
       includeTurns
     } satisfies ThreadReadParams)) as ThreadReadResponse;
     return result.thread;
+  }
+
+  public async refreshThreadGoalForSession(
+    sessionId: string
+  ): Promise<ThreadGoal | null> {
+    const threadId = this.threadIdBySessionId.get(sessionId);
+    if (!threadId) {
+      return null;
+    }
+    await this.start(this.startConfig);
+    const result = (await this.rpc("thread/goal/get", {
+      threadId
+    } satisfies ThreadGoalGetParams)) as ThreadGoalGetResponse;
+    if (!result.goal) {
+      this.emitEvent("thread.goal.cleared", {
+        sessionId,
+        threadId
+      });
+      return null;
+    }
+    const goal = this.mapThreadGoal(sessionId, result.goal, null);
+    if (!goal) {
+      return null;
+    }
+    this.emitEvent("thread.goal.updated", {
+      sessionId,
+      threadId,
+      turnId: null,
+      goal
+    });
+    return result.goal;
   }
 
   public async listThreadTurns(input: {
@@ -1310,6 +1374,58 @@ export class CodexAppServerRuntimePort
       threadId,
       turnId
     } satisfies TurnInterruptParams);
+  }
+
+  private async handleThreadGoalSet(payload: CodexRuntimeRequest): Promise<void> {
+    const sessionId = String(payload.params.sessionId ?? "");
+    if (!sessionId) {
+      return;
+    }
+    const cwd =
+      typeof payload.params.cwd === "string" && payload.params.cwd.trim().length > 0
+        ? payload.params.cwd
+        : undefined;
+    const objective =
+      typeof payload.params.objective === "string"
+        ? payload.params.objective
+        : undefined;
+    const hasObjective = objective !== undefined;
+    const existingThreadId = this.threadIdBySessionId.get(sessionId);
+    if (!hasObjective && !existingThreadId) {
+      throw new Error(
+        `Cannot update goal status before session is attached: ${sessionId}`
+      );
+    }
+    const threadId = existingThreadId ?? (await this.ensureThreadForSession(sessionId, cwd));
+    const params: ThreadGoalSetParams = {
+      threadId
+    };
+    if (objective !== undefined) {
+      params.objective = objective;
+    }
+    if (isThreadGoalStatus(payload.params.status)) {
+      params.status = payload.params.status;
+    }
+    if (payload.params.tokenBudget === null) {
+      params.tokenBudget = null;
+    } else if (typeof payload.params.tokenBudget === "number") {
+      params.tokenBudget = payload.params.tokenBudget;
+    }
+    await this.rpc("thread/goal/set", params);
+  }
+
+  private async handleThreadGoalClear(payload: CodexRuntimeRequest): Promise<void> {
+    const sessionId = String(payload.params.sessionId ?? "");
+    if (!sessionId) {
+      return;
+    }
+    const threadId = this.threadIdBySessionId.get(sessionId);
+    if (!threadId) {
+      throw new Error(`Cannot clear goal before session is attached: ${sessionId}`);
+    }
+    await this.rpc("thread/goal/clear", {
+      threadId
+    } satisfies ThreadGoalClearParams);
   }
 
   private async handleApprovalResponse(payload: CodexRuntimeRequest): Promise<void> {
@@ -1920,6 +2036,35 @@ export class CodexAppServerRuntimePort
         this.emitEvent("session.context.updated", {
           sessionId,
           contextUsage
+        });
+        return;
+      }
+      case "thread/goal/updated": {
+        const threadId = typeof params.threadId === "string" ? params.threadId : "";
+        const sessionId = this.resolveSessionIdFromThreadId(threadId);
+        const goal = isRecord(params.goal)
+          ? this.mapThreadGoal(sessionId, params.goal, params.turnId)
+          : undefined;
+        if (!sessionId || !goal) {
+          return;
+        }
+        this.emitEvent("thread.goal.updated", {
+          sessionId,
+          threadId,
+          turnId: typeof params.turnId === "string" ? params.turnId : null,
+          goal
+        });
+        return;
+      }
+      case "thread/goal/cleared": {
+        const threadId = typeof params.threadId === "string" ? params.threadId : "";
+        const sessionId = this.resolveSessionIdFromThreadId(threadId);
+        if (!sessionId || !threadId) {
+          return;
+        }
+        this.emitEvent("thread.goal.cleared", {
+          sessionId,
+          threadId
         });
         return;
       }
@@ -2849,6 +2994,39 @@ export class CodexAppServerRuntimePort
       return undefined;
     }
     return this.sessionIdByThreadId.get(rawThreadId);
+  }
+
+  private mapThreadGoal(
+    sessionId: string | undefined,
+    rawGoal: Record<string, unknown>,
+    rawTurnId: unknown
+  ): (ThreadGoal & { sessionId: string; turnId: string | null }) | undefined {
+    if (!sessionId) {
+      return undefined;
+    }
+    if (
+      typeof rawGoal.threadId !== "string" ||
+      typeof rawGoal.objective !== "string" ||
+      !isThreadGoalStatus(rawGoal.status) ||
+      typeof rawGoal.tokensUsed !== "number" ||
+      typeof rawGoal.timeUsedSeconds !== "number" ||
+      typeof rawGoal.createdAt !== "number" ||
+      typeof rawGoal.updatedAt !== "number"
+    ) {
+      return undefined;
+    }
+    return {
+      sessionId,
+      threadId: rawGoal.threadId,
+      objective: rawGoal.objective,
+      status: rawGoal.status,
+      tokenBudget: typeof rawGoal.tokenBudget === "number" ? rawGoal.tokenBudget : null,
+      tokensUsed: rawGoal.tokensUsed,
+      timeUsedSeconds: rawGoal.timeUsedSeconds,
+      createdAt: rawGoal.createdAt,
+      updatedAt: rawGoal.updatedAt,
+      turnId: typeof rawTurnId === "string" ? rawTurnId : null
+    };
   }
 
   private setActiveTurnForThread(threadId: string, turnId: string): void {

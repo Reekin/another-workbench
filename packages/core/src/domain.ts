@@ -8,6 +8,7 @@ import type {
   RuntimeInteraction,
   SessionRelation,
   TerminalStream,
+  ThreadGoal,
   ToolCall,
   Turn
 } from "@another-workbench/shared";
@@ -27,6 +28,7 @@ export type DomainIndexes = {
   approvalById: Map<ApprovalRequest["requestId"], ApprovalRequest>;
   runtimeInteractionById: Map<RuntimeInteraction["requestId"], RuntimeInteraction>;
   participantById: Map<AgentParticipant["participantId"], AgentParticipant>;
+  threadGoalBySessionId: Map<ChatSession["sessionId"], ThreadGoal>;
   parentSessionIdByChild: Map<ChatSession["sessionId"], ChatSession["sessionId"]>;
   childSessionIdsByParent: Map<ChatSession["sessionId"], ChatSession["sessionId"][]>;
 };
@@ -65,6 +67,9 @@ export const buildDomainIndexes = (snapshot: DomainSnapshot): DomainIndexes => {
       participant.participantId,
       participant
     ])
+  );
+  const threadGoalBySessionId = new Map(
+    snapshot.threadGoals.map((goal) => [goal.sessionId, goal])
   );
   const messageBlocksByMessageId = new Map<MessageBlock["messageId"], MessageBlock[]>();
   for (const block of snapshot.messageBlocks) {
@@ -105,6 +110,7 @@ export const buildDomainIndexes = (snapshot: DomainSnapshot): DomainIndexes => {
     approvalById,
     runtimeInteractionById,
     participantById,
+    threadGoalBySessionId,
     parentSessionIdByChild,
     childSessionIdsByParent
   };

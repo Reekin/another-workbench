@@ -872,12 +872,14 @@ describe("Session discovery and reconciliation", () => {
       data: [rootThread, childThread],
       nextCursor: null
     });
+    const refreshThreadGoalForSession = vi.fn().mockResolvedValue(null);
 
     const provider = new CodexSessionDiscoveryProvider({
       codexRuntimePort: {
         listThreads,
         resumeThread,
-        attachThreadToSession
+        attachThreadToSession,
+        refreshThreadGoalForSession
       } as never
     });
 
@@ -929,6 +931,9 @@ describe("Session discovery and reconciliation", () => {
     expect(attachThreadToSession).toHaveBeenCalledWith(
       "codex-thread:thread-root",
       "thread-root"
+    );
+    expect(refreshThreadGoalForSession).toHaveBeenCalledWith(
+      "codex-thread:thread-root"
     );
     expect(runtimeService.listSessions({ includeArchived: true })).toEqual([
       expect.objectContaining({

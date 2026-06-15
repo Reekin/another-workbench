@@ -97,7 +97,7 @@ export const createSmartTakeoverHostTool = (
   namespace: smartTakeoverToolNamespace,
   name: smartTakeoverToolName,
   description:
-    "Let another agent act as the user to supervise this session. Before starting takeover, call SmartTakeover with action=\"help\" to learn the required usage and context format.",
+    "Let another agent act as the user to supervise this session. Before starting takeover, call SmartTakeover with action=\"help\" to learn the required usage and context format. SmartTakeover is mutually exclusive with Codex goals: do not use goal while takeover is enabled, and do not start takeover while a goal is active.",
   inputSchema: createSmartTakeoverInputSchemaResolver(options),
   deferLoading: false,
   isAvailable: options.isAvailable,

@@ -91,6 +91,13 @@ const composerSlashSuggestionsByCapability: Partial<
       "Summarize the available checkpoints and explain what changed since the latest one.",
     sourceCapability: "checkpoint"
   },
+  goal: {
+    id: "goal",
+    label: "/goal",
+    detail: "Set the current Codex goal",
+    replacement: "/goal",
+    sourceCapability: "goal"
+  },
   delegation: {
     id: "delegation",
     label: "/delegation",
@@ -1107,6 +1114,9 @@ export class WorkbenchShellService {
       runtimeInteractions: (snapshot.runtimeInteractions ?? []).filter(
         (interaction) => interaction.sessionId === sessionId
       ),
+      threadGoals: (snapshot.threadGoals ?? []).filter(
+        (goal) => goal.sessionId === sessionId
+      ),
       participants,
       sessionRelations,
       hasOlder: hydrated.hasOlder,
@@ -1209,6 +1219,9 @@ export class WorkbenchShellService {
       ),
       runtimeInteractions: (snapshot.runtimeInteractions ?? []).filter(
         (interaction) => interaction.sessionId === sessionId
+      ),
+      threadGoals: (snapshot.threadGoals ?? []).filter(
+        (goal) => goal.sessionId === sessionId
       ),
       participants: snapshot.participants.filter(
         (participant) => participant.conversationId === conversation.conversationId

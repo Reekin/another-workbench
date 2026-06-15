@@ -182,6 +182,7 @@ export const createWorkbenchRuntimeService = (
           "approval",
           "attachments",
           "conversationGraph",
+          "goal",
           "delegation",
           "checkpoint",
           "worktree",

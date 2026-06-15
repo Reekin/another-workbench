@@ -11,10 +11,10 @@ import type {
   AcpRuntimeResponse
 } from "./types.js";
 
-const acpMethodByCommandType: Record<
+const acpMethodByCommandType: Partial<Record<
   CommandEnvelope["command"]["type"],
   AcpRuntimeRequest["method"]
-> = {
+>> = {
   initialize: "agent.initialize",
   createSession: "session.create",
   listSessions: "session.list",
@@ -72,8 +72,10 @@ export class AcpMapper
     envelope: CommandEnvelope,
     _context: AdapterMapperContext
   ): AcpRuntimeRequest {
-    const method: AcpRuntimeRequest["method"] =
-      acpMethodByCommandType[envelope.command.type];
+    const method = acpMethodByCommandType[envelope.command.type];
+    if (!method) {
+      throw new Error(`ACP adapter does not support ${envelope.command.type}.`);
+    }
     return {
       id: envelope.commandId,
       method,

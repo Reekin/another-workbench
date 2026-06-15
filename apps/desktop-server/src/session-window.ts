@@ -8,6 +8,7 @@ import type {
   RuntimeInteraction,
   SessionRelation,
   TerminalStream,
+  ThreadGoal,
   ToolCall,
   Turn
 } from "@another-workbench/shared";
@@ -33,6 +34,7 @@ type BuildSessionWindowInput = {
   terminalStreams: TerminalStream[];
   approvalRequests: ApprovalRequest[];
   runtimeInteractions: RuntimeInteraction[];
+  threadGoals: ThreadGoal[];
   participants: AgentParticipant[];
   sessionRelations: SessionRelation[];
   limit: number;
@@ -117,6 +119,9 @@ export const buildSessionWindowSnapshot = (
           new Set(),
           new Set()
         ),
+        threadGoals: (input.threadGoals ?? []).filter(
+          (goal) => goal.sessionId === input.sessionId
+        ),
         participants: input.participants,
         sessionRelations: input.sessionRelations
       },
@@ -191,6 +196,9 @@ export const buildSessionWindowSnapshot = (
         turnIds,
         interactionRequestIds
       ),
+      threadGoals: (input.threadGoals ?? []).filter(
+        (goal) => goal.sessionId === input.sessionId
+      ),
       participants: input.participants,
       sessionRelations: input.sessionRelations
     }
@@ -243,6 +251,9 @@ export const buildSessionWindowSnapshotFromPage = (
         input.sessionId,
         turnIds,
         interactionRequestIds
+      ),
+      threadGoals: (input.threadGoals ?? []).filter(
+        (goal) => goal.sessionId === input.sessionId
       ),
       participants: input.participants,
       sessionRelations: input.sessionRelations

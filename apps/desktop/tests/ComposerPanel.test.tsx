@@ -138,6 +138,68 @@ describe("ComposerPanel", () => {
     expect(html).not.toContain("awb-composer-context__track");
   });
 
+  it("renders the goal badge as passive status text", () => {
+    const html = renderToStaticMarkup(
+      <ComposerPanel
+        isDropTarget={false}
+        fileInputRef={{ current: null }}
+        textareaRef={{ current: null }}
+        draft=""
+        selectedSkills={[]}
+        attachments={[]}
+        queue={[]}
+        suggestions={undefined}
+        status={{ kind: "idle", label: "Ready" }}
+        threadGoal={{
+          sessionId: "session-1",
+          threadId: "thread-1",
+          objective: "Keep the goal badge tidy",
+          status: "active",
+          tokenBudget: 12000,
+          tokensUsed: 4000,
+          timeUsedSeconds: 10,
+          createdAt: 1700000000000,
+          updatedAt: 1700000001000
+        }}
+        intent="send"
+        supportsSteer={true}
+        supportsAttachments={true}
+        canSubmit={true}
+        canQueue={false}
+        canStop={false}
+        isDispatching={false}
+        onTextareaChange={() => undefined}
+        onTextareaSelect={() => undefined}
+        onInputKeyDown={async () => undefined}
+        onPaste={() => undefined}
+        onFileInputChange={() => undefined}
+        onDragEnter={() => undefined}
+        onDragOver={() => undefined}
+        onDragLeave={() => undefined}
+        onDrop={() => undefined}
+        onRemoveSkill={() => undefined}
+        onRemoveAttachment={() => undefined}
+        onPreviewAttachment={() => undefined}
+        onPickAttachments={() => undefined}
+        onPrimaryAction={async () => undefined}
+        onQueueCurrent={() => undefined}
+        onStop={async () => undefined}
+        onSuggestionHover={() => undefined}
+        onSuggestionSelect={async () => undefined}
+        onEditQueuedMessage={() => undefined}
+        onDeleteQueuedMessage={() => undefined}
+        onSendQueuedMessageNow={async () => undefined}
+        onSteerQueuedMessageNow={async () => undefined}
+      />
+    );
+
+    expect(html).toContain("Keep the goal badge tidy");
+    expect(html).toContain("4.0k/12.0k");
+    expect(html).toContain('class="awb-composer-goal awb-composer-goal--active"');
+    expect(html).not.toContain("tabindex");
+    expect(html).not.toContain("awb-composer-takeover__button");
+  });
+
   it("renders pending approval controls above the editor", () => {
     const html = renderToStaticMarkup(
       <ComposerPanel

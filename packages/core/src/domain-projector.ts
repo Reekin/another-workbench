@@ -8,6 +8,7 @@ import {
   parseMessageBlock,
   parseRuntimeInteraction,
   parseRuntimeEvent,
+  parseThreadGoal,
   parseToolCall,
   parseTurn
 } from "@another-workbench/shared";
@@ -691,6 +692,21 @@ export class DomainProjector {
         if (event.turnId) {
           this.appendTurnCollection(event.turnId, "interactionRequestIds", event.requestId, timestamp);
         }
+        return;
+      }
+      case "thread.goal.updated": {
+        this.store.upsertThreadGoal(
+          parseThreadGoal({
+            ...event.goal,
+            sessionId: event.sessionId,
+            threadId: event.threadId,
+            turnId: event.turnId ?? event.goal.turnId
+          })
+        );
+        return;
+      }
+      case "thread.goal.cleared": {
+        this.store.deleteThreadGoal(event.sessionId);
         return;
       }
       case "runtime.error": {

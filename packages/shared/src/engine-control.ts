@@ -17,6 +17,7 @@ export const zEngineSharedCapabilitySchema = z.enum([
   "approval",
   "attachments",
   "conversationGraph",
+  "goal",
   "delegation",
   "checkpoint",
   "worktree",

@@ -31,6 +31,7 @@ import type {
   TakeoverPresetDocumentRpc,
   TakeoverPresetSummaryRpc,
   TakeoverSessionStateRpc,
+  ThreadGoalStatus,
   WorkspaceFileSearchResultRpc,
   WorkbenchClientApi,
   EventEnvelope,
@@ -113,6 +114,17 @@ export type ChatSteerInput = {
   content: string;
   messageId?: string;
   attachments?: Attachment[];
+};
+
+export type ChatSetGoalInput = {
+  sessionId: string;
+  objective?: string;
+  status?: ThreadGoalStatus;
+  tokenBudget?: number | null;
+};
+
+export type ChatClearGoalInput = {
+  sessionId: string;
 };
 
 export type ApprovalRespondInput = {
@@ -323,6 +335,8 @@ export type DesktopTransport = {
     send: (input: ChatSendInput) => Promise<CommandReceipt>;
     steer: (input: ChatSteerInput) => Promise<CommandReceipt>;
     interrupt: (input: ChatInterruptInput) => Promise<CommandReceipt>;
+    setGoal: (input: ChatSetGoalInput) => Promise<CommandReceipt>;
+    clearGoal: (input: ChatClearGoalInput) => Promise<CommandReceipt>;
     getCapabilities: (sessionId: string) => Promise<ChatInteractionCapabilitiesRpc>;
   };
   skills: {
@@ -904,6 +918,19 @@ export const createDesktopTransport = (
           sessionId: input.sessionId,
           turnId: input.turnId,
           reason: input.reason
+        }),
+      setGoal: (input: ChatSetGoalInput) =>
+        sendCommand({
+          type: "setThreadGoal",
+          sessionId: input.sessionId,
+          ...(input.objective !== undefined ? { objective: input.objective } : {}),
+          ...(input.status !== undefined ? { status: input.status } : {}),
+          ...(input.tokenBudget !== undefined ? { tokenBudget: input.tokenBudget } : {})
+        }),
+      clearGoal: (input: ChatClearGoalInput) =>
+        sendCommand({
+          type: "clearThreadGoal",
+          sessionId: input.sessionId
         }),
       getCapabilities: async (sessionId: string) => {
         const result = await rpc.request("chat.getCapabilities", {

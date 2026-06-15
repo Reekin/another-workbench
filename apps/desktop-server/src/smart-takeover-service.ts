@@ -107,6 +107,9 @@ const textResult = (text: string, success = true): HostToolResult => ({
 const alreadyManagedStartMessage = (sessionId: string): string =>
   `SmartTakeover start failed: session ${sessionId} is already managed. To change presetId or context, call SmartTakeover with action="stop" first, then call action="start" again. Usually a task should call SmartTakeover only once at the beginning; the original global context is reused for later reviews and does not need to be updated. Think carefully about whether restarting takeover is really necessary.`;
 
+const goalConflictMessage = (sessionId: string): string =>
+  `SmartTakeover start failed: session ${sessionId} has an active goal. SmartTakeover is mutually exclusive with goals; clear the goal before enabling takeover.`;
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -398,7 +401,8 @@ export class SmartTakeoverService {
       createSmartTakeoverHostTool({
         isAvailable: (context) =>
           !this.isActiveTakeoverRun(context.sessionId) &&
-          !this.isActiveParentRun(context.sessionId),
+          !this.isActiveParentRun(context.sessionId) &&
+          !this.hasThreadGoal(context.sessionId),
         presetIdDescription: () => this.buildPresetIdInputDescription(),
         onRequest: (request) => this.handleSmartTakeover(request)
       }),
@@ -474,6 +478,7 @@ export class SmartTakeoverService {
       return this.getSessionState(input.sessionId);
     }
 
+    this.assertNoThreadGoalForTakeover(input.sessionId);
     await this.enableTakeover({
       parentSessionId: input.sessionId,
       args: {
@@ -561,6 +566,19 @@ export class SmartTakeoverService {
         }
       })
       .catch(() => undefined);
+  }
+
+  private hasThreadGoal(sessionId: string): boolean {
+    const snapshot = this.runtimeService.getSnapshot?.();
+    return (snapshot?.threadGoals ?? []).some(
+      (goal) => goal.sessionId === sessionId
+    );
+  }
+
+  private assertNoThreadGoalForTakeover(sessionId: string): void {
+    if (this.hasThreadGoal(sessionId)) {
+      throw new Error(goalConflictMessage(sessionId));
+    }
   }
 
   private resolveTakeoverMetadata(
@@ -673,6 +691,10 @@ export class SmartTakeoverService {
           "SmartTakeover start failed: presetId is required. Choose one of the available takeover presets and pass its presetId explicitly.",
           false
         );
+      }
+
+      if (this.hasThreadGoal(request.parentSessionId)) {
+        return textResult(goalConflictMessage(request.parentSessionId), false);
       }
 
       const existingConfig = this.takeoverConfigByParentSessionId.get(

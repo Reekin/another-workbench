@@ -67,6 +67,15 @@ export const zRuntimeInteractionKind = z.enum([
 
 export const zParticipantRole = z.enum(["primary", "secondary", "observer"]);
 
+export const zThreadGoalStatus = z.enum([
+  "active",
+  "paused",
+  "blocked",
+  "usageLimited",
+  "budgetLimited",
+  "complete"
+]);
+
 export const zSessionRelationType = z.enum([
   "fork",
   "subagent",
@@ -222,6 +231,19 @@ export const zAgentParticipantSchema = z.object({
   metadata: zJsonRecord.optional()
 });
 
+export const zThreadGoalSchema = z.object({
+  sessionId: zSessionId,
+  threadId: z.string().min(1),
+  objective: z.string().min(1),
+  status: zThreadGoalStatus,
+  tokenBudget: z.number().int().positive().nullable().optional(),
+  tokensUsed: z.number().int().nonnegative(),
+  timeUsedSeconds: z.number().int().nonnegative(),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
+  turnId: zTurnId.nullable().optional()
+});
+
 export const zSessionRelationSchema = z.object({
   relationId: z.string().min(1),
   parentSessionId: zSessionId,
@@ -242,6 +264,7 @@ export const zDomainSnapshotSchema = z.object({
   approvalRequests: z.array(zApprovalRequestSchema).default([]),
   runtimeInteractions: z.array(zRuntimeInteractionSchema).optional(),
   participants: z.array(zAgentParticipantSchema).default([]),
+  threadGoals: z.array(zThreadGoalSchema).default([]),
   sessionRelations: z.array(zSessionRelationSchema).default([])
 });
 
@@ -257,6 +280,7 @@ export type ApprovalKind = z.infer<typeof zApprovalKind>;
 export type RuntimeInteractionStatus = z.infer<typeof zRuntimeInteractionStatus>;
 export type RuntimeInteractionKind = z.infer<typeof zRuntimeInteractionKind>;
 export type ParticipantRole = z.infer<typeof zParticipantRole>;
+export type ThreadGoalStatus = z.infer<typeof zThreadGoalStatus>;
 export type SessionRelationType = z.infer<typeof zSessionRelationType>;
 export type ContextUsage = z.infer<typeof zContextUsageSchema>;
 
@@ -269,6 +293,7 @@ export type TerminalStream = z.infer<typeof zTerminalStreamSchema>;
 export type ApprovalRequest = z.infer<typeof zApprovalRequestSchema>;
 export type RuntimeInteraction = z.infer<typeof zRuntimeInteractionSchema>;
 export type AgentParticipant = z.infer<typeof zAgentParticipantSchema>;
+export type ThreadGoal = z.infer<typeof zThreadGoalSchema>;
 export type SessionRelation = z.infer<typeof zSessionRelationSchema>;
 export type DomainSnapshot = z.infer<typeof zDomainSnapshotSchema>;
 
@@ -289,6 +314,8 @@ export const parseRuntimeInteraction = (value: unknown): RuntimeInteraction =>
   zRuntimeInteractionSchema.parse(value);
 export const parseAgentParticipant = (value: unknown): AgentParticipant =>
   zAgentParticipantSchema.parse(value);
+export const parseThreadGoal = (value: unknown): ThreadGoal =>
+  zThreadGoalSchema.parse(value);
 export const parseSessionRelation = (value: unknown): SessionRelation =>
   zSessionRelationSchema.parse(value);
 export const parseDomainSnapshot = (value: unknown): DomainSnapshot =>

@@ -7,6 +7,7 @@ import type {
   RuntimeInteraction,
   SessionRelation,
   TerminalStream,
+  ThreadGoal,
   ToolCall,
   Turn
 } from "@another-workbench/shared";
@@ -44,6 +45,7 @@ export const createEmptyEntities = (): RendererEntities => ({
   approvalRequests: {},
   runtimeInteractions: {},
   participants: {},
+  threadGoals: {},
   sessionRelations: {}
 });
 
@@ -213,6 +215,35 @@ export const upsertParticipant = (
     )
   }
 });
+
+export const upsertThreadGoal = (
+  state: RendererStoreState,
+  goal: ThreadGoal
+): RendererStoreState => ({
+  ...state,
+  entities: {
+    ...state.entities,
+    threadGoals: put(state.entities.threadGoals, goal.sessionId, goal)
+  }
+});
+
+export const deleteThreadGoal = (
+  state: RendererStoreState,
+  sessionId: string
+): RendererStoreState => {
+  if (!(sessionId in state.entities.threadGoals)) {
+    return state;
+  }
+  const nextThreadGoals = { ...state.entities.threadGoals };
+  delete nextThreadGoals[sessionId];
+  return {
+    ...state,
+    entities: {
+      ...state.entities,
+      threadGoals: nextThreadGoals
+    }
+  };
+};
 
 export const upsertSessionRelation = (
   state: RendererStoreState,

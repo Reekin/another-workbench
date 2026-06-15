@@ -223,6 +223,9 @@ export class RuntimeOrchestrator {
       }
       case "interruptTurn":
         return this.forwardSessionCommand(envelope.command.sessionId, envelope);
+      case "setThreadGoal":
+      case "clearThreadGoal":
+        return this.forwardSessionCommand(envelope.command.sessionId, envelope);
       case "respondApproval":
       case "respondInteraction":
         return this.forwardSessionCommand(envelope.command.sessionId, envelope);

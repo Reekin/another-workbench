@@ -17,7 +17,8 @@ import {
 import {
   zContextUsageSchema,
   zMessagePhase,
-  zSessionRelationSchema
+  zSessionRelationSchema,
+  zThreadGoalSchema
 } from "./domain.js";
 
 export const eventTypes = [
@@ -42,6 +43,8 @@ export const eventTypes = [
   "approval.resolved",
   "interaction.requested",
   "interaction.resolved",
+  "thread.goal.updated",
+  "thread.goal.cleared",
   "engineExtension.updated",
   "conversationGraph.updated",
   "participant.updated",
@@ -258,6 +261,20 @@ const zInteractionResolvedEvent = z
     ...zActorFields
   });
 
+const zThreadGoalUpdatedEvent = z.object({
+  type: z.literal("thread.goal.updated"),
+  sessionId: zSessionId,
+  threadId: z.string().min(1),
+  turnId: zTurnId.nullable().optional(),
+  goal: zThreadGoalSchema
+});
+
+const zThreadGoalClearedEvent = z.object({
+  type: z.literal("thread.goal.cleared"),
+  sessionId: zSessionId,
+  threadId: z.string().min(1)
+});
+
 const zParticipantUpdatedEvent = z.object({
   type: z.literal("participant.updated"),
   conversationId: zConversationId,
@@ -331,6 +348,8 @@ export const zEventSchema = z
     zApprovalResolvedEvent,
     zInteractionRequestedEvent,
     zInteractionResolvedEvent,
+    zThreadGoalUpdatedEvent,
+    zThreadGoalClearedEvent,
     zEngineExtensionUpdatedEvent,
     zConversationGraphUpdatedEvent,
     zParticipantUpdatedEvent,

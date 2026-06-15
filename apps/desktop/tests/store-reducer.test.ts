@@ -92,6 +92,51 @@ describe("desktop store reducer", () => {
     });
   });
 
+  it("stores and clears thread goals from incremental events", () => {
+    let state = createInitialRendererStoreState();
+
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-goal-updated", "1", {
+          type: "thread.goal.updated",
+          sessionId: "session-a",
+          threadId: "thread-a",
+          goal: {
+            sessionId: "session-a",
+            threadId: "thread-a",
+            objective: "Wire Codex goal state",
+            status: "active",
+            tokensUsed: 12,
+            timeUsedSeconds: 3,
+            createdAt: 1700000000000,
+            updatedAt: 1700000001000
+          }
+        })
+      )
+    );
+
+    expect(state.entities.threadGoals["session-a"]).toMatchObject({
+      sessionId: "session-a",
+      threadId: "thread-a",
+      objective: "Wire Codex goal state",
+      status: "active"
+    });
+
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-goal-cleared", "2", {
+          type: "thread.goal.cleared",
+          sessionId: "session-a",
+          threadId: "thread-a"
+        })
+      )
+    );
+
+    expect(state.entities.threadGoals["session-a"]).toBeUndefined();
+  });
+
   it("maintains conversation/turn aggregate links during incremental ingestion", () => {
     let state = createInitialRendererStoreState();
 

@@ -1826,6 +1826,7 @@ export const ChatShellApp = ({
     TakeoverSessionStateRpc | undefined
   >();
   const takeoverStateRequestRef = useRef(createTakeoverStateRequestState());
+  const goalTakeoverDisableRef = useRef<string | undefined>(undefined);
   const [takeoverContextCacheBySessionId, setTakeoverContextCacheBySessionId] =
     useState<Record<string, Record<string, string>>>({});
   const [isTakeoverMenuOpen, setIsTakeoverMenuOpen] = useState(false);
@@ -2002,6 +2003,9 @@ export const ChatShellApp = ({
   const activeSession = activeSessionId
     ? state.entities.sessions[activeSessionId]
     : undefined;
+  const activeThreadGoal = activeSessionId
+    ? state.entities.threadGoals[activeSessionId]
+    : undefined;
   const cacheTakeoverContext = useCallback(
     (sessionId?: string, presetId?: string, context?: string): void => {
       if (!sessionId || !presetId) {
@@ -2040,6 +2044,69 @@ export const ChatShellApp = ({
     setIsTakeoverMenuOpen(false);
     setIsTakeoverContextEditorOpen(false);
   }, [activeSessionId]);
+
+  useEffect(() => {
+    if (!activeThreadGoal) {
+      goalTakeoverDisableRef.current = undefined;
+      return;
+    }
+    setIsTakeoverMenuOpen(false);
+    setIsTakeoverContextEditorOpen(false);
+    if (
+      !transport ||
+      !activeSessionId ||
+      currentTakeoverState?.role !== "managed"
+    ) {
+      return;
+    }
+    const takeoverPresetId =
+      currentTakeoverState.presetId ?? currentTakeoverState.manualPresetId ?? "";
+    const disableKey = [
+      activeSessionId,
+      activeThreadGoal.updatedAt,
+      takeoverPresetId,
+      currentTakeoverState.active ? "active" : "idle"
+    ].join(":");
+    if (goalTakeoverDisableRef.current === disableKey) {
+      return;
+    }
+    goalTakeoverDisableRef.current = disableKey;
+    void transport.takeover
+      .setManual({ sessionId: activeSessionId })
+      .then((nextState) => {
+        if (activeSessionIdRef.current !== activeSessionId) {
+          return;
+        }
+        invalidateTakeoverStateRequestsForSession(
+          takeoverStateRequestRef.current,
+          activeSessionId
+        );
+        setTakeoverState(resolveCurrentTakeoverState(nextState, activeSessionId));
+        void refreshSessionBrowser({ mode: "visible" });
+        setStatusNotice({
+          message: "Takeover disabled while a goal is active.",
+          source: "takeover"
+        });
+      })
+      .catch((error) => {
+        setStatusNotice({
+          message: `Takeover disable failed: ${(error as Error).message}`,
+          persistent: true,
+          source: "takeover",
+          ...statusNoticeErrorDetails(error)
+        });
+      });
+  }, [
+    activeSessionId,
+    activeThreadGoal,
+    currentTakeoverState?.active,
+    currentTakeoverState?.manualPresetId,
+    currentTakeoverState?.presetId,
+    currentTakeoverState?.role,
+    refreshSessionBrowser,
+    setStatusNotice,
+    transport
+  ]);
 
   useEffect(() => {
     if (!transport) {
@@ -2597,6 +2664,14 @@ export const ChatShellApp = ({
       if (!transport || !activeSessionId) {
         return;
       }
+      if (presetId && activeThreadGoal) {
+        setIsTakeoverMenuOpen(false);
+        setStatusNotice({
+          message: "Takeover is unavailable while a goal is active.",
+          source: "takeover"
+        });
+        return;
+      }
       try {
         const currentPresetId =
           currentTakeoverState?.presetId ?? currentTakeoverState?.manualPresetId;
@@ -2640,6 +2715,7 @@ export const ChatShellApp = ({
     },
     [
       activeSessionId,
+      activeThreadGoal,
       cacheTakeoverContext,
       currentTakeoverState?.context,
       currentTakeoverState?.manualPresetId,
@@ -2668,6 +2744,14 @@ export const ChatShellApp = ({
       currentTakeoverState?.presetId ?? currentTakeoverState?.manualPresetId;
     if (!transport || !activeSessionId || !presetId) {
       setIsTakeoverContextEditorOpen(false);
+      return;
+    }
+    if (activeThreadGoal) {
+      setIsTakeoverContextEditorOpen(false);
+      setStatusNotice({
+        message: "Takeover is unavailable while a goal is active.",
+        source: "takeover"
+      });
       return;
     }
     const willRestartReview = currentTakeoverState?.active === true;
@@ -2718,6 +2802,7 @@ export const ChatShellApp = ({
     }
   }, [
     activeSessionId,
+    activeThreadGoal,
     cacheTakeoverContext,
     currentTakeoverState?.active,
     currentTakeoverState?.manualPresetId,
@@ -3107,6 +3192,7 @@ export const ChatShellApp = ({
             transport={transport}
             activeSession={activeSession}
             activeSessionId={activeSessionId}
+            threadGoal={activeThreadGoal}
             displayedSessionId={displayedSessionId}
             selectedEngineId={selectedEngineId}
             activeWorkspaceId={activeWorkspace?.workspaceId}

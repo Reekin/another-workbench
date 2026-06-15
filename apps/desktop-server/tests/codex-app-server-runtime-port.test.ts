@@ -254,6 +254,128 @@ describe("Codex app-server runtime port", () => {
     ]);
   });
 
+  it("refreshes persisted thread goals through thread/goal/get", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "awb-codex-goal-"));
+    const requestLogPath = join(tempDir, "requests.jsonl");
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+    const goalEvents: Array<Record<string, unknown>> = [];
+    port.subscribe((event) => {
+      if (event.method === "thread.goal.updated") {
+        goalEvents.push(event.params);
+      }
+    });
+
+    try {
+      await port.start({
+        env: {
+          FAKE_CODEX_REQUEST_LOG: requestLogPath,
+          FAKE_CODEX_THREAD_GOAL_OBJECTIVE: "Resume the persisted goal"
+        }
+      });
+      port.attachThreadToSession("session-goal", "thread-goal");
+
+      await expect(
+        port.refreshThreadGoalForSession("session-goal")
+      ).resolves.toMatchObject({
+        threadId: "thread-goal",
+        objective: "Resume the persisted goal",
+        status: "active"
+      });
+
+      expect(readRequestLog(requestLogPath)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "thread/goal/get",
+            params: {
+              threadId: "thread-goal"
+            }
+          })
+        ])
+      );
+      expect(goalEvents).toEqual([
+        expect.objectContaining({
+          sessionId: "session-goal",
+          threadId: "thread-goal",
+          goal: expect.objectContaining({
+            objective: "Resume the persisted goal"
+          })
+        })
+      ]);
+    } finally {
+      rmSync(tempDir, {
+        recursive: true,
+        force: true
+      });
+    }
+  });
+
+  it("rejects clear goal requests before a session is attached to a thread", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    await port.start();
+
+    await expect(
+      port.request({
+        id: "goal-clear-missing",
+        method: "thread/goal/clear",
+        params: {
+          sessionId: "session-missing"
+        }
+      })
+    ).rejects.toThrow("Cannot clear goal before session is attached");
+  });
+
+  it("rejects status-only goal updates without materializing a new thread", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "awb-codex-goal-status-"));
+    const requestLogPath = join(tempDir, "requests.jsonl");
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    try {
+      await port.start({
+        env: {
+          FAKE_CODEX_REQUEST_LOG: requestLogPath
+        }
+      });
+
+      await expect(
+        port.request({
+          id: "goal-pause-missing",
+          method: "thread/goal/set",
+          params: {
+            sessionId: "session-missing",
+            status: "paused"
+          }
+        })
+      ).rejects.toThrow("Cannot update goal status before session is attached");
+
+      expect(
+        readRequestLog(requestLogPath).some(
+          (request) => request.method === "thread/start"
+        )
+      ).toBe(false);
+    } finally {
+      rmSync(tempDir, {
+        recursive: true,
+        force: true
+      });
+    }
+  });
+
   it("maps real app-server style notifications into message, tool, and terminal events", async () => {
     const port = createCodexAppServerRuntimePort({
       commandPath: process.execPath,

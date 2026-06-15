@@ -1520,6 +1520,81 @@ button {
   transform: translate(-50%, 0);
 }
 
+.awb-composer-goal {
+  display: inline-grid;
+  grid-template-columns: auto auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  max-width: min(520px, 52vw);
+  min-height: 24px;
+  padding: 4px 8px;
+  border: 1px solid rgba(140, 143, 141, 0.22);
+  border-radius: 6px;
+  background: rgba(44, 47, 50, 0.68);
+  color: var(--awb-ink);
+  outline: none;
+}
+
+.awb-composer-goal:focus-visible,
+.awb-composer-goal:hover {
+  border-color: rgba(182, 185, 183, 0.34);
+  background: rgba(50, 54, 58, 0.82);
+}
+
+.awb-composer-goal__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--awb-accent);
+  box-shadow: 0 0 0 3px rgba(105, 162, 132, 0.12);
+}
+
+.awb-composer-goal--paused .awb-composer-goal__dot,
+.awb-composer-goal--blocked .awb-composer-goal__dot {
+  background: var(--awb-warm);
+  box-shadow: 0 0 0 3px rgba(191, 140, 81, 0.14);
+}
+
+.awb-composer-goal--budgetLimited .awb-composer-goal__dot,
+.awb-composer-goal--usageLimited .awb-composer-goal__dot {
+  background: #c99191;
+  box-shadow: 0 0 0 3px rgba(184, 99, 99, 0.14);
+}
+
+.awb-composer-goal--complete .awb-composer-goal__dot {
+  background: #9ab1d2;
+  box-shadow: 0 0 0 3px rgba(123, 151, 190, 0.14);
+}
+
+.awb-composer-goal__label,
+.awb-composer-goal__status,
+.awb-composer-goal__usage {
+  font-family: var(--awb-font-mono);
+  font-size: 0.66rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.awb-composer-goal__label {
+  color: var(--awb-ink-strong);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.awb-composer-goal__status,
+.awb-composer-goal__usage {
+  color: var(--awb-ink-muted);
+}
+
+.awb-composer-goal__objective {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.76rem;
+  line-height: 1.25;
+}
+
 .awb-status {
   font-size: 0.76rem;
   color: var(--awb-warm);

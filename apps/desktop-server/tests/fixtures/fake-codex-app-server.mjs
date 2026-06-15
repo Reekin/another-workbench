@@ -11,6 +11,7 @@ const pendingDynamicToolByRequestId = new Map();
 const pendingInteractionByRequestId = new Map();
 let lastThreadStartParams = null;
 const threadStartParamsByThreadId = new Map();
+const threadGoalByThreadId = new Map();
 
 const send = (payload) => {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
@@ -21,6 +22,35 @@ const recordRequest = (payload) => {
     return;
   }
   appendFileSync(process.env.FAKE_CODEX_REQUEST_LOG, `${JSON.stringify(payload)}\n`);
+};
+
+const nowMs = () => 1_700_000_000_000;
+
+const buildThreadGoal = (threadId, input = {}) => ({
+  threadId,
+  objective: input.objective ?? "Hydrated goal from fake server",
+  status: input.status ?? "active",
+  tokenBudget: input.tokenBudget ?? null,
+  tokensUsed: input.tokensUsed ?? 12,
+  timeUsedSeconds: input.timeUsedSeconds ?? 3,
+  createdAt: input.createdAt ?? nowMs(),
+  updatedAt: input.updatedAt ?? nowMs() + 1_000
+});
+
+const getThreadGoal = (threadId) => {
+  const existing = threadGoalByThreadId.get(threadId);
+  if (existing) {
+    return existing;
+  }
+  if (!process.env.FAKE_CODEX_THREAD_GOAL_OBJECTIVE) {
+    return null;
+  }
+  const goal = buildThreadGoal(threadId, {
+    objective: process.env.FAKE_CODEX_THREAD_GOAL_OBJECTIVE,
+    status: process.env.FAKE_CODEX_THREAD_GOAL_STATUS ?? "active"
+  });
+  threadGoalByThreadId.set(threadId, goal);
+  return goal;
 };
 
 const emitHappyPath = ({ threadId, turnId, prompt, messagePhase = null }) => {
@@ -1948,6 +1978,71 @@ const handleRequest = (payload) => {
             }
           }
         });
+        return;
+      }
+      case "thread/goal/get": {
+        const threadId = String(payload.params?.threadId ?? "");
+        send({
+          id: payload.id,
+          result: {
+            goal: getThreadGoal(threadId)
+          }
+        });
+        return;
+      }
+      case "thread/goal/set": {
+        const threadId = String(payload.params?.threadId ?? "");
+        const existing = getThreadGoal(threadId);
+        const goal = buildThreadGoal(threadId, {
+          ...existing,
+          objective:
+            typeof payload.params?.objective === "string"
+              ? payload.params.objective
+              : existing?.objective,
+          status:
+            typeof payload.params?.status === "string"
+              ? payload.params.status
+              : existing?.status,
+          tokenBudget:
+            Object.prototype.hasOwnProperty.call(payload.params ?? {}, "tokenBudget")
+              ? payload.params.tokenBudget
+              : existing?.tokenBudget,
+          updatedAt: nowMs() + 2_000
+        });
+        threadGoalByThreadId.set(threadId, goal);
+        send({
+          id: payload.id,
+          result: {
+            goal
+          }
+        });
+        send({
+          method: "thread/goal/updated",
+          params: {
+            threadId,
+            turnId: null,
+            goal
+          }
+        });
+        return;
+      }
+      case "thread/goal/clear": {
+        const threadId = String(payload.params?.threadId ?? "");
+        const cleared = threadGoalByThreadId.delete(threadId);
+        send({
+          id: payload.id,
+          result: {
+            cleared
+          }
+        });
+        if (cleared) {
+          send({
+            method: "thread/goal/cleared",
+            params: {
+              threadId
+            }
+          });
+        }
         return;
       }
       case "thread/fork": {

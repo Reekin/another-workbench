@@ -21,6 +21,8 @@ export const commandTypes = [
   "sendUserMessage",
   "steerTurn",
   "interruptTurn",
+  "setThreadGoal",
+  "clearThreadGoal",
   "respondApproval",
   "respondInteraction",
   "disposeSession"
@@ -99,6 +101,23 @@ const zInterruptTurnCommand = z.object({
   cwd: z.string().min(1).optional()
 });
 
+const zSetThreadGoalCommand = z.object({
+  type: z.literal("setThreadGoal"),
+  sessionId: zSessionId,
+  objective: z.string().min(1).optional(),
+  status: z
+    .enum(["active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"])
+    .optional(),
+  tokenBudget: z.number().int().positive().nullable().optional(),
+  cwd: z.string().min(1).optional()
+});
+
+const zClearThreadGoalCommand = z.object({
+  type: z.literal("clearThreadGoal"),
+  sessionId: zSessionId,
+  cwd: z.string().min(1).optional()
+});
+
 const zRespondApprovalCommand = z.object({
   type: z.literal("respondApproval"),
   sessionId: zSessionId,
@@ -137,6 +156,8 @@ export const zCommandSchema = z.discriminatedUnion("type", [
   zSendUserMessageCommand,
   zSteerTurnCommand,
   zInterruptTurnCommand,
+  zSetThreadGoalCommand,
+  zClearThreadGoalCommand,
   zRespondApprovalCommand,
   zRespondInteractionCommand,
   zDisposeSessionCommand

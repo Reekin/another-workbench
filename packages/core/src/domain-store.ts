@@ -8,6 +8,7 @@ import type {
   RuntimeInteraction,
   SessionRelation,
   TerminalStream,
+  ThreadGoal,
   ToolCall,
   Turn
 } from "@another-workbench/shared";
@@ -21,6 +22,7 @@ import {
   parseRuntimeInteraction,
   parseSessionRelation,
   parseTerminalStream,
+  parseThreadGoal,
   parseToolCall,
   parseTurn
 } from "@another-workbench/shared";
@@ -64,6 +66,10 @@ export type ListApprovalRequestsOptions = {
 export type ListRuntimeInteractionsOptions = {
   sessionId?: string;
   turnId?: string;
+};
+
+export type ListThreadGoalsOptions = {
+  sessionId?: string;
 };
 
 export type ListParticipantsOptions = {
@@ -165,6 +171,7 @@ export class DomainStore {
   private readonly approvalRequests = new Map<string, ApprovalRequest>();
   private readonly runtimeInteractions = new Map<string, RuntimeInteraction>();
   private readonly participants = new Map<string, AgentParticipant>();
+  private readonly threadGoals = new Map<string, ThreadGoal>();
   private readonly sessionRelations = new Map<string, SessionRelation>();
 
   private readonly sessionIdsByConversation = new Map<string, string[]>();
@@ -195,6 +202,7 @@ export class DomainStore {
     this.approvalRequests.clear();
     this.runtimeInteractions.clear();
     this.participants.clear();
+    this.threadGoals.clear();
     this.sessionRelations.clear();
 
     this.sessionIdsByConversation.clear();
@@ -240,6 +248,9 @@ export class DomainStore {
     }
     for (const participant of parsedSnapshot.participants) {
       this.upsertParticipant(participant);
+    }
+    for (const goal of parsedSnapshot.threadGoals) {
+      this.upsertThreadGoal(goal);
     }
     for (const relation of parsedSnapshot.sessionRelations) {
       this.upsertSessionRelation(relation);
@@ -289,6 +300,7 @@ export class DomainStore {
       participants: [...this.participants.values()].sort((left, right) =>
         left.participantId.localeCompare(right.participantId)
       ),
+      threadGoals: this.listThreadGoals(),
       sessionRelations: sortByIsoAsc(
         this.sessionRelations.values(),
         (relation) => relation.createdAt,
@@ -334,6 +346,9 @@ export class DomainStore {
         this.listRuntimeInteractions({ sessionId: session.sessionId })
       ),
       participants: this.listParticipants({ conversationId }),
+      threadGoals: sessions.flatMap((session) =>
+        this.listThreadGoals({ sessionId: session.sessionId })
+      ),
       sessionRelations
     };
   }
@@ -366,6 +381,7 @@ export class DomainStore {
         conversationId: session.conversationId,
         engineId: session.engineId
       }),
+      threadGoals: this.listThreadGoals({ sessionId }),
       sessionRelations: this.listSessionRelations({ sessionId })
     };
   }
@@ -829,6 +845,30 @@ export class DomainStore {
     return true;
   }
 
+  public getThreadGoal(sessionId: string): ThreadGoal | undefined {
+    return this.threadGoals.get(sessionId);
+  }
+
+  public listThreadGoals(options: ListThreadGoalsOptions = {}): ThreadGoal[] {
+    const goals = options.sessionId
+      ? [this.threadGoals.get(options.sessionId)].filter(
+          (goal): goal is ThreadGoal => goal !== undefined
+        )
+      : [...this.threadGoals.values()];
+
+    return sortByIsoAsc(goals, (goal) => String(goal.updatedAt), (goal) => goal.sessionId);
+  }
+
+  public upsertThreadGoal(goal: ThreadGoal | unknown): ThreadGoal {
+    const parsedGoal = parseThreadGoal(goal);
+    this.threadGoals.set(parsedGoal.sessionId, parsedGoal);
+    return parsedGoal;
+  }
+
+  public deleteThreadGoal(sessionId: string): boolean {
+    return this.threadGoals.delete(sessionId);
+  }
+
   public getSessionRelation(relationId: string): SessionRelation | undefined {
     return this.sessionRelations.get(relationId);
   }
@@ -936,6 +976,7 @@ export class DomainStore {
     for (const interaction of this.listRuntimeInteractions({ sessionId })) {
       this.deleteRuntimeInteraction(interaction.requestId);
     }
+    this.deleteThreadGoal(sessionId);
 
     for (const turn of this.listTurns({ sessionId })) {
       for (const block of this.listMessageBlocks({ turnId: turn.turnId })) {

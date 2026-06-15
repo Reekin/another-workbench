@@ -9,6 +9,7 @@ import type { RendererStoreAction, RendererStoreState } from "./types.js";
 import {
   createEmptyIndexes,
   createInitialRendererStoreState,
+  deleteThreadGoal,
   upsertApprovalRequest,
   upsertConversation,
   upsertMessageBlock,
@@ -17,6 +18,7 @@ import {
   upsertSession,
   upsertSessionRelation,
   upsertTerminalStream,
+  upsertThreadGoal,
   upsertToolCall,
   upsertTurn
 } from "./state.js";
@@ -227,6 +229,9 @@ const hydrateFromSnapshot = (
   for (const participant of snapshot.participants) {
     state = upsertParticipant(state, participant);
   }
+  for (const goal of snapshot.threadGoals ?? []) {
+    state = upsertThreadGoal(state, goal);
+  }
   for (const relation of snapshot.sessionRelations) {
     state = upsertSessionRelation(state, relation);
   }
@@ -275,6 +280,9 @@ const mergeSnapshotIntoState = (
   }
   for (const participant of snapshot.participants) {
     state = upsertParticipant(state, participant);
+  }
+  for (const goal of snapshot.threadGoals ?? []) {
+    state = upsertThreadGoal(state, goal);
   }
   for (const relation of snapshot.sessionRelations) {
     state = upsertSessionRelation(state, relation);
@@ -467,6 +475,11 @@ const disposeSessionState = (
       ([, interaction]) => interaction.sessionId !== sessionId
     )
   );
+  const nextThreadGoals = Object.fromEntries(
+    Object.entries(state.entities.threadGoals).filter(
+      ([goalSessionId]) => goalSessionId !== sessionId
+    )
+  );
   const nextSessionRelations = Object.fromEntries(
     Object.entries(state.entities.sessionRelations).filter(
       ([, relation]) =>
@@ -517,6 +530,7 @@ const disposeSessionState = (
     approvalRequests: nextApprovalRequests,
     runtimeInteractions: nextRuntimeInteractions,
     participants: nextParticipants,
+    threadGoals: nextThreadGoals,
     sessionRelations: nextSessionRelations
   };
 
@@ -1123,6 +1137,12 @@ const applyRuntimeEvent = (
     }
     case "conversationGraph.updated": {
       return withEventType(state, event);
+    }
+    case "thread.goal.updated": {
+      return upsertThreadGoal(withEventType(state, event), event.goal);
+    }
+    case "thread.goal.cleared": {
+      return deleteThreadGoal(withEventType(state, event), event.sessionId);
     }
     case "engineExtension.updated": {
       return withEventType(state, event);

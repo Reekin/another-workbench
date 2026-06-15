@@ -5,6 +5,7 @@ import type {
   RuntimeInteraction,
   TakeoverPresetSummaryRpc,
   TakeoverSessionStateRpc,
+  ThreadGoal,
   Turn
 } from "@another-workbench/shared";
 import type { DesktopTransport } from "../../../transport/desktop-transport.js";
@@ -19,6 +20,7 @@ export type ComposerContainerProps = {
   transport?: DesktopTransport;
   activeSession?: ChatSession;
   activeSessionId?: string;
+  threadGoal?: ThreadGoal;
   displayedSessionId?: string;
   selectedEngineId: string;
   activeWorkspaceId?: string;
@@ -47,6 +49,7 @@ export const ComposerContainer = ({
   transport,
   activeSession,
   activeSessionId,
+  threadGoal,
   displayedSessionId,
   selectedEngineId,
   activeWorkspaceId,
@@ -74,6 +77,7 @@ export const ComposerContainer = ({
     transport,
     activeSession,
     activeSessionId,
+    threadGoal,
     displayedSessionId,
     selectedEngineId,
     activeWorkspaceId,
@@ -106,6 +110,7 @@ export const ComposerContainer = ({
         (interaction) => interaction.status === "pending"
       )}
       contextUsage={activeSession?.contextUsage}
+      threadGoal={threadGoal}
       takeoverPresets={takeoverPresets}
       takeoverState={takeoverState}
       isTakeoverMenuOpen={isTakeoverMenuOpen}

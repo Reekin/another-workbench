@@ -12,12 +12,12 @@ After the current assistant response finishes, Another Workbench starts a takeov
 Context purpose:
 The context is a stable baseline for the entire task lifecycle. It should help the takeover agent understand the long-term task scope, source-of-truth documents, project layout, and durable technical references. The context must remain valid even after phases are completed, roadmap state changes, implementation details change, or the current review target changes.
 
-Context must include only lifecycle-stable information, such as:
+Context must include only lifecycle-stable information about current session task, such as:
 
 * Overall project objective
 * Project root and important stable directories
 * Original/reference package locations
-* Source-of-truth documents, such as ROADMAP.md
+* Source-of-truth documents of current session task, such as ROADMAP.md
 * Stable technical references or documentation locations
 * Stable smoke-test or validation entry points, if they are generally applicable across the project
 

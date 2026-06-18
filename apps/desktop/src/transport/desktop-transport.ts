@@ -153,6 +153,7 @@ export type EventSubscribeInput = {
   onEnvelope: (push: WorkbenchEventPush["envelope"]) => void;
   onEnvelopes?: (envelopes: WorkbenchEventPush["envelope"][]) => void;
   onPush?: (push: WorkbenchEventPush) => void;
+  onBacklogPressure?: (pressure: EventBacklogPressure) => void;
 };
 
 export type EventReplayInput = {
@@ -166,6 +167,19 @@ export type EventReplayResult = {
   fromCursor: string;
   toCursor?: string;
   envelopes: WorkbenchEventPush["envelope"][];
+};
+
+export type EventBacklogPressure = {
+  pendingCount: number;
+  streamPendingCount: number;
+  lastCursor?: string;
+  sessions: Record<
+    string,
+    {
+      streamPendingCount: number;
+      lastCursor?: string;
+    }
+  >;
 };
 
 export type SessionBrowserActionInput = {
@@ -417,11 +431,15 @@ export type DesktopTransportOptions = {
   now?: Clock;
   eventBatchMaxSize?: number;
   eventDrainBudgetMs?: number;
+  eventBacklogPressurePendingThreshold?: number;
+  eventBacklogPressureStreamThreshold?: number;
   scheduleEventDrain?: EventDrainScheduler;
 };
 
 const defaultEventBatchMaxSize = 500;
 const defaultEventDrainBudgetMs = 8;
+const defaultEventBacklogPressurePendingThreshold = 2_000;
+const defaultEventBacklogPressureStreamThreshold = 500;
 
 const scheduleDefaultEventDrain: EventDrainScheduler = (callback) => {
   if (typeof globalThis.requestAnimationFrame === "function") {
@@ -438,6 +456,21 @@ const monotonicNow = (): number => {
   }
   return Date.now();
 };
+
+const streamBacklogEventTypes = new Set<EventEnvelope["event"]["type"]>([
+  "message.delta",
+  "tool.delta",
+  "terminal.output"
+]);
+
+const eventSessionId = (event: EventEnvelope["event"]): string | undefined =>
+  "sessionId" in event && typeof event.sessionId === "string"
+    ? event.sessionId
+    : undefined;
+
+const isStreamBacklogEnvelope = (envelope: EventEnvelope): boolean =>
+  streamBacklogEventTypes.has(envelope.event.type) &&
+  Boolean(eventSessionId(envelope.event));
 
 const toTransportError = (
   method: string,
@@ -462,6 +495,12 @@ export const createDesktopTransport = (
   const now = options.now ?? (() => new Date().toISOString());
   const eventBatchMaxSize = options.eventBatchMaxSize ?? defaultEventBatchMaxSize;
   const eventDrainBudgetMs = options.eventDrainBudgetMs ?? defaultEventDrainBudgetMs;
+  const eventBacklogPressurePendingThreshold =
+    options.eventBacklogPressurePendingThreshold ??
+    defaultEventBacklogPressurePendingThreshold;
+  const eventBacklogPressureStreamThreshold =
+    options.eventBacklogPressureStreamThreshold ??
+    defaultEventBacklogPressureStreamThreshold;
   const scheduleEventDrain = options.scheduleEventDrain ?? scheduleDefaultEventDrain;
   const writeDiagnosticDirect = async (
     input: DiagnosticsWriteInputRpc
@@ -1070,6 +1109,65 @@ export const createDesktopTransport = (
         let disposed = false;
         let cancelScheduledDrain: CancelScheduledWork | undefined;
         const envelopeQueue: EventEnvelope[] = [];
+        let streamPendingCount = 0;
+        const sessionStreamBacklog = new Map<
+          string,
+          { streamPendingCount: number; lastCursor?: string }
+        >();
+        const addEnvelopeToBacklogStats = (envelope: EventEnvelope): void => {
+          if (!isStreamBacklogEnvelope(envelope)) {
+            return;
+          }
+          const sessionId = eventSessionId(envelope.event);
+          if (!sessionId) {
+            return;
+          }
+          streamPendingCount += 1;
+          const current = sessionStreamBacklog.get(sessionId);
+          sessionStreamBacklog.set(sessionId, {
+            streamPendingCount: (current?.streamPendingCount ?? 0) + 1,
+            lastCursor: envelope.cursor ?? current?.lastCursor
+          });
+        };
+        const removeEnvelopeFromBacklogStats = (envelope: EventEnvelope): void => {
+          if (!isStreamBacklogEnvelope(envelope)) {
+            return;
+          }
+          const sessionId = eventSessionId(envelope.event);
+          if (!sessionId) {
+            return;
+          }
+          streamPendingCount = Math.max(0, streamPendingCount - 1);
+          const current = sessionStreamBacklog.get(sessionId);
+          if (!current) {
+            return;
+          }
+          const nextCount = current.streamPendingCount - 1;
+          if (nextCount <= 0) {
+            sessionStreamBacklog.delete(sessionId);
+            return;
+          }
+          sessionStreamBacklog.set(sessionId, {
+            ...current,
+            streamPendingCount: nextCount
+          });
+        };
+        const maybeReportBacklogPressure = (): void => {
+          if (
+            !input.onBacklogPressure ||
+            envelopeQueue.length < eventBacklogPressurePendingThreshold ||
+            streamPendingCount < eventBacklogPressureStreamThreshold
+          ) {
+            return;
+          }
+          const sessions = Object.fromEntries(sessionStreamBacklog.entries());
+          input.onBacklogPressure({
+            pendingCount: envelopeQueue.length,
+            streamPendingCount,
+            lastCursor: envelopeQueue.at(-1)?.cursor,
+            sessions
+          });
+        };
         const deliverEnvelopes = (envelopes: EventEnvelope[]): void => {
           if (envelopes.length === 0) {
             return;
@@ -1098,6 +1196,7 @@ export const createDesktopTransport = (
             }
             const envelope = envelopeQueue.shift();
             if (envelope) {
+              removeEnvelopeFromBacklogStats(envelope);
               batch.push(envelope);
             }
           }
@@ -1121,6 +1220,8 @@ export const createDesktopTransport = (
             return;
           }
           const pending = envelopeQueue.splice(0, envelopeQueue.length);
+          streamPendingCount = 0;
+          sessionStreamBacklog.clear();
           deliverEnvelopes(pending);
         };
         const flushIntervalId = globalThis.setInterval(
@@ -1146,6 +1247,8 @@ export const createDesktopTransport = (
             }
             input.onPush?.(push);
             envelopeQueue.push(push.envelope);
+            addEnvelopeToBacklogStats(push.envelope);
+            maybeReportBacklogPressure();
             scheduleDrain();
           }
         );

@@ -718,6 +718,10 @@ describe("WorkbenchShellService", () => {
       runtimeService: {
         listSessions: () => [],
         getSnapshot: () => buildSessionSnapshot(),
+        getSnapshotResult: () => ({
+          snapshot: buildSessionSnapshot(),
+          cursor: "runtime-cursor-1"
+        }),
         getWorkspaceRegistry: () => ({
           setLastActiveSelection
         }),
@@ -744,6 +748,7 @@ describe("WorkbenchShellService", () => {
     await expect(service.openSession("session-1")).resolves.toEqual({
       page: expect.objectContaining({
         sessionId: "session-1",
+        cursor: "runtime-cursor-1",
         windowStartTurnId: "turn-2",
         windowEndTurnId: "turn-2",
         hasOlder: true,

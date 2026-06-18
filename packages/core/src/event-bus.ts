@@ -213,14 +213,17 @@ export class RuntimeEventBus {
 
   public replay(input: RuntimeEventReplayInput = {}): RuntimeEventEnvelope[] {
     const source = this.readReplaySource(input);
-    const filtered = this.sliceByCursor(source, input.fromCursor, input.toCursor)
-      .filter((envelope) =>
-        shouldDeliver(
-          input.filter ?? {},
-          envelope,
-          this.resolveConversationIdBySessionId
-        )
-      );
+    const filtered = this.sliceByCursor(
+      source.envelopes,
+      source.fromCursorAlreadyApplied ? undefined : input.fromCursor,
+      input.toCursor
+    ).filter((envelope) =>
+      shouldDeliver(
+        input.filter ?? {},
+        envelope,
+        this.resolveConversationIdBySessionId
+      )
+    );
 
     if (typeof input.limit !== "number") {
       return filtered;
@@ -244,16 +247,28 @@ export class RuntimeEventBus {
     }
   }
 
-  private readReplaySource(input: RuntimeEventReplayInput): RuntimeEventEnvelope[] {
+  private readReplaySource(input: RuntimeEventReplayInput): {
+    envelopes: RuntimeEventEnvelope[];
+    fromCursorAlreadyApplied: boolean;
+  } {
     if (this.replayPort?.replay) {
-      return this.replayPort.replay(input);
+      return {
+        envelopes: this.replayPort.replay(input),
+        fromCursorAlreadyApplied: false
+      };
     }
 
     if (input.fromCursor && this.replayPort?.readSinceCursor) {
-      return this.replayPort.readSinceCursor(input.fromCursor);
+      return {
+        envelopes: this.replayPort.readSinceCursor(input.fromCursor),
+        fromCursorAlreadyApplied: true
+      };
     }
 
-    return [...this.replayBuffer];
+    return {
+      envelopes: [...this.replayBuffer],
+      fromCursorAlreadyApplied: false
+    };
   }
 
   private sliceByCursor(
@@ -278,7 +293,7 @@ export class RuntimeEventBus {
     }
     const index = envelopes.findIndex((envelope) => envelope.cursor === fromCursor);
     if (index === -1) {
-      return 0;
+      return envelopes.length;
     }
     return index + 1;
   }

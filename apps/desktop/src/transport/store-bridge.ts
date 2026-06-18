@@ -1,6 +1,9 @@
 import type { WorkbenchEventSubscriptionFilter } from "@another-workbench/shared";
 import type { RendererStore } from "../store/store.js";
-import type { DesktopTransport } from "./desktop-transport.js";
+import type {
+  DesktopTransport,
+  EventBacklogPressure
+} from "./desktop-transport.js";
 
 export type ConnectDesktopTransportToStoreInput = {
   transport: DesktopTransport;
@@ -12,6 +15,7 @@ export type ConnectDesktopTransportToStoreInput = {
   fromCursor?: string;
   subscriptionId?: string;
   hydrateSnapshot?: boolean;
+  onBacklogPressure?: (pressure: EventBacklogPressure) => void;
 };
 
 const hasHydratedDomainState = (store: RendererStore): boolean => {
@@ -32,7 +36,7 @@ export const connectDesktopTransportToStore = async (
 
   if (shouldHydrateSnapshot) {
     const snapshotResult = await input.transport.domain.snapshot();
-    input.store.hydrateSnapshot(snapshotResult.snapshot);
+    input.store.hydrateSnapshot(snapshotResult.snapshot, snapshotResult.cursor);
     fromCursor = fromCursor ?? snapshotResult.cursor;
   }
 
@@ -45,7 +49,8 @@ export const connectDesktopTransportToStore = async (
     },
     onEnvelope: (envelope) => {
       input.store.ingestEnvelope(envelope);
-    }
+    },
+    onBacklogPressure: input.onBacklogPressure
   });
 
   return subscription;

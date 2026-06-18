@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { EventEnvelope, RuntimeEvent } from "@another-workbench/shared";
+import type {
+  DomainSnapshot,
+  EventEnvelope,
+  RuntimeEvent
+} from "@another-workbench/shared";
 import { MAX_ACCUMULATED_STREAM_TEXT_LENGTH } from "@another-workbench/shared";
 import { parseIngestEnvelopeAction } from "../src/store/intake.js";
 import { rendererStoreReducer } from "../src/store/reducer.js";
@@ -53,6 +57,299 @@ describe("desktop store reducer", () => {
     expect(deduped.indexes.sessionIdsByConversation["conversation-a"]).toEqual([
       "session-a"
     ]);
+  });
+
+  it("uses hydrated session window cursors as barriers for stale stream envelopes", () => {
+    const snapshot: DomainSnapshot = {
+      conversations: [
+        {
+          conversationId: "conversation-a",
+          sessionIds: ["session-a"],
+          participantEngineIds: ["agent-a"],
+          activeSessionId: "session-a",
+          createdAt: "2026-04-17T00:00:00.000Z",
+          updatedAt: "2026-04-17T00:00:00.000Z"
+        }
+      ],
+      sessions: [
+        {
+          sessionId: "session-a",
+          conversationId: "conversation-a",
+          engineId: "agent-a",
+          status: "running",
+          createdAt: "2026-04-17T00:00:00.000Z",
+          updatedAt: "2026-04-17T00:00:00.000Z",
+          lastTurnId: "turn-a"
+        }
+      ],
+      turns: [
+        {
+          turnId: "turn-a",
+          sessionId: "session-a",
+          status: "running",
+          messageIds: ["message-a"],
+          toolCallIds: [],
+          terminalIds: [],
+          approvalRequestIds: [],
+          interactionRequestIds: [],
+          startedAt: "2026-04-17T00:00:00.000Z"
+        }
+      ],
+      messageBlocks: [
+        {
+          blockId: "message-a:md",
+          messageId: "message-a",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          role: "assistant",
+          kind: "markdown",
+          text: "latest text",
+          startedAt: "2026-04-17T00:00:00.000Z"
+        }
+      ],
+      toolCalls: [],
+      terminalStreams: [],
+      approvalRequests: [],
+      runtimeInteractions: [],
+      participants: [],
+      sessionRelations: []
+    };
+
+    let state = rendererStoreReducer(createInitialRendererStoreState(), {
+      type: "store/hydrateSessionWindow",
+      sessionId: "session-a",
+      snapshot,
+      mode: "replace",
+      cursor: "cursor-10"
+    });
+
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-stale-delta", "cursor-9", {
+          type: "message.delta",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          messageId: "message-a",
+          delta: " stale"
+        })
+      )
+    );
+
+    expect(state.entities.messageBlocks["message-a:md"]?.text).toBe("latest text");
+    expect(state.eventStream.lastCursor).toBeUndefined();
+
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-other-session", "cursor-9", {
+          type: "turn.started",
+          sessionId: "session-b",
+          turnId: "turn-b"
+        })
+      )
+    );
+
+    expect(state.entities.turns["turn-b"]?.sessionId).toBe("session-b");
+    expect(state.eventStream.lastCursor).toBe("cursor-9");
+
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-covered-delta", "cursor-10", {
+          type: "message.delta",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          messageId: "message-a",
+          delta: " covered"
+        })
+      )
+    );
+
+    expect(state.entities.messageBlocks["message-a:md"]?.text).toBe("latest text");
+    expect(state.eventStream.lastCursor).toBe("cursor-9");
+
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-live-delta", "cursor-11", {
+          type: "message.delta",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          messageId: "message-a",
+          delta: " live"
+        })
+      )
+    );
+
+    expect(state.entities.messageBlocks["message-a:md"]?.text).toBe(
+      "latest text live"
+    );
+    expect(state.eventStream.lastCursor).toBe("cursor-11");
+  });
+
+  it("does not use prepend session window cursors as barriers for queued live events", () => {
+    const currentSnapshot: DomainSnapshot = {
+      conversations: [
+        {
+          conversationId: "conversation-a",
+          sessionIds: ["session-a"],
+          participantEngineIds: ["agent-a"],
+          activeSessionId: "session-a",
+          createdAt: "2026-04-17T00:00:00.000Z",
+          updatedAt: "2026-04-17T00:00:00.000Z"
+        }
+      ],
+      sessions: [
+        {
+          sessionId: "session-a",
+          conversationId: "conversation-a",
+          engineId: "agent-a",
+          status: "running",
+          createdAt: "2026-04-17T00:00:00.000Z",
+          updatedAt: "2026-04-17T00:00:00.000Z",
+          lastTurnId: "turn-current"
+        }
+      ],
+      turns: [
+        {
+          turnId: "turn-current",
+          sessionId: "session-a",
+          status: "running",
+          messageIds: ["message-current"],
+          toolCallIds: [],
+          terminalIds: [],
+          approvalRequestIds: [],
+          interactionRequestIds: [],
+          startedAt: "2026-04-17T00:00:10.000Z"
+        }
+      ],
+      messageBlocks: [
+        {
+          blockId: "message-current:md",
+          messageId: "message-current",
+          sessionId: "session-a",
+          turnId: "turn-current",
+          role: "assistant",
+          kind: "markdown",
+          text: "current text",
+          startedAt: "2026-04-17T00:00:10.000Z"
+        }
+      ],
+      toolCalls: [],
+      terminalStreams: [],
+      approvalRequests: [],
+      runtimeInteractions: [],
+      participants: [],
+      sessionRelations: []
+    };
+    const olderSnapshot: DomainSnapshot = {
+      conversations: currentSnapshot.conversations,
+      sessions: currentSnapshot.sessions,
+      turns: [
+        {
+          turnId: "turn-older",
+          sessionId: "session-a",
+          status: "completed",
+          messageIds: ["message-older"],
+          toolCallIds: [],
+          terminalIds: [],
+          approvalRequestIds: [],
+          interactionRequestIds: [],
+          startedAt: "2026-04-17T00:00:00.000Z",
+          completedAt: "2026-04-17T00:00:01.000Z",
+          finishReason: "completed"
+        }
+      ],
+      messageBlocks: [
+        {
+          blockId: "message-older:md",
+          messageId: "message-older",
+          sessionId: "session-a",
+          turnId: "turn-older",
+          role: "assistant",
+          kind: "markdown",
+          text: "older text",
+          startedAt: "2026-04-17T00:00:00.000Z"
+        }
+      ],
+      toolCalls: [],
+      terminalStreams: [],
+      approvalRequests: [],
+      runtimeInteractions: [],
+      participants: [],
+      sessionRelations: []
+    };
+
+    let state = rendererStoreReducer(createInitialRendererStoreState(), {
+      type: "store/hydrateSessionWindow",
+      sessionId: "session-a",
+      snapshot: currentSnapshot,
+      mode: "replace"
+    });
+
+    state = rendererStoreReducer(state, {
+      type: "store/hydrateSessionWindow",
+      sessionId: "session-a",
+      snapshot: olderSnapshot,
+      mode: "prepend",
+      cursor: "cursor-10"
+    });
+
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-current-queued-delta", "cursor-9", {
+          type: "message.delta",
+          sessionId: "session-a",
+          turnId: "turn-current",
+          messageId: "message-current",
+          delta: " queued"
+        })
+      )
+    );
+
+    expect(state.entities.turns["turn-older"]?.sessionId).toBe("session-a");
+    expect(state.entities.messageBlocks["message-current:md"]?.text).toBe(
+      "current text queued"
+    );
+    expect(state.eventStream.lastCursor).toBe("cursor-9");
+  });
+
+  it("uses full snapshot cursors as global barriers for stale stream envelopes", () => {
+    const snapshot: DomainSnapshot = {
+      conversations: [],
+      sessions: [],
+      turns: [],
+      messageBlocks: [],
+      toolCalls: [],
+      terminalStreams: [],
+      approvalRequests: [],
+      runtimeInteractions: [],
+      participants: [],
+      sessionRelations: []
+    };
+    let state = rendererStoreReducer(createInitialRendererStoreState(), {
+      type: "store/hydrateSnapshot",
+      snapshot,
+      cursor: "cursor-10"
+    });
+
+    expect(state.eventStream.lastCursor).toBe("cursor-10");
+
+    state = rendererStoreReducer(
+      state,
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-covered-session-b", "cursor-9", {
+          type: "turn.started",
+          sessionId: "session-b",
+          turnId: "turn-b"
+        })
+      )
+    );
+
+    expect(state.entities.turns["turn-b"]).toBeUndefined();
+    expect(state.eventStream.lastCursor).toBe("cursor-10");
   });
 
   it("stores session context usage from incremental events", () => {

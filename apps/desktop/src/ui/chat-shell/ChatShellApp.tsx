@@ -29,7 +29,10 @@ import type {
 } from "@another-workbench/shared";
 import "xterm/css/xterm.css";
 import type { RendererStore } from "../../store/store.js";
-import type { DesktopTransport } from "../../transport/desktop-transport.js";
+import type {
+  DesktopTransport,
+  EventBacklogPressure
+} from "../../transport/desktop-transport.js";
 import { connectDesktopTransportToStore } from "../../transport/store-bridge.js";
 import { renderTurnExtensions } from "../../features/engine-extensions/turn-extension-registry.js";
 import { ChatTreePanel } from "./ChatTreePanel.js";
@@ -70,6 +73,7 @@ import {
 import { useChatTreeController } from "./use-chat-tree-controller.js";
 import { useRendererDiagnostics } from "./use-renderer-diagnostics.js";
 import { buildEngineInspectorViewModel } from "./engine-summary.js";
+import { resolveAutoRefreshBacklogAttempt } from "./auto-refresh-backlog.js";
 import { ComposerContainer } from "./composer/ComposerContainer.js";
 import {
   beginTakeoverStateRequest,
@@ -97,6 +101,8 @@ type SettingsLauncherProps = {
 type SettingsTab = "general" | "takeover";
 
 const takeoverPresetNamePattern = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+const autoRefreshBacklogCooldownMs = 30_000;
+const autoRefreshBacklogStreamThreshold = 500;
 
 const createDefaultTakeoverPresetPrompt = (presetId: string): string => `# ${presetId}
 
@@ -2266,27 +2272,121 @@ export const ChatShellApp = ({
     setProcessVisibilityByTurnId({});
   };
 
-  const { reloadSessionWindow, onLoadOlder, onCreateSession, onOpenSession } =
-    useSessionOpenController({
-      store,
-      transport,
-      workspaceTree,
-      sessionWindows,
-      setSessionWindows,
-      loadingOlderSessionId,
-      setLoadingOlderSessionId,
-      browserSelectedSessionId,
-      setBrowserSelectedSessionId,
-      openingSessionId,
-      setOpeningSessionId,
-      displayedSessionId,
-      activeSessionWindow,
-      isOpeningSelectedSession,
-      viewport,
-      onResetSessionSwitchState: resetSessionSwitchState,
-      onStatusNotice: setStatusNotice,
-      refreshSessionBrowser
-    });
+  const {
+    reloadSessionWindow,
+    refreshDisplayedSessionWindow,
+    onLoadOlder,
+    onCreateSession,
+    onOpenSession
+  } = useSessionOpenController({
+    store,
+    transport,
+    workspaceTree,
+    sessionWindows,
+    setSessionWindows,
+    loadingOlderSessionId,
+    setLoadingOlderSessionId,
+    browserSelectedSessionId,
+    setBrowserSelectedSessionId,
+    openingSessionId,
+    setOpeningSessionId,
+    displayedSessionId,
+    activeSessionWindow,
+    isOpeningSelectedSession,
+    viewport,
+    onResetSessionSwitchState: resetSessionSwitchState,
+    onStatusNotice: setStatusNotice,
+    refreshSessionBrowser
+  });
+  const backlogAutoRefreshRef = useRef<{
+    displayedSessionId?: string;
+    refreshDisplayedSessionWindow: typeof refreshDisplayedSessionWindow;
+    isOpeningSelectedSession: boolean;
+    lastRefreshStartedAtMs?: number;
+    refreshInFlight: boolean;
+    pendingPressure?: EventBacklogPressure;
+  }>({
+    displayedSessionId,
+    refreshDisplayedSessionWindow,
+    isOpeningSelectedSession,
+    refreshInFlight: false
+  });
+  if (backlogAutoRefreshRef.current.displayedSessionId !== displayedSessionId) {
+    backlogAutoRefreshRef.current.pendingPressure = undefined;
+  }
+  backlogAutoRefreshRef.current.displayedSessionId = displayedSessionId;
+  backlogAutoRefreshRef.current.refreshDisplayedSessionWindow =
+    refreshDisplayedSessionWindow;
+  backlogAutoRefreshRef.current.isOpeningSelectedSession = isOpeningSelectedSession;
+  if (isOpeningSelectedSession) {
+    backlogAutoRefreshRef.current.pendingPressure = undefined;
+  }
+
+  const attemptBacklogAutoRefresh = useCallback(
+    (incomingPressure?: EventBacklogPressure): void => {
+      const current = backlogAutoRefreshRef.current;
+      if (current.isOpeningSelectedSession) {
+        current.pendingPressure = undefined;
+        return;
+      }
+      const nowMs =
+        typeof performance !== "undefined" && typeof performance.now === "function"
+          ? performance.now()
+          : Date.now();
+      const result = resolveAutoRefreshBacklogAttempt({
+        incomingPressure,
+        pendingPressure: current.pendingPressure,
+        displayedSessionId: current.displayedSessionId,
+        visibilityState:
+          typeof document === "undefined" ? "visible" : document.visibilityState,
+        nowMs,
+        lastRefreshStartedAtMs: current.lastRefreshStartedAtMs,
+        refreshInFlight: current.refreshInFlight,
+        cooldownMs: autoRefreshBacklogCooldownMs,
+        streamThreshold: autoRefreshBacklogStreamThreshold
+      });
+      current.pendingPressure = result.pendingPressure;
+      const decision = result.decision;
+      if (!decision) {
+        return;
+      }
+      current.lastRefreshStartedAtMs = nowMs;
+      current.refreshInFlight = true;
+      void current
+        .refreshDisplayedSessionWindow(decision.sessionId, {
+          forceProviderHydration: true,
+          barrierCursor: decision.barrierCursor,
+          preserveViewport: true
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          backlogAutoRefreshRef.current.refreshInFlight = false;
+        });
+    },
+    []
+  );
+
+  const onBacklogPressure = useCallback(
+    (pressure: EventBacklogPressure): void => {
+      attemptBacklogAutoRefresh(pressure);
+    },
+    [attemptBacklogAutoRefresh]
+  );
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    const onVisibilityChange = (): void => {
+      if (document.visibilityState === "visible") {
+        attemptBacklogAutoRefresh();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [attemptBacklogAutoRefresh]);
 
   const {
     chatTree,
@@ -2499,7 +2599,8 @@ export const ChatShellApp = ({
     let disposed = false;
     void connectDesktopTransportToStore({
       transport,
-      store
+      store,
+      onBacklogPressure
     })
       .then((binding) => {
         if (disposed) {
@@ -2524,7 +2625,7 @@ export const ChatShellApp = ({
         void unsubscribe();
       }
     };
-  }, [transport, store]);
+  }, [transport, store, onBacklogPressure]);
 
   const onRespondApproval = useCallback(async (input: {
     sessionId: string;

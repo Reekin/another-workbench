@@ -18,6 +18,12 @@ type StatusNoticeSetter = Dispatch<
   SetStateAction<ComposerStatusNotice | undefined>
 >;
 
+type SessionWindowHydrationOptions = {
+  forceProviderHydration?: boolean;
+  barrierCursor?: string;
+  preserveViewport?: boolean;
+};
+
 export const useSessionOpenController = (input: {
   store: RendererStore;
   transport?: DesktopTransport;
@@ -46,15 +52,33 @@ export const useSessionOpenController = (input: {
 }): {
   reloadSessionWindow: (
     sessionId: string,
-    options?: {
-      forceProviderHydration?: boolean;
-    }
+    options?: SessionWindowHydrationOptions
+  ) => Promise<void>;
+  refreshDisplayedSessionWindow: (
+    sessionId: string,
+    options?: SessionWindowHydrationOptions
   ) => Promise<void>;
   onLoadOlder: () => Promise<void>;
   onCreateSession: (workspaceId: string, engineId: string) => Promise<void>;
   onOpenSession: (sessionId: string) => Promise<void>;
 } => {
   const openSessionRequestIdRef = useRef(0);
+  const backgroundRefreshRequestIdRef = useRef(0);
+  const manualSessionOpenTokenRef = useRef(0);
+  const manualSessionOpenInFlightRef = useRef(false);
+
+  const beginManualSessionOpen = (): number => {
+    manualSessionOpenInFlightRef.current = true;
+    manualSessionOpenTokenRef.current += 1;
+    backgroundRefreshRequestIdRef.current += 1;
+    return manualSessionOpenTokenRef.current;
+  };
+
+  const finishManualSessionOpen = (token: number): void => {
+    if (manualSessionOpenTokenRef.current === token) {
+      manualSessionOpenInFlightRef.current = false;
+    }
+  };
 
   const activateLoadedSession = (sessionId: string): boolean => {
     const session = input.store.getState().entities.sessions[sessionId];
@@ -87,9 +111,16 @@ export const useSessionOpenController = (input: {
     mode: "replace" | "prepend" = "replace",
     options: {
       activate?: boolean;
+      barrierCursor?: string;
+      preserveViewport?: boolean;
     } = {}
   ): void => {
-    input.store.hydrateSessionWindow(page.sessionId, page.snapshot, mode);
+    input.store.hydrateSessionWindow(
+      page.sessionId,
+      page.snapshot,
+      mode,
+      options.barrierCursor ?? page.cursor
+    );
     input.setSessionWindows((current) => {
       const existing = current[page.sessionId];
       if (mode === "prepend" && existing?.sessionId === page.sessionId) {
@@ -111,7 +142,7 @@ export const useSessionOpenController = (input: {
         [page.sessionId]: page
       };
     });
-    if (mode === "replace") {
+    if (mode === "replace" && !options.preserveViewport) {
       input.viewport.queueViewportTarget({
         sessionId: page.sessionId,
         type: page.windowEndTurnId && page.hasNewer ? "turn" : "bottom",
@@ -126,9 +157,7 @@ export const useSessionOpenController = (input: {
   const hydrateOpenedSession = async (
     sessionId: string,
     requestId: number,
-    options: {
-      forceProviderHydration?: boolean;
-    } = {}
+    options: SessionWindowHydrationOptions = {}
   ): Promise<void> => {
     if (!input.transport) {
       return;
@@ -139,7 +168,10 @@ export const useSessionOpenController = (input: {
     if (openSessionRequestIdRef.current !== requestId) {
       return;
     }
-    applySessionWindow(result.page, "replace");
+    applySessionWindow(result.page, "replace", {
+      barrierCursor: options.barrierCursor,
+      preserveViewport: options.preserveViewport
+    });
   };
 
   useEffect(() => {
@@ -165,12 +197,44 @@ export const useSessionOpenController = (input: {
   return {
     reloadSessionWindow: async (
       sessionId: string,
-      options: {
-        forceProviderHydration?: boolean;
-      } = {}
+      options: SessionWindowHydrationOptions = {}
     ) => {
+      const manualOpenToken = beginManualSessionOpen();
       const requestId = ++openSessionRequestIdRef.current;
-      await hydrateOpenedSession(sessionId, requestId, options);
+      try {
+        await hydrateOpenedSession(sessionId, requestId, options);
+      } finally {
+        finishManualSessionOpen(manualOpenToken);
+      }
+    },
+    refreshDisplayedSessionWindow: async (
+      sessionId: string,
+      options: SessionWindowHydrationOptions = {}
+    ) => {
+      if (!input.transport || manualSessionOpenInFlightRef.current) {
+        return;
+      }
+      if (input.viewport.displayedSessionIdRef.current !== sessionId) {
+        return;
+      }
+      const requestId = ++backgroundRefreshRequestIdRef.current;
+      const result = await input.transport.sessionBrowser.open(sessionId, {
+        forceProviderHydration: options.forceProviderHydration
+      });
+      if (backgroundRefreshRequestIdRef.current !== requestId) {
+        return;
+      }
+      if (
+        manualSessionOpenInFlightRef.current ||
+        input.viewport.displayedSessionIdRef.current !== sessionId
+      ) {
+        return;
+      }
+      applySessionWindow(result.page, "replace", {
+        activate: false,
+        barrierCursor: options.barrierCursor,
+        preserveViewport: options.preserveViewport ?? true
+      });
     },
     onLoadOlder: async () => {
       if (
@@ -223,6 +287,7 @@ export const useSessionOpenController = (input: {
       if (!input.transport || !engineId) {
         return;
       }
+      const manualOpenToken = beginManualSessionOpen();
       input.onStatusNotice({
         message: "Creating session…",
         persistent: true,
@@ -265,27 +330,61 @@ export const useSessionOpenController = (input: {
           source: "create-session",
           ...statusNoticeErrorDetails(error)
         });
+      } finally {
+        finishManualSessionOpen(manualOpenToken);
       }
     },
     onOpenSession: async (sessionId: string) => {
       if (!input.transport) {
         return;
       }
-      const previousSessionId = input.viewport.displayedSessionIdRef.current;
-      if (previousSessionId && previousSessionId !== sessionId) {
-        await releaseSessionCache(previousSessionId);
-      }
-      input.onResetSessionSwitchState();
-      input.setBrowserSelectedSessionId(sessionId);
-      input.setOpeningSessionId(sessionId);
+      const manualOpenToken = beginManualSessionOpen();
       const requestId = ++openSessionRequestIdRef.current;
-      const cachedWindow = input.sessionWindows[sessionId];
-      if (cachedWindow && activateLoadedSession(sessionId)) {
-        input.viewport.scrollToBottom(sessionId, {
-          allowPendingForInactive: true
+      try {
+        const previousSessionId = input.viewport.displayedSessionIdRef.current;
+        if (previousSessionId && previousSessionId !== sessionId) {
+          await releaseSessionCache(previousSessionId);
+        }
+        input.onResetSessionSwitchState();
+        input.setBrowserSelectedSessionId(sessionId);
+        input.setOpeningSessionId(sessionId);
+        const cachedWindow = input.sessionWindows[sessionId];
+        if (cachedWindow && activateLoadedSession(sessionId)) {
+          input.viewport.scrollToBottom(sessionId, {
+            allowPendingForInactive: true
+          });
+          try {
+            await input.transport.sessionBrowser.activate(sessionId);
+            if (openSessionRequestIdRef.current !== requestId) {
+              return;
+            }
+            await input.refreshSessionBrowser({
+              mode: "workspace",
+              workspaceId: findSessionNode(input.workspaceTree, sessionId)?.workspaceId
+            });
+            input.setOpeningSessionId(undefined);
+            input.onStatusNotice(undefined);
+          } catch (error) {
+            if (openSessionRequestIdRef.current !== requestId) {
+              return;
+            }
+            input.setOpeningSessionId(undefined);
+            input.onStatusNotice({
+              message: `Open session failed: ${(error as Error).message}`,
+              persistent: true,
+              source: "session-browser",
+              ...statusNoticeErrorDetails(error)
+            });
+          }
+          return;
+        }
+        input.onStatusNotice({
+          message: "Opening session…",
+          persistent: true,
+          source: "session-browser"
         });
         try {
-          await input.transport.sessionBrowser.activate(sessionId);
+          await hydrateOpenedSession(sessionId, requestId);
           if (openSessionRequestIdRef.current !== requestId) {
             return;
           }
@@ -307,34 +406,8 @@ export const useSessionOpenController = (input: {
             ...statusNoticeErrorDetails(error)
           });
         }
-        return;
-      }
-      input.onStatusNotice({
-        message: "Opening session…",
-        persistent: true,
-        source: "session-browser"
-      });
-      try {
-        await hydrateOpenedSession(sessionId, requestId);
-        if (openSessionRequestIdRef.current !== requestId) {
-          return;
-        }
-        await input.refreshSessionBrowser({
-          mode: "workspace",
-          workspaceId: findSessionNode(input.workspaceTree, sessionId)?.workspaceId
-        });
-        input.onStatusNotice(undefined);
-      } catch (error) {
-        if (openSessionRequestIdRef.current !== requestId) {
-          return;
-        }
-        input.setOpeningSessionId(undefined);
-        input.onStatusNotice({
-          message: `Open session failed: ${(error as Error).message}`,
-          persistent: true,
-          source: "session-browser",
-          ...statusNoticeErrorDetails(error)
-        });
+      } finally {
+        finishManualSessionOpen(manualOpenToken);
       }
     }
   };

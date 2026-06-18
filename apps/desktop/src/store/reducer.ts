@@ -33,6 +33,76 @@ const maxSeenEventIds = 2_048;
 
 type ActorFields = { participantId?: string; engineId?: string };
 
+const splitComparableCursor = (
+  cursor: string
+): { prefix: string; sequence: bigint } | undefined => {
+  const match = /^(.*?)(\d+)$/.exec(cursor);
+  if (!match) {
+    return undefined;
+  }
+  return {
+    prefix: match[1] ?? "",
+    sequence: BigInt(match[2]!)
+  };
+};
+
+const compareCursorPosition = (
+  left: string | undefined,
+  right: string | undefined
+): number | undefined => {
+  if (!left || !right) {
+    return undefined;
+  }
+  if (left === right) {
+    return 0;
+  }
+  const parsedLeft = splitComparableCursor(left);
+  const parsedRight = splitComparableCursor(right);
+  if (!parsedLeft || !parsedRight || parsedLeft.prefix !== parsedRight.prefix) {
+    return undefined;
+  }
+  if (parsedLeft.sequence < parsedRight.sequence) {
+    return -1;
+  }
+  if (parsedLeft.sequence > parsedRight.sequence) {
+    return 1;
+  }
+  return 0;
+};
+
+const isEnvelopeCoveredByCursor = (
+  envelope: EventEnvelope,
+  cursor: string | undefined
+): boolean => {
+  if (!cursor) {
+    return false;
+  }
+  const comparison = compareCursorPosition(envelope.cursor, cursor);
+  return comparison !== undefined && comparison <= 0;
+};
+
+const runtimeEventSessionId = (event: RuntimeEvent): string | undefined =>
+  "sessionId" in event && typeof event.sessionId === "string"
+    ? event.sessionId
+    : undefined;
+
+const isEnvelopeCoveredByBarrier = (
+  state: RendererStoreState,
+  envelope: EventEnvelope
+): boolean => {
+  if (isEnvelopeCoveredByCursor(envelope, state.eventStream.cursorBarrier)) {
+    return true;
+  }
+  const sessionId = runtimeEventSessionId(envelope.event);
+  if (!sessionId) {
+    return false;
+  }
+  return isEnvelopeCoveredByCursor(
+    envelope,
+    state.eventStream.cursorBarrierBySessionId?.[sessionId]
+  );
+};
+
 const runtimeErrorMessageId = (turnId: string): string => `runtime-error:${turnId}`;
 
 const formatRuntimeErrorText = (
@@ -1231,6 +1301,63 @@ const markEnvelopeInEventStream = (
   return markEnvelopesInEventStream(state, [envelope]);
 };
 
+const markGlobalCursorBarrier = (
+  state: RendererStoreState,
+  cursor: string | undefined
+): RendererStoreState => {
+  if (!cursor) {
+    return state;
+  }
+  const barrierComparison = compareCursorPosition(
+    cursor,
+    state.eventStream.cursorBarrier
+  );
+  if (barrierComparison !== undefined && barrierComparison <= 0) {
+    return state;
+  }
+  const lastCursorComparison = compareCursorPosition(
+    cursor,
+    state.eventStream.lastCursor
+  );
+  const lastCursor =
+    lastCursorComparison !== undefined && lastCursorComparison <= 0
+      ? state.eventStream.lastCursor
+      : cursor;
+  return {
+    ...state,
+    eventStream: {
+      ...state.eventStream,
+      lastCursor,
+      cursorBarrier: cursor
+    }
+  };
+};
+
+const markSessionCursorBarrier = (
+  state: RendererStoreState,
+  sessionId: string,
+  cursor: string | undefined
+): RendererStoreState => {
+  if (!cursor) {
+    return state;
+  }
+  const currentBarrier = state.eventStream.cursorBarrierBySessionId?.[sessionId];
+  const comparison = compareCursorPosition(cursor, currentBarrier);
+  if (comparison !== undefined && comparison <= 0) {
+    return state;
+  }
+  return {
+    ...state,
+    eventStream: {
+      ...state.eventStream,
+      cursorBarrierBySessionId: {
+        ...(state.eventStream.cursorBarrierBySessionId ?? {}),
+        [sessionId]: cursor
+      }
+    }
+  };
+};
+
 const markEnvelopesInEventStream = (
   state: RendererStoreState,
   envelopes: EventEnvelope[]
@@ -1259,6 +1386,8 @@ const markEnvelopesInEventStream = (
     eventStream: {
       lastEventId: lastEnvelope.eventId,
       lastCursor: lastEnvelope.cursor,
+      cursorBarrier: state.eventStream.cursorBarrier,
+      cursorBarrierBySessionId: state.eventStream.cursorBarrierBySessionId,
       lastOccurredAt: lastEnvelope.occurredAt,
       recentEventIds: trimmedRecentEventIds,
       seenEventIds
@@ -1354,7 +1483,10 @@ const ingestEnvelope = (
   state: RendererStoreState,
   envelope: EventEnvelope
 ): RendererStoreState => {
-  if (state.eventStream.seenEventIds[envelope.eventId]) {
+  if (
+    state.eventStream.seenEventIds[envelope.eventId] ||
+    isEnvelopeCoveredByBarrier(state, envelope)
+  ) {
     return state;
   }
   const next = applyRuntimeEvent(
@@ -1374,7 +1506,8 @@ const ingestEnvelopeBatch = (
   for (const envelope of envelopes) {
     if (
       state.eventStream.seenEventIds[envelope.eventId] ||
-      seenInBatch.has(envelope.eventId)
+      seenInBatch.has(envelope.eventId) ||
+      isEnvelopeCoveredByBarrier(state, envelope)
     ) {
       continue;
     }
@@ -1401,7 +1534,10 @@ export const rendererStoreReducer = (
 ): RendererStoreState => {
   switch (action.type) {
     case "store/hydrateSnapshot":
-      return hydrateFromSnapshot(state, action.snapshot);
+      return markGlobalCursorBarrier(
+        hydrateFromSnapshot(state, action.snapshot),
+        action.cursor
+      );
     case "store/hydrateSessionWindow": {
       const shouldPreserveActiveSession =
         action.mode !== "prepend" && state.activeSessionId === action.sessionId;
@@ -1409,7 +1545,15 @@ export const rendererStoreReducer = (
         action.mode === "prepend"
           ? state
           : disposeSessionState(state, action.sessionId);
-      const nextState = mergeSnapshotIntoState(baseState, action.snapshot);
+      const mergedState = mergeSnapshotIntoState(baseState, action.snapshot);
+      const nextState =
+        action.mode === "prepend"
+          ? mergedState
+          : markSessionCursorBarrier(
+              mergedState,
+              action.sessionId,
+              action.cursor
+            );
       if (!shouldPreserveActiveSession) {
         return nextState;
       }

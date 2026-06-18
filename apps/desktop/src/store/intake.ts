@@ -29,10 +29,12 @@ const safeParseWith = <T>(parse: (payload: unknown) => T, payload: unknown): Saf
 };
 
 export const createHydrateSnapshotAction = (
-  snapshot: DomainSnapshot
+  snapshot: DomainSnapshot,
+  cursor?: string
 ): RendererStoreAction => ({
   type: "store/hydrateSnapshot",
-  snapshot
+  snapshot,
+  cursor
 });
 
 export const createIngestEventAction = (event: RuntimeEvent): RendererStoreAction => ({

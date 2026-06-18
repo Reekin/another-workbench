@@ -272,10 +272,39 @@ describe("RuntimeEventBus", () => {
     });
 
     const replayed = bus.replay({
-      fromCursor: "1"
+      fromCursor: "2"
     });
-    expect(replayed).toHaveLength(2);
-    expect(replayed.map((envelope) => envelope.cursor)).toEqual(["2", "3"]);
+    expect(replayed).toHaveLength(1);
+    expect(replayed.map((envelope) => envelope.cursor)).toEqual(["3"]);
+  });
+
+  it("does not replay from the start when an in-memory fromCursor expired", () => {
+    const bus = new RuntimeEventBus({
+      now: () => now,
+      maxReplayEnvelopes: 2,
+      createId: (() => {
+        let sequence = 0;
+        return () => `evt-expired-${++sequence}`;
+      })()
+    });
+
+    bus.publish({
+      type: "turn.started",
+      sessionId: "session-a",
+      turnId: "turn-a-1"
+    });
+    bus.publish({
+      type: "turn.started",
+      sessionId: "session-a",
+      turnId: "turn-a-2"
+    });
+    bus.publish({
+      type: "turn.started",
+      sessionId: "session-a",
+      turnId: "turn-a-3"
+    });
+
+    expect(bus.replay({ fromCursor: "1" })).toEqual([]);
   });
 
   it("replays backlog before continuing live delivery for fromCursor subscriptions", () => {

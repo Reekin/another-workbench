@@ -1092,7 +1092,8 @@ export class WorkbenchShellService {
       return undefined;
     }
     this.partiallyHydratedSessionIds.add(sessionId);
-    const snapshot = this.runtimeService.getSnapshot();
+    const snapshotResult = this.getRuntimeSnapshotResult();
+    const snapshot = snapshotResult.snapshot;
     const participants = snapshot.participants.filter(
       (participant) => participant.conversationId === hydrated.conversation.conversationId
     );
@@ -1102,6 +1103,7 @@ export class WorkbenchShellService {
     );
     return buildSessionWindowSnapshotFromPage({
       sessionId,
+      cursor: snapshotResult.cursor,
       conversation: hydrated.conversation,
       session: hydrated.session,
       turns: hydrated.turns,
@@ -1193,7 +1195,8 @@ export class WorkbenchShellService {
       anchorTurnId?: string;
     }
   ): SessionWindowSnapshot {
-    const snapshot = this.runtimeService.getSnapshot();
+    const snapshotResult = this.getRuntimeSnapshotResult();
+    const snapshot = snapshotResult.snapshot;
     const session = snapshot.sessions.find((item) => item.sessionId === sessionId);
     if (!session) {
       throw new Error(`Unknown session: ${sessionId}`);
@@ -1206,6 +1209,7 @@ export class WorkbenchShellService {
     }
     return buildSessionWindowSnapshot({
       sessionId,
+      cursor: snapshotResult.cursor,
       conversation,
       session,
       turns: snapshot.turns.filter((turn) => turn.sessionId === sessionId),
@@ -1234,5 +1238,22 @@ export class WorkbenchShellService {
       beforeTurnId: input.beforeTurnId,
       anchorTurnId: input.anchorTurnId
     });
+  }
+
+  private getRuntimeSnapshotResult(): {
+    snapshot: ReturnType<WorkbenchRuntimeService["getSnapshot"]>;
+    cursor?: string;
+  } {
+    const runtimeService = this.runtimeService as WorkbenchRuntimeService & {
+      getSnapshotResult?: () => {
+        snapshot: ReturnType<WorkbenchRuntimeService["getSnapshot"]>;
+        cursor?: string;
+      };
+    };
+    return (
+      runtimeService.getSnapshotResult?.() ?? {
+        snapshot: this.runtimeService.getSnapshot()
+      }
+    );
   }
 }

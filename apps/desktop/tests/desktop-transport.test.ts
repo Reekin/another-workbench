@@ -1123,7 +1123,7 @@ describe("Desktop transport facade", () => {
       });
     }
 
-    expect(store.getState().eventStream.lastCursor).toBeUndefined();
+    expect(store.getState().eventStream.lastCursor).toBe("cursor-0");
     expect(scheduled).toHaveLength(1);
 
     scheduled.shift()?.();
@@ -1131,6 +1131,60 @@ describe("Desktop transport facade", () => {
     expect(store.getState().eventStream.lastCursor).toBe("cursor-3");
     expect(store.getState().entities.messageBlocks["message-1:md"]?.text).toBe("123");
     expect(actions).toEqual(["store/hydrateSnapshot", "store/ingestEnvelopes"]);
+  });
+
+  it("reports backlog pressure for queued stream events", async () => {
+    const scheduled: Array<() => void> = [];
+    const preload = createPreloadMock();
+    const transport = createDesktopTransport(preload.api, {
+      eventBacklogPressurePendingThreshold: 2,
+      eventBacklogPressureStreamThreshold: 2,
+      scheduleEventDrain: (callback) => {
+        scheduled.push(callback);
+        return () => undefined;
+      }
+    });
+    const pressures: unknown[] = [];
+
+    await transport.events.subscribe({
+      fromCursor: "cursor-0",
+      onEnvelope: () => undefined,
+      onBacklogPressure: (pressure) => pressures.push(pressure)
+    });
+
+    for (let index = 1; index <= 2; index += 1) {
+      preload.emitPush({
+        channel: "workbench.events",
+        subscriptionId: "sub-1",
+        envelope: {
+          eventId: `evt-pressure-${index}`,
+          cursor: `cursor-${index}`,
+          occurredAt: "2026-04-17T00:00:01.000Z",
+          event: {
+            type: "message.delta",
+            sessionId: "session-a",
+            turnId: "turn-a",
+            messageId: "message-a",
+            delta: String(index)
+          }
+        }
+      });
+    }
+
+    expect(scheduled).toHaveLength(1);
+    expect(pressures).toEqual([
+      {
+        pendingCount: 2,
+        streamPendingCount: 2,
+        lastCursor: "cursor-2",
+        sessions: {
+          "session-a": {
+            streamPendingCount: 2,
+            lastCursor: "cursor-2"
+          }
+        }
+      }
+    ]);
   });
 
   it("flushes queued event pushes after upstream unsubscribe drains pending batches", async () => {
@@ -1195,7 +1249,7 @@ describe("Desktop transport facade", () => {
     });
 
     expect(scheduled).toHaveLength(1);
-    expect(store.getState().eventStream.lastCursor).toBeUndefined();
+    expect(store.getState().eventStream.lastCursor).toBe("cursor-0");
 
     await subscription.unsubscribe();
 

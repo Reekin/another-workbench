@@ -35,6 +35,31 @@ const updateListIndex = (
   [ownerId]: addUnique(index[ownerId] ?? [], valueId)
 });
 
+const removeFromListIndex = (
+  index: Record<string, string[]>,
+  ownerId: string | undefined,
+  valueId: string
+): Record<string, string[]> => {
+  if (!ownerId) {
+    return index;
+  }
+  const current = index[ownerId];
+  if (!current?.includes(valueId)) {
+    return index;
+  }
+  const next = current.filter((item) => item !== valueId);
+  if (next.length === current.length) {
+    return index;
+  }
+  const result = { ...index };
+  if (next.length === 0) {
+    delete result[ownerId];
+  } else {
+    result[ownerId] = next;
+  }
+  return result;
+};
+
 export const createEmptyEntities = (): RendererEntities => ({
   conversations: {},
   sessions: {},
@@ -53,6 +78,11 @@ export const createEmptyIndexes = (): RendererIndexes => ({
   sessionIdsByConversation: {},
   turnIdsBySession: {},
   messageBlockIdsByMessage: {},
+  messageBlockIdsByTurn: {},
+  toolCallIdsByTurn: {},
+  terminalIdsByTurn: {},
+  approvalRequestIdsByTurn: {},
+  runtimeInteractionIdsByTurn: {},
   participantIdsByConversation: {},
   relationIdsByParentSession: {},
   relationIdsByChildSession: {}
@@ -121,77 +151,168 @@ export const upsertTurn = (state: RendererStoreState, turn: Turn): RendererStore
 export const upsertMessageBlock = (
   state: RendererStoreState,
   messageBlock: MessageBlock
-): RendererStoreState => ({
-  ...state,
-  entities: {
-    ...state.entities,
-    messageBlocks: put(state.entities.messageBlocks, messageBlock.blockId, messageBlock)
-  },
-  indexes: {
-    ...state.indexes,
-    messageBlockIdsByMessage: updateListIndex(
+): RendererStoreState => {
+  const existing = state.entities.messageBlocks[messageBlock.blockId];
+  const messageBlockIdsByMessage = updateListIndex(
+    removeFromListIndex(
       state.indexes.messageBlockIdsByMessage,
-      messageBlock.messageId,
+      existing?.messageId !== messageBlock.messageId ? existing?.messageId : undefined,
       messageBlock.blockId
-    )
-  }
-});
+    ),
+    messageBlock.messageId,
+    messageBlock.blockId
+  );
+  const messageBlockIdsByTurn = updateListIndex(
+    removeFromListIndex(
+      state.indexes.messageBlockIdsByTurn,
+      existing?.turnId !== messageBlock.turnId ? existing?.turnId : undefined,
+      messageBlock.blockId
+    ),
+    messageBlock.turnId,
+    messageBlock.blockId
+  );
+  return {
+    ...state,
+    entities: {
+      ...state.entities,
+      messageBlocks: put(state.entities.messageBlocks, messageBlock.blockId, messageBlock)
+    },
+    indexes: {
+      ...state.indexes,
+      messageBlockIdsByMessage,
+      messageBlockIdsByTurn
+    }
+  };
+};
 
 export const upsertToolCall = (
   state: RendererStoreState,
   toolCall: ToolCall
-): RendererStoreState => ({
-  ...state,
-  entities: {
-    ...state.entities,
-    toolCalls: put(state.entities.toolCalls, toolCall.toolCallId, toolCall)
-  }
-});
+): RendererStoreState => {
+  const existing = state.entities.toolCalls[toolCall.toolCallId];
+  return {
+    ...state,
+    entities: {
+      ...state.entities,
+      toolCalls: put(state.entities.toolCalls, toolCall.toolCallId, toolCall)
+    },
+    indexes: {
+      ...state.indexes,
+      toolCallIdsByTurn: updateListIndex(
+        removeFromListIndex(
+          state.indexes.toolCallIdsByTurn,
+          existing?.turnId !== toolCall.turnId ? existing?.turnId : undefined,
+          toolCall.toolCallId
+        ),
+        toolCall.turnId,
+        toolCall.toolCallId
+      )
+    }
+  };
+};
 
 export const upsertTerminalStream = (
   state: RendererStoreState,
   terminalStream: TerminalStream
-): RendererStoreState => ({
-  ...state,
-  entities: {
-    ...state.entities,
-    terminalStreams: put(
-      state.entities.terminalStreams,
-      terminalStream.terminalId,
-      terminalStream
-    )
-  }
-});
+): RendererStoreState => {
+  const existing = state.entities.terminalStreams[terminalStream.terminalId];
+  return {
+    ...state,
+    entities: {
+      ...state.entities,
+      terminalStreams: put(
+        state.entities.terminalStreams,
+        terminalStream.terminalId,
+        terminalStream
+      )
+    },
+    indexes: {
+      ...state.indexes,
+      terminalIdsByTurn: updateListIndex(
+        removeFromListIndex(
+          state.indexes.terminalIdsByTurn,
+          existing?.turnId !== terminalStream.turnId ? existing?.turnId : undefined,
+          terminalStream.terminalId
+        ),
+        terminalStream.turnId,
+        terminalStream.terminalId
+      )
+    }
+  };
+};
 
 export const upsertApprovalRequest = (
   state: RendererStoreState,
   approvalRequest: ApprovalRequest
-): RendererStoreState => ({
-  ...state,
-  entities: {
-    ...state.entities,
-    approvalRequests: put(
-      state.entities.approvalRequests,
-      approvalRequest.requestId,
-      approvalRequest
-    )
-  }
-});
+): RendererStoreState => {
+  const existing = state.entities.approvalRequests[approvalRequest.requestId];
+  return {
+    ...state,
+    entities: {
+      ...state.entities,
+      approvalRequests: put(
+        state.entities.approvalRequests,
+        approvalRequest.requestId,
+        approvalRequest
+      )
+    },
+    indexes: {
+      ...state.indexes,
+      approvalRequestIdsByTurn: updateListIndex(
+        removeFromListIndex(
+          state.indexes.approvalRequestIdsByTurn,
+          existing?.turnId !== approvalRequest.turnId ? existing?.turnId : undefined,
+          approvalRequest.requestId
+        ),
+        approvalRequest.turnId,
+        approvalRequest.requestId
+      )
+    }
+  };
+};
 
 export const upsertRuntimeInteraction = (
   state: RendererStoreState,
   runtimeInteraction: RuntimeInteraction
-): RendererStoreState => ({
-  ...state,
-  entities: {
-    ...state.entities,
-    runtimeInteractions: put(
-      state.entities.runtimeInteractions,
-      runtimeInteraction.requestId,
-      runtimeInteraction
-    )
+): RendererStoreState => {
+  const existing = state.entities.runtimeInteractions[runtimeInteraction.requestId];
+  const runtimeInteractionIdsByTurn = removeFromListIndex(
+    state.indexes.runtimeInteractionIdsByTurn,
+    existing?.turnId !== runtimeInteraction.turnId ? existing?.turnId : undefined,
+    runtimeInteraction.requestId
+  );
+  const nextState: RendererStoreState = {
+    ...state,
+    entities: {
+      ...state.entities,
+      runtimeInteractions: put(
+        state.entities.runtimeInteractions,
+        runtimeInteraction.requestId,
+        runtimeInteraction
+      )
+    }
+  };
+  if (!runtimeInteraction.turnId) {
+    return {
+      ...nextState,
+      indexes: {
+        ...nextState.indexes,
+        runtimeInteractionIdsByTurn
+      }
+    };
   }
-});
+  return {
+    ...nextState,
+    indexes: {
+      ...nextState.indexes,
+      runtimeInteractionIdsByTurn: updateListIndex(
+        runtimeInteractionIdsByTurn,
+        runtimeInteraction.turnId,
+        runtimeInteraction.requestId
+      )
+    }
+  };
+};
 
 export const upsertParticipant = (
   state: RendererStoreState,

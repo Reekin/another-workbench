@@ -96,6 +96,19 @@ const shouldDeliver = (
 
 const limitRuntimeEventPayload = (event: RuntimeEvent): RuntimeEvent => {
   switch (event.type) {
+    case "message.delta":
+      return {
+        ...event,
+        delta: limitSingleStreamChunk(event.delta)
+      };
+    case "message.completed":
+      return {
+        ...event,
+        finalText:
+          event.finalText != null
+            ? appendLimitedStreamText(undefined, event.finalText)
+            : undefined
+      };
     case "tool.delta":
       return {
         ...event,
@@ -117,6 +130,19 @@ const limitRuntimeEventPayload = (event: RuntimeEvent): RuntimeEvent => {
     default:
       return event;
   }
+};
+
+const limitRuntimeEventEnvelopePayload = (
+  envelope: RuntimeEventEnvelope
+): RuntimeEventEnvelope => {
+  const limitedEvent = limitRuntimeEventPayload(envelope.event);
+  if (limitedEvent === envelope.event) {
+    return envelope;
+  }
+  return {
+    ...envelope,
+    event: limitedEvent
+  };
 };
 
 export class RuntimeEventBus {
@@ -224,15 +250,16 @@ export class RuntimeEventBus {
         this.resolveConversationIdBySessionId
       )
     );
+    const normalized = filtered.map(limitRuntimeEventEnvelopePayload);
 
     if (typeof input.limit !== "number") {
-      return filtered;
+      return normalized;
     }
     const limit = Math.max(0, Math.floor(input.limit));
-    if (limit >= filtered.length) {
-      return filtered;
+    if (limit >= normalized.length) {
+      return normalized;
     }
-    return filtered.slice(0, limit);
+    return normalized.slice(0, limit);
   }
 
   public getSubscriberCount(): number {

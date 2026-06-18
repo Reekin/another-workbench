@@ -852,4 +852,359 @@ describe("transcript view model", () => {
       blocks: []
     });
   });
+
+  it("builds the visible session transcript without touching unindexed background entities", () => {
+    const store = createRendererStore();
+    store.hydrateSnapshot(
+      parseDomainSnapshot({
+        conversations: [
+          {
+            conversationId: "conv-1",
+            participantEngineIds: ["agent-1"],
+            activeSessionId: "session-1",
+            sessionIds: ["session-1"],
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-1",
+            conversationId: "conv-1",
+            engineId: "agent-1",
+            status: "running",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        turns: [
+          {
+            turnId: "turn-1",
+            sessionId: "session-1",
+            status: "completed",
+            startedAt: "2026-04-17T00:00:01.000Z",
+            messageIds: ["message-1"],
+            toolCallIds: [],
+            terminalIds: [],
+            approvalRequestIds: []
+          }
+        ],
+        messageBlocks: [
+          {
+            blockId: "message-1:md",
+            messageId: "message-1",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "assistant",
+            kind: "markdown",
+            text: "Visible response.",
+            startedAt: "2026-04-17T00:00:01.000Z"
+          }
+        ],
+        toolCalls: [],
+        terminalStreams: [],
+        approvalRequests: [],
+        participants: [],
+        sessionRelations: []
+      })
+    );
+
+    const state = store.getState();
+    const withPoisonedBackgroundEntity = <T extends object>(items: T, key: string): T => {
+      const next = { ...items };
+      Object.defineProperty(next, key, {
+        enumerable: true,
+        get() {
+          throw new Error(`background entity scanned: ${key}`);
+        }
+      });
+      return next;
+    };
+    const stateWithBackgroundPoison = {
+      ...state,
+      entities: {
+        ...state.entities,
+        messageBlocks: withPoisonedBackgroundEntity(
+          state.entities.messageBlocks,
+          "background-message:md"
+        ),
+        toolCalls: withPoisonedBackgroundEntity(
+          state.entities.toolCalls,
+          "background-tool"
+        ),
+        terminalStreams: withPoisonedBackgroundEntity(
+          state.entities.terminalStreams,
+          "background-terminal"
+        ),
+        approvalRequests: withPoisonedBackgroundEntity(
+          state.entities.approvalRequests,
+          "background-approval"
+        ),
+        runtimeInteractions: withPoisonedBackgroundEntity(
+          state.entities.runtimeInteractions,
+          "background-interaction"
+        )
+      }
+    };
+
+    const rows = buildTurnTranscriptRows(
+      stateWithBackgroundPoison,
+      selectTurnsForSession(state, "session-1"),
+      buildParticipantDirectory([])
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.blocks).toEqual([
+      expect.objectContaining({
+        blockId: "message-1:md",
+        text: "Visible response."
+      })
+    ]);
+  });
+
+  it("ignores stale by-turn index entries whose entity owner changed", () => {
+    const store = createRendererStore();
+    store.hydrateSnapshot(
+      parseDomainSnapshot({
+        conversations: [
+          {
+            conversationId: "conv-1",
+            participantEngineIds: ["agent-1"],
+            activeSessionId: "session-1",
+            sessionIds: ["session-1"],
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-1",
+            conversationId: "conv-1",
+            engineId: "agent-1",
+            status: "running",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        turns: [
+          {
+            turnId: "turn-1",
+            sessionId: "session-1",
+            status: "completed",
+            startedAt: "2026-04-17T00:00:01.000Z",
+            messageIds: ["message-visible"],
+            toolCallIds: [],
+            terminalIds: [],
+            approvalRequestIds: []
+          }
+        ],
+        messageBlocks: [
+          {
+            blockId: "message-visible:md",
+            messageId: "message-visible",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "assistant",
+            kind: "markdown",
+            text: "Visible response.",
+            startedAt: "2026-04-17T00:00:01.000Z"
+          }
+        ],
+        toolCalls: [],
+        terminalStreams: [],
+        approvalRequests: [],
+        participants: [],
+        sessionRelations: []
+      })
+    );
+
+    const state = store.getState();
+    const stateWithStaleIndex = {
+      ...state,
+      entities: {
+        ...state.entities,
+        messageBlocks: {
+          ...state.entities.messageBlocks,
+          "message-stale:md": {
+            blockId: "message-stale:md",
+            messageId: "message-stale",
+            sessionId: "session-1",
+            turnId: "turn-old",
+            role: "assistant" as const,
+            kind: "markdown" as const,
+            text: "Stale response.",
+            startedAt: "2026-04-17T00:00:00.000Z"
+          }
+        }
+      },
+      indexes: {
+        ...state.indexes,
+        messageBlockIdsByTurn: {
+          ...state.indexes.messageBlockIdsByTurn,
+          "turn-1": [
+            ...(state.indexes.messageBlockIdsByTurn["turn-1"] ?? []),
+            "message-stale:md"
+          ]
+        }
+      }
+    };
+
+    const rows = buildTurnTranscriptRows(
+      stateWithStaleIndex,
+      selectTurnsForSession(state, "session-1"),
+      buildParticipantDirectory([])
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.blocks.map((block) => block.blockId)).toEqual([
+      "message-visible:md"
+    ]);
+  });
+
+  it("ignores stale direct turn references whose entity owner changed", () => {
+    const store = createRendererStore();
+    store.hydrateSnapshot(
+      parseDomainSnapshot({
+        conversations: [
+          {
+            conversationId: "conv-1",
+            participantEngineIds: ["agent-1"],
+            activeSessionId: "session-1",
+            sessionIds: ["session-1"],
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-1",
+            conversationId: "conv-1",
+            engineId: "agent-1",
+            status: "running",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        turns: [
+          {
+            turnId: "turn-old",
+            sessionId: "session-1",
+            status: "completed",
+            startedAt: "2026-04-17T00:00:01.000Z",
+            messageIds: ["message-moved"],
+            toolCallIds: ["tool-moved"],
+            terminalIds: ["terminal-moved"],
+            approvalRequestIds: ["approval-moved"],
+            interactionRequestIds: ["interaction-moved"]
+          },
+          {
+            turnId: "turn-new",
+            sessionId: "session-1",
+            status: "completed",
+            startedAt: "2026-04-17T00:00:02.000Z",
+            messageIds: ["message-moved"],
+            toolCallIds: ["tool-moved"],
+            terminalIds: ["terminal-moved"],
+            approvalRequestIds: ["approval-moved"],
+            interactionRequestIds: ["interaction-moved"]
+          }
+        ],
+        messageBlocks: [
+          {
+            blockId: "message-moved:md",
+            messageId: "message-moved",
+            sessionId: "session-1",
+            turnId: "turn-new",
+            role: "assistant",
+            kind: "markdown",
+            text: "Moved response.",
+            startedAt: "2026-04-17T00:00:02.100Z"
+          }
+        ],
+        toolCalls: [
+          {
+            toolCallId: "tool-moved",
+            sessionId: "session-1",
+            turnId: "turn-new",
+            toolName: "exec",
+            status: "completed",
+            startedAt: "2026-04-17T00:00:02.200Z"
+          }
+        ],
+        terminalStreams: [
+          {
+            terminalId: "terminal-moved",
+            sessionId: "session-1",
+            turnId: "turn-new",
+            status: "completed",
+            outputText: "output",
+            startedAt: "2026-04-17T00:00:02.300Z"
+          }
+        ],
+        approvalRequests: [
+          {
+            requestId: "approval-moved",
+            sessionId: "session-1",
+            turnId: "turn-new",
+            approvalKind: "tool",
+            status: "pending",
+            title: "Approve command",
+            requestedAt: "2026-04-17T00:00:02.400Z"
+          }
+        ],
+        runtimeInteractions: [
+          {
+            requestId: "interaction-moved",
+            sessionId: "session-1",
+            turnId: "turn-new",
+            interactionKind: "tool_user_input",
+            status: "pending",
+            title: "Provide input",
+            payload: {},
+            requestedAt: "2026-04-17T00:00:02.500Z"
+          }
+        ],
+        participants: [],
+        sessionRelations: []
+      })
+    );
+
+    const state = store.getState();
+    const oldTurn = state.entities.turns["turn-old"];
+    const newTurn = state.entities.turns["turn-new"];
+    expect(oldTurn).toBeDefined();
+    expect(newTurn).toBeDefined();
+
+    const oldRows = buildTurnTranscriptRows(
+      state,
+      oldTurn ? [oldTurn] : [],
+      buildParticipantDirectory([])
+    );
+    const newRows = buildTurnTranscriptRows(
+      state,
+      newTurn ? [newTurn] : [],
+      buildParticipantDirectory([])
+    );
+
+    expect(oldRows.flatMap((row) => row.blocks)).toEqual([]);
+    expect(oldRows.flatMap((row) => row.toolCalls)).toEqual([]);
+    expect(oldRows.flatMap((row) => row.terminalStreams)).toEqual([]);
+    expect(oldRows.flatMap((row) => row.approvals)).toEqual([]);
+    expect(oldRows.flatMap((row) => row.interactions)).toEqual([]);
+    expect(newRows.flatMap((row) => row.blocks).map((block) => block.blockId)).toEqual([
+      "message-moved:md"
+    ]);
+    expect(
+      newRows.flatMap((row) => row.toolCalls).map((tool) => tool.toolCallId)
+    ).toEqual(["tool-moved"]);
+    expect(
+      newRows.flatMap((row) => row.terminalStreams).map((stream) => stream.terminalId)
+    ).toEqual(["terminal-moved"]);
+    expect(
+      newRows.flatMap((row) => row.approvals).map((approval) => approval.requestId)
+    ).toEqual(["approval-moved"]);
+    expect(
+      newRows.flatMap((row) => row.interactions).map((interaction) => interaction.requestId)
+    ).toEqual(["interaction-moved"]);
+  });
 });

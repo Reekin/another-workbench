@@ -60,12 +60,23 @@ const sortByStartTime = <T extends { startedAt?: string }>(
     return getStableId(left).localeCompare(getStableId(right));
   });
 
-const groupByTurnId = <T extends { turnId: string }>(
-  items: Iterable<T>
+const collectIndexedEntitiesByTurn = <T extends { turnId?: string }>(
+  turnIds: Iterable<string>,
+  idsByTurn: Record<string, string[]>,
+  entities: Record<string, T | undefined>
 ): Record<string, T[]> => {
   const result: Record<string, T[]> = {};
-  for (const item of items) {
-    (result[item.turnId] ??= []).push(item);
+  for (const turnId of turnIds) {
+    const items: T[] = [];
+    for (const id of idsByTurn[turnId] ?? []) {
+      const item = entities[id];
+      if (item && item.turnId === turnId) {
+        items.push(item);
+      }
+    }
+    if (items.length > 0) {
+      result[turnId] = items;
+    }
   }
   return result;
 };
@@ -103,26 +114,41 @@ type ProcessTranscriptEntry =
       id: string;
       startedAt?: string;
       interaction: RuntimeInteraction;
-    };
+};
 
 const buildTranscriptEntityIndexes = (
-  state: RendererStoreState
-): TranscriptEntityIndexes => ({
-  messageBlocksByTurnId: groupByTurnId(Object.values(state.entities.messageBlocks)),
-  toolCallsByTurnId: groupByTurnId(Object.values(state.entities.toolCalls)),
-  terminalStreamsByTurnId: groupByTurnId(
-    Object.values(state.entities.terminalStreams)
-  ),
-  approvalRequestsByTurnId: groupByTurnId(
-    Object.values(state.entities.approvalRequests)
-  ),
-  runtimeInteractionsByTurnId: groupByTurnId(
-    Object.values(state.entities.runtimeInteractions).filter(
-      (interaction): interaction is RuntimeInteraction & { turnId: string } =>
-        typeof interaction.turnId === "string"
+  state: RendererStoreState,
+  turns: Turn[]
+): TranscriptEntityIndexes => {
+  const turnIds = turns.map((turn) => turn.turnId);
+  return {
+    messageBlocksByTurnId: collectIndexedEntitiesByTurn(
+      turnIds,
+      state.indexes.messageBlockIdsByTurn,
+      state.entities.messageBlocks
+    ),
+    toolCallsByTurnId: collectIndexedEntitiesByTurn(
+      turnIds,
+      state.indexes.toolCallIdsByTurn,
+      state.entities.toolCalls
+    ),
+    terminalStreamsByTurnId: collectIndexedEntitiesByTurn(
+      turnIds,
+      state.indexes.terminalIdsByTurn,
+      state.entities.terminalStreams
+    ),
+    approvalRequestsByTurnId: collectIndexedEntitiesByTurn(
+      turnIds,
+      state.indexes.approvalRequestIdsByTurn,
+      state.entities.approvalRequests
+    ),
+    runtimeInteractionsByTurnId: collectIndexedEntitiesByTurn(
+      turnIds,
+      state.indexes.runtimeInteractionIdsByTurn,
+      state.entities.runtimeInteractions
     )
-  )
-});
+  };
+};
 
 const selectMessageBlocksForTurn = (
   state: RendererStoreState,
@@ -131,7 +157,7 @@ const selectMessageBlocksForTurn = (
 ): MessageBlock[] => {
   const fromMessageRefs = turn.messageIds.flatMap((messageId) =>
     selectMessageBlocksForMessage(state, messageId)
-  );
+  ).filter((block) => block.turnId === turn.turnId);
   const fromTurnScan = indexes.messageBlocksByTurnId[turn.turnId] ?? [];
 
   return sortByStartTime(
@@ -147,7 +173,9 @@ const selectToolCallsForTurn = (
 ): ToolCall[] => {
   const byTurnOrder = turn.toolCallIds
     .map((toolCallId) => state.entities.toolCalls[toolCallId])
-    .filter((item): item is ToolCall => Boolean(item));
+    .filter(
+      (item): item is ToolCall => Boolean(item) && item.turnId === turn.turnId
+    );
   const orderedIds = new Set(turn.toolCallIds);
   const fallback = (indexes.toolCallsByTurnId[turn.turnId] ?? []).filter(
     (item) => !orderedIds.has(item.toolCallId)
@@ -162,7 +190,10 @@ const selectTerminalStreamsForTurn = (
 ): TerminalStream[] => {
   const byTurnOrder = turn.terminalIds
     .map((terminalId) => state.entities.terminalStreams[terminalId])
-    .filter((item): item is TerminalStream => Boolean(item));
+    .filter(
+      (item): item is TerminalStream =>
+        Boolean(item) && item.turnId === turn.turnId
+    );
   const orderedIds = new Set(turn.terminalIds);
   const fallback = (indexes.terminalStreamsByTurnId[turn.turnId] ?? []).filter(
     (item) => !orderedIds.has(item.terminalId)
@@ -177,7 +208,10 @@ const selectApprovalRequestsForTurn = (
 ): ApprovalRequest[] => {
   const byTurnOrder = turn.approvalRequestIds
     .map((requestId) => state.entities.approvalRequests[requestId])
-    .filter((item): item is ApprovalRequest => Boolean(item));
+    .filter(
+      (item): item is ApprovalRequest =>
+        Boolean(item) && item.turnId === turn.turnId
+    );
   const orderedIds = new Set(turn.approvalRequestIds);
   const fallback = (indexes.approvalRequestsByTurnId[turn.turnId] ?? []).filter(
     (item) => !orderedIds.has(item.requestId)
@@ -200,7 +234,10 @@ const selectRuntimeInteractionsForTurn = (
   const requestIds = turn.interactionRequestIds ?? [];
   const byTurnOrder = requestIds
     .map((requestId) => state.entities.runtimeInteractions[requestId])
-    .filter((item): item is RuntimeInteraction => Boolean(item));
+    .filter(
+      (item): item is RuntimeInteraction =>
+        Boolean(item) && item.turnId === turn.turnId
+    );
   const orderedIds = new Set(requestIds);
   const fallback = (indexes.runtimeInteractionsByTurnId[turn.turnId] ?? []).filter(
     (item) => !orderedIds.has(item.requestId)
@@ -542,7 +579,7 @@ export const buildTurnTranscriptRows = (
   turns: Turn[],
   participantDirectory = buildParticipantDirectory([])
 ): TurnTranscriptRow[] => {
-  const indexes = buildTranscriptEntityIndexes(state);
+  const indexes = buildTranscriptEntityIndexes(state, turns);
   return sortTurnsForTranscript(turns).flatMap((turn) => {
     const blocks = selectMessageBlocksForTurn(state, turn, indexes);
     const toolCalls = selectToolCallsForTurn(state, turn, indexes);

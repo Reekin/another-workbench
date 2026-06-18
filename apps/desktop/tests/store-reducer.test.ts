@@ -601,6 +601,55 @@ describe("desktop store reducer", () => {
     expect(state.eventStream.seenEventIds["evt-terminal-1"]).toBe(true);
   });
 
+  it("bounds coalesced stream deltas during batch ingestion", () => {
+    const largeChunk = "x".repeat(50_000);
+    const state = rendererStoreReducer(createInitialRendererStoreState(), {
+      type: "store/ingestEnvelopes",
+      envelopes: [
+        toEnvelope("evt-message-1", "1", {
+          type: "message.delta",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          messageId: "message-a",
+          delta: largeChunk
+        }),
+        toEnvelope("evt-message-2", "2", {
+          type: "message.delta",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          messageId: "message-a",
+          delta: largeChunk
+        }),
+        toEnvelope("evt-message-3", "3", {
+          type: "message.delta",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          messageId: "message-a",
+          delta: largeChunk
+        }),
+        toEnvelope("evt-message-4", "4", {
+          type: "message.delta",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          messageId: "message-a",
+          delta: largeChunk
+        }),
+        toEnvelope("evt-message-5", "5", {
+          type: "message.delta",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          messageId: "message-a",
+          delta: largeChunk
+        })
+      ]
+    });
+
+    expect(state.entities.messageBlocks["message-a:md"]?.text.length).toBeLessThanOrEqual(
+      MAX_ACCUMULATED_STREAM_TEXT_LENGTH
+    );
+    expect(state.entities.messageBlocks["message-a:md"]?.text).toContain("truncated");
+  });
+
   it("updates session titles from session update events", () => {
     let state = createInitialRendererStoreState();
 
@@ -883,6 +932,190 @@ describe("desktop store reducer", () => {
     );
 
     expect(state.entities.messageBlocks["message-a:md"]?.text).toBe("更精确的验证。");
+  });
+
+  it("bounds message.completed finalText kept in renderer state", () => {
+    const largeFinalText = "x".repeat(MAX_ACCUMULATED_STREAM_TEXT_LENGTH + 50_000);
+    const state = rendererStoreReducer(
+      createInitialRendererStoreState(),
+      parseIngestEnvelopeAction(
+        toEnvelope("evt-message-completed-large-final-text", "1", {
+          type: "message.completed",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          messageId: "message-a",
+          finalText: largeFinalText,
+          engineId: "agent-a"
+        })
+      )
+    );
+
+    expect(state.entities.messageBlocks["message-a:md"]?.text.length).toBeLessThanOrEqual(
+      MAX_ACCUMULATED_STREAM_TEXT_LENGTH
+    );
+    expect(state.entities.messageBlocks["message-a:md"]?.text).toContain("truncated");
+  });
+
+  it("removes stale by-turn index entries when snapshot merge moves entities", () => {
+    const baseSnapshot: DomainSnapshot = {
+      conversations: [
+        {
+          conversationId: "conversation-a",
+          participantEngineIds: ["agent-a"],
+          activeSessionId: "session-a",
+          sessionIds: ["session-a"],
+          createdAt: "2026-04-17T00:00:00.000Z",
+          updatedAt: "2026-04-17T00:00:00.000Z"
+        }
+      ],
+      sessions: [
+        {
+          sessionId: "session-a",
+          conversationId: "conversation-a",
+          engineId: "agent-a",
+          status: "running",
+          createdAt: "2026-04-17T00:00:00.000Z",
+          updatedAt: "2026-04-17T00:00:00.000Z"
+        }
+      ],
+      turns: [
+        {
+          turnId: "turn-old",
+          sessionId: "session-a",
+          status: "completed",
+          startedAt: "2026-04-17T00:00:01.000Z",
+          messageIds: ["message-a"],
+          toolCallIds: ["tool-a"],
+          terminalIds: ["terminal-a"],
+          approvalRequestIds: ["approval-a"],
+          interactionRequestIds: ["interaction-a"]
+        }
+      ],
+      messageBlocks: [
+        {
+          blockId: "message-a:md",
+          messageId: "message-a",
+          sessionId: "session-a",
+          turnId: "turn-old",
+          role: "assistant",
+          kind: "markdown",
+          text: "old",
+          startedAt: "2026-04-17T00:00:01.000Z"
+        }
+      ],
+      toolCalls: [
+        {
+          toolCallId: "tool-a",
+          sessionId: "session-a",
+          turnId: "turn-old",
+          toolName: "exec",
+          status: "completed",
+          startedAt: "2026-04-17T00:00:01.000Z"
+        }
+      ],
+      terminalStreams: [
+        {
+          terminalId: "terminal-a",
+          sessionId: "session-a",
+          turnId: "turn-old",
+          status: "completed",
+          outputText: "old",
+          startedAt: "2026-04-17T00:00:01.000Z"
+        }
+      ],
+      approvalRequests: [
+        {
+          requestId: "approval-a",
+          sessionId: "session-a",
+          turnId: "turn-old",
+          approvalKind: "tool",
+          status: "pending",
+          title: "Approve exec",
+          requestedAt: "2026-04-17T00:00:01.000Z"
+        }
+      ],
+      runtimeInteractions: [
+        {
+          requestId: "interaction-a",
+          sessionId: "session-a",
+          turnId: "turn-old",
+          interactionKind: "tool_user_input",
+          status: "pending",
+          title: "Provide input",
+          payload: {},
+          requestedAt: "2026-04-17T00:00:01.000Z"
+        }
+      ],
+      threadGoals: [],
+      participants: [],
+      sessionRelations: []
+    };
+    const movedSnapshot: DomainSnapshot = {
+      ...baseSnapshot,
+      turns: [
+        {
+          ...baseSnapshot.turns[0],
+          turnId: "turn-new",
+          startedAt: "2026-04-17T00:00:02.000Z"
+        }
+      ],
+      messageBlocks: [
+        {
+          ...baseSnapshot.messageBlocks[0],
+          turnId: "turn-new",
+          text: "new"
+        }
+      ],
+      toolCalls: [
+        {
+          ...baseSnapshot.toolCalls[0],
+          turnId: "turn-new"
+        }
+      ],
+      terminalStreams: [
+        {
+          ...baseSnapshot.terminalStreams[0],
+          turnId: "turn-new",
+          outputText: "new"
+        }
+      ],
+      approvalRequests: [
+        {
+          ...baseSnapshot.approvalRequests[0],
+          turnId: "turn-new"
+        }
+      ],
+      runtimeInteractions: [
+        {
+          ...baseSnapshot.runtimeInteractions![0],
+          turnId: "turn-new"
+        }
+      ]
+    };
+    let state = rendererStoreReducer(createInitialRendererStoreState(), {
+      type: "store/hydrateSnapshot",
+      snapshot: baseSnapshot
+    });
+
+    state = rendererStoreReducer(state, {
+      type: "store/hydrateSessionWindow",
+      sessionId: "session-a",
+      snapshot: movedSnapshot,
+      mode: "prepend"
+    });
+
+    expect(state.indexes.messageBlockIdsByTurn["turn-old"]).toBeUndefined();
+    expect(state.indexes.toolCallIdsByTurn["turn-old"]).toBeUndefined();
+    expect(state.indexes.terminalIdsByTurn["turn-old"]).toBeUndefined();
+    expect(state.indexes.approvalRequestIdsByTurn["turn-old"]).toBeUndefined();
+    expect(state.indexes.runtimeInteractionIdsByTurn["turn-old"]).toBeUndefined();
+    expect(state.indexes.messageBlockIdsByTurn["turn-new"]).toEqual(["message-a:md"]);
+    expect(state.indexes.toolCallIdsByTurn["turn-new"]).toEqual(["tool-a"]);
+    expect(state.indexes.terminalIdsByTurn["turn-new"]).toEqual(["terminal-a"]);
+    expect(state.indexes.approvalRequestIdsByTurn["turn-new"]).toEqual(["approval-a"]);
+    expect(state.indexes.runtimeInteractionIdsByTurn["turn-new"]).toEqual([
+      "interaction-a"
+    ]);
   });
 
   it("stores explicit final-message truth on the turn when message.completed marks it", () => {
@@ -1336,11 +1569,30 @@ describe("desktop store reducer", () => {
     expect(state.eventStream.seenEventIds["evt-2050"]).toBe(true);
   });
 
-  it("bounds accumulated tool and terminal output kept in renderer state", () => {
+  it("bounds accumulated message, tool, and terminal output kept in renderer state", () => {
     let state = createInitialRendererStoreState();
     const largeChunk = "x".repeat(50_000);
 
     for (let index = 1; index <= 8; index += 1) {
+      state = rendererStoreReducer(
+        state,
+        parseIngestEnvelopeAction(
+          toEnvelopeAt(
+            `evt-message-${index}`,
+            String(index + 40),
+            "2026-04-17T00:00:00.000Z",
+            {
+              type: "message.delta",
+              sessionId: "session-a",
+              turnId: "turn-a",
+              messageId: "message-a",
+              role: "assistant",
+              delta: largeChunk,
+              engineId: "agent-a"
+            }
+          )
+        )
+      );
       state = rendererStoreReducer(
         state,
         parseIngestEnvelopeAction(
@@ -1383,6 +1635,10 @@ describe("desktop store reducer", () => {
       MAX_ACCUMULATED_STREAM_TEXT_LENGTH
     );
     expect(state.entities.toolCalls["tool-a"]?.outputSummary).toContain("truncated");
+    expect(state.entities.messageBlocks["message-a:md"]?.text.length).toBeLessThanOrEqual(
+      MAX_ACCUMULATED_STREAM_TEXT_LENGTH
+    );
+    expect(state.entities.messageBlocks["message-a:md"]?.text).toContain("truncated");
     expect(state.entities.terminalStreams["terminal-a"]?.outputText.length).toBeLessThanOrEqual(
       MAX_ACCUMULATED_STREAM_TEXT_LENGTH
     );

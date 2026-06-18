@@ -36,6 +36,11 @@ export type RendererIndexes = {
   sessionIdsByConversation: Record<string, string[]>;
   turnIdsBySession: Record<string, string[]>;
   messageBlockIdsByMessage: Record<string, string[]>;
+  messageBlockIdsByTurn: Record<string, string[]>;
+  toolCallIdsByTurn: Record<string, string[]>;
+  terminalIdsByTurn: Record<string, string[]>;
+  approvalRequestIdsByTurn: Record<string, string[]>;
+  runtimeInteractionIdsByTurn: Record<string, string[]>;
   participantIdsByConversation: Record<string, string[]>;
   relationIdsByParentSession: Record<string, string[]>;
   relationIdsByChildSession: Record<string, string[]>;

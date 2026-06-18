@@ -412,7 +412,7 @@ export class DomainProjector {
             role: existing?.role ?? "assistant",
             phase: event.phase ?? existing?.phase,
             kind: "markdown",
-            text: `${existing?.text ?? ""}${event.delta}`,
+            text: appendLimitedStreamText(existing?.text, event.delta),
             actor: existing?.actor ?? actor,
             startedAt: existing?.startedAt ?? timestamp,
             completedAt: existing?.completedAt
@@ -435,7 +435,10 @@ export class DomainProjector {
             role: existing?.role ?? "assistant",
             phase: event.phase ?? existing?.phase,
             kind: "markdown",
-            text: event.finalText ?? existing?.text ?? "",
+            text:
+              event.finalText !== undefined
+                ? appendLimitedStreamText(undefined, event.finalText)
+                : existing?.text ?? "",
             actor: existing?.actor ?? actor,
             startedAt: existing?.startedAt ?? timestamp,
             completedAt: timestamp

@@ -196,6 +196,65 @@ describe("RuntimeEventBus", () => {
     expect(bus.readSinceCursor("not-found")).toEqual([]);
   });
 
+  it("bounds oversized replay port payloads before returning them", () => {
+    const oversizedReplayEvents: RuntimeEventEnvelope[] = [
+      {
+        eventId: "evt-replay-message-delta",
+        cursor: "42",
+        occurredAt: now,
+        event: {
+          type: "message.delta",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          messageId: "message-a",
+          delta: "m".repeat(MAX_STREAM_EVENT_CHUNK_LENGTH + 10)
+        }
+      },
+      {
+        eventId: "evt-replay-message-completed",
+        cursor: "43",
+        occurredAt: now,
+        event: {
+          type: "message.completed",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          messageId: "message-a",
+          finalText: "f".repeat(MAX_ACCUMULATED_STREAM_TEXT_LENGTH + 10)
+        }
+      }
+    ];
+    const replayBus = new RuntimeEventBus({
+      replayPort: {
+        replay: () => oversizedReplayEvents
+      }
+    });
+    const readSinceBus = new RuntimeEventBus({
+      replayPort: {
+        readSinceCursor: () => oversizedReplayEvents
+      }
+    });
+
+    for (const replayed of [
+      replayBus.replay(),
+      readSinceBus.readSinceCursor("41")
+    ]) {
+      expect(replayed[0]?.event.type).toBe("message.delta");
+      if (replayed[0]?.event.type === "message.delta") {
+        expect(replayed[0].event.delta.length).toBeLessThanOrEqual(
+          MAX_STREAM_EVENT_CHUNK_LENGTH
+        );
+        expect(replayed[0].event.delta).toContain("truncated");
+      }
+      expect(replayed[1]?.event.type).toBe("message.completed");
+      if (replayed[1]?.event.type === "message.completed") {
+        expect(replayed[1].event.finalText?.length).toBeLessThanOrEqual(
+          MAX_ACCUMULATED_STREAM_TEXT_LENGTH
+        );
+        expect(replayed[1].event.finalText).toContain("truncated");
+      }
+    }
+  });
+
   it("supports filtered replay with cursor range from in-memory history", () => {
     const bus = new RuntimeEventBus({
       now: () => now,
@@ -374,6 +433,23 @@ describe("RuntimeEventBus", () => {
     });
 
     bus.publish({
+      type: "message.delta",
+      sessionId: "session-a",
+      turnId: "turn-a",
+      messageId: "message-a",
+      role: "assistant",
+      delta: "m".repeat(MAX_STREAM_EVENT_CHUNK_LENGTH + 10),
+      engineId: "agent-a"
+    });
+    bus.publish({
+      type: "message.completed",
+      sessionId: "session-a",
+      turnId: "turn-a",
+      messageId: "message-a",
+      finalText: "f".repeat(MAX_ACCUMULATED_STREAM_TEXT_LENGTH + 10),
+      engineId: "agent-a"
+    });
+    bus.publish({
       type: "tool.delta",
       sessionId: "session-a",
       turnId: "turn-a",
@@ -402,26 +478,40 @@ describe("RuntimeEventBus", () => {
     const replayed = bus.replay();
     expect(received).toEqual(replayed);
     expect(published).toEqual(replayed);
-    expect(replayed[0]?.event.type).toBe("tool.delta");
-    if (replayed[0]?.event.type === "tool.delta") {
+    expect(replayed[0]?.event.type).toBe("message.delta");
+    if (replayed[0]?.event.type === "message.delta") {
       expect(replayed[0].event.delta.length).toBeLessThanOrEqual(
         MAX_STREAM_EVENT_CHUNK_LENGTH
       );
       expect(replayed[0].event.delta).toContain("truncated");
     }
-    expect(replayed[1]?.event.type).toBe("terminal.output");
-    if (replayed[1]?.event.type === "terminal.output") {
-      expect(replayed[1].event.chunk.length).toBeLessThanOrEqual(
-        MAX_STREAM_EVENT_CHUNK_LENGTH
-      );
-      expect(replayed[1].event.chunk).toContain("truncated");
-    }
-    expect(replayed[2]?.event.type).toBe("tool.completed");
-    if (replayed[2]?.event.type === "tool.completed") {
-      expect(replayed[2].event.outputSummary?.length).toBeLessThanOrEqual(
+    expect(replayed[1]?.event.type).toBe("message.completed");
+    if (replayed[1]?.event.type === "message.completed") {
+      expect(replayed[1].event.finalText?.length).toBeLessThanOrEqual(
         MAX_ACCUMULATED_STREAM_TEXT_LENGTH
       );
-      expect(replayed[2].event.outputSummary).toContain("truncated");
+      expect(replayed[1].event.finalText).toContain("truncated");
+    }
+    expect(replayed[2]?.event.type).toBe("tool.delta");
+    if (replayed[2]?.event.type === "tool.delta") {
+      expect(replayed[2].event.delta.length).toBeLessThanOrEqual(
+        MAX_STREAM_EVENT_CHUNK_LENGTH
+      );
+      expect(replayed[2].event.delta).toContain("truncated");
+    }
+    expect(replayed[3]?.event.type).toBe("terminal.output");
+    if (replayed[3]?.event.type === "terminal.output") {
+      expect(replayed[3].event.chunk.length).toBeLessThanOrEqual(
+        MAX_STREAM_EVENT_CHUNK_LENGTH
+      );
+      expect(replayed[3].event.chunk).toContain("truncated");
+    }
+    expect(replayed[4]?.event.type).toBe("tool.completed");
+    if (replayed[4]?.event.type === "tool.completed") {
+      expect(replayed[4].event.outputSummary?.length).toBeLessThanOrEqual(
+        MAX_ACCUMULATED_STREAM_TEXT_LENGTH
+      );
+      expect(replayed[4].event.outputSummary).toContain("truncated");
     }
   });
 });

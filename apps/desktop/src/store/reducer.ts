@@ -493,6 +493,18 @@ const rebuildIndexesFromEntities = (
   for (const block of Object.values(entities.messageBlocks)) {
     state = upsertMessageBlock(state, block);
   }
+  for (const toolCall of Object.values(entities.toolCalls)) {
+    state = upsertToolCall(state, toolCall);
+  }
+  for (const terminal of Object.values(entities.terminalStreams)) {
+    state = upsertTerminalStream(state, terminal);
+  }
+  for (const approval of Object.values(entities.approvalRequests)) {
+    state = upsertApprovalRequest(state, approval);
+  }
+  for (const interaction of Object.values(entities.runtimeInteractions)) {
+    state = upsertRuntimeInteraction(state, interaction);
+  }
   for (const participant of Object.values(entities.participants)) {
     state = upsertParticipant(state, participant);
   }
@@ -807,7 +819,7 @@ const applyRuntimeEvent = (
         {
           ...base,
           phase: event.phase ?? base.phase,
-          text: `${base.text ?? ""}${event.delta}`
+          text: appendLimitedStreamText(base.text, event.delta)
         }
       );
       return appendTurnCollection(
@@ -840,7 +852,10 @@ const applyRuntimeEvent = (
         {
           ...base,
           phase: event.phase ?? base.phase,
-          text: event.finalText ?? base.text ?? "",
+          text:
+            event.finalText !== undefined
+              ? appendLimitedStreamText(undefined, event.finalText)
+              : base.text ?? "",
           actor: base.actor ?? buildActorRef(event),
           completedAt: timestamp
         }
@@ -1417,7 +1432,7 @@ const mergeRuntimeEvents = (
       ) {
         return {
           ...next,
-          delta: `${previous.delta}${next.delta}`
+          delta: appendLimitedStreamText(previous.delta, next.delta)
         };
       }
       return undefined;
@@ -1432,7 +1447,7 @@ const mergeRuntimeEvents = (
       ) {
         return {
           ...next,
-          delta: `${previous.delta}${next.delta}`
+          delta: appendLimitedStreamText(previous.delta, next.delta)
         };
       }
       return undefined;
@@ -1447,7 +1462,7 @@ const mergeRuntimeEvents = (
       ) {
         return {
           ...next,
-          chunk: `${previous.chunk}${next.chunk}`
+          chunk: appendLimitedStreamText(previous.chunk, next.chunk)
         };
       }
       return undefined;

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MAX_ACCUMULATED_STREAM_TEXT_LENGTH } from "@another-workbench/shared";
 import { DomainProjector } from "../src/domain-projector.js";
 import { DomainStore } from "../src/domain-store.js";
 
@@ -292,6 +293,59 @@ describe("DomainProjector", () => {
       status: "idle",
       lastTurnId: "turn-1"
     });
+  });
+
+  it("bounds projected message text in domain snapshots", () => {
+    const projector = new DomainProjector();
+    const largeChunk = "x".repeat(50_000);
+
+    projector.apply(
+      {
+        type: "session.created",
+        conversationId: "conversation-a",
+        sessionId: "session-1",
+        engineId: "agent-a",
+        status: "running"
+      },
+      "2026-04-18T00:01:00.000Z"
+    );
+    for (let index = 0; index < 6; index += 1) {
+      projector.apply(
+        {
+          type: "message.delta",
+          sessionId: "session-1",
+          turnId: "turn-1",
+          messageId: "message-1",
+          delta: largeChunk,
+          engineId: "agent-a"
+        },
+        "2026-04-18T00:01:01.000Z"
+      );
+    }
+
+    const snapshotAfterDeltas = projector.store.getSessionSnapshot("session-1");
+    expect(snapshotAfterDeltas.messageBlocks[0]?.text?.length).toBeLessThanOrEqual(
+      MAX_ACCUMULATED_STREAM_TEXT_LENGTH
+    );
+    expect(snapshotAfterDeltas.messageBlocks[0]?.text).toContain("truncated");
+
+    projector.apply(
+      {
+        type: "message.completed",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        messageId: "message-1",
+        finalText: "f".repeat(MAX_ACCUMULATED_STREAM_TEXT_LENGTH + 50_000),
+        engineId: "agent-a"
+      },
+      "2026-04-18T00:01:02.000Z"
+    );
+
+    const snapshotAfterCompleted = projector.store.getSessionSnapshot("session-1");
+    expect(snapshotAfterCompleted.messageBlocks[0]?.text?.length).toBeLessThanOrEqual(
+      MAX_ACCUMULATED_STREAM_TEXT_LENGTH
+    );
+    expect(snapshotAfterCompleted.messageBlocks[0]?.text).toContain("truncated");
   });
 
   it("falls back to the last assistant message when a turn completes without an explicit final marker", () => {

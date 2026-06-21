@@ -469,6 +469,196 @@ describe("transcript view model", () => {
     ]);
   });
 
+  it("keeps a running turn user prompt before process rows even when process timestamps are earlier", () => {
+    const store = createRendererStore();
+    store.hydrateSnapshot(
+      parseDomainSnapshot({
+        conversations: [
+          {
+            conversationId: "conv-1",
+            participantEngineIds: ["agent-1"],
+            activeSessionId: "session-1",
+            sessionIds: ["session-1"],
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-1",
+            conversationId: "conv-1",
+            engineId: "agent-1",
+            status: "running",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        turns: [
+          {
+            turnId: "turn-1",
+            sessionId: "session-1",
+            status: "streaming",
+            startedAt: "2026-04-17T00:00:00.000Z",
+            messageIds: ["message-user", "message-assistant"],
+            toolCallIds: ["tool-early"],
+            terminalIds: [],
+            approvalRequestIds: []
+          }
+        ],
+        messageBlocks: [
+          {
+            blockId: "message-user:md",
+            messageId: "message-user",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "user",
+            kind: "markdown",
+            text: "Please inspect the scene.",
+            startedAt: "2026-04-17T00:00:02.000Z"
+          },
+          {
+            blockId: "message-assistant:md",
+            messageId: "message-assistant",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "assistant",
+            kind: "markdown",
+            text: "I checked it.",
+            startedAt: "2026-04-17T00:00:03.000Z"
+          }
+        ],
+        toolCalls: [
+          {
+            toolCallId: "tool-early",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            toolName: "view_image",
+            status: "completed",
+            startedAt: "2026-04-17T00:00:01.000Z",
+            completedAt: "2026-04-17T00:00:01.500Z"
+          }
+        ],
+        terminalStreams: [],
+        approvalRequests: [],
+        participants: [],
+        sessionRelations: []
+      })
+    );
+
+    const rows = buildTurnTranscriptRows(
+      store.getState(),
+      selectTurnsForSession(store.getState(), "session-1"),
+      buildParticipantDirectory([])
+    );
+
+    expect(rows.map((row) => row.rowKind)).toEqual(["message", "process", "message"]);
+    expect(rows.map((row) => row.messageRole)).toEqual([
+      "user",
+      "assistant",
+      "assistant"
+    ]);
+    expect(rows[0]?.blocks.map((block) => block.text)).toEqual([
+      "Please inspect the scene."
+    ]);
+    expect(rows[1]?.toolCalls.map((toolCall) => toolCall.toolCallId)).toEqual([
+      "tool-early"
+    ]);
+  });
+
+  it("respects turn message order over message block timestamps", () => {
+    const store = createRendererStore();
+    store.hydrateSnapshot(
+      parseDomainSnapshot({
+        conversations: [
+          {
+            conversationId: "conv-1",
+            participantEngineIds: ["agent-1"],
+            activeSessionId: "session-1",
+            sessionIds: ["session-1"],
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-1",
+            conversationId: "conv-1",
+            engineId: "agent-1",
+            status: "completed",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        turns: [
+          {
+            turnId: "turn-1",
+            sessionId: "session-1",
+            status: "completed",
+            startedAt: "2026-04-17T00:00:00.000Z",
+            completedAt: "2026-04-17T00:00:04.000Z",
+            finalMessageId: "message-assistant",
+            messageIds: ["message-user", "message-assistant"],
+            toolCallIds: ["tool-after-user"],
+            terminalIds: [],
+            approvalRequestIds: []
+          }
+        ],
+        messageBlocks: [
+          {
+            blockId: "message-assistant:md",
+            messageId: "message-assistant",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "assistant",
+            kind: "markdown",
+            text: "Tool finished.",
+            startedAt: "2026-04-17T00:00:01.000Z"
+          },
+          {
+            blockId: "message-user:md",
+            messageId: "message-user",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "user",
+            kind: "markdown",
+            text: "Run the inspection.",
+            startedAt: "2026-04-17T00:00:02.000Z"
+          }
+        ],
+        toolCalls: [
+          {
+            toolCallId: "tool-after-user",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            toolName: "shell",
+            status: "completed",
+            startedAt: "2026-04-17T00:00:03.000Z",
+            completedAt: "2026-04-17T00:00:03.500Z"
+          }
+        ],
+        terminalStreams: [],
+        approvalRequests: [],
+        participants: [],
+        sessionRelations: []
+      })
+    );
+
+    const rows = buildTurnTranscriptRows(
+      store.getState(),
+      selectTurnsForSession(store.getState(), "session-1"),
+      buildParticipantDirectory([])
+    );
+
+    expect(rows.map((row) => row.messageRole)).toEqual(["user", "assistant"]);
+    expect(rows[0]?.blocks.map((block) => block.text)).toEqual([
+      "Run the inspection."
+    ]);
+    expect(rows[1]?.blocks.map((block) => block.text)).toEqual(["Tool finished."]);
+    expect(rows[1]?.toolCalls.map((toolCall) => toolCall.toolCallId)).toEqual([
+      "tool-after-user"
+    ]);
+  });
+
   it("keeps transcript rows focused on message and process content even when messages reference files", () => {
     const store = createRendererStore();
     store.hydrateSnapshot(

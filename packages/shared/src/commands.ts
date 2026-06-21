@@ -34,6 +34,7 @@ const zAttachmentSchema = z.object({
   attachmentId: z.string().min(1),
   mimeType: z.string().min(1),
   uri: z.string().min(1),
+  displayUri: z.string().min(1).optional(),
   name: z.string().min(1).optional()
 });
 

@@ -71,6 +71,35 @@ describe("composer attachment helpers", () => {
     expect(attachment.releasePreviewUrl).toBe(false);
   });
 
+  it("uses a materialized display URI for pasted image previews", async () => {
+    const materializeDataUri = vi.fn(async () => ({
+      displayUri:
+        "file:///C:/Users/TestUser/AppData/Roaming/another-workbench/attachments/pasted-image.png"
+    }));
+    const file = new File([Uint8Array.from([137, 80, 78, 71])], "", {
+      type: "image/png"
+    });
+
+    const attachment = await createComposerAttachment(file, "paste", {
+      materializeDataUri
+    });
+
+    expect(attachment.attachment.uri.startsWith("data:image/png;base64,")).toBe(true);
+    expect(attachment.attachment.displayUri).toBe(
+      "file:///C:/Users/TestUser/AppData/Roaming/another-workbench/attachments/pasted-image.png"
+    );
+    expect(attachment.previewUrl).toContain(
+      "file:///C:/Users/TestUser/AppData/Roaming/another-workbench/attachments/pasted-image.png?"
+    );
+    expect(attachment.previewUrl).toContain("awb_image_cache=");
+    expect(materializeDataUri).toHaveBeenCalledWith({
+      attachmentId: attachment.attachment.attachmentId,
+      dataUri: attachment.attachment.uri,
+      mimeType: "image/png",
+      name: "pasted-image.png"
+    });
+  });
+
   it("keeps multiple pasted images as separate composer attachments", async () => {
     const attachments = await createComposerAttachments(
       [

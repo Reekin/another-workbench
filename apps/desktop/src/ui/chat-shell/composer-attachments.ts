@@ -25,6 +25,17 @@ export type MergeComposerAttachmentsResult = {
   skipped: ComposerAttachment[];
 };
 
+export type AttachmentDisplayMaterializer = (input: {
+  attachmentId: string;
+  dataUri: string;
+  mimeType: string;
+  name?: string;
+}) => Promise<{ displayUri: string }>;
+
+export type CreateComposerAttachmentOptions = {
+  materializeDataUri?: AttachmentDisplayMaterializer;
+};
+
 const fallbackMimeType = "application/octet-stream";
 const imageMimeTypePattern = /^image\//iu;
 
@@ -105,6 +116,27 @@ const resolveNativeFilePath = (file: File): string | undefined => {
   return typeof candidate === "string" && candidate.trim() ? candidate : undefined;
 };
 
+const resolveDefaultMaterializer = (): AttachmentDisplayMaterializer | undefined =>
+  typeof window === "undefined"
+    ? undefined
+    : window.workbenchLocalAssets?.materializeAttachmentDataUri;
+
+const tryMaterializeDisplayUri = async (
+  input: Parameters<AttachmentDisplayMaterializer>[0],
+  options: CreateComposerAttachmentOptions
+): Promise<string | undefined> => {
+  const materializer = options.materializeDataUri ?? resolveDefaultMaterializer();
+  if (!materializer) {
+    return undefined;
+  }
+  try {
+    const result = await materializer(input);
+    return result.displayUri.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 export const formatComposerAttachmentSize = (size: number): string => {
   if (size < 1024) {
     return `${size} B`;
@@ -117,31 +149,48 @@ export const formatComposerAttachmentSize = (size: number): string => {
 
 export const createComposerAttachment = async (
   file: File,
-  origin: ComposerAttachmentOrigin
+  origin: ComposerAttachmentOrigin,
+  options: CreateComposerAttachmentOptions = {}
 ): Promise<ComposerAttachment> => {
   const normalized = normalizeFile(file, origin);
   const mimeType = normalized.type || fallbackMimeType;
   const isImage = isImageMimeType(mimeType);
+  const attachmentId = createAttachmentId();
   const nativeFilePath = origin !== "paste" ? resolveNativeFilePath(normalized) : undefined;
   const uri = nativeFilePath
     ? isImage
       ? buildVersionedFileUri(nativeFilePath, normalized)
       : filePathToFileUri(nativeFilePath)
     : await blobToDataUri(normalized, mimeType);
+  const displayUri =
+    isImage && !nativeFilePath
+      ? await tryMaterializeDisplayUri(
+          {
+            attachmentId,
+            dataUri: uri,
+            mimeType,
+            name: normalized.name
+          },
+          options
+        )
+      : undefined;
   const previewUrl = isImage
     ? nativeFilePath
       ? (buildLocalImagePreviewSrc(
           uri,
           `${nativeFilePath}:${normalized.lastModified}:${normalized.size}`
         ) ?? uri)
-      : uri
+      : (buildLocalImagePreviewSrc(displayUri, `${attachmentId}:${normalized.size}`) ??
+        displayUri ??
+        uri)
     : undefined;
 
   return {
     attachment: {
-      attachmentId: createAttachmentId(),
+      attachmentId,
       mimeType,
       uri,
+      ...(displayUri ? { displayUri } : {}),
       name: normalized.name
     },
     dedupeKey: nativeFilePath || `${normalized.name}:${mimeType}:${normalized.size}:${uri}`,
@@ -157,12 +206,13 @@ export const createComposerAttachment = async (
 
 export const createComposerAttachments = async (
   files: Iterable<File>,
-  origin: ComposerAttachmentOrigin
+  origin: ComposerAttachmentOrigin,
+  options: CreateComposerAttachmentOptions = {}
 ): Promise<ComposerAttachment[]> =>
   Promise.all(
     [...files]
       .filter((file) => file.size > 0 || file.type.trim().length > 0 || file.name.trim())
-      .map((file) => createComposerAttachment(file, origin))
+      .map((file) => createComposerAttachment(file, origin, options))
   );
 
 export const mergeComposerAttachments = (

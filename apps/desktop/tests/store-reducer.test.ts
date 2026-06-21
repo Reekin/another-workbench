@@ -2097,4 +2097,162 @@ describe("desktop store reducer", () => {
     expect(state.entities.turns["turn-a"]).toBeDefined();
     expect(state.entities.messageBlocks["message-a:md"]?.text).toBe("updated");
   });
+
+  it("preserves already loaded session turns outside the replaced session window", () => {
+    let state = rendererStoreReducer(createInitialRendererStoreState(), {
+      type: "store/hydrateSnapshot",
+      snapshot: {
+        conversations: [
+          {
+            conversationId: "conversation-a",
+            participantEngineIds: ["agent-a"],
+            sessionIds: ["session-a"],
+            activeSessionId: "session-a",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:10.000Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-a",
+            conversationId: "conversation-a",
+            engineId: "agent-a",
+            status: "running",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:10.000Z",
+            lastTurnId: "turn-new"
+          }
+        ],
+        turns: [
+          {
+            turnId: "turn-old",
+            sessionId: "session-a",
+            status: "completed",
+            startedAt: "2026-04-17T00:00:01.000Z",
+            completedAt: "2026-04-17T00:00:02.000Z",
+            messageIds: ["message-old"],
+            toolCallIds: [],
+            terminalIds: [],
+            approvalRequestIds: []
+          },
+          {
+            turnId: "turn-new",
+            sessionId: "session-a",
+            status: "streaming",
+            startedAt: "2026-04-17T00:00:10.000Z",
+            messageIds: ["message-new"],
+            toolCallIds: ["tool-stale"],
+            terminalIds: [],
+            approvalRequestIds: []
+          }
+        ],
+        messageBlocks: [
+          {
+            blockId: "message-old:md",
+            messageId: "message-old",
+            sessionId: "session-a",
+            turnId: "turn-old",
+            role: "user",
+            kind: "markdown",
+            text: "old prompt",
+            startedAt: "2026-04-17T00:00:01.000Z"
+          },
+          {
+            blockId: "message-new:md",
+            messageId: "message-new",
+            sessionId: "session-a",
+            turnId: "turn-new",
+            role: "assistant",
+            kind: "markdown",
+            text: "stale",
+            startedAt: "2026-04-17T00:00:10.000Z"
+          }
+        ],
+        toolCalls: [
+          {
+            toolCallId: "tool-stale",
+            sessionId: "session-a",
+            turnId: "turn-new",
+            toolName: "shell",
+            status: "running",
+            startedAt: "2026-04-17T00:00:10.500Z"
+          }
+        ],
+        terminalStreams: [],
+        approvalRequests: [],
+        participants: [],
+        sessionRelations: []
+      }
+    });
+
+    state = rendererStoreReducer(state, {
+      type: "store/hydrateSessionWindow",
+      sessionId: "session-a",
+      mode: "replace",
+      snapshot: {
+        conversations: [
+          {
+            conversationId: "conversation-a",
+            participantEngineIds: ["agent-a"],
+            sessionIds: ["session-a"],
+            activeSessionId: "session-a",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:12.000Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-a",
+            conversationId: "conversation-a",
+            engineId: "agent-a",
+            status: "running",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:12.000Z",
+            lastTurnId: "turn-new"
+          }
+        ],
+        turns: [
+          {
+            turnId: "turn-new",
+            sessionId: "session-a",
+            status: "streaming",
+            startedAt: "2026-04-17T00:00:10.000Z",
+            messageIds: ["message-new"],
+            toolCallIds: [],
+            terminalIds: [],
+            approvalRequestIds: []
+          }
+        ],
+        messageBlocks: [
+          {
+            blockId: "message-new:md",
+            messageId: "message-new",
+            sessionId: "session-a",
+            turnId: "turn-new",
+            role: "assistant",
+            kind: "markdown",
+            text: "fresh",
+            startedAt: "2026-04-17T00:00:10.000Z"
+          }
+        ],
+        toolCalls: [],
+        terminalStreams: [],
+        approvalRequests: [],
+        participants: [],
+        sessionRelations: []
+      },
+      cursor: "cursor-20"
+    });
+
+    expect(state.entities.turns["turn-old"]).toBeDefined();
+    expect(state.entities.messageBlocks["message-old:md"]?.text).toBe("old prompt");
+    expect(state.entities.turns["turn-new"]?.messageIds).toEqual(["message-new"]);
+    expect(state.entities.messageBlocks["message-new:md"]?.text).toBe("fresh");
+    expect(state.entities.toolCalls["tool-stale"]).toBeUndefined();
+    expect(state.indexes.turnIdsBySession["session-a"]).toEqual([
+      "turn-old",
+      "turn-new"
+    ]);
+    expect(state.indexes.toolCallIdsByTurn["turn-new"]).toBeUndefined();
+  });
 });

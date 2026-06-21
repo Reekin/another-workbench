@@ -158,10 +158,14 @@ const selectMessageBlocksForTurn = (
   const fromMessageRefs = turn.messageIds.flatMap((messageId) =>
     selectMessageBlocksForMessage(state, messageId)
   ).filter((block) => block.turnId === turn.turnId);
+  const referencedBlockIds = new Set(fromMessageRefs.map((block) => block.blockId));
   const fromTurnScan = indexes.messageBlocksByTurnId[turn.turnId] ?? [];
+  const fallback = fromTurnScan.filter(
+    (block) => !referencedBlockIds.has(block.blockId)
+  );
 
-  return sortByStartTime(
-    uniqueById([...fromMessageRefs, ...fromTurnScan], (block) => block.blockId),
+  return uniqueById(
+    [...fromMessageRefs, ...sortByStartTime(fallback, (block) => block.blockId)],
     (block) => block.blockId
   );
 };
@@ -466,6 +470,13 @@ const buildRunningTurnRows = (
     index
   }));
   const entries = [...messageEntries, ...processEntries].sort((left, right) => {
+    const leftPhase =
+      left.kind === "message" && left.group.role === "user" ? 0 : 1;
+    const rightPhase =
+      right.kind === "message" && right.group.role === "user" ? 0 : 1;
+    if (leftPhase !== rightPhase) {
+      return leftPhase - rightPhase;
+    }
     const byDate = compareIsoDateAsc(left.startedAt, right.startedAt);
     if (byDate !== 0) {
       return byDate;

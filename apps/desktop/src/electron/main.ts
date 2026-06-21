@@ -9,9 +9,11 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   WORKBENCH_IPC_EVENTS_PUSH_CHANNEL,
+  WORKBENCH_IPC_MATERIALIZE_ATTACHMENT_CHANNEL,
   WORKBENCH_IPC_REQUEST_CHANNEL
 } from "./ipc-channels.js";
 import { createWorkbenchIpcRouter } from "./workbench-ipc-router.js";
+import { materializeAttachmentDataUri } from "./attachment-materializer.js";
 import {
   resolveWillNavigate,
   resolveWindowOpenNavigation
@@ -543,6 +545,12 @@ const boot = async (): Promise<void> => {
   ipcMain.handle(WORKBENCH_IPC_REQUEST_CHANNEL, (_event, payload: unknown) =>
     router.handleRequest(payload)
   );
+  ipcMain.handle(WORKBENCH_IPC_MATERIALIZE_ATTACHMENT_CHANNEL, (_event, payload: unknown) =>
+    materializeAttachmentDataUri(
+      payload as Record<string, unknown>,
+      join(app.getPath("userData"), "attachments", "pasted-images")
+    )
+  );
 
   await loadRendererTarget(window);
 
@@ -561,6 +569,7 @@ const boot = async (): Promise<void> => {
 
   app.once("will-quit", () => {
     ipcMain.removeHandler(WORKBENCH_IPC_REQUEST_CHANNEL);
+    ipcMain.removeHandler(WORKBENCH_IPC_MATERIALIZE_ATTACHMENT_CHANNEL);
     void router.dispose();
   });
 };

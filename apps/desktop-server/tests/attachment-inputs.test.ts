@@ -28,6 +28,26 @@ describe("attachment input helpers", () => {
     );
   });
 
+  it("renders image display URIs into local echo content without leaking data URIs", () => {
+    const attachments: Attachment[] = [
+      {
+        attachmentId: "image-1",
+        mimeType: "image/png",
+        uri: "data:image/png;base64,AAAA",
+        displayUri:
+          "file:///C:/Users/TestUser/AppData/Roaming/another-workbench/attachments/pasted-image.png",
+        name: "clipboard.png"
+      }
+    ];
+
+    const text = buildLocalEchoMessageText("Please inspect this.", attachments);
+
+    expect(text).toBe(
+      "Please inspect this.\n\n![clipboard.png](file:///C:/Users/TestUser/AppData/Roaming/another-workbench/attachments/pasted-image.png)"
+    );
+    expect(text).not.toContain("data:image/png;base64");
+  });
+
   it("builds Codex turn input with images as structured items and files as text context", () => {
     const inputs = buildCodexTurnInput("Review the attached context.", [
       {
@@ -40,6 +60,7 @@ describe("attachment input helpers", () => {
         attachmentId: "image-2",
         mimeType: "image/png",
         uri: "data:image/png;base64,AAAA",
+        displayUri: "file:///C:/Users/TestUser/AppData/Roaming/another-workbench/clipboard.png",
         name: "clipboard.png"
       },
       {
@@ -74,6 +95,7 @@ describe("attachment input helpers", () => {
         attachmentId: "image-1",
         mimeType: "image/png",
         uri: "data:image/png;base64,AAAA",
+        displayUri: "file:///C:/Users/TestUser/AppData/Roaming/another-workbench/clipboard.png",
         name: "clipboard.png"
       },
       {

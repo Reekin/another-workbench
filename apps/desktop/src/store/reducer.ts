@@ -637,6 +637,89 @@ const disposeSessionState = (
   };
 };
 
+const disposeSessionWindowCoverage = (
+  state: RendererStoreState,
+  sessionId: string,
+  snapshot: DomainSnapshot
+): RendererStoreState => {
+  const coveredTurns = snapshot.turns.filter((turn) => turn.sessionId === sessionId);
+  if (coveredTurns.length === 0) {
+    return state;
+  }
+  const coveredTurnIds = new Set(coveredTurns.map((turn) => turn.turnId));
+  const coveredMessageIds = new Set(
+    coveredTurns.flatMap((turn) => turn.messageIds)
+  );
+  const coveredToolCallIds = new Set(
+    coveredTurns.flatMap((turn) => turn.toolCallIds)
+  );
+  const coveredTerminalIds = new Set(
+    coveredTurns.flatMap((turn) => turn.terminalIds)
+  );
+  const coveredApprovalRequestIds = new Set(
+    coveredTurns.flatMap((turn) => turn.approvalRequestIds)
+  );
+  const coveredInteractionRequestIds = new Set(
+    coveredTurns.flatMap((turn) => turn.interactionRequestIds ?? [])
+  );
+
+  const nextEntities: RendererStoreState["entities"] = {
+    ...state.entities,
+    turns: Object.fromEntries(
+      Object.entries(state.entities.turns).filter(
+        ([turnId, turn]) =>
+          turn.sessionId !== sessionId || !coveredTurnIds.has(turnId)
+      )
+    ),
+    messageBlocks: Object.fromEntries(
+      Object.entries(state.entities.messageBlocks).filter(
+        ([, block]) =>
+          block.sessionId !== sessionId ||
+          (!coveredTurnIds.has(block.turnId) &&
+            !coveredMessageIds.has(block.messageId))
+      )
+    ),
+    toolCalls: Object.fromEntries(
+      Object.entries(state.entities.toolCalls).filter(
+        ([toolCallId, toolCall]) =>
+          toolCall.sessionId !== sessionId ||
+          (!coveredTurnIds.has(toolCall.turnId) &&
+            !coveredToolCallIds.has(toolCallId))
+      )
+    ),
+    terminalStreams: Object.fromEntries(
+      Object.entries(state.entities.terminalStreams).filter(
+        ([terminalId, terminal]) =>
+          terminal.sessionId !== sessionId ||
+          (!coveredTurnIds.has(terminal.turnId) &&
+            !coveredTerminalIds.has(terminalId))
+      )
+    ),
+    approvalRequests: Object.fromEntries(
+      Object.entries(state.entities.approvalRequests).filter(
+        ([requestId, approval]) =>
+          approval.sessionId !== sessionId ||
+          (!coveredTurnIds.has(approval.turnId) &&
+            !coveredApprovalRequestIds.has(requestId))
+      )
+    ),
+    runtimeInteractions: Object.fromEntries(
+      Object.entries(state.entities.runtimeInteractions).filter(
+        ([requestId, interaction]) =>
+          interaction.sessionId !== sessionId ||
+          (!coveredTurnIds.has(interaction.turnId ?? "") &&
+            !coveredInteractionRequestIds.has(requestId))
+      )
+    )
+  };
+
+  return {
+    ...state,
+    entities: nextEntities,
+    indexes: rebuildIndexesFromEntities(nextEntities)
+  };
+};
+
 const applyRuntimeEvent = (
   state: RendererStoreState,
   event: RuntimeEvent,
@@ -1559,7 +1642,11 @@ export const rendererStoreReducer = (
       const baseState =
         action.mode === "prepend"
           ? state
-          : disposeSessionState(state, action.sessionId);
+          : disposeSessionWindowCoverage(
+              state,
+              action.sessionId,
+              action.snapshot
+            );
       const mergedState = mergeSnapshotIntoState(baseState, action.snapshot);
       const nextState =
         action.mode === "prepend"

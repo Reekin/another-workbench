@@ -13,8 +13,22 @@ import {
 } from "@another-workbench/shared";
 import {
   WORKBENCH_IPC_EVENTS_PUSH_CHANNEL,
+  WORKBENCH_IPC_MATERIALIZE_ATTACHMENT_CHANNEL,
   WORKBENCH_IPC_REQUEST_CHANNEL
 } from "./ipc-channels.js";
+
+type WorkbenchLocalAssetsApi = {
+  materializeAttachmentDataUri: (input: {
+    attachmentId: string;
+    dataUri: string;
+    mimeType: string;
+    name?: string;
+  }) => Promise<{
+    bytesWritten: number;
+    displayUri: string;
+    filePath: string;
+  }>;
+};
 
 const handlersBySubscriptionId = new Map<string, Set<WorkbenchEventHandler>>();
 
@@ -118,4 +132,13 @@ const api: WorkbenchClientApi = {
   subscribe
 };
 
+const localAssetsApi: WorkbenchLocalAssetsApi = {
+  materializeAttachmentDataUri: async (input) =>
+    (await ipcRenderer.invoke(
+      WORKBENCH_IPC_MATERIALIZE_ATTACHMENT_CHANNEL,
+      input
+    )) as Awaited<ReturnType<WorkbenchLocalAssetsApi["materializeAttachmentDataUri"]>>
+};
+
 contextBridge.exposeInMainWorld("workbench", api);
+contextBridge.exposeInMainWorld("workbenchLocalAssets", localAssetsApi);

@@ -34,6 +34,9 @@ export const resolveAttachmentDisplayName = (attachment: Attachment): string =>
   basenameFromUri(attachment.uri) ||
   attachment.attachmentId;
 
+export const resolveAttachmentDisplayUri = (attachment: Attachment): string =>
+  attachment.displayUri?.trim() || attachment.uri;
+
 export const filePathToFileUri = (path: string): string => {
   if (uncPathPattern.test(path)) {
     const normalized = path.replace(/\\/gu, "/");
@@ -55,8 +58,8 @@ export const buildAttachmentMarkdown = (attachments: Attachment[]): string =>
     .map((attachment) => {
       const label = escapeMarkdownText(resolveAttachmentDisplayName(attachment));
       return isImageAttachment(attachment)
-        ? `![${label}](${attachment.uri})`
-        : `[${label}](${attachment.uri})`;
+        ? `![${label}](${resolveAttachmentDisplayUri(attachment)})`
+        : `[${label}](${resolveAttachmentDisplayUri(attachment)})`;
     })
     .join("\n");
 

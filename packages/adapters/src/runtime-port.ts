@@ -1,3 +1,12 @@
+import type { AgentAdapterRuntimeConfig } from "./types.js";
+import type {
+  RuntimeLifecycleState,
+  RuntimeOperationOptions,
+  RuntimeStartOptions,
+  RuntimeStateListener,
+  RuntimeStopOptions
+} from "./runtime-lifecycle.js";
+
 export type RuntimeEventListener<TEvent> = (event: TEvent) => void;
 
 export interface AdapterRuntimePort<
@@ -5,9 +14,16 @@ export interface AdapterRuntimePort<
   TResponse = unknown,
   TEvent = unknown
 > {
-  start(config?: Record<string, unknown>): Promise<void>;
-  stop(): Promise<void>;
-  request(payload: TRequest): Promise<TResponse>;
+  getState(): RuntimeLifecycleState;
+  start(
+    config?: AgentAdapterRuntimeConfig,
+    options?: RuntimeStartOptions
+  ): Promise<void>;
+  stop(options?: RuntimeStopOptions): Promise<void>;
+  request(
+    payload: TRequest,
+    options?: RuntimeOperationOptions
+  ): Promise<TResponse>;
   subscribe(listener: RuntimeEventListener<TEvent>): () => void;
+  subscribeState(listener: RuntimeStateListener): () => void;
 }
-

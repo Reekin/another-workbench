@@ -5,8 +5,11 @@ import type {
   AcpRuntimeResponse,
   CodexRuntimeEvent,
   CodexRuntimeRequest,
-  CodexRuntimeResponse
+  CodexRuntimeResponse,
+  RuntimeLifecycleState,
+  RuntimeStateListener
 } from "@another-workbench/adapters";
+import { createRuntimeLifecycleController } from "@another-workbench/adapters";
 import type { EventType } from "@another-workbench/shared";
 
 type DemoStoryContext = {
@@ -78,6 +81,7 @@ class DemoRuntimePort<TRequest, TResponse, TEvent>
     params: Record<string, unknown>;
   };
   private readonly listeners = new Set<(event: TEvent) => void>();
+  private readonly lifecycle = createRuntimeLifecycleController();
   private readonly pendingApprovals = new Map<string, ApprovalContinuation<TEvent>>();
   private sequence = 0;
   private turnCounter = 0;
@@ -91,11 +95,20 @@ class DemoRuntimePort<TRequest, TResponse, TEvent>
     this.parseRequestFactory = options.parseRequest;
   }
 
-  public async start(): Promise<void> {}
+  public getState(): RuntimeLifecycleState {
+    return this.lifecycle.getState();
+  }
+
+  public async start(): Promise<void> {
+    this.lifecycle.setState("starting");
+    this.lifecycle.setState("ready");
+  }
 
   public async stop(): Promise<void> {
+    this.lifecycle.setState("stopping");
     this.listeners.clear();
     this.pendingApprovals.clear();
+    this.lifecycle.setState("stopped");
   }
 
   public async request(payload: TRequest): Promise<TResponse> {
@@ -148,6 +161,10 @@ class DemoRuntimePort<TRequest, TResponse, TEvent>
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  public subscribeState(listener: RuntimeStateListener): () => void {
+    return this.lifecycle.subscribe(listener);
   }
 
   private dispatchAsync(events: TEvent[]): void {
@@ -383,6 +400,7 @@ class DemoRuntimePort<TRequest, TResponse, TEvent>
     this.sequence += 1;
     return String(this.sequence);
   }
+
 }
 
 export const createCodexDemoRuntimePort = (

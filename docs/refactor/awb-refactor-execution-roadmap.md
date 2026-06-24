@@ -113,7 +113,7 @@ fake runtime 集成测试、真实 Codex/ACP smoke、真实进程 kill 行为验
 - stop 清空 map 却不 settle Promise。
 - 单测使用 fake object，没有真实 child process。
 
-[ ] task_1_1: 定义 runtime lifecycle 与错误契约
+[x] task_1_1: 定义 runtime lifecycle 与错误契约
 - tag: infra
 - goal: 为所有 runtime 建立相同的状态与错误语义
 - executor: subagent

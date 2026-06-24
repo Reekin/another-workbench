@@ -1,5 +1,9 @@
 import type { AdapterRuntimePort } from "../src/runtime-port.js";
 import type {
+  RuntimeLifecycleState,
+  RuntimeStateListener
+} from "../src/runtime-lifecycle.js";
+import type {
   CodexRuntimeEvent,
   CodexRuntimeRequest,
   CodexRuntimeResponse
@@ -14,14 +18,22 @@ class FakeCodexRuntimePort
   public started = false;
   public stopped = false;
   public readonly requests: CodexRuntimeRequest[] = [];
+  private lifecycleState: RuntimeLifecycleState = "stopped";
   private listener: ((event: CodexRuntimeEvent) => void) | undefined;
+  private stateListener: RuntimeStateListener | undefined;
+
+  public getState(): RuntimeLifecycleState {
+    return this.lifecycleState;
+  }
 
   public async start(): Promise<void> {
     this.started = true;
+    this.setState("ready");
   }
 
   public async stop(): Promise<void> {
     this.stopped = true;
+    this.setState("stopped");
   }
 
   public async request(
@@ -44,8 +56,20 @@ class FakeCodexRuntimePort
     };
   }
 
+  public subscribeState(listener: RuntimeStateListener): () => void {
+    this.stateListener = listener;
+    return () => {
+      this.stateListener = undefined;
+    };
+  }
+
   public emit(event: CodexRuntimeEvent): void {
     this.listener?.(event);
+  }
+
+  private setState(state: RuntimeLifecycleState): void {
+    this.lifecycleState = state;
+    this.stateListener?.(state);
   }
 }
 

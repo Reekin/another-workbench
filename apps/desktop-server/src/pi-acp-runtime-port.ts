@@ -16,12 +16,19 @@ import {
   type ToolCallContent,
   type ToolCallStatus,
 } from "@agentclientprotocol/sdk";
-import type { AdapterRuntimePort, AgentAdapterRuntimeConfig } from "@another-workbench/adapters";
 import type {
+  AdapterRuntimePort,
   AcpRuntimeEvent,
   AcpRuntimeRequest,
-  AcpRuntimeResponse
+  AcpRuntimeResponse,
+  AgentAdapterRuntimeConfig,
+  RuntimeLifecycleState,
+  RuntimeOperationOptions,
+  RuntimeStartOptions,
+  RuntimeStateListener,
+  RuntimeStopOptions
 } from "@another-workbench/adapters";
+import { createRuntimeLifecycleController } from "@another-workbench/adapters";
 import type { Attachment } from "@another-workbench/shared";
 import { buildAcpPromptContent } from "./attachment-inputs.js";
 
@@ -314,6 +321,7 @@ class PiAcpRuntimePort
     | undefined;
   private readonly now: () => string;
   private readonly listeners = new Set<RuntimeListener>();
+  private readonly lifecycle = createRuntimeLifecycleController();
   private readonly backingSessionByWorkbenchId = new Map<string, BackingSession>();
   private readonly workbenchSessionIdByAcpId = new Map<string, string>();
   private readonly turnStateBySessionId = new Map<string, TurnState>();
@@ -338,71 +346,94 @@ class PiAcpRuntimePort
     this.now = options.now ?? (() => new Date().toISOString());
   }
 
-  public async start(config: AgentAdapterRuntimeConfig = {}): Promise<void> {
+  public getState(): RuntimeLifecycleState {
+    return this.lifecycle.getState();
+  }
+
+  public async start(
+    config: AgentAdapterRuntimeConfig = {},
+    _options: RuntimeStartOptions = {}
+  ): Promise<void> {
     if (this.connection) {
       return;
     }
 
+    this.lifecycle.setState("starting");
     this.startConfig = config;
-    const spawnCommand = resolveSpawnCommand(this.commandPath, this.commandArgs);
-    const child = spawn(spawnCommand.command, spawnCommand.args, {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        ...(config.env ?? {}),
-        ...(this.piCommandPath ? { PI_ACP_PI_COMMAND: this.piCommandPath } : {})
-      }
-    });
-
-    await new Promise<void>((resolve, reject) => {
-      child.once("spawn", () => resolve());
-      child.once("error", (error) => reject(error));
-    });
-
-    this.process = child;
-    child.stderr.on("data", (chunk: Buffer | string) => {
-      const text = typeof chunk === "string" ? chunk : String(chunk);
-      const trimmed = text.trim();
-      if (!trimmed) {
-        return;
-      }
-      this.emitEvent("runtime.error", {
-        code: "PI_ACP_STDERR",
-        message: trimmed,
-        recoverable: true
+    try {
+      const spawnCommand = resolveSpawnCommand(this.commandPath, this.commandArgs);
+      const child = spawn(spawnCommand.command, spawnCommand.args, {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          ...(config.env ?? {}),
+          ...(this.piCommandPath ? { PI_ACP_PI_COMMAND: this.piCommandPath } : {})
+        }
       });
-    });
-    child.on("exit", (code, signal) => {
-      this.process = undefined;
-      this.connection = undefined;
-      this.emitEvent("runtime.error", {
-        code: "PI_ACP_EXIT",
-        message: `pi-acp exited (code=${code ?? "null"}, signal=${signal ?? "null"})`,
-        recoverable: false
+
+      await new Promise<void>((resolve, reject) => {
+        child.once("spawn", () => resolve());
+        child.once("error", (error) => reject(error));
       });
-    });
 
-    const client: Client = {
-      requestPermission: async (request) => this.handlePermissionRequest(request),
-      sessionUpdate: async (notification) => this.handleSessionUpdate(notification)
-    };
+      this.process = child;
+      child.stderr.on("data", (chunk: Buffer | string) => {
+        const text = typeof chunk === "string" ? chunk : String(chunk);
+        const trimmed = text.trim();
+        if (!trimmed) {
+          return;
+        }
+        this.emitEvent("runtime.error", {
+          code: "PI_ACP_STDERR",
+          message: trimmed,
+          recoverable: true
+        });
+      });
+      child.on("exit", (code, signal) => {
+        this.process = undefined;
+        this.connection = undefined;
+        const state = this.lifecycle.getState();
+        if (state !== "stopping" && state !== "stopped") {
+          this.lifecycle.setState("failed");
+        }
+        this.emitEvent("runtime.error", {
+          code: "PI_ACP_EXIT",
+          message: `pi-acp exited (code=${code ?? "null"}, signal=${signal ?? "null"})`,
+          recoverable: false
+        });
+      });
 
-    const input = Writable.toWeb(child.stdin);
-    const output = Readable.toWeb(child.stdout);
-    const stream = ndJsonStream(input, output);
-    const connection = new ClientSideConnection(() => client, stream);
+      const client: Client = {
+        requestPermission: async (request) => this.handlePermissionRequest(request),
+        sessionUpdate: async (notification) => this.handleSessionUpdate(notification)
+      };
 
-    await connection.initialize({
-      protocolVersion: PROTOCOL_VERSION
-    });
+      const input = Writable.toWeb(child.stdin);
+      const output = Readable.toWeb(child.stdout);
+      const stream = ndJsonStream(input, output);
+      const connection = new ClientSideConnection(() => client, stream);
 
-    this.connection = connection;
-    void connection.closed.then(() => {
-      this.connection = undefined;
-    });
+      await connection.initialize({
+        protocolVersion: PROTOCOL_VERSION
+      });
+
+      this.connection = connection;
+      this.lifecycle.setState("ready");
+      void connection.closed.then(() => {
+        this.connection = undefined;
+        const state = this.lifecycle.getState();
+        if (state !== "stopping" && state !== "stopped") {
+          this.lifecycle.setState("failed");
+        }
+      });
+    } catch (error) {
+      this.lifecycle.setState("failed");
+      throw error;
+    }
   }
 
-  public async stop(): Promise<void> {
+  public async stop(_options: RuntimeStopOptions = {}): Promise<void> {
+    this.lifecycle.setState("stopping");
     this.cancelPendingApprovalsForSession();
     this.backingSessionByWorkbenchId.clear();
     this.workbenchSessionIdByAcpId.clear();
@@ -413,12 +444,17 @@ class PiAcpRuntimePort
     this.process = undefined;
     this.connection = undefined;
     if (!child) {
+      this.lifecycle.setState("stopped");
       return;
     }
     child.kill();
+    this.lifecycle.setState("stopped");
   }
 
-  public async request(payload: AcpRuntimeRequest): Promise<AcpRuntimeResponse> {
+  public async request(
+    payload: AcpRuntimeRequest,
+    _options: RuntimeOperationOptions = {}
+  ): Promise<AcpRuntimeResponse> {
     switch (payload.method) {
       case "agent.initialize":
         return {
@@ -460,6 +496,10 @@ class PiAcpRuntimePort
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  public subscribeState(listener: RuntimeStateListener): () => void {
+    return this.lifecycle.subscribe(listener);
   }
 
   private async handlePrompt(
@@ -1019,6 +1059,7 @@ class PiAcpRuntimePort
       listener(runtimeEvent);
     }
   }
+
 }
 
 export const createPiAcpRuntimePort = (

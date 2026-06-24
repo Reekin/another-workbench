@@ -1,5 +1,9 @@
 import type { AdapterRuntimePort } from "../src/runtime-port.js";
 import type {
+  RuntimeLifecycleState,
+  RuntimeStateListener
+} from "../src/runtime-lifecycle.js";
+import type {
   AcpRuntimeEvent,
   AcpRuntimeRequest,
   AcpRuntimeResponse
@@ -12,11 +16,21 @@ class FakeAcpRuntimePort
     AdapterRuntimePort<AcpRuntimeRequest, AcpRuntimeResponse, AcpRuntimeEvent>
 {
   public readonly requests: AcpRuntimeRequest[] = [];
+  private lifecycleState: RuntimeLifecycleState = "stopped";
   private listener: ((event: AcpRuntimeEvent) => void) | undefined;
+  private stateListener: RuntimeStateListener | undefined;
 
-  public async start(): Promise<void> {}
+  public getState(): RuntimeLifecycleState {
+    return this.lifecycleState;
+  }
 
-  public async stop(): Promise<void> {}
+  public async start(): Promise<void> {
+    this.setState("ready");
+  }
+
+  public async stop(): Promise<void> {
+    this.setState("stopped");
+  }
 
   public async request(payload: AcpRuntimeRequest): Promise<AcpRuntimeResponse> {
     this.requests.push(payload);
@@ -36,8 +50,20 @@ class FakeAcpRuntimePort
     };
   }
 
+  public subscribeState(listener: RuntimeStateListener): () => void {
+    this.stateListener = listener;
+    return () => {
+      this.stateListener = undefined;
+    };
+  }
+
   public emit(event: AcpRuntimeEvent): void {
     this.listener?.(event);
+  }
+
+  private setState(state: RuntimeLifecycleState): void {
+    this.lifecycleState = state;
+    this.stateListener?.(state);
   }
 }
 

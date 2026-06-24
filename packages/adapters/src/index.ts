@@ -3,6 +3,7 @@ export const ADAPTERS_PACKAGE_NAME = "@another-workbench/adapters";
 export const adapterDependencies = ["@another-workbench/shared"];
 
 export * from "./types.js";
+export * from "./runtime-lifecycle.js";
 export * from "./runtime-port.js";
 export * from "./mapper.js";
 export * from "./runtime-backed-adapter.js";

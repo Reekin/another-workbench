@@ -1,11 +1,17 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
-import type { AdapterRuntimePort } from "@another-workbench/adapters";
 import type {
+  AdapterRuntimePort,
   CodexRuntimeEvent,
   CodexRuntimeRequest,
-  CodexRuntimeResponse
+  CodexRuntimeResponse,
+  RuntimeLifecycleState,
+  RuntimeOperationOptions,
+  RuntimeStartOptions,
+  RuntimeStateListener,
+  RuntimeStopOptions
 } from "@another-workbench/adapters";
+import { createRuntimeLifecycleController } from "@another-workbench/adapters";
 import type { AgentAdapterRuntimeConfig } from "@another-workbench/adapters";
 import type {
   Attachment,
@@ -826,6 +832,7 @@ export class CodexAppServerRuntimePort
   private readonly hostTools: HostToolRegistry | undefined;
   private readonly now: () => string;
   private readonly listeners = new Set<RuntimeListener>();
+  private readonly lifecycle = createRuntimeLifecycleController();
   private readonly pendingRpcById = new Map<string, PendingRpc>();
   private readonly threadIdBySessionId = new Map<string, string>();
   private readonly sessionIdByThreadId = new Map<string, string>();
@@ -867,67 +874,86 @@ export class CodexAppServerRuntimePort
     this.now = options.now ?? (() => new Date().toISOString());
   }
 
-  public async start(config: AgentAdapterRuntimeConfig = {}): Promise<void> {
+  public getState(): RuntimeLifecycleState {
+    return this.lifecycle.getState();
+  }
+
+  public async start(
+    config: AgentAdapterRuntimeConfig = {},
+    _options: RuntimeStartOptions = {}
+  ): Promise<void> {
     if (this.process) {
       return;
     }
 
     this.startConfig = config;
-    const child = spawn(this.commandPath, this.commandArgs, {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        ...(config.env ?? {})
-      }
-    });
-
-    this.process = child;
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-
-    child.stdout.on("data", (chunk: string) => {
-      this.consumeStdout(chunk);
-    });
-    child.stderr.on("data", (chunk: string) => {
-      const trimmed = chunk.trim();
-      if (!trimmed) {
-        return;
-      }
-      this.emitEvent("runtime.error", {
-        code: "CODEX_APP_SERVER_STDERR",
-        message: trimmed,
-        recoverable: true
+    this.lifecycle.setState("starting");
+    try {
+      const child = spawn(this.commandPath, this.commandArgs, {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          ...(config.env ?? {})
+        }
       });
-    });
-    child.on("exit", (code, signal) => {
-      this.process = undefined;
-      this.emitEvent("runtime.error", {
-        code: "CODEX_APP_SERVER_EXIT",
-        message: `codex app-server exited (code=${code ?? "null"}, signal=${signal ?? "null"})`,
-        recoverable: false
-      });
-      for (const pending of this.pendingRpcById.values()) {
-        pending.reject(new Error("codex app-server exited before responding."));
-      }
-      this.pendingRpcById.clear();
-    });
 
-    await this.rpc("initialize", {
-      clientInfo: {
-        name: "another-workbench",
-        title: "Another Workbench",
-        version: "0.1.0"
-      },
-      capabilities: {
-        experimentalApi: true
-      }
-    });
-    this.write({
-      method: "initialized"
-    });
+      this.process = child;
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+
+      child.stdout.on("data", (chunk: string) => {
+        this.consumeStdout(chunk);
+      });
+      child.stderr.on("data", (chunk: string) => {
+        const trimmed = chunk.trim();
+        if (!trimmed) {
+          return;
+        }
+        this.emitEvent("runtime.error", {
+          code: "CODEX_APP_SERVER_STDERR",
+          message: trimmed,
+          recoverable: true
+        });
+      });
+      child.on("exit", (code, signal) => {
+        this.process = undefined;
+        const state = this.lifecycle.getState();
+        if (state !== "stopping" && state !== "stopped") {
+          this.lifecycle.setState("failed");
+        }
+        this.emitEvent("runtime.error", {
+          code: "CODEX_APP_SERVER_EXIT",
+          message: `codex app-server exited (code=${code ?? "null"}, signal=${signal ?? "null"})`,
+          recoverable: false
+        });
+        for (const pending of this.pendingRpcById.values()) {
+          pending.reject(new Error("codex app-server exited before responding."));
+        }
+        this.pendingRpcById.clear();
+      });
+
+      await this.rpc("initialize", {
+        clientInfo: {
+          name: "another-workbench",
+          title: "Another Workbench",
+          version: "0.1.0"
+        },
+        capabilities: {
+          experimentalApi: true
+        }
+      });
+      this.write({
+        method: "initialized"
+      });
+      this.lifecycle.setState("ready");
+    } catch (error) {
+      this.lifecycle.setState("failed");
+      throw error;
+    }
   }
 
-  public async stop(): Promise<void> {
+  public async stop(_options: RuntimeStopOptions = {}): Promise<void> {
+    this.lifecycle.setState("stopping");
     this.pendingRpcById.clear();
     this.pendingApprovalsById.clear();
     this.pendingApprovalResolutionsById.clear();
@@ -943,12 +969,17 @@ export class CodexAppServerRuntimePort
     const child = this.process;
     this.process = undefined;
     if (!child) {
+      this.lifecycle.setState("stopped");
       return;
     }
     child.kill();
+    this.lifecycle.setState("stopped");
   }
 
-  public async request(payload: CodexRuntimeRequest): Promise<CodexRuntimeResponse> {
+  public async request(
+    payload: CodexRuntimeRequest,
+    _options: RuntimeOperationOptions = {}
+  ): Promise<CodexRuntimeResponse> {
     switch (payload.method) {
       case "initialize":
         return {
@@ -1037,6 +1068,12 @@ export class CodexAppServerRuntimePort
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  public subscribeState(
+    listener: RuntimeStateListener
+  ): () => void {
+    return this.lifecycle.subscribe(listener);
   }
 
   public getThreadIdForSession(sessionId: string): string | undefined {
@@ -3126,6 +3163,7 @@ export class CodexAppServerRuntimePort
       listener(event);
     }
   }
+
 }
 
 export const createCodexAppServerRuntimePort = (

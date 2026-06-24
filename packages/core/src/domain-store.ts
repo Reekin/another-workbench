@@ -32,6 +32,15 @@ export type DomainStoreOptions = {
   snapshot?: DomainSnapshot;
 };
 
+export type DomainSnapshotMergeScope = {
+  conversationId?: string;
+  sessionId?: string;
+};
+
+export type DomainSnapshotMergeOptions = {
+  scope?: DomainSnapshotMergeScope;
+};
+
 export type ListSessionsOptions = {
   conversationId?: string;
   engineId?: string;
@@ -215,35 +224,69 @@ const mapIdsToValues = <T>(
     .filter((value): value is T => value !== undefined);
 };
 
-export class DomainStore {
-  private readonly conversations = new Map<string, Conversation>();
-  private readonly sessions = new Map<string, ChatSession>();
-  private readonly turns = new Map<string, Turn>();
-  private readonly messageBlocks = new Map<string, MessageBlock>();
-  private readonly toolCalls = new Map<string, ToolCall>();
-  private readonly terminalStreams = new Map<string, TerminalStream>();
-  private readonly approvalRequests = new Map<string, ApprovalRequest>();
-  private readonly runtimeInteractions = new Map<string, RuntimeInteraction>();
-  private readonly participants = new Map<string, AgentParticipant>();
-  private readonly threadGoals = new Map<string, ThreadGoal>();
-  private readonly sessionRelations = new Map<string, SessionRelation>();
+const mergeUniqueStrings = (
+  left: readonly string[] = [],
+  right: readonly string[] = []
+): string[] => {
+  const merged = [...left];
+  for (const value of right) {
+    if (!merged.includes(value)) {
+      merged.push(value);
+    }
+  }
+  return merged;
+};
 
-  private readonly sessionIdsByConversation = new Map<string, string[]>();
-  private readonly turnIdsBySession = new Map<string, string[]>();
-  private readonly messageBlockIdsByTurn = new Map<string, string[]>();
-  private readonly messageBlockIdsByMessage = new Map<string, string[]>();
-  private readonly toolCallIdsByTurn = new Map<string, string[]>();
-  private readonly terminalIdsByTurn = new Map<string, string[]>();
-  private readonly approvalRequestIdsByTurn = new Map<string, string[]>();
-  private readonly interactionRequestIdsByTurn = new Map<string, string[]>();
-  private readonly participantIdsByConversation = new Map<string, string[]>();
-  private readonly parentSessionIdByChild = new Map<string, string>();
-  private readonly childSessionIdsByParent = new Map<string, string[]>();
+const mergeRecords = (
+  left: Record<string, unknown> | undefined,
+  right: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined => {
+  if (!left && !right) {
+    return undefined;
+  }
+  return {
+    ...(left ?? {}),
+    ...(right ?? {})
+  };
+};
+
+export class DomainStore {
+  private conversations = new Map<string, Conversation>();
+  private sessions = new Map<string, ChatSession>();
+  private turns = new Map<string, Turn>();
+  private messageBlocks = new Map<string, MessageBlock>();
+  private toolCalls = new Map<string, ToolCall>();
+  private terminalStreams = new Map<string, TerminalStream>();
+  private approvalRequests = new Map<string, ApprovalRequest>();
+  private runtimeInteractions = new Map<string, RuntimeInteraction>();
+  private participants = new Map<string, AgentParticipant>();
+  private threadGoals = new Map<string, ThreadGoal>();
+  private sessionRelations = new Map<string, SessionRelation>();
+
+  private sessionIdsByConversation = new Map<string, string[]>();
+  private turnIdsBySession = new Map<string, string[]>();
+  private messageBlockIdsByTurn = new Map<string, string[]>();
+  private messageBlockIdsByMessage = new Map<string, string[]>();
+  private toolCallIdsByTurn = new Map<string, string[]>();
+  private terminalIdsByTurn = new Map<string, string[]>();
+  private approvalRequestIdsByTurn = new Map<string, string[]>();
+  private interactionRequestIdsByTurn = new Map<string, string[]>();
+  private participantIdsByConversation = new Map<string, string[]>();
+  private parentSessionIdByChild = new Map<string, string>();
+  private childSessionIdsByParent = new Map<string, string[]>();
 
   public constructor(options: DomainStoreOptions = {}) {
     if (options.snapshot) {
       this.replaceSnapshot(options.snapshot);
     }
+  }
+
+  public static fromSnapshot(snapshot: DomainSnapshot | unknown): DomainStore {
+    const store = new DomainStore();
+    store.applyParsedSnapshot(parseDomainSnapshot(snapshot), {
+      merge: false
+    });
+    return store;
   }
 
   public clear(): void {
@@ -273,11 +316,37 @@ export class DomainStore {
   }
 
   public replaceSnapshot(snapshot: DomainSnapshot | unknown): DomainSnapshot {
-    const parsedSnapshot = parseDomainSnapshot(snapshot);
-    this.clear();
+    const staged = DomainStore.fromSnapshot(snapshot);
+    this.swapFrom(staged);
+    return this.getSnapshot();
+  }
 
+  public mergeSnapshot(
+    snapshot: DomainSnapshot | unknown,
+    options: DomainSnapshotMergeOptions = {}
+  ): DomainSnapshot {
+    const parsedSnapshot = parseDomainSnapshot(snapshot);
+    const staged = DomainStore.fromSnapshot(this.getSnapshot());
+    staged.assertSnapshotWithinMergeScope(parsedSnapshot, options.scope);
+    staged.applyParsedSnapshot(parsedSnapshot, {
+      merge: true
+    });
+    this.swapFrom(staged);
+    return this.getSnapshot();
+  }
+
+  private applyParsedSnapshot(
+    parsedSnapshot: DomainSnapshot,
+    options: {
+      merge: boolean;
+    }
+  ): void {
     for (const conversation of parsedSnapshot.conversations) {
-      this.upsertConversation(conversation);
+      if (options.merge) {
+        this.mergeConversation(conversation);
+      } else {
+        this.upsertConversation(conversation);
+      }
     }
     for (const session of parsedSnapshot.sessions) {
       this.upsertSession(session);
@@ -301,7 +370,11 @@ export class DomainStore {
       this.upsertRuntimeInteraction(interaction);
     }
     for (const participant of parsedSnapshot.participants) {
-      this.upsertParticipant(participant);
+      if (options.merge) {
+        this.mergeParticipant(participant);
+      } else {
+        this.upsertParticipant(participant);
+      }
     }
     for (const goal of parsedSnapshot.threadGoals) {
       this.upsertThreadGoal(goal);
@@ -309,8 +382,169 @@ export class DomainStore {
     for (const relation of parsedSnapshot.sessionRelations) {
       this.upsertSessionRelation(relation);
     }
+  }
 
-    return this.getSnapshot();
+  private swapFrom(staged: DomainStore): void {
+    this.conversations = staged.conversations;
+    this.sessions = staged.sessions;
+    this.turns = staged.turns;
+    this.messageBlocks = staged.messageBlocks;
+    this.toolCalls = staged.toolCalls;
+    this.terminalStreams = staged.terminalStreams;
+    this.approvalRequests = staged.approvalRequests;
+    this.runtimeInteractions = staged.runtimeInteractions;
+    this.participants = staged.participants;
+    this.threadGoals = staged.threadGoals;
+    this.sessionRelations = staged.sessionRelations;
+
+    this.sessionIdsByConversation = staged.sessionIdsByConversation;
+    this.turnIdsBySession = staged.turnIdsBySession;
+    this.messageBlockIdsByTurn = staged.messageBlockIdsByTurn;
+    this.messageBlockIdsByMessage = staged.messageBlockIdsByMessage;
+    this.toolCallIdsByTurn = staged.toolCallIdsByTurn;
+    this.terminalIdsByTurn = staged.terminalIdsByTurn;
+    this.approvalRequestIdsByTurn = staged.approvalRequestIdsByTurn;
+    this.interactionRequestIdsByTurn = staged.interactionRequestIdsByTurn;
+    this.participantIdsByConversation = staged.participantIdsByConversation;
+    this.parentSessionIdByChild = staged.parentSessionIdByChild;
+    this.childSessionIdsByParent = staged.childSessionIdsByParent;
+  }
+
+  private mergeConversation(conversation: Conversation): Conversation {
+    const parsedConversation = parseConversation(conversation);
+    const existing = this.conversations.get(parsedConversation.conversationId);
+    if (!existing) {
+      return this.upsertConversation(parsedConversation);
+    }
+    return this.upsertConversation({
+      ...existing,
+      ...parsedConversation,
+      participantEngineIds: mergeUniqueStrings(
+        existing.participantEngineIds,
+        parsedConversation.participantEngineIds
+      ),
+      sessionIds: mergeUniqueStrings(existing.sessionIds, parsedConversation.sessionIds),
+      metadata: mergeRecords(existing.metadata, parsedConversation.metadata)
+    });
+  }
+
+  private mergeParticipant(participant: AgentParticipant): AgentParticipant {
+    const parsedParticipant = parseAgentParticipant(participant);
+    const existing = this.participants.get(parsedParticipant.participantId);
+    if (!existing) {
+      return this.upsertParticipant(parsedParticipant);
+    }
+    return this.upsertParticipant({
+      ...existing,
+      ...parsedParticipant,
+      capabilities: mergeUniqueStrings(
+        existing.capabilities,
+        parsedParticipant.capabilities
+      ),
+      activeSessionIds: mergeUniqueStrings(
+        existing.activeSessionIds,
+        parsedParticipant.activeSessionIds
+      ),
+      metadata: mergeRecords(existing.metadata, parsedParticipant.metadata)
+    });
+  }
+
+  private assertSnapshotWithinMergeScope(
+    snapshot: DomainSnapshot,
+    scope: DomainSnapshotMergeScope | undefined
+  ): void {
+    if (!scope?.conversationId && !scope?.sessionId) {
+      return;
+    }
+
+    const sessionConversationIds = new Map<string, string>();
+    for (const session of this.sessions.values()) {
+      sessionConversationIds.set(session.sessionId, session.conversationId);
+    }
+    for (const session of snapshot.sessions) {
+      sessionConversationIds.set(session.sessionId, session.conversationId);
+    }
+    const scopedSessionConversationId = scope?.sessionId
+      ? sessionConversationIds.get(scope.sessionId)
+      : undefined;
+
+    const assertSessionId = (sessionId: string, label: string): void => {
+      if (scope?.sessionId && sessionId !== scope.sessionId) {
+        throw new Error(
+          `${label} belongs to session ${sessionId}, outside merge scope ${scope.sessionId}.`
+        );
+      }
+      if (scope?.conversationId) {
+        const conversationId = sessionConversationIds.get(sessionId);
+        if (conversationId && conversationId !== scope.conversationId) {
+          throw new Error(
+            `${label} belongs to conversation ${conversationId}, outside merge scope ${scope.conversationId}.`
+          );
+        }
+      }
+    };
+    const assertConversationId = (conversationId: string, label: string): void => {
+      if (scope?.conversationId && conversationId !== scope.conversationId) {
+        throw new Error(
+          `${label} belongs to conversation ${conversationId}, outside merge scope ${scope.conversationId}.`
+        );
+      }
+      if (
+        scopedSessionConversationId &&
+        conversationId !== scopedSessionConversationId
+      ) {
+        throw new Error(
+          `${label} belongs to conversation ${conversationId}, outside merge scope ${scopedSessionConversationId}.`
+        );
+      }
+    };
+
+    for (const conversation of snapshot.conversations) {
+      assertConversationId(conversation.conversationId, "Conversation");
+    }
+    for (const session of snapshot.sessions) {
+      assertSessionId(session.sessionId, "Session");
+      assertConversationId(session.conversationId, "Session");
+    }
+    for (const turn of snapshot.turns) {
+      assertSessionId(turn.sessionId, "Turn");
+    }
+    for (const block of snapshot.messageBlocks) {
+      assertSessionId(block.sessionId, "Message block");
+    }
+    for (const toolCall of snapshot.toolCalls) {
+      assertSessionId(toolCall.sessionId, "Tool call");
+    }
+    for (const terminalStream of snapshot.terminalStreams) {
+      assertSessionId(terminalStream.sessionId, "Terminal stream");
+    }
+    for (const approvalRequest of snapshot.approvalRequests) {
+      assertSessionId(approvalRequest.sessionId, "Approval request");
+    }
+    for (const interaction of snapshot.runtimeInteractions) {
+      assertSessionId(interaction.sessionId, "Runtime interaction");
+    }
+    for (const participant of snapshot.participants) {
+      assertConversationId(participant.conversationId, "Participant");
+    }
+    for (const goal of snapshot.threadGoals) {
+      assertSessionId(goal.sessionId, "Thread goal");
+    }
+    for (const relation of snapshot.sessionRelations) {
+      if (
+        scope?.sessionId &&
+        relation.parentSessionId !== scope.sessionId &&
+        relation.childSessionId !== scope.sessionId
+      ) {
+        throw new Error(
+          `Session relation ${relation.relationId} is outside merge scope ${scope.sessionId}.`
+        );
+      }
+      if (scope?.conversationId) {
+        assertSessionId(relation.parentSessionId, "Session relation parent");
+        assertSessionId(relation.childSessionId, "Session relation child");
+      }
+    }
   }
 
   public getSnapshot(): DomainSnapshot {

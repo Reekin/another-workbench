@@ -293,7 +293,7 @@ domain property tests、host integration、cold hydration 和真实 archive/fork
   - core/desktop-server tests
   - Codex create/resume/archive smoke
 
-[ ] task_2_2: 原子 replaceSnapshot/mergeSnapshot
+[x] task_2_2: 原子 replaceSnapshot/mergeSnapshot
 - tag: prod
 - goal: snapshot 失败时保持 live state
 - executor: subagent

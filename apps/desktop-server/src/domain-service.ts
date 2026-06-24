@@ -16,11 +16,7 @@ import {
   parseChatSession,
   parseAgentParticipant,
   parseConversation,
-  parseMessageBlock,
-  parseSessionRelation,
-  parseTerminalStream,
-  parseToolCall,
-  parseTurn
+  parseSessionRelation
 } from "@another-workbench/shared";
 import type { SessionRelationIndex } from "./session-index.js";
 import type { HydratedSessionSnapshot } from "./session-discovery.js";
@@ -111,53 +107,56 @@ export class DomainService {
     const existingConversation = this.domainStore.getConversation(
       snapshot.conversation.conversationId
     );
-    this.domainStore.upsertConversation(
-      withConversationSession(
-        parseConversation({
-          ...existingConversation,
-          ...snapshot.conversation
-        }),
-        {
-          conversationId: snapshot.conversation.conversationId,
-          sessionId: snapshot.session.sessionId,
-          engineId: snapshot.session.engineId,
-          workspaceId: snapshot.conversation.workspaceId,
-          timestamp: snapshot.session.updatedAt
+    const relatedIndexRelations = (input.relatedIndexRelations ?? []).map(
+      (relation) => ({
+        relationId: `${relation.parentSessionId}:${relation.childSessionId}:${relation.relationType}`,
+        parentSessionId: relation.parentSessionId,
+        childSessionId: relation.childSessionId,
+        relationType: relation.relationType,
+        sourceTurnId: relation.sourceTurnId,
+        createdAt: relation.createdAt
+      })
+    );
+    this.domainStore.mergeSnapshot(
+      {
+        conversations: [
+          withConversationSession(
+            parseConversation({
+              ...existingConversation,
+              ...snapshot.conversation
+            }),
+            {
+              conversationId: snapshot.conversation.conversationId,
+              sessionId: snapshot.session.sessionId,
+              engineId: snapshot.session.engineId,
+              workspaceId: snapshot.conversation.workspaceId,
+              timestamp: snapshot.session.updatedAt
+            }
+          )
+        ],
+        sessions: [snapshot.session],
+        turns: snapshot.turns,
+        messageBlocks: snapshot.messageBlocks,
+        toolCalls: snapshot.toolCalls,
+        terminalStreams: snapshot.terminalStreams,
+        approvalRequests: [],
+        runtimeInteractions: [],
+        participants: [],
+        threadGoals: [],
+        sessionRelations: [
+          ...snapshot.sessionRelations,
+          ...relatedIndexRelations
+        ]
+      },
+      {
+        scope: {
+          sessionId: snapshot.session.sessionId
         }
-      )
+      }
     );
 
-    const session = this.domainStore.upsertSession(snapshot.session);
+    const session = this.requireSession(snapshot.session.sessionId);
     this.ensureParticipantForSession(session);
-
-    for (const relation of snapshot.sessionRelations) {
-      this.domainStore.upsertSessionRelation(parseSessionRelation(relation));
-    }
-    for (const relation of input.relatedIndexRelations ?? []) {
-      const relationId = `${relation.parentSessionId}:${relation.childSessionId}:${relation.relationType}`;
-      this.domainStore.upsertSessionRelation(
-        parseSessionRelation({
-          relationId,
-          parentSessionId: relation.parentSessionId,
-          childSessionId: relation.childSessionId,
-          relationType: relation.relationType,
-          sourceTurnId: relation.sourceTurnId,
-          createdAt: relation.createdAt
-        })
-      );
-    }
-    for (const turn of snapshot.turns) {
-      this.domainStore.upsertTurn(parseTurn(turn));
-    }
-    for (const block of snapshot.messageBlocks) {
-      this.domainStore.upsertMessageBlock(parseMessageBlock(block));
-    }
-    for (const toolCall of snapshot.toolCalls) {
-      this.domainStore.upsertToolCall(parseToolCall(toolCall));
-    }
-    for (const terminalStream of snapshot.terminalStreams) {
-      this.domainStore.upsertTerminalStream(parseTerminalStream(terminalStream));
-    }
 
     return session;
   }

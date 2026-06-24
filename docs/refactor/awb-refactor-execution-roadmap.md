@@ -311,7 +311,7 @@ domain property tests、host integration、cold hydration 和真实 archive/fork
   - DomainStore tests
   - session-discovery/session-window tests
 
-[ ] task_2_3: 索引成为派生集合唯一内部真相
+[x] task_2_3: 索引成为派生集合唯一内部真相
 - tag: prod
 - goal: 消除实体数组与 store index 双写
 - executor: subagent

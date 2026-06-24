@@ -107,6 +107,17 @@ export class DomainStoreRelationError extends Error {
   }
 }
 
+type StoredConversation = Omit<Conversation, "participantEngineIds" | "sessionIds">;
+type StoredTurn = Omit<
+  Turn,
+  | "messageIds"
+  | "toolCallIds"
+  | "terminalIds"
+  | "approvalRequestIds"
+  | "interactionRequestIds"
+>;
+type StoredParticipant = Omit<AgentParticipant, "activeSessionIds">;
+
 const compareIsoAsc = (left?: string, right?: string): number => {
   if (!left && !right) {
     return 0;
@@ -212,6 +223,25 @@ const removeIndexedValue = (
   map.set(key, nextValues);
 };
 
+const mergeIndexedValues = (
+  map: Map<string, string[]>,
+  key: string,
+  values: readonly string[]
+): void => {
+  for (const value of values) {
+    addUniqueValue(map, key, value);
+  }
+};
+
+const setIndexedValues = (
+  map: Map<string, string[]>,
+  key: string,
+  values: readonly string[]
+): void => {
+  map.delete(key);
+  mergeIndexedValues(map, key, values);
+};
+
 const mapIdsToValues = <T>(
   ids: readonly string[] | undefined,
   getValue: (id: string) => T | undefined
@@ -251,20 +281,22 @@ const mergeRecords = (
 };
 
 export class DomainStore {
-  private conversations = new Map<string, Conversation>();
+  private conversations = new Map<string, StoredConversation>();
   private sessions = new Map<string, ChatSession>();
-  private turns = new Map<string, Turn>();
+  private turns = new Map<string, StoredTurn>();
   private messageBlocks = new Map<string, MessageBlock>();
   private toolCalls = new Map<string, ToolCall>();
   private terminalStreams = new Map<string, TerminalStream>();
   private approvalRequests = new Map<string, ApprovalRequest>();
   private runtimeInteractions = new Map<string, RuntimeInteraction>();
-  private participants = new Map<string, AgentParticipant>();
+  private participants = new Map<string, StoredParticipant>();
   private threadGoals = new Map<string, ThreadGoal>();
   private sessionRelations = new Map<string, SessionRelation>();
 
   private sessionIdsByConversation = new Map<string, string[]>();
+  private participantEngineIdsByConversation = new Map<string, string[]>();
   private turnIdsBySession = new Map<string, string[]>();
+  private messageIdsByTurn = new Map<string, string[]>();
   private messageBlockIdsByTurn = new Map<string, string[]>();
   private messageBlockIdsByMessage = new Map<string, string[]>();
   private toolCallIdsByTurn = new Map<string, string[]>();
@@ -272,6 +304,7 @@ export class DomainStore {
   private approvalRequestIdsByTurn = new Map<string, string[]>();
   private interactionRequestIdsByTurn = new Map<string, string[]>();
   private participantIdsByConversation = new Map<string, string[]>();
+  private activeSessionIdsByParticipant = new Map<string, string[]>();
   private parentSessionIdByChild = new Map<string, string>();
   private childSessionIdsByParent = new Map<string, string[]>();
 
@@ -303,7 +336,9 @@ export class DomainStore {
     this.sessionRelations.clear();
 
     this.sessionIdsByConversation.clear();
+    this.participantEngineIdsByConversation.clear();
     this.turnIdsBySession.clear();
+    this.messageIdsByTurn.clear();
     this.messageBlockIdsByTurn.clear();
     this.messageBlockIdsByMessage.clear();
     this.toolCallIdsByTurn.clear();
@@ -311,6 +346,7 @@ export class DomainStore {
     this.approvalRequestIdsByTurn.clear();
     this.interactionRequestIdsByTurn.clear();
     this.participantIdsByConversation.clear();
+    this.activeSessionIdsByParticipant.clear();
     this.parentSessionIdByChild.clear();
     this.childSessionIdsByParent.clear();
   }
@@ -352,7 +388,11 @@ export class DomainStore {
       this.upsertSession(session);
     }
     for (const turn of parsedSnapshot.turns) {
-      this.upsertTurn(turn);
+      if (options.merge) {
+        this.mergeTurn(turn);
+      } else {
+        this.upsertTurn(turn);
+      }
     }
     for (const block of parsedSnapshot.messageBlocks) {
       this.upsertMessageBlock(block);
@@ -398,7 +438,10 @@ export class DomainStore {
     this.sessionRelations = staged.sessionRelations;
 
     this.sessionIdsByConversation = staged.sessionIdsByConversation;
+    this.participantEngineIdsByConversation =
+      staged.participantEngineIdsByConversation;
     this.turnIdsBySession = staged.turnIdsBySession;
+    this.messageIdsByTurn = staged.messageIdsByTurn;
     this.messageBlockIdsByTurn = staged.messageBlockIdsByTurn;
     this.messageBlockIdsByMessage = staged.messageBlockIdsByMessage;
     this.toolCallIdsByTurn = staged.toolCallIdsByTurn;
@@ -406,13 +449,14 @@ export class DomainStore {
     this.approvalRequestIdsByTurn = staged.approvalRequestIdsByTurn;
     this.interactionRequestIdsByTurn = staged.interactionRequestIdsByTurn;
     this.participantIdsByConversation = staged.participantIdsByConversation;
+    this.activeSessionIdsByParticipant = staged.activeSessionIdsByParticipant;
     this.parentSessionIdByChild = staged.parentSessionIdByChild;
     this.childSessionIdsByParent = staged.childSessionIdsByParent;
   }
 
   private mergeConversation(conversation: Conversation): Conversation {
     const parsedConversation = parseConversation(conversation);
-    const existing = this.conversations.get(parsedConversation.conversationId);
+    const existing = this.getConversation(parsedConversation.conversationId);
     if (!existing) {
       return this.upsertConversation(parsedConversation);
     }
@@ -430,7 +474,7 @@ export class DomainStore {
 
   private mergeParticipant(participant: AgentParticipant): AgentParticipant {
     const parsedParticipant = parseAgentParticipant(participant);
-    const existing = this.participants.get(parsedParticipant.participantId);
+    const existing = this.getParticipant(parsedParticipant.participantId);
     if (!existing) {
       return this.upsertParticipant(parsedParticipant);
     }
@@ -446,6 +490,32 @@ export class DomainStore {
         parsedParticipant.activeSessionIds
       ),
       metadata: mergeRecords(existing.metadata, parsedParticipant.metadata)
+    });
+  }
+
+  private mergeTurn(turn: Turn): Turn {
+    const parsedTurn = parseTurn(turn);
+    const existing = this.getTurn(parsedTurn.turnId);
+    if (!existing) {
+      return this.upsertTurn(parsedTurn);
+    }
+    return this.upsertTurn({
+      ...existing,
+      ...parsedTurn,
+      messageIds: mergeUniqueStrings(existing.messageIds, parsedTurn.messageIds),
+      toolCallIds: mergeUniqueStrings(
+        existing.toolCallIds,
+        parsedTurn.toolCallIds
+      ),
+      terminalIds: mergeUniqueStrings(existing.terminalIds, parsedTurn.terminalIds),
+      approvalRequestIds: mergeUniqueStrings(
+        existing.approvalRequestIds,
+        parsedTurn.approvalRequestIds
+      ),
+      interactionRequestIds: mergeUniqueStrings(
+        existing.interactionRequestIds,
+        parsedTurn.interactionRequestIds
+      )
     });
   }
 
@@ -547,19 +617,56 @@ export class DomainStore {
     }
   }
 
+  private materializeConversation(conversation: StoredConversation): Conversation {
+    return parseConversation({
+      ...conversation,
+      participantEngineIds: [
+        ...(this.participantEngineIdsByConversation.get(conversation.conversationId) ??
+          [])
+      ],
+      sessionIds: [
+        ...(this.sessionIdsByConversation.get(conversation.conversationId) ?? [])
+      ]
+    });
+  }
+
+  private materializeTurn(turn: StoredTurn): Turn {
+    return parseTurn({
+      ...turn,
+      messageIds: [...(this.messageIdsByTurn.get(turn.turnId) ?? [])],
+      toolCallIds: [...(this.toolCallIdsByTurn.get(turn.turnId) ?? [])],
+      terminalIds: [...(this.terminalIdsByTurn.get(turn.turnId) ?? [])],
+      approvalRequestIds: [
+        ...(this.approvalRequestIdsByTurn.get(turn.turnId) ?? [])
+      ],
+      interactionRequestIds: [
+        ...(this.interactionRequestIdsByTurn.get(turn.turnId) ?? [])
+      ]
+    });
+  }
+
+  private materializeParticipant(participant: StoredParticipant): AgentParticipant {
+    return parseAgentParticipant({
+      ...participant,
+      activeSessionIds: [
+        ...(this.activeSessionIdsByParticipant.get(participant.participantId) ?? [])
+      ]
+    });
+  }
+
   public getSnapshot(): DomainSnapshot {
     return {
       conversations: sortByIsoAsc(
         this.conversations.values(),
         (conversation) => conversation.createdAt,
         (conversation) => conversation.conversationId
-      ).map(cloneConversation),
+      ).map((conversation) => this.materializeConversation(conversation)),
       sessions: this.listSessions({ includeArchived: true }),
       turns: sortByIsoAsc(
         this.turns.values(),
         (turn) => turn.startedAt,
         (turn) => turn.turnId
-      ).map(cloneTurn),
+      ).map((turn) => this.materializeTurn(turn)),
       messageBlocks: sortByIsoAsc(
         this.messageBlocks.values(),
         (block) => block.startedAt,
@@ -587,7 +694,7 @@ export class DomainStore {
       ).map(cloneRuntimeInteraction),
       participants: [...this.participants.values()].sort((left, right) =>
         left.participantId.localeCompare(right.participantId)
-      ).map(cloneParticipant),
+      ).map((participant) => this.materializeParticipant(participant)),
       threadGoals: this.listThreadGoals(),
       sessionRelations: sortByIsoAsc(
         this.sessionRelations.values(),
@@ -676,7 +783,7 @@ export class DomainStore {
 
   public getConversation(conversationId: string): Conversation | undefined {
     const conversation = this.conversations.get(conversationId);
-    return conversation ? cloneConversation(conversation) : undefined;
+    return conversation ? this.materializeConversation(conversation) : undefined;
   }
 
   public listConversations(): Conversation[] {
@@ -684,13 +791,31 @@ export class DomainStore {
       this.conversations.values(),
       (conversation) => conversation.createdAt,
       (conversation) => conversation.conversationId
-    ).map(cloneConversation);
+    ).map((conversation) => this.materializeConversation(conversation));
   }
 
   public upsertConversation(conversation: Conversation | unknown): Conversation {
     const parsedConversation = parseConversation(conversation);
-    this.conversations.set(parsedConversation.conversationId, parsedConversation);
-    return cloneConversation(parsedConversation);
+    const {
+      participantEngineIds,
+      sessionIds,
+      ...storedConversation
+    } = parsedConversation;
+    this.conversations.set(
+      parsedConversation.conversationId,
+      storedConversation
+    );
+    setIndexedValues(
+      this.participantEngineIdsByConversation,
+      parsedConversation.conversationId,
+      participantEngineIds
+    );
+    setIndexedValues(
+      this.sessionIdsByConversation,
+      parsedConversation.conversationId,
+      sessionIds
+    );
+    return this.materializeConversation(storedConversation);
   }
 
   public getSession(sessionId: string): ChatSession | undefined {
@@ -730,13 +855,36 @@ export class DomainStore {
         existing.sessionId
       );
     }
-
+    if (
+      existing &&
+      (existing.conversationId !== parsedSession.conversationId ||
+        existing.engineId !== parsedSession.engineId)
+    ) {
+      this.removeParticipantEngineIfUnused({
+        conversationId: existing.conversationId,
+        engineId: existing.engineId,
+        excludingSessionId: existing.sessionId
+      });
+    }
+    if (existing) {
+      this.removeActiveSessionFromParticipants(existing);
+    }
     this.sessions.set(parsedSession.sessionId, parsedSession);
     addUniqueValue(
       this.sessionIdsByConversation,
       parsedSession.conversationId,
       parsedSession.sessionId
     );
+    addUniqueValue(
+      this.participantEngineIdsByConversation,
+      parsedSession.conversationId,
+      parsedSession.engineId
+    );
+    if (!parsedSession.archivedAt) {
+      this.addActiveSessionToParticipants(parsedSession);
+    } else {
+      this.removeActiveSessionFromParticipants(parsedSession);
+    }
     return cloneSession(parsedSession);
   }
 
@@ -751,12 +899,18 @@ export class DomainStore {
       existing.conversationId,
       existing.sessionId
     );
+    this.removeActiveSessionFromParticipants(existing);
+    this.removeParticipantEngineIfUnused({
+      conversationId: existing.conversationId,
+      engineId: existing.engineId,
+      excludingSessionId: existing.sessionId
+    });
     return true;
   }
 
   public getTurn(turnId: string): Turn | undefined {
     const turn = this.turns.get(turnId);
-    return turn ? cloneTurn(turn) : undefined;
+    return turn ? this.materializeTurn(turn) : undefined;
   }
 
   public listTurns(options: ListTurnsOptions = {}): Turn[] {
@@ -767,7 +921,7 @@ export class DomainStore {
       : [...this.turns.values()];
 
     return sortByIsoAsc(turns, (turn) => turn.startedAt, (turn) => turn.turnId).map(
-      cloneTurn
+      (turn) => this.materializeTurn(turn)
     );
   }
 
@@ -778,9 +932,31 @@ export class DomainStore {
       removeIndexedValue(this.turnIdsBySession, existing.sessionId, existing.turnId);
     }
 
-    this.turns.set(parsedTurn.turnId, parsedTurn);
+    const {
+      messageIds,
+      toolCallIds,
+      terminalIds,
+      approvalRequestIds,
+      interactionRequestIds,
+      ...storedTurn
+    } = parsedTurn;
+
+    this.turns.set(parsedTurn.turnId, storedTurn);
     addUniqueValue(this.turnIdsBySession, parsedTurn.sessionId, parsedTurn.turnId);
-    return cloneTurn(parsedTurn);
+    setIndexedValues(this.messageIdsByTurn, parsedTurn.turnId, messageIds);
+    setIndexedValues(this.toolCallIdsByTurn, parsedTurn.turnId, toolCallIds);
+    setIndexedValues(this.terminalIdsByTurn, parsedTurn.turnId, terminalIds);
+    setIndexedValues(
+      this.approvalRequestIdsByTurn,
+      parsedTurn.turnId,
+      approvalRequestIds
+    );
+    setIndexedValues(
+      this.interactionRequestIdsByTurn,
+      parsedTurn.turnId,
+      interactionRequestIds
+    );
+    return this.materializeTurn(storedTurn);
   }
 
   public deleteTurn(turnId: string): boolean {
@@ -790,6 +966,11 @@ export class DomainStore {
     }
     this.turns.delete(turnId);
     removeIndexedValue(this.turnIdsBySession, existing.sessionId, existing.turnId);
+    this.messageIdsByTurn.delete(turnId);
+    this.toolCallIdsByTurn.delete(turnId);
+    this.terminalIdsByTurn.delete(turnId);
+    this.approvalRequestIdsByTurn.delete(turnId);
+    this.interactionRequestIdsByTurn.delete(turnId);
     return true;
   }
 
@@ -837,9 +1018,21 @@ export class DomainStore {
           existing.blockId
         );
       }
+      if (
+        (existing.turnId !== parsedBlock.turnId ||
+          existing.messageId !== parsedBlock.messageId) &&
+        !this.hasMessageBlockForTurnMessage({
+          turnId: existing.turnId,
+          messageId: existing.messageId,
+          excludingBlockId: existing.blockId
+        })
+      ) {
+        removeIndexedValue(this.messageIdsByTurn, existing.turnId, existing.messageId);
+      }
     }
 
     this.messageBlocks.set(parsedBlock.blockId, parsedBlock);
+    addUniqueValue(this.messageIdsByTurn, parsedBlock.turnId, parsedBlock.messageId);
     addUniqueValue(this.messageBlockIdsByTurn, parsedBlock.turnId, parsedBlock.blockId);
     addUniqueValue(
       this.messageBlockIdsByMessage,
@@ -861,6 +1054,14 @@ export class DomainStore {
       existing.messageId,
       existing.blockId
     );
+    if (
+      !this.hasMessageBlockForTurnMessage({
+        turnId: existing.turnId,
+        messageId: existing.messageId
+      })
+    ) {
+      removeIndexedValue(this.messageIdsByTurn, existing.turnId, existing.messageId);
+    }
     return true;
   }
 
@@ -1088,7 +1289,7 @@ export class DomainStore {
 
   public getParticipant(participantId: string): AgentParticipant | undefined {
     const participant = this.participants.get(participantId);
-    return participant ? cloneParticipant(participant) : undefined;
+    return participant ? this.materializeParticipant(participant) : undefined;
   }
 
   public listParticipants(options: ListParticipantsOptions = {}): AgentParticipant[] {
@@ -1107,7 +1308,7 @@ export class DomainStore {
 
     return [...participants].sort((left, right) =>
       left.participantId.localeCompare(right.participantId)
-    ).map(cloneParticipant);
+    ).map((participant) => this.materializeParticipant(participant));
   }
 
   public upsertParticipant(participant: AgentParticipant | unknown): AgentParticipant {
@@ -1123,14 +1324,37 @@ export class DomainStore {
         existing.participantId
       );
     }
+    if (
+      existing &&
+      (existing.conversationId !== parsedParticipant.conversationId ||
+        existing.engineId !== parsedParticipant.engineId)
+    ) {
+      this.removeParticipantEngineIfUnused({
+        conversationId: existing.conversationId,
+        engineId: existing.engineId,
+        excludingParticipantId: existing.participantId
+      });
+    }
 
-    this.participants.set(parsedParticipant.participantId, parsedParticipant);
+    const { activeSessionIds, ...storedParticipant } = parsedParticipant;
+    this.participants.set(parsedParticipant.participantId, storedParticipant);
     addUniqueValue(
       this.participantIdsByConversation,
       parsedParticipant.conversationId,
       parsedParticipant.participantId
     );
-    return cloneParticipant(parsedParticipant);
+    addUniqueValue(
+      this.participantEngineIdsByConversation,
+      parsedParticipant.conversationId,
+      parsedParticipant.engineId
+    );
+    setIndexedValues(
+      this.activeSessionIdsByParticipant,
+      parsedParticipant.participantId,
+      activeSessionIds
+    );
+    this.addExistingActiveSessionsToParticipant(storedParticipant);
+    return this.materializeParticipant(storedParticipant);
   }
 
   public deleteParticipant(participantId: string): boolean {
@@ -1144,6 +1368,12 @@ export class DomainStore {
       existing.conversationId,
       existing.participantId
     );
+    this.activeSessionIdsByParticipant.delete(participantId);
+    this.removeParticipantEngineIfUnused({
+      conversationId: existing.conversationId,
+      engineId: existing.engineId,
+      excludingParticipantId: existing.participantId
+    });
     return true;
   }
 
@@ -1360,6 +1590,119 @@ export class DomainStore {
         candidate.childSessionId === childSessionId
     );
     return relation?.parentSessionId;
+  }
+
+  private hasMessageBlockForTurnMessage(input: {
+    turnId: string;
+    messageId: string;
+    excludingBlockId?: string;
+  }): boolean {
+    for (const block of this.messageBlocks.values()) {
+      if (
+        block.blockId !== input.excludingBlockId &&
+        block.turnId === input.turnId &&
+        block.messageId === input.messageId
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private removeParticipantEngineIfUnused(input: {
+    conversationId: string;
+    engineId: string;
+    excludingSessionId?: string;
+    excludingParticipantId?: string;
+  }): void {
+    if (
+      this.hasSessionForEngine(input) ||
+      this.hasParticipantForEngine(input)
+    ) {
+      return;
+    }
+    removeIndexedValue(
+      this.participantEngineIdsByConversation,
+      input.conversationId,
+      input.engineId
+    );
+  }
+
+  private hasSessionForEngine(input: {
+    conversationId: string;
+    engineId: string;
+    excludingSessionId?: string;
+  }): boolean {
+    for (const session of this.sessions.values()) {
+      if (
+        session.sessionId !== input.excludingSessionId &&
+        session.conversationId === input.conversationId &&
+        session.engineId === input.engineId
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private hasParticipantForEngine(input: {
+    conversationId: string;
+    engineId: string;
+    excludingParticipantId?: string;
+  }): boolean {
+    for (const participant of this.participants.values()) {
+      if (
+        participant.participantId !== input.excludingParticipantId &&
+        participant.conversationId === input.conversationId &&
+        participant.engineId === input.engineId
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private addExistingActiveSessionsToParticipant(
+    participant: StoredParticipant
+  ): void {
+    for (const session of this.sessions.values()) {
+      if (
+        !session.archivedAt &&
+        session.conversationId === participant.conversationId &&
+        session.engineId === participant.engineId
+      ) {
+        addUniqueValue(
+          this.activeSessionIdsByParticipant,
+          participant.participantId,
+          session.sessionId
+        );
+      }
+    }
+  }
+
+  private addActiveSessionToParticipants(session: ChatSession): void {
+    for (const participant of this.participants.values()) {
+      if (
+        participant.conversationId === session.conversationId &&
+        participant.engineId === session.engineId
+      ) {
+        addUniqueValue(
+          this.activeSessionIdsByParticipant,
+          participant.participantId,
+          session.sessionId
+        );
+      }
+    }
+  }
+
+  private removeActiveSessionFromParticipants(session: ChatSession): void {
+    for (const participant of this.participants.values()) {
+      removeIndexedValue(
+        this.activeSessionIdsByParticipant,
+        participant.participantId,
+        session.sessionId
+      );
+    }
   }
 
   public deleteSessionCascade(sessionId: string): boolean {

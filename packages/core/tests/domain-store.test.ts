@@ -79,7 +79,356 @@ const expectRelationError = (
   }
 };
 
+const getStoredEntity = (
+  store: DomainStore,
+  key: "conversations" | "turns" | "participants",
+  id: string
+): Record<string, unknown> | undefined =>
+  (store as unknown as Record<string, Map<string, Record<string, unknown>>>)[
+    key
+  ]?.get(id);
+
 describe("DomainStore", () => {
+  it("materializes V1 snapshot arrays from indexes without storing them on entities", () => {
+    const store = new DomainStore({
+      snapshot: {
+        conversations: [
+          {
+            ...conversation("conversation-a"),
+            participantEngineIds: ["agent-a"],
+            sessionIds: ["session-a"]
+          }
+        ],
+        sessions: [session("session-a")],
+        turns: [
+          {
+            ...turn("turn-a", "session-a"),
+            messageIds: ["message-a"],
+            toolCallIds: ["tool-a"],
+            terminalIds: ["terminal-a"],
+            approvalRequestIds: ["approval-a"],
+            interactionRequestIds: ["interaction-a"]
+          }
+        ],
+        messageBlocks: [],
+        toolCalls: [],
+        terminalStreams: [],
+        approvalRequests: [],
+        runtimeInteractions: [],
+        participants: [
+          {
+            participantId: "participant-a",
+            conversationId: "conversation-a",
+            engineId: "agent-a",
+            role: "primary",
+            capabilities: ["chat"],
+            activeSessionIds: ["session-a"]
+          }
+        ],
+        threadGoals: [],
+        sessionRelations: []
+      }
+    });
+
+    expect(store.getConversation("conversation-a")).toMatchObject({
+      participantEngineIds: ["agent-a"],
+      sessionIds: ["session-a"]
+    });
+    expect(store.getTurn("turn-a")).toMatchObject({
+      messageIds: ["message-a"],
+      toolCallIds: ["tool-a"],
+      terminalIds: ["terminal-a"],
+      approvalRequestIds: ["approval-a"],
+      interactionRequestIds: ["interaction-a"]
+    });
+    expect(store.getParticipant("participant-a")).toMatchObject({
+      activeSessionIds: ["session-a"]
+    });
+
+    expect(getStoredEntity(store, "conversations", "conversation-a")).not.toHaveProperty(
+      "sessionIds"
+    );
+    expect(getStoredEntity(store, "conversations", "conversation-a")).not.toHaveProperty(
+      "participantEngineIds"
+    );
+    expect(getStoredEntity(store, "turns", "turn-a")).not.toHaveProperty(
+      "messageIds"
+    );
+    expect(getStoredEntity(store, "turns", "turn-a")).not.toHaveProperty(
+      "toolCallIds"
+    );
+    expect(getStoredEntity(store, "turns", "turn-a")).not.toHaveProperty(
+      "terminalIds"
+    );
+    expect(getStoredEntity(store, "turns", "turn-a")).not.toHaveProperty(
+      "approvalRequestIds"
+    );
+    expect(getStoredEntity(store, "turns", "turn-a")).not.toHaveProperty(
+      "interactionRequestIds"
+    );
+    expect(getStoredEntity(store, "participants", "participant-a")).not.toHaveProperty(
+      "activeSessionIds"
+    );
+  });
+
+  it("preserves V1 snapshot collection indexes without related entities", () => {
+    const store = new DomainStore({
+      snapshot: {
+        conversations: [
+          {
+            ...conversation("conversation-v1"),
+            participantEngineIds: ["agent-b", "agent-a"],
+            sessionIds: ["session-missing"]
+          }
+        ],
+        sessions: [],
+        turns: [],
+        messageBlocks: [],
+        toolCalls: [],
+        terminalStreams: [],
+        approvalRequests: [],
+        runtimeInteractions: [],
+        participants: [
+          {
+            participantId: "participant-b",
+            conversationId: "conversation-v1",
+            engineId: "agent-b",
+            role: "primary",
+            capabilities: [],
+            activeSessionIds: ["session-missing"]
+          }
+        ],
+        threadGoals: [],
+        sessionRelations: []
+      }
+    });
+
+    expect(store.getConversation("conversation-v1")).toMatchObject({
+      participantEngineIds: ["agent-b", "agent-a"],
+      sessionIds: ["session-missing"]
+    });
+    expect(store.getParticipant("participant-b")).toMatchObject({
+      activeSessionIds: ["session-missing"]
+    });
+    expect(store.getSnapshot().conversations[0]).toMatchObject({
+      participantEngineIds: ["agent-b", "agent-a"],
+      sessionIds: ["session-missing"]
+    });
+    expect(store.getSnapshot().participants[0]).toMatchObject({
+      activeSessionIds: ["session-missing"]
+    });
+  });
+
+  it("materializes derived arrays from relation indexes after mutations", () => {
+    const store = new DomainStore();
+    store.upsertConversation(conversation("conversation-a"));
+    store.upsertSession(session("session-a"));
+    store.upsertTurn({
+      ...turn("turn-a", "session-a"),
+      messageIds: [],
+      toolCallIds: [],
+      terminalIds: [],
+      approvalRequestIds: [],
+      interactionRequestIds: []
+    });
+    store.upsertParticipant({
+      participantId: "participant-a",
+      conversationId: "conversation-a",
+      engineId: "agent-a",
+      role: "primary",
+      capabilities: ["chat"],
+      activeSessionIds: []
+    });
+    store.upsertMessageBlock({
+      blockId: "block-a",
+      messageId: "message-a",
+      sessionId: "session-a",
+      turnId: "turn-a",
+      role: "assistant",
+      kind: "markdown",
+      startedAt: now
+    });
+    store.upsertToolCall({
+      toolCallId: "tool-a",
+      sessionId: "session-a",
+      turnId: "turn-a",
+      toolName: "shell",
+      status: "completed",
+      startedAt: now
+    });
+    store.upsertTerminalStream({
+      terminalId: "terminal-a",
+      sessionId: "session-a",
+      turnId: "turn-a",
+      status: "completed",
+      outputText: "",
+      startedAt: now
+    });
+
+    expect(store.getConversation("conversation-a")).toMatchObject({
+      participantEngineIds: ["agent-a"],
+      sessionIds: ["session-a"]
+    });
+    expect(store.getParticipant("participant-a")).toMatchObject({
+      activeSessionIds: ["session-a"]
+    });
+    expect(store.getTurn("turn-a")).toMatchObject({
+      messageIds: ["message-a"],
+      toolCallIds: ["tool-a"],
+      terminalIds: ["terminal-a"]
+    });
+
+    expect(store.deleteMessageBlock("block-a")).toBe(true);
+    expect(store.getTurn("turn-a")?.messageIds).toEqual([]);
+    expect(store.deleteSession("session-a")).toBe(true);
+    expect(store.getConversation("conversation-a")?.sessionIds).toEqual([]);
+    expect(store.getParticipant("participant-a")?.activeSessionIds).toEqual([]);
+  });
+
+  it("uses public upsert as collection index replacement", () => {
+    const store = new DomainStore();
+    store.upsertConversation({
+      ...conversation("conversation-a"),
+      participantEngineIds: ["agent-a"],
+      sessionIds: ["session-a"]
+    });
+    store.upsertTurn({
+      ...turn("turn-a"),
+      messageIds: ["message-a"],
+      toolCallIds: ["tool-a"],
+      terminalIds: ["terminal-a"],
+      approvalRequestIds: ["approval-a"],
+      interactionRequestIds: ["interaction-a"]
+    });
+    store.upsertParticipant({
+      participantId: "participant-a",
+      conversationId: "conversation-a",
+      engineId: "agent-a",
+      role: "primary",
+      capabilities: [],
+      activeSessionIds: ["session-a"]
+    });
+
+    store.upsertConversation({
+      ...conversation("conversation-a"),
+      participantEngineIds: [],
+      sessionIds: []
+    });
+    expect(store.getConversation("conversation-a")).toMatchObject({
+      participantEngineIds: [],
+      sessionIds: []
+    });
+    store.upsertTurn({
+      ...turn("turn-a"),
+      messageIds: [],
+      toolCallIds: [],
+      terminalIds: [],
+      approvalRequestIds: [],
+      interactionRequestIds: []
+    });
+    store.upsertParticipant({
+      participantId: "participant-a",
+      conversationId: "conversation-a",
+      engineId: "agent-a",
+      role: "primary",
+      capabilities: [],
+      activeSessionIds: []
+    });
+
+    expect(store.getTurn("turn-a")).toMatchObject({
+      messageIds: [],
+      toolCallIds: [],
+      terminalIds: [],
+      approvalRequestIds: [],
+      interactionRequestIds: []
+    });
+    expect(store.getParticipant("participant-a")).toMatchObject({
+      activeSessionIds: []
+    });
+  });
+
+  it("uses scoped snapshot merge as collection index union", () => {
+    const store = new DomainStore();
+    store.upsertConversation({
+      ...conversation("conversation-a"),
+      participantEngineIds: ["agent-a"],
+      sessionIds: ["session-a"]
+    });
+    store.upsertTurn({
+      ...turn("turn-a"),
+      messageIds: ["message-a"],
+      toolCallIds: ["tool-a"],
+      terminalIds: ["terminal-a"],
+      approvalRequestIds: ["approval-a"],
+      interactionRequestIds: ["interaction-a"]
+    });
+    store.upsertParticipant({
+      participantId: "participant-a",
+      conversationId: "conversation-a",
+      engineId: "agent-a",
+      role: "primary",
+      capabilities: ["chat"],
+      activeSessionIds: ["session-a"]
+    });
+
+    store.mergeSnapshot(
+      {
+        conversations: [
+          {
+            ...conversation("conversation-a"),
+            participantEngineIds: ["agent-b"],
+            sessionIds: ["session-b"]
+          }
+        ],
+        sessions: [],
+        turns: [
+          {
+            ...turn("turn-a"),
+            messageIds: ["message-b"],
+            toolCallIds: ["tool-b"],
+            terminalIds: ["terminal-b"],
+            approvalRequestIds: ["approval-b"],
+            interactionRequestIds: ["interaction-b"]
+          }
+        ],
+        messageBlocks: [],
+        toolCalls: [],
+        terminalStreams: [],
+        approvalRequests: [],
+        runtimeInteractions: [],
+        participants: [
+          {
+            participantId: "participant-a",
+            conversationId: "conversation-a",
+            engineId: "agent-a",
+            role: "primary",
+            capabilities: ["tool"],
+            activeSessionIds: ["session-b"]
+          }
+        ],
+        threadGoals: [],
+        sessionRelations: []
+      },
+      { scope: { conversationId: "conversation-a" } }
+    );
+
+    expect(store.getConversation("conversation-a")).toMatchObject({
+      participantEngineIds: ["agent-a", "agent-b"],
+      sessionIds: ["session-a", "session-b"]
+    });
+    expect(store.getTurn("turn-a")).toMatchObject({
+      messageIds: ["message-a", "message-b"],
+      toolCallIds: ["tool-a", "tool-b"],
+      terminalIds: ["terminal-a", "terminal-b"],
+      approvalRequestIds: ["approval-a", "approval-b"],
+      interactionRequestIds: ["interaction-a", "interaction-b"]
+    });
+    expect(store.getParticipant("participant-a")).toMatchObject({
+      capabilities: ["chat", "tool"],
+      activeSessionIds: ["session-a", "session-b"]
+    });
+  });
+
   it("preserves the current snapshot when replaceSnapshot fails relation validation", () => {
     const store = new DomainStore();
     store.upsertConversation(conversation("conversation-live"));

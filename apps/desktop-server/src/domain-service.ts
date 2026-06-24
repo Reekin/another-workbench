@@ -1,8 +1,6 @@
 import {
   DomainProjector,
-  DomainStore,
-  SessionManager,
-  type RuntimeBinding
+  DomainStore
 } from "@another-workbench/core";
 import type {
   AgentParticipant,
@@ -15,6 +13,7 @@ import type {
   SessionRelationType
 } from "@another-workbench/shared";
 import {
+  parseChatSession,
   parseAgentParticipant,
   parseConversation,
   parseMessageBlock,
@@ -84,7 +83,7 @@ export class DomainService {
   private readonly markSessionUnreadCompleted?: (sessionId: string) => void;
   private readonly now: Clock;
   private readonly createRelationId: IdFactory;
-  private readonly sessionManager: SessionManager;
+  private readonly createSessionId: IdFactory;
   private readonly domainStore: DomainStore;
   private readonly domainProjector: DomainProjector;
 
@@ -95,10 +94,7 @@ export class DomainService {
     this.markSessionUnreadCompleted = options.markSessionUnreadCompleted;
     this.now = options.now ?? (() => new Date().toISOString());
     this.createRelationId = options.createRelationId ?? (() => createOpaqueId("relation"));
-    this.sessionManager = new SessionManager({
-      now: this.now,
-      createSessionId: options.createSessionId
-    });
+    this.createSessionId = options.createSessionId ?? (() => createOpaqueId("session"));
     this.domainStore = new DomainStore();
     this.domainProjector = new DomainProjector({
       store: this.domainStore,
@@ -131,8 +127,7 @@ export class DomainService {
       )
     );
 
-    const session = this.sessionManager.loadSession(snapshot.session);
-    this.domainStore.upsertSession(session);
+    const session = this.domainStore.upsertSession(snapshot.session);
     this.ensureParticipantForSession(session);
 
     for (const relation of snapshot.sessionRelations) {
@@ -168,15 +163,15 @@ export class DomainService {
   }
 
   public listSessions(options: WorkbenchSessionListOptions = {}): ChatSession[] {
-    return this.sessionManager.listSessions(options);
+    return this.domainStore.listSessions(options);
   }
 
   public getSession(sessionId: string): ChatSession | undefined {
-    return this.sessionManager.getSession(sessionId);
+    return this.domainStore.getSession(sessionId);
   }
 
   public requireSession(sessionId: string): ChatSession {
-    const session = this.sessionManager.getSession(sessionId);
+    const session = this.domainStore.getSession(sessionId);
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`);
     }
@@ -195,10 +190,6 @@ export class DomainService {
     return conversation;
   }
 
-  public bindRuntime(sessionId: string, binding: RuntimeBinding): RuntimeBinding {
-    return this.sessionManager.bindRuntime(sessionId, binding);
-  }
-
   public createSession(input: {
     conversationId: string;
     engineId: string;
@@ -206,7 +197,7 @@ export class DomainService {
     workspaceId?: string;
   }): ChatSession {
     this.assertEngineRegistered(input.engineId);
-    const session = this.sessionManager.createSession({
+    const session = this.createSessionRecord({
       conversationId: input.conversationId,
       engineId: input.engineId,
       metadata: input.metadata
@@ -231,7 +222,7 @@ export class DomainService {
   }
 
   public resumeSession(sessionId: string): ChatSession {
-    const session = this.sessionManager.resumeSession(sessionId);
+    const session = this.resumeSessionRecord(sessionId);
     this.primeConversationForSession(session);
     this.ensureParticipantForSession(session);
     this.commitRuntimeEvent({
@@ -248,17 +239,18 @@ export class DomainService {
   }
 
   public archiveSession(sessionId: string): ChatSession {
-    const session = this.sessionManager.archiveSession(sessionId);
+    const session = this.requireSession(sessionId);
+    const archivedAt = this.now();
     this.commitRuntimeEvent({
       type: "session.archived",
       conversationId: session.conversationId,
       sessionId: session.sessionId,
-      archivedAt: session.archivedAt ?? this.now()
+      archivedAt
     });
     this.publishConversationUpdated({
       conversationId: session.conversationId
     });
-    return session;
+    return this.requireSession(sessionId);
   }
 
   public updateSessionTitle(input: {
@@ -291,7 +283,7 @@ export class DomainService {
   } {
     const parentSession = this.requireSession(input.sessionId);
     const timestamp = this.now();
-    const childSession = this.sessionManager.createSession({
+    const childSession = this.createSessionRecord({
       conversationId: parentSession.conversationId,
       engineId: parentSession.engineId,
       metadata: parentSession.metadata
@@ -341,7 +333,7 @@ export class DomainService {
   } {
     const parentSession = this.requireSession(input.parentSessionId);
     const timestamp = this.now();
-    const childSession = this.sessionManager.createSession({
+    const childSession = this.createSessionRecord({
       conversationId: parentSession.conversationId,
       engineId: input.engineId,
       metadata: input.metadata
@@ -469,10 +461,7 @@ export class DomainService {
   }
 
   public resolveConversationIdForSession(sessionId: string): string | undefined {
-    return (
-      this.domainStore.resolveConversationIdBySessionId(sessionId) ??
-      this.sessionManager.getSession(sessionId)?.conversationId
-    );
+    return this.domainStore.resolveConversationIdBySessionId(sessionId);
   }
 
   public getSnapshot(): DomainSnapshot {
@@ -490,24 +479,39 @@ export class DomainService {
 
   private applyRuntimeEvent(event: RuntimeEvent, occurredAt?: string): void {
     this.domainProjector.apply(event, occurredAt);
-    this.syncProjectedSessionState(event);
     if (event.type === "turn.completed") {
       this.markSessionUnreadCompleted?.(event.sessionId);
     }
   }
 
-  private syncProjectedSessionState(event: RuntimeEvent): void {
-    if (!("sessionId" in event) || typeof event.sessionId !== "string") {
-      return;
-    }
-    if (event.type === "session.disposed") {
-      this.sessionManager.disposeSession(event.sessionId);
-      return;
-    }
-    const projectedSession = this.domainStore.getSession(event.sessionId);
-    if (projectedSession) {
-      this.sessionManager.loadSession(projectedSession);
-    }
+  private createSessionRecord(input: {
+    conversationId: string;
+    engineId: string;
+    metadata?: Record<string, unknown>;
+  }): ChatSession {
+    const timestamp = this.now();
+    return parseChatSession({
+      sessionId: this.createSessionId(),
+      conversationId: input.conversationId,
+      engineId: input.engineId,
+      status: "idle",
+      metadata: input.metadata,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+  }
+
+  private resumeSessionRecord(sessionId: string): ChatSession {
+    const existingSession = this.requireSession(sessionId);
+    const resumedSession = parseChatSession({
+      ...existingSession,
+      archivedAt: undefined,
+      status:
+        existingSession.status === "completed" ? "idle" : existingSession.status,
+      updatedAt: this.now()
+    });
+    this.domainStore.upsertSession(resumedSession);
+    return resumedSession;
   }
 
   private primeConversationForSession(

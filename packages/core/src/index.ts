@@ -6,4 +6,3 @@ export * from "./domain.js";
 export * from "./domain-projector.js";
 export * from "./domain-store.js";
 export * from "./event-bus.js";
-export * from "./session-manager.js";

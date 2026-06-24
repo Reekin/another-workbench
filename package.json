@@ -20,6 +20,7 @@
     "remote:smoke:host-register": "pnpm exec tsx ./scripts/remote-smoke-host-register.ts",
     "smoke:codex": "pnpm exec tsx ./scripts/smoke-real-codex-runtime.ts",
     "smoke:codex:restart": "pnpm exec tsx ./scripts/smoke-codex-runtime-restart.ts",
+    "smoke:session-lifecycle": "pnpm exec tsx ./scripts/smoke-session-lifecycle.ts",
     "smoke:pi": "pnpm exec tsx ./scripts/smoke-real-pi-acp-runtime.ts",
     "smoke:pi:restart": "pnpm exec tsx ./scripts/smoke-pi-acp-runtime-restart.ts"
   },

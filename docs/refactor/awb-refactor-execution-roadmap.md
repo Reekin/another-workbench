@@ -273,7 +273,7 @@ domain property tests、host integration、cold hydration 和真实 archive/fork
 - 删除类名但又在 DomainService 新建另一份 session map。
 - snapshot tests 只覆盖合法输入，没有验证半途失败保持旧状态。
 
-[ ] task_2_1: 删除 SessionManager 和无效 runtime binding
+[x] task_2_1: 删除 SessionManager 和无效 runtime binding
 - tag: prod
 - goal: 消除 session 双真源
 - executor: subagent

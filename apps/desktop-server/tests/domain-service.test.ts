@@ -65,6 +65,107 @@ describe("DomainService", () => {
     ]);
   });
 
+  it("uses the domain store for session list/get/archive/resume/dispose state", () => {
+    const service = new DomainService({
+      now: (() => {
+        let tick = 0;
+        return () => `2026-04-20T00:03:${String(++tick).padStart(2, "0")}Z`;
+      })(),
+      createSessionId: () => "session-domain-owner",
+      assertEngineRegistered: vi.fn(),
+      resolveEngineCapabilities: () => ["chat"],
+      publishRuntimeEvent: () => {}
+    });
+
+    const created = service.createSession({
+      conversationId: "conversation-domain-owner",
+      engineId: "codex",
+      metadata: {
+        cwd: "I:/workspace/project"
+      }
+    });
+
+    expect(service.getSession(created.sessionId)).toMatchObject({
+      sessionId: "session-domain-owner",
+      metadata: {
+        cwd: "I:/workspace/project"
+      }
+    });
+    expect(service.listSessions()).toHaveLength(1);
+
+    const archived = service.archiveSession(created.sessionId);
+    expect(archived.archivedAt).toBeDefined();
+    expect(service.listSessions()).toEqual([]);
+    expect(service.listSessions({ includeArchived: true })).toHaveLength(1);
+
+    const resumed = service.resumeSession(created.sessionId);
+    expect(resumed.archivedAt).toBeUndefined();
+    expect(service.listSessions()).toEqual([
+      expect.objectContaining({
+        sessionId: created.sessionId
+      })
+    ]);
+
+    expect(service.disposeSession(created.sessionId)).toBe(true);
+    expect(service.getSession(created.sessionId)).toBeUndefined();
+    expect(service.listSessions({ includeArchived: true })).toEqual([]);
+  });
+
+  it("hydrates discovered sessions into the same canonical session store", () => {
+    const service = new DomainService({
+      now: (() => {
+        let tick = 0;
+        return () => `2026-04-20T00:04:${String(++tick).padStart(2, "0")}Z`;
+      })(),
+      assertEngineRegistered: vi.fn(),
+      resolveEngineCapabilities: () => ["chat", "terminal"],
+      publishRuntimeEvent: () => {}
+    });
+
+    const hydrated = service.hydrateDiscoveredSession({
+      workspaceId: "workspace-hydrated",
+      conversation: {
+        conversationId: "conversation-hydrated",
+        workspaceId: "workspace-hydrated",
+        participantEngineIds: ["codex"],
+        activeSessionId: "session-hydrated",
+        sessionIds: ["session-hydrated"],
+        createdAt: "2026-04-19T00:00:00Z",
+        updatedAt: "2026-04-19T00:01:00Z"
+      },
+      session: {
+        sessionId: "session-hydrated",
+        conversationId: "conversation-hydrated",
+        engineId: "codex",
+        status: "idle",
+        title: "Hydrated session",
+        createdAt: "2026-04-19T00:00:00Z",
+        updatedAt: "2026-04-19T00:01:00Z",
+        metadata: {
+          providerSessionId: "thread-hydrated"
+        }
+      },
+      turns: [],
+      messageBlocks: [],
+      toolCalls: [],
+      terminalStreams: [],
+      sessionRelations: []
+    });
+
+    expect(hydrated.sessionId).toBe("session-hydrated");
+    expect(service.getSession("session-hydrated")).toMatchObject({
+      title: "Hydrated session",
+      metadata: {
+        providerSessionId: "thread-hydrated"
+      }
+    });
+    expect(service.listSessions({ conversationId: "conversation-hydrated" })).toEqual([
+      expect.objectContaining({
+        sessionId: "session-hydrated"
+      })
+    ]);
+  });
+
   it("marks unread completed when a turn finishes", () => {
     const markSessionUnreadCompleted = vi.fn();
     const service = new DomainService({

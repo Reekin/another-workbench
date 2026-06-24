@@ -167,9 +167,7 @@ export class RuntimeOrchestrator {
       relatedIndexRelations?: SessionRelationIndex[];
     } = {}
   ) {
-    const session = this.domainService.hydrateDiscoveredSession(snapshot, input);
-    this.bindRuntime(session.sessionId);
-    return session;
+    return this.domainService.hydrateDiscoveredSession(snapshot, input);
   }
 
   public async executeCommand(input: CommandEnvelope): Promise<CommandReceipt> {
@@ -275,7 +273,6 @@ export class RuntimeOrchestrator {
       metadata: writeSessionExecutionProfile(command.metadata, sessionProfile),
       workspaceId: command.workspaceId
     });
-    this.bindRuntime(session.sessionId);
     const conversation = this.domainService.requireConversation(conversationId);
     await this.sessionIndexSyncService.syncSession(session.sessionId);
     await this.workspaceSelectionService.activateSelection({
@@ -308,7 +305,6 @@ export class RuntimeOrchestrator {
         metadata: writeSessionExecutionProfile(command.metadata, sessionProfile),
         workspaceId: command.workspaceId
       });
-    this.bindRuntime(childSession.sessionId);
     const conversation = this.domainService.requireConversation(
       childSession.conversationId
     );
@@ -349,7 +345,6 @@ export class RuntimeOrchestrator {
       sessionId,
       fromTurnId
     });
-    this.bindRuntime(childSession.sessionId);
     const conversation = this.domainService.requireConversation(childSession.conversationId);
     await this.sessionIndexSyncService.syncSession(childSession.sessionId);
     if (conversation.workspaceId) {
@@ -545,27 +540,6 @@ export class RuntimeOrchestrator {
         cwd
       } as CommandEnvelope["command"]
     };
-  }
-
-  private bindRuntime(sessionId: string): void {
-    const session = this.domainService.getSession(sessionId);
-    if (!session) {
-      return;
-    }
-    const engineId = this.resolveSessionEngineId(session);
-    const binding = this.bindings.get(engineId);
-    if (!binding?.adapter) {
-      return;
-    }
-
-    this.domainService.bindRuntime(session.sessionId, {
-      runtimeId: `${engineId}:${session.sessionId}`,
-      handle: binding.adapter,
-      attachedAt: this.now(),
-      metadata: {
-        engineId
-      }
-    });
   }
 
   private async ensureAdapterReady(engineId: string): Promise<void> {

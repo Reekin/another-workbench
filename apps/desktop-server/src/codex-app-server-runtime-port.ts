@@ -1,4 +1,3 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import type {
   AdapterRuntimePort,
@@ -94,6 +93,8 @@ import type {
   HostToolResult
 } from "./host-tools.js";
 import { discoveredCodexSessionId } from "./codex-session-identity.js";
+import { ChildProcessSupervisor } from "./runtime/child-process-supervisor.js";
+import { LifecycleGate } from "./runtime/lifecycle-gate.js";
 
 type RuntimeListener = (event: CodexRuntimeEvent) => void;
 
@@ -833,6 +834,8 @@ export class CodexAppServerRuntimePort
   private readonly now: () => string;
   private readonly listeners = new Set<RuntimeListener>();
   private readonly lifecycle = createRuntimeLifecycleController();
+  private readonly lifecycleGate = new LifecycleGate();
+  private readonly processSupervisor = new ChildProcessSupervisor();
   private readonly pendingRpcById = new Map<string, PendingRpc>();
   private readonly threadIdBySessionId = new Map<string, string>();
   private readonly sessionIdByThreadId = new Map<string, string>();
@@ -856,7 +859,6 @@ export class CodexAppServerRuntimePort
     string,
     ProcessActivitySummaryState
   >();
-  private process: ChildProcessWithoutNullStreams | undefined;
   private buffer = "";
   private sequence = 0;
   private requestCounter = 0;
@@ -872,6 +874,38 @@ export class CodexAppServerRuntimePort
     this.recordTurnChanges = options.recordTurnChanges;
     this.hostTools = options.hostTools;
     this.now = options.now ?? (() => new Date().toISOString());
+    this.processSupervisor.onStderr((event) => {
+      const trimmed = event.text.trim();
+      if (!trimmed) {
+        return;
+      }
+      this.emitEvent("runtime.error", {
+        code: "CODEX_APP_SERVER_STDERR",
+        message: trimmed,
+        recoverable: true
+      });
+    });
+    this.processSupervisor.onExit((event) => {
+      const state = this.lifecycle.getState();
+      if (
+        !event.expected &&
+        state !== "stopping" &&
+        state !== "stopped"
+      ) {
+        this.lifecycle.setState("failed");
+        this.emitEvent("runtime.error", {
+          code: "CODEX_APP_SERVER_EXIT",
+          message: event.error
+            ? `codex app-server process error: ${event.error.message}`
+            : `codex app-server exited (code=${event.code ?? "null"}, signal=${event.signal ?? "null"})`,
+          recoverable: false
+        });
+      }
+      for (const pending of this.pendingRpcById.values()) {
+        pending.reject(new Error("codex app-server exited before responding."));
+      }
+      this.pendingRpcById.clear();
+    });
   }
 
   public getState(): RuntimeLifecycleState {
@@ -882,54 +916,35 @@ export class CodexAppServerRuntimePort
     config: AgentAdapterRuntimeConfig = {},
     _options: RuntimeStartOptions = {}
   ): Promise<void> {
-    if (this.process) {
+    await this.lifecycleGate.start(() => this.startProcess(config));
+  }
+
+  private async startProcess(
+    config: AgentAdapterRuntimeConfig = {}
+  ): Promise<void> {
+    if (this.processSupervisor.getCurrentProcess()) {
       return;
     }
 
     this.startConfig = config;
     this.lifecycle.setState("starting");
     try {
-      const child = spawn(this.commandPath, this.commandArgs, {
-        stdio: ["pipe", "pipe", "pipe"],
-        env: {
-          ...process.env,
-          ...(config.env ?? {})
+      const { process: child } = await this.processSupervisor.start({
+        command: this.commandPath,
+        args: this.commandArgs,
+        options: {
+          env: {
+            ...process.env,
+            ...(config.env ?? {})
+          }
         }
       });
 
-      this.process = child;
       child.stdout.setEncoding("utf8");
       child.stderr.setEncoding("utf8");
 
       child.stdout.on("data", (chunk: string) => {
         this.consumeStdout(chunk);
-      });
-      child.stderr.on("data", (chunk: string) => {
-        const trimmed = chunk.trim();
-        if (!trimmed) {
-          return;
-        }
-        this.emitEvent("runtime.error", {
-          code: "CODEX_APP_SERVER_STDERR",
-          message: trimmed,
-          recoverable: true
-        });
-      });
-      child.on("exit", (code, signal) => {
-        this.process = undefined;
-        const state = this.lifecycle.getState();
-        if (state !== "stopping" && state !== "stopped") {
-          this.lifecycle.setState("failed");
-        }
-        this.emitEvent("runtime.error", {
-          code: "CODEX_APP_SERVER_EXIT",
-          message: `codex app-server exited (code=${code ?? "null"}, signal=${signal ?? "null"})`,
-          recoverable: false
-        });
-        for (const pending of this.pendingRpcById.values()) {
-          pending.reject(new Error("codex app-server exited before responding."));
-        }
-        this.pendingRpcById.clear();
       });
 
       await this.rpc("initialize", {
@@ -947,12 +962,20 @@ export class CodexAppServerRuntimePort
       });
       this.lifecycle.setState("ready");
     } catch (error) {
-      this.lifecycle.setState("failed");
+      await this.processSupervisor.stop({ reason: "start-failed" }).catch(() => {});
+      const state = this.lifecycle.getState();
+      if (state !== "stopping" && state !== "stopped") {
+        this.lifecycle.setState("failed");
+      }
       throw error;
     }
   }
 
   public async stop(_options: RuntimeStopOptions = {}): Promise<void> {
+    await this.lifecycleGate.stop(() => this.stopProcess(_options));
+  }
+
+  private async stopProcess(_options: RuntimeStopOptions = {}): Promise<void> {
     this.lifecycle.setState("stopping");
     this.pendingRpcById.clear();
     this.pendingApprovalsById.clear();
@@ -966,13 +989,10 @@ export class CodexAppServerRuntimePort
     this.warnedUnhandledItemLifecycle.clear();
     this.warnedUnhandledRawResponseItems.clear();
 
-    const child = this.process;
-    this.process = undefined;
-    if (!child) {
-      this.lifecycle.setState("stopped");
-      return;
-    }
-    child.kill();
+    await this.processSupervisor.stop({
+      reason: _options.reason,
+      timeoutMs: _options.timeoutMs
+    });
     this.lifecycle.setState("stopped");
   }
 
@@ -3143,7 +3163,7 @@ export class CodexAppServerRuntimePort
   }
 
   private write(payload: JsonRpcPayload): void {
-    const child = this.process;
+    const child = this.processSupervisor.getCurrentProcess()?.process;
     if (!child) {
       throw new Error("codex app-server is not started.");
     }

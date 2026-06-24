@@ -77,6 +77,7 @@ export class RuntimeOrchestrator {
   private readonly publishRuntimeEvent: (event: EventEnvelope["event"]) => void;
   private readonly titleGenerator: SessionTitleGenerator | undefined;
   private readonly titleGenerationSessionIds = new Set<string>();
+  private readonly titleGenerationTasks = new Set<Promise<void>>();
   private readonly now: Clock;
   private readonly createConversationId: IdFactory;
   private readonly adapterEventQueue: EventEnvelope[] = [];
@@ -374,6 +375,7 @@ export class RuntimeOrchestrator {
   }
 
   public async dispose(): Promise<void> {
+    await this.drainBackgroundWork();
     for (const [engineId, binding] of this.bindings.entries()) {
       await this.lifecycleGateForEngine(engineId).stop(async () => {
         const unsubscribe = this.adapterUnsubscribeByEngineId.get(engineId);
@@ -467,7 +469,10 @@ export class RuntimeOrchestrator {
       return;
     }
     this.titleGenerationSessionIds.add(command.sessionId);
-    void this.generateTitle(command).finally(() => {
+    const task = this.generateTitle(command);
+    this.titleGenerationTasks.add(task);
+    void task.finally(() => {
+      this.titleGenerationTasks.delete(task);
       this.titleGenerationSessionIds.delete(command.sessionId);
     });
   }
@@ -753,6 +758,7 @@ export class RuntimeOrchestrator {
     for (let guard = 0; guard < 1_000; guard += 1) {
       if (
         this.adapterEventQueue.length === 0 &&
+        this.titleGenerationTasks.size === 0 &&
         !this.indexSyncPump &&
         this.pendingSessionIndexSyncIds.size === 0 &&
         this.pendingRelationSyncs.size === 0
@@ -761,6 +767,10 @@ export class RuntimeOrchestrator {
       }
       if (this.adapterEventQueue.length > 0) {
         this.drainAdapterEvents();
+        continue;
+      }
+      if (this.titleGenerationTasks.size > 0) {
+        await Promise.allSettled([...this.titleGenerationTasks]);
         continue;
       }
       if (

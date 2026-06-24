@@ -149,7 +149,7 @@ fake runtime 集成测试、真实 Codex/ACP smoke、真实进程 kill 行为验
   - targeted Vitest
   - fake timer/real timer 两组测试
 
-[ ] task_1_3: 实现 ChildProcessSupervisor
+[x] task_1_3: 实现 ChildProcessSupervisor
 - tag: infra
 - goal: 统一 child spawn/error/exit/kill generation 所有权
 - executor: subagent

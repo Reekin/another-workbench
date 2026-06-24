@@ -1,4 +1,3 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { Readable, Writable } from "node:stream";
 import {
@@ -31,6 +30,8 @@ import type {
 import { createRuntimeLifecycleController } from "@another-workbench/adapters";
 import type { Attachment } from "@another-workbench/shared";
 import { buildAcpPromptContent } from "./attachment-inputs.js";
+import { ChildProcessSupervisor } from "./runtime/child-process-supervisor.js";
+import { LifecycleGate } from "./runtime/lifecycle-gate.js";
 
 type RuntimeListener = (event: AcpRuntimeEvent) => void;
 
@@ -322,11 +323,12 @@ class PiAcpRuntimePort
   private readonly now: () => string;
   private readonly listeners = new Set<RuntimeListener>();
   private readonly lifecycle = createRuntimeLifecycleController();
+  private readonly lifecycleGate = new LifecycleGate();
+  private readonly processSupervisor = new ChildProcessSupervisor();
   private readonly backingSessionByWorkbenchId = new Map<string, BackingSession>();
   private readonly workbenchSessionIdByAcpId = new Map<string, string>();
   private readonly turnStateBySessionId = new Map<string, TurnState>();
   private readonly pendingApprovalByRequestId = new Map<string, PendingApproval>();
-  private process: ChildProcessWithoutNullStreams | undefined;
   private connection: ClientSideConnection | undefined;
   private startConfig: AgentAdapterRuntimeConfig = {};
   private sequence = 0;
@@ -344,6 +346,35 @@ class PiAcpRuntimePort
     this.resolveConversationIdBySessionId =
       options.resolveConversationIdBySessionId;
     this.now = options.now ?? (() => new Date().toISOString());
+    this.processSupervisor.onStderr((event) => {
+      const trimmed = event.text.trim();
+      if (!trimmed) {
+        return;
+      }
+      this.emitEvent("runtime.error", {
+        code: "PI_ACP_STDERR",
+        message: trimmed,
+        recoverable: true
+      });
+    });
+    this.processSupervisor.onExit((event) => {
+      this.connection = undefined;
+      const state = this.lifecycle.getState();
+      if (
+        !event.expected &&
+        state !== "stopping" &&
+        state !== "stopped"
+      ) {
+        this.lifecycle.setState("failed");
+        this.emitEvent("runtime.error", {
+          code: "PI_ACP_EXIT",
+          message: event.error
+            ? `pi-acp process error: ${event.error.message}`
+            : `pi-acp exited (code=${event.code ?? "null"}, signal=${event.signal ?? "null"})`,
+          recoverable: false
+        });
+      }
+    });
   }
 
   public getState(): RuntimeLifecycleState {
@@ -354,6 +385,12 @@ class PiAcpRuntimePort
     config: AgentAdapterRuntimeConfig = {},
     _options: RuntimeStartOptions = {}
   ): Promise<void> {
+    await this.lifecycleGate.start(() => this.startProcess(config));
+  }
+
+  private async startProcess(
+    config: AgentAdapterRuntimeConfig = {}
+  ): Promise<void> {
     if (this.connection) {
       return;
     }
@@ -362,45 +399,16 @@ class PiAcpRuntimePort
     this.startConfig = config;
     try {
       const spawnCommand = resolveSpawnCommand(this.commandPath, this.commandArgs);
-      const child = spawn(spawnCommand.command, spawnCommand.args, {
-        stdio: ["pipe", "pipe", "pipe"],
-        env: {
-          ...process.env,
-          ...(config.env ?? {}),
-          ...(this.piCommandPath ? { PI_ACP_PI_COMMAND: this.piCommandPath } : {})
+      const { process: child } = await this.processSupervisor.start({
+        command: spawnCommand.command,
+        args: spawnCommand.args,
+        options: {
+          env: {
+            ...process.env,
+            ...(config.env ?? {}),
+            ...(this.piCommandPath ? { PI_ACP_PI_COMMAND: this.piCommandPath } : {})
+          }
         }
-      });
-
-      await new Promise<void>((resolve, reject) => {
-        child.once("spawn", () => resolve());
-        child.once("error", (error) => reject(error));
-      });
-
-      this.process = child;
-      child.stderr.on("data", (chunk: Buffer | string) => {
-        const text = typeof chunk === "string" ? chunk : String(chunk);
-        const trimmed = text.trim();
-        if (!trimmed) {
-          return;
-        }
-        this.emitEvent("runtime.error", {
-          code: "PI_ACP_STDERR",
-          message: trimmed,
-          recoverable: true
-        });
-      });
-      child.on("exit", (code, signal) => {
-        this.process = undefined;
-        this.connection = undefined;
-        const state = this.lifecycle.getState();
-        if (state !== "stopping" && state !== "stopped") {
-          this.lifecycle.setState("failed");
-        }
-        this.emitEvent("runtime.error", {
-          code: "PI_ACP_EXIT",
-          message: `pi-acp exited (code=${code ?? "null"}, signal=${signal ?? "null"})`,
-          recoverable: false
-        });
       });
 
       const client: Client = {
@@ -427,12 +435,21 @@ class PiAcpRuntimePort
         }
       });
     } catch (error) {
-      this.lifecycle.setState("failed");
+      this.connection = undefined;
+      await this.processSupervisor.stop({ reason: "start-failed" }).catch(() => {});
+      const state = this.lifecycle.getState();
+      if (state !== "stopping" && state !== "stopped") {
+        this.lifecycle.setState("failed");
+      }
       throw error;
     }
   }
 
   public async stop(_options: RuntimeStopOptions = {}): Promise<void> {
+    await this.lifecycleGate.stop(() => this.stopProcess(_options));
+  }
+
+  private async stopProcess(_options: RuntimeStopOptions = {}): Promise<void> {
     this.lifecycle.setState("stopping");
     this.cancelPendingApprovalsForSession();
     this.backingSessionByWorkbenchId.clear();
@@ -440,14 +457,11 @@ class PiAcpRuntimePort
     this.turnStateBySessionId.clear();
     this.pendingApprovalByRequestId.clear();
 
-    const child = this.process;
-    this.process = undefined;
     this.connection = undefined;
-    if (!child) {
-      this.lifecycle.setState("stopped");
-      return;
-    }
-    child.kill();
+    await this.processSupervisor.stop({
+      reason: _options.reason,
+      timeoutMs: _options.timeoutMs
+    });
     this.lifecycle.setState("stopped");
   }
 

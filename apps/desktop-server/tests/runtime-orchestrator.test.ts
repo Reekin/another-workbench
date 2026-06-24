@@ -543,6 +543,99 @@ describe("RuntimeOrchestrator", () => {
     expect(generateTitle).toHaveBeenCalledTimes(1);
   });
 
+  it("waits for pending title generation before disposing adapters", async () => {
+    const syncSession = vi.fn().mockResolvedValue(undefined);
+    const titleGate = createDeferred<string>();
+    const generateTitle = vi.fn(() => titleGate.promise);
+    const executeCommand = vi.fn().mockResolvedValue({
+      commandId: "send-1",
+      commandType: "sendUserMessage",
+      accepted: true
+    });
+    const dispose = vi.fn().mockResolvedValue(undefined);
+    const adapter: AgentAdapter = {
+      id: "codex-adapter",
+      kind: "codex",
+      getLifecycleState: () => "idle",
+      initialize: vi.fn().mockResolvedValue(undefined),
+      executeCommand,
+      subscribe: vi.fn().mockReturnValue(() => {}),
+      dispose
+    };
+
+    let orchestrator: RuntimeOrchestrator | undefined;
+    const domainService = new DomainService({
+      now: () => "2026-04-20T00:04:00Z",
+      createSessionId: () => "session-title-drain",
+      assertEngineRegistered: (engineId) =>
+        orchestrator?.assertEngineRegistered(engineId),
+      resolveEngineCapabilities: (engineId) =>
+        orchestrator?.getEngineCapabilities(engineId) ?? [],
+      publishRuntimeEvent: () => {}
+    });
+
+    orchestrator = new RuntimeOrchestrator({
+      domainService,
+      sessionIndexSyncService: {
+        syncSession,
+        syncRelation: vi.fn().mockResolvedValue(undefined),
+        markSessionUnreadCompleted: vi.fn().mockResolvedValue(undefined)
+      } as never,
+      workspaceSelectionService: {
+        activateSelection: vi.fn().mockResolvedValue(undefined),
+        selectWorkspace: vi.fn().mockResolvedValue({
+          workspaceId: "workspace-1"
+        })
+      } as never,
+      publishRuntimeEvent: () => {},
+      createConversationId: () => "conversation-title-drain",
+      titleGenerator: {
+        generateTitle
+      },
+      agentBindings: [
+        {
+          descriptor: {
+            engineId: "codex",
+            displayName: "Codex",
+            capabilities: ["chat", "terminal"]
+          },
+          adapter
+        }
+      ]
+    });
+
+    const session = await orchestrator.createSession({
+      engineId: "codex",
+      workspaceId: "workspace-1"
+    });
+
+    await orchestrator.executeCommand({
+      commandId: "send-1",
+      command: {
+        type: "sendUserMessage",
+        sessionId: session.sessionId,
+        messageId: "message-1",
+        content: "summarize the runtime lifecycle plan",
+        attachments: []
+      }
+    });
+
+    expect(generateTitle).toHaveBeenCalledTimes(1);
+    const disposePromise = orchestrator.dispose();
+    await flushAsyncWork();
+
+    expect(dispose).not.toHaveBeenCalled();
+
+    titleGate.resolve("Runtime lifecycle plan");
+    await disposePromise;
+
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(domainService.getSession(session.sessionId)?.title).toBe(
+      "Runtime lifecycle plan"
+    );
+    expect(syncSession).toHaveBeenCalledWith("session-title-drain");
+  });
+
   it("persists a session execution profile snapshot for create and resume flows", async () => {
     const syncSession = vi.fn().mockResolvedValue(undefined);
 

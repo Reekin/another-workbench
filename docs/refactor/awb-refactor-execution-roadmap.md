@@ -168,7 +168,7 @@ fake runtime 集成测试、真实 Codex/ACP smoke、真实进程 kill 行为验
   - child-process fixture integration tests
   - Windows 真实进程检查
 
-[ ] task_1_4: 实现 JsonRpcLineClient
+[x] task_1_4: 实现 JsonRpcLineClient
 - tag: infra
 - goal: 闭合 JSON-RPC pending request 生命周期
 - executor: subagent

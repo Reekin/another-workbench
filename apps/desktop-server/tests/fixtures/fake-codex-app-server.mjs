@@ -1668,6 +1668,18 @@ const emitDynamicToolResolution = ({ dynamicTool, response }) => {
 
 const handleRequest = (payload) => {
   recordRequest(payload);
+  if (
+    process.env.FAKE_CODEX_EXIT_ON_METHOD &&
+    process.env.FAKE_CODEX_EXIT_ON_METHOD === payload.method
+  ) {
+    process.exit(Number(process.env.FAKE_CODEX_EXIT_CODE ?? 23));
+  }
+  if (
+    process.env.FAKE_CODEX_HANG_METHOD &&
+    process.env.FAKE_CODEX_HANG_METHOD === payload.method
+  ) {
+    return;
+  }
   if (payload.method === "initialized") {
     return;
   }

@@ -94,26 +94,15 @@ import type {
 } from "./host-tools.js";
 import { discoveredCodexSessionId } from "./codex-session-identity.js";
 import { ChildProcessSupervisor } from "./runtime/child-process-supervisor.js";
+import {
+  JsonRpcLineClient,
+  type JsonRpcLinePayload,
+  type JsonRpcLineRequestPayload
+} from "./runtime/json-rpc-line-client.js";
 import { LifecycleGate } from "./runtime/lifecycle-gate.js";
+import { createRuntimePortError } from "./runtime/runtime-lifecycle.js";
 
 type RuntimeListener = (event: CodexRuntimeEvent) => void;
-
-type PendingRpc = {
-  resolve: (value: unknown) => void;
-  reject: (error: Error) => void;
-};
-
-type JsonRpcPayload = {
-  id?: string | number;
-  method?: string;
-  params?: Record<string, unknown>;
-  result?: unknown;
-  error?: {
-    code?: string | number;
-    message?: string;
-    data?: Record<string, unknown>;
-  };
-};
 
 type PendingApproval = {
   requestId: string;
@@ -225,6 +214,7 @@ const resolveDefaultCodexCommandPath = (): string => {
 };
 
 const localRequestId = (value: string | number): string => String(value);
+const CODEX_RPC_TIMEOUT_MS = 30_000;
 
 const chunkText = (value: string): string[] => {
   if (!value) {
@@ -836,7 +826,9 @@ export class CodexAppServerRuntimePort
   private readonly lifecycle = createRuntimeLifecycleController();
   private readonly lifecycleGate = new LifecycleGate();
   private readonly processSupervisor = new ChildProcessSupervisor();
-  private readonly pendingRpcById = new Map<string, PendingRpc>();
+  private readonly rpcClient = new JsonRpcLineClient({
+    defaultTimeoutMs: CODEX_RPC_TIMEOUT_MS
+  });
   private readonly threadIdBySessionId = new Map<string, string>();
   private readonly sessionIdByThreadId = new Map<string, string>();
   private readonly activeTurnIdByThreadId = new Map<string, string>();
@@ -859,9 +851,7 @@ export class CodexAppServerRuntimePort
     string,
     ProcessActivitySummaryState
   >();
-  private buffer = "";
   private sequence = 0;
-  private requestCounter = 0;
   private startConfig: AgentAdapterRuntimeConfig = {};
   private readonly recordTurnChanges: ((input: RecordedCodexTurnChanges) => void) | undefined;
 
@@ -901,10 +891,33 @@ export class CodexAppServerRuntimePort
           recoverable: false
         });
       }
-      for (const pending of this.pendingRpcById.values()) {
-        pending.reject(new Error("codex app-server exited before responding."));
-      }
-      this.pendingRpcById.clear();
+      this.rpcClient.dispose(
+        createRuntimePortError({
+          code: "runtime_process_exited",
+          message: event.error
+            ? `codex app-server process error: ${event.error.message}`
+            : `codex app-server exited (code=${event.code ?? "null"}, signal=${event.signal ?? "null"})`,
+          retryable: event.expected,
+          details: {
+            generation: event.generation,
+            code: event.code,
+            signal: event.signal
+          },
+          cause: event.error
+        })
+      );
+    });
+    this.rpcClient.onRequest((payload) => {
+      this.handleServerRequest(payload);
+    });
+    this.rpcClient.onNotification((payload) => {
+      this.handleNotification(
+        payload.method,
+        isRecord(payload.params) ? payload.params : {}
+      );
+    });
+    this.rpcClient.onProtocolError((error) => {
+      this.emitRpcProtocolError(error);
     });
   }
 
@@ -942,9 +955,9 @@ export class CodexAppServerRuntimePort
 
       child.stdout.setEncoding("utf8");
       child.stderr.setEncoding("utf8");
-
-      child.stdout.on("data", (chunk: string) => {
-        this.consumeStdout(chunk);
+      this.rpcClient.attach({
+        input: child.stdout,
+        output: child.stdin
       });
 
       await this.rpc("initialize", {
@@ -957,11 +970,17 @@ export class CodexAppServerRuntimePort
           experimentalApi: true
         }
       });
-      this.write({
-        method: "initialized"
-      });
+      await this.rpcClient.notify("initialized");
       this.lifecycle.setState("ready");
     } catch (error) {
+      this.rpcClient.dispose(
+        createRuntimePortError({
+          code: "runtime_start_failed",
+          message: "Failed to start codex app-server JSON-RPC client.",
+          retryable: true,
+          cause: error
+        })
+      );
       await this.processSupervisor.stop({ reason: "start-failed" }).catch(() => {});
       const state = this.lifecycle.getState();
       if (state !== "stopping" && state !== "stopped") {
@@ -977,7 +996,16 @@ export class CodexAppServerRuntimePort
 
   private async stopProcess(_options: RuntimeStopOptions = {}): Promise<void> {
     this.lifecycle.setState("stopping");
-    this.pendingRpcById.clear();
+    this.rpcClient.dispose(
+      createRuntimePortError({
+        code: "runtime_process_exited",
+        message: "codex app-server runtime was stopped.",
+        retryable: true,
+        details: {
+          reason: _options.reason
+        }
+      })
+    );
     this.pendingApprovalsById.clear();
     this.pendingApprovalResolutionsById.clear();
     this.threadIdBySessionId.clear();
@@ -998,7 +1026,7 @@ export class CodexAppServerRuntimePort
 
   public async request(
     payload: CodexRuntimeRequest,
-    _options: RuntimeOperationOptions = {}
+    options: RuntimeOperationOptions = {}
   ): Promise<CodexRuntimeResponse> {
     switch (payload.method) {
       case "initialize":
@@ -1010,7 +1038,7 @@ export class CodexAppServerRuntimePort
           }
         };
       case "turn/start":
-        await this.handleTurnStart(payload);
+        await this.handleTurnStart(payload, options);
         return {
           id: payload.id,
           ok: true,
@@ -1019,7 +1047,7 @@ export class CodexAppServerRuntimePort
           }
         };
       case "turn/steer":
-        await this.handleTurnSteer(payload);
+        await this.handleTurnSteer(payload, options);
         return {
           id: payload.id,
           ok: true,
@@ -1028,7 +1056,7 @@ export class CodexAppServerRuntimePort
           }
         };
       case "turn/interrupt":
-        await this.handleTurnInterrupt(payload);
+        await this.handleTurnInterrupt(payload, options);
         return {
           id: payload.id,
           ok: true,
@@ -1037,7 +1065,7 @@ export class CodexAppServerRuntimePort
           }
         };
       case "approval/respond":
-        await this.handleApprovalResponse(payload);
+        await this.handleApprovalResponse(payload, options);
         return {
           id: payload.id,
           ok: true,
@@ -1046,7 +1074,7 @@ export class CodexAppServerRuntimePort
           }
         };
       case "thread/goal/set":
-        await this.handleThreadGoalSet(payload);
+        await this.handleThreadGoalSet(payload, options);
         return {
           id: payload.id,
           ok: true,
@@ -1055,7 +1083,7 @@ export class CodexAppServerRuntimePort
           }
         };
       case "thread/goal/clear":
-        await this.handleThreadGoalClear(payload);
+        await this.handleThreadGoalClear(payload, options);
         return {
           id: payload.id,
           ok: true,
@@ -1064,7 +1092,7 @@ export class CodexAppServerRuntimePort
           }
         };
       case "interaction/respond":
-        await this.handleInteractionResponse(payload);
+        await this.handleInteractionResponse(payload, options);
         return {
           id: payload.id,
           ok: true,
@@ -1373,7 +1401,10 @@ export class CodexAppServerRuntimePort
     await this.rpc("config/mcpServer/reload");
   }
 
-  private async handleTurnStart(payload: CodexRuntimeRequest): Promise<void> {
+  private async handleTurnStart(
+    payload: CodexRuntimeRequest,
+    options: RuntimeOperationOptions
+  ): Promise<void> {
     const sessionId = String(payload.params.sessionId ?? "");
     const content = String(payload.params.content ?? "");
     const attachments = Array.isArray(payload.params.attachments)
@@ -1383,13 +1414,17 @@ export class CodexAppServerRuntimePort
       typeof payload.params.cwd === "string" && payload.params.cwd.trim().length > 0
         ? payload.params.cwd
         : undefined;
-    const threadId = await this.ensureThreadForSession(sessionId, cwd);
+    const threadId = await this.ensureThreadForSession(sessionId, cwd, options);
     const input = buildCodexTurnInput(content, attachments);
 
-    const result = (await this.rpc("turn/start", {
-      threadId,
-      input
-    })) as TurnStartResponse;
+    const result = (await this.rpc(
+      "turn/start",
+      {
+        threadId,
+        input
+      },
+      options
+    )) as TurnStartResponse;
 
     if (result?.turn?.id) {
       this.setActiveTurnForThread(threadId, result.turn.id);
@@ -1400,7 +1435,10 @@ export class CodexAppServerRuntimePort
     }
   }
 
-  private async handleTurnSteer(payload: CodexRuntimeRequest): Promise<void> {
+  private async handleTurnSteer(
+    payload: CodexRuntimeRequest,
+    options: RuntimeOperationOptions
+  ): Promise<void> {
     const sessionId = String(payload.params.sessionId ?? "");
     const expectedTurnId = String(payload.params.turnId ?? "");
     const content = String(payload.params.content ?? "");
@@ -1412,27 +1450,41 @@ export class CodexAppServerRuntimePort
       return;
     }
     const input = buildCodexTurnInput(content, attachments);
-    await this.rpc("turn/steer", {
-      threadId,
-      input,
-      expectedTurnId
-    } satisfies TurnSteerParams);
+    await this.rpc(
+      "turn/steer",
+      {
+        threadId,
+        input,
+        expectedTurnId
+      } satisfies TurnSteerParams,
+      options
+    );
   }
 
-  private async handleTurnInterrupt(payload: CodexRuntimeRequest): Promise<void> {
+  private async handleTurnInterrupt(
+    payload: CodexRuntimeRequest,
+    options: RuntimeOperationOptions
+  ): Promise<void> {
     const sessionId = String(payload.params.sessionId ?? "");
     const threadId = this.threadIdBySessionId.get(sessionId);
     const turnId = String(payload.params.turnId ?? "");
     if (!threadId || !turnId) {
       return;
     }
-    await this.rpc("turn/interrupt", {
-      threadId,
-      turnId
-    } satisfies TurnInterruptParams);
+    await this.rpc(
+      "turn/interrupt",
+      {
+        threadId,
+        turnId
+      } satisfies TurnInterruptParams,
+      options
+    );
   }
 
-  private async handleThreadGoalSet(payload: CodexRuntimeRequest): Promise<void> {
+  private async handleThreadGoalSet(
+    payload: CodexRuntimeRequest,
+    options: RuntimeOperationOptions
+  ): Promise<void> {
     const sessionId = String(payload.params.sessionId ?? "");
     if (!sessionId) {
       return;
@@ -1452,7 +1504,8 @@ export class CodexAppServerRuntimePort
         `Cannot update goal status before session is attached: ${sessionId}`
       );
     }
-    const threadId = existingThreadId ?? (await this.ensureThreadForSession(sessionId, cwd));
+    const threadId =
+      existingThreadId ?? (await this.ensureThreadForSession(sessionId, cwd, options));
     const params: ThreadGoalSetParams = {
       threadId
     };
@@ -1467,10 +1520,13 @@ export class CodexAppServerRuntimePort
     } else if (typeof payload.params.tokenBudget === "number") {
       params.tokenBudget = payload.params.tokenBudget;
     }
-    await this.rpc("thread/goal/set", params);
+    await this.rpc("thread/goal/set", params, options);
   }
 
-  private async handleThreadGoalClear(payload: CodexRuntimeRequest): Promise<void> {
+  private async handleThreadGoalClear(
+    payload: CodexRuntimeRequest,
+    options: RuntimeOperationOptions
+  ): Promise<void> {
     const sessionId = String(payload.params.sessionId ?? "");
     if (!sessionId) {
       return;
@@ -1479,12 +1535,19 @@ export class CodexAppServerRuntimePort
     if (!threadId) {
       throw new Error(`Cannot clear goal before session is attached: ${sessionId}`);
     }
-    await this.rpc("thread/goal/clear", {
-      threadId
-    } satisfies ThreadGoalClearParams);
+    await this.rpc(
+      "thread/goal/clear",
+      {
+        threadId
+      } satisfies ThreadGoalClearParams,
+      options
+    );
   }
 
-  private async handleApprovalResponse(payload: CodexRuntimeRequest): Promise<void> {
+  private async handleApprovalResponse(
+    payload: CodexRuntimeRequest,
+    options: RuntimeOperationOptions
+  ): Promise<void> {
     const requestId = String(payload.params.requestId ?? "");
     const approval = this.pendingApprovalsById.get(requestId);
     if (!approval) {
@@ -1529,14 +1592,20 @@ export class CodexAppServerRuntimePort
             )
           };
 
-    this.write({
-      id: approval.rawRequestId,
-      result
-    });
+    await this.write(
+      {
+        id: approval.rawRequestId,
+        result
+      },
+      options
+    );
     this.pendingApprovalResolutionsById.set(requestId, { action });
   }
 
-  private async handleInteractionResponse(payload: CodexRuntimeRequest): Promise<void> {
+  private async handleInteractionResponse(
+    payload: CodexRuntimeRequest,
+    options: RuntimeOperationOptions
+  ): Promise<void> {
     const requestId = String(payload.params.requestId ?? "");
     const interaction = this.pendingInteractionsById.get(requestId);
     if (!interaction) {
@@ -1562,10 +1631,13 @@ export class CodexAppServerRuntimePort
           }
         : this.buildMcpElicitationResponse(resolvedAction, payload.params, responsePayload);
 
-    this.write({
-      id: interaction.rawRequestId,
-      result
-    });
+    await this.write(
+      {
+        id: interaction.rawRequestId,
+        result
+      },
+      options
+    );
     this.pendingInteractionResolutionsById.set(requestId, {
       action: resolvedAction,
       response: isRecord(result) ? result : undefined
@@ -1640,7 +1712,8 @@ export class CodexAppServerRuntimePort
 
   private async ensureThreadForSession(
     sessionId: string,
-    cwd?: string
+    cwd?: string,
+    options: RuntimeOperationOptions = {}
   ): Promise<string> {
     const existing = this.threadIdBySessionId.get(sessionId);
     if (existing) {
@@ -1686,7 +1759,11 @@ export class CodexAppServerRuntimePort
       threadStartParams.sandbox = selected.sandbox;
     }
 
-    const result = (await this.rpc("thread/start", threadStartParams)) as ThreadStartResponse;
+    const result = (await this.rpc(
+      "thread/start",
+      threadStartParams,
+      options
+    )) as ThreadStartResponse;
 
     const threadId = result.thread.id;
     this.threadIdBySessionId.set(sessionId, threadId);
@@ -1702,62 +1779,7 @@ export class CodexAppServerRuntimePort
     return metadata.selectedConfig as CodexSelectedConfig;
   }
 
-  private consumeStdout(chunk: string): void {
-    this.buffer += chunk;
-    for (;;) {
-      const newlineIndex = this.buffer.indexOf("\n");
-      if (newlineIndex < 0) {
-        break;
-      }
-
-      const line = this.buffer.slice(0, newlineIndex);
-      this.buffer = this.buffer.slice(newlineIndex + 1);
-      if (!line.trim()) {
-        continue;
-      }
-
-      let payload: JsonRpcPayload;
-      try {
-        payload = JSON.parse(line) as JsonRpcPayload;
-      } catch (error) {
-        this.emitEvent("runtime.error", {
-          code: "CODEX_APP_SERVER_BAD_JSON",
-          message: error instanceof Error ? error.message : "Failed to parse JSON line",
-          recoverable: true,
-          details: {
-            rawLine: line
-          }
-        });
-        continue;
-      }
-
-      if (typeof payload.method === "string" && payload.id !== undefined) {
-        this.handleServerRequest(payload);
-        continue;
-      }
-
-      if (typeof payload.method === "string") {
-        this.handleNotification(payload.method, payload.params ?? {});
-        continue;
-      }
-
-      if (payload.id !== undefined) {
-        const requestId = localRequestId(payload.id);
-        const pending = this.pendingRpcById.get(requestId);
-        if (!pending) {
-          continue;
-        }
-        this.pendingRpcById.delete(requestId);
-        if (payload.error?.message) {
-          pending.reject(new Error(payload.error.message));
-        } else {
-          pending.resolve(payload.result);
-        }
-      }
-    }
-  }
-
-  private handleServerRequest(payload: JsonRpcPayload): void {
+  private handleServerRequest(payload: JsonRpcLineRequestPayload): void {
     const method = payload.method;
     const rawRequestId = payload.id;
     if (rawRequestId === undefined || !method) {
@@ -1933,7 +1955,7 @@ export class CodexAppServerRuntimePort
             error instanceof Error
               ? error.message
               : "Unknown dynamic tool call failure.";
-          this.writeDynamicToolCallResponse(rawRequestId, {
+          void this.writeDynamicToolCallResponse(rawRequestId, {
             contentItems: [
               {
                 type: "inputText",
@@ -1941,16 +1963,20 @@ export class CodexAppServerRuntimePort
               }
             ],
             success: false
+          }).catch((writeError: Error) => {
+            this.emitRpcProtocolError(writeError);
           });
         });
         return;
       default:
-        this.write({
+        void this.write({
           id: rawRequestId,
           error: {
             code: "UNSUPPORTED_SERVER_REQUEST",
             message: `Unsupported server request: ${method}`
           }
+        }).catch((error: Error) => {
+          this.emitRpcProtocolError(error);
         });
         this.emitEvent("runtime.error", {
           sessionId,
@@ -1971,7 +1997,7 @@ export class CodexAppServerRuntimePort
     const namespace = optionalString(params.namespace);
     const toolName = optionalString(params.tool);
     if (!threadId || !toolName) {
-      this.writeDynamicToolCallResponse(rawRequestId, {
+      await this.writeDynamicToolCallResponse(rawRequestId, {
         contentItems: [
           {
             type: "inputText",
@@ -1985,7 +2011,7 @@ export class CodexAppServerRuntimePort
 
     const sessionId = this.sessionIdByThreadId.get(threadId);
     if (!sessionId) {
-      this.writeDynamicToolCallResponse(rawRequestId, {
+      await this.writeDynamicToolCallResponse(rawRequestId, {
         contentItems: [
           {
             type: "inputText",
@@ -2006,7 +2032,7 @@ export class CodexAppServerRuntimePort
       }
     });
     if (!tool) {
-      this.writeDynamicToolCallResponse(rawRequestId, {
+      await this.writeDynamicToolCallResponse(rawRequestId, {
         contentItems: [
           {
             type: "inputText",
@@ -2032,14 +2058,14 @@ export class CodexAppServerRuntimePort
         providerToolCallId: callId
       }
     });
-    this.writeDynamicToolCallResponse(rawRequestId, result);
+    await this.writeDynamicToolCallResponse(rawRequestId, result);
   }
 
-  private writeDynamicToolCallResponse(
+  private async writeDynamicToolCallResponse(
     rawRequestId: string | number,
     result: HostToolResult
-  ): void {
-    this.write({
+  ): Promise<void> {
+    await this.write({
       id: rawRequestId,
       result: {
         contentItems: result.contentItems.map((contentItem) =>
@@ -3149,25 +3175,30 @@ export class CodexAppServerRuntimePort
     return undefined;
   }
 
-  private async rpc(method: string, params?: Record<string, unknown>): Promise<unknown> {
-    const id = String(++this.requestCounter);
-    const result = new Promise<unknown>((resolve, reject) => {
-      this.pendingRpcById.set(id, { resolve, reject });
-    });
-    this.write({
-      id,
-      method,
-      ...(params === undefined ? {} : { params })
-    });
-    return result;
+  private async rpc(
+    method: string,
+    params?: Record<string, unknown>,
+    options: RuntimeOperationOptions = {}
+  ): Promise<unknown> {
+    return this.rpcClient.request(method, params, options);
   }
 
-  private write(payload: JsonRpcPayload): void {
-    const child = this.processSupervisor.getCurrentProcess()?.process;
-    if (!child) {
-      throw new Error("codex app-server is not started.");
-    }
-    child.stdin.write(`${JSON.stringify(payload)}\n`);
+  private async write(
+    payload: JsonRpcLinePayload,
+    options: RuntimeOperationOptions = {}
+  ): Promise<void> {
+    await this.rpcClient.write(payload, options);
+  }
+
+  private emitRpcProtocolError(error: Error): void {
+    const details = (error as { details?: unknown }).details;
+    const code = (error as { code?: unknown }).code;
+    this.emitEvent("runtime.error", {
+      code: typeof code === "string" ? code : "CODEX_APP_SERVER_RPC_ERROR",
+      message: error.message,
+      recoverable: true,
+      details: isRecord(details) ? details : undefined
+    });
   }
 
   private emitEvent(method: EventType, params: Record<string, unknown>): void {

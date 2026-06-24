@@ -254,6 +254,79 @@ describe("Codex app-server runtime port", () => {
     ]);
   });
 
+  it("rejects unanswered JSON-RPC requests by deadline", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    await port.start({
+      env: {
+        FAKE_CODEX_HANG_METHOD: "turn/start"
+      }
+    });
+
+    await expect(
+      port.request(
+        {
+          id: "turn-timeout",
+          method: "turn/start",
+          params: {
+            sessionId: "session-timeout",
+            content: "this request will not receive a response"
+          }
+        },
+        {
+          timeoutMs: 25
+        }
+      )
+    ).rejects.toMatchObject({
+      code: "runtime_request_timeout",
+      details: expect.objectContaining({
+        method: "turn/start"
+      })
+    });
+  });
+
+  it("rejects pending JSON-RPC requests when the app-server exits mid-request", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    await port.start({
+      env: {
+        FAKE_CODEX_EXIT_ON_METHOD: "turn/start",
+        FAKE_CODEX_EXIT_CODE: "23"
+      }
+    });
+
+    await expect(
+      port.request(
+        {
+          id: "turn-exit",
+          method: "turn/start",
+          params: {
+            sessionId: "session-exit",
+            content: "this request exits the process"
+          }
+        },
+        {
+          timeoutMs: 1000
+        }
+      )
+    ).rejects.toMatchObject({
+      code: "runtime_process_exited",
+      details: expect.objectContaining({
+        code: 23
+      })
+    });
+  });
+
   it("refreshes persisted thread goals through thread/goal/get", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "awb-codex-goal-"));
     const requestLogPath = join(tempDir, "requests.jsonl");

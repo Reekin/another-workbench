@@ -207,7 +207,7 @@ fake runtime 集成测试、真实 Codex/ACP smoke、真实进程 kill 行为验
   - `pnpm smoke:codex:restart`
   - 人工 crash/restart smoke
 
-[ ] task_1_6: ACP runtime 迁移到 supervisor
+[x] task_1_6: ACP runtime 迁移到 supervisor
 - tag: prod
 - goal: 让 fallback runtime 与 Codex 遵循相同生命周期
 - executor: subagent
@@ -224,6 +224,7 @@ fake runtime 集成测试、真实 Codex/ACP smoke、真实进程 kill 行为验
 - verify:
   - ACP port tests
   - `pnpm smoke:pi`
+  - `pnpm smoke:pi:restart`
 
 [ ] task_1_7: 删除 Orchestrator/Adapter 重复 ready 状态
 - tag: prod

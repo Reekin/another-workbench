@@ -32,6 +32,7 @@ import type { Attachment } from "@another-workbench/shared";
 import { buildAcpPromptContent } from "./attachment-inputs.js";
 import { ChildProcessSupervisor } from "./runtime/child-process-supervisor.js";
 import { LifecycleGate } from "./runtime/lifecycle-gate.js";
+import { createRuntimeNotStartedError } from "./runtime/runtime-lifecycle.js";
 
 type RuntimeListener = (event: AcpRuntimeEvent) => void;
 
@@ -358,20 +359,18 @@ class PiAcpRuntimePort
       });
     });
     this.processSupervisor.onExit((event) => {
+      const message = event.error
+        ? `pi-acp process error: ${event.error.message}`
+        : `pi-acp exited (code=${event.code ?? "null"}, signal=${event.signal ?? "null"})`;
       this.connection = undefined;
-      const state = this.lifecycle.getState();
-      if (
-        !event.expected &&
-        state !== "stopping" &&
-        state !== "stopped"
-      ) {
-        this.lifecycle.setState("failed");
-        this.emitEvent("runtime.error", {
+      this.clearBackingSessions();
+      this.cancelPendingApprovalsForSession();
+      if (!event.expected) {
+        this.markRuntimeFailed({
           code: "PI_ACP_EXIT",
-          message: event.error
-            ? `pi-acp process error: ${event.error.message}`
-            : `pi-acp exited (code=${event.code ?? "null"}, signal=${event.signal ?? "null"})`,
-          recoverable: false
+          message,
+          recoverable: false,
+          emitIfAlreadyFailed: true
         });
       }
     });
@@ -395,6 +394,7 @@ class PiAcpRuntimePort
       return;
     }
 
+    await this.stopFailedProcessBeforeRestart();
     this.lifecycle.setState("starting");
     this.startConfig = config;
     try {
@@ -428,14 +428,22 @@ class PiAcpRuntimePort
       this.connection = connection;
       this.lifecycle.setState("ready");
       void connection.closed.then(() => {
-        this.connection = undefined;
-        const state = this.lifecycle.getState();
-        if (state !== "stopping" && state !== "stopped") {
-          this.lifecycle.setState("failed");
+        if (this.connection !== connection) {
+          return;
         }
+        this.connection = undefined;
+        this.clearBackingSessions();
+        this.cancelPendingApprovalsForSession();
+        this.markRuntimeFailed({
+          code: "PI_ACP_CONNECTION_CLOSED",
+          message: "pi-acp connection closed.",
+          recoverable: true
+        });
       });
     } catch (error) {
       this.connection = undefined;
+      this.clearBackingSessions();
+      this.cancelPendingApprovalsForSession();
       await this.processSupervisor.stop({ reason: "start-failed" }).catch(() => {});
       const state = this.lifecycle.getState();
       if (state !== "stopping" && state !== "stopped") {
@@ -443,6 +451,19 @@ class PiAcpRuntimePort
       }
       throw error;
     }
+  }
+
+  private async stopFailedProcessBeforeRestart(): Promise<void> {
+    if (this.lifecycle.getState() !== "failed") {
+      return;
+    }
+    if (this.processSupervisor.getHealth().state === "stopped") {
+      return;
+    }
+
+    await this.processSupervisor.stop({
+      reason: "restart-after-failure"
+    });
   }
 
   public async stop(_options: RuntimeStopOptions = {}): Promise<void> {
@@ -615,9 +636,22 @@ class PiAcpRuntimePort
       };
     }
 
-    await this.requireConnection().cancel({
-      sessionId: backingSession.acpSessionId
-    });
+    try {
+      await this.requireConnection().cancel({
+        sessionId: backingSession.acpSessionId
+      });
+    } catch (error) {
+      this.cancelPendingApprovalsForSession(sessionId);
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        id: payload.id,
+        ok: false,
+        error: {
+          code: "ACP_CANCEL_FAILED",
+          message
+        }
+      };
+    }
     this.cancelPendingApprovalsForSession(sessionId);
 
     return {
@@ -1050,11 +1084,41 @@ class PiAcpRuntimePort
     }
   }
 
+  private clearBackingSessions(): void {
+    this.backingSessionByWorkbenchId.clear();
+    this.workbenchSessionIdByAcpId.clear();
+  }
+
   private requireConnection(): ClientSideConnection {
     if (!this.connection) {
-      throw new Error("pi-acp connection is not started.");
+      throw createRuntimeNotStartedError({
+        engineId: this.engineId
+      });
     }
     return this.connection;
+  }
+
+  private markRuntimeFailed(input: {
+    code: string;
+    message: string;
+    recoverable: boolean;
+    emitIfAlreadyFailed?: boolean;
+  }): void {
+    const { emitIfAlreadyFailed, ...payload } = input;
+    const state = this.lifecycle.getState();
+    if (state === "stopping" || state === "stopped") {
+      return;
+    }
+
+    if (state === "failed") {
+      if (emitIfAlreadyFailed) {
+        this.emitEvent("runtime.error", payload);
+      }
+      return;
+    }
+
+    this.lifecycle.setState("failed");
+    this.emitEvent("runtime.error", payload);
   }
 
   private emitEvent(

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { appendFileSync } from "node:fs";
 import { Readable, Writable } from "node:stream";
 import {
   AgentSideConnection,
@@ -8,6 +9,42 @@ import {
 
 const sessions = new Map();
 const cancelledSessionIds = new Set();
+const requestLogPath = process.env.FAKE_PI_ACP_REQUEST_LOG;
+
+const record = (method, params = {}) => {
+  if (!requestLogPath) {
+    return;
+  }
+  appendFileSync(
+    requestLogPath,
+    `${JSON.stringify({
+      method,
+      pid: process.pid,
+      params
+    })}\n`
+  );
+};
+
+const maybeExit = (method) => {
+  if (process.env.FAKE_PI_ACP_EXIT_ON_METHOD !== method) {
+    return;
+  }
+  const exitCode = Number(process.env.FAKE_PI_ACP_EXIT_CODE ?? "23");
+  process.exit(Number.isFinite(exitCode) ? exitCode : 23);
+};
+
+const maybeHang = async (method) => {
+  if (process.env.FAKE_PI_ACP_HANG_ON_METHOD !== method) {
+    return;
+  }
+  await new Promise(() => {});
+};
+
+const beforeMethod = async (method, params = {}) => {
+  record(method, params);
+  maybeExit(method);
+  await maybeHang(method);
+};
 
 const promptToText = (prompt) =>
   prompt
@@ -15,8 +52,13 @@ const promptToText = (prompt) =>
     .join("\n")
     .trim();
 
+const shouldRequestPermission = (promptText) =>
+  process.env.FAKE_PI_ACP_REQUEST_PERMISSION === "1" ||
+  promptText.includes("[approval]");
+
 const createAgent = (connection) => ({
   async initialize() {
+    await beforeMethod("initialize");
     return {
       protocolVersion: PROTOCOL_VERSION,
       agentInfo: {
@@ -30,6 +72,9 @@ const createAgent = (connection) => ({
   },
 
   async newSession({ cwd }) {
+    await beforeMethod("newSession", {
+      cwd
+    });
     const sessionId = `pi-session-${randomUUID()}`;
     sessions.set(sessionId, {
       cwd,
@@ -42,6 +87,9 @@ const createAgent = (connection) => ({
   },
 
   async prompt({ sessionId, prompt }) {
+    await beforeMethod("prompt", {
+      sessionId
+    });
     const session = sessions.get(sessionId);
     if (!session) {
       throw new Error(`Unknown session: ${sessionId}`);
@@ -97,6 +145,40 @@ const createAgent = (connection) => ({
       }
     });
     const toolCallId = `tool-${randomUUID()}`;
+
+    if (shouldRequestPermission(promptText)) {
+      const permissionResponse = await connection.requestPermission({
+        sessionId,
+        options: [
+          {
+            optionId: "allow-once",
+            kind: "allow_once",
+            name: "Allow once"
+          },
+          {
+            optionId: "reject-once",
+            kind: "reject_once",
+            name: "Reject once"
+          }
+        ],
+        toolCall: {
+          toolCallId,
+          title: "Permission gated shell command",
+          kind: "execute",
+          status: "pending",
+          rawInput: {
+            command: "echo approval"
+          }
+        }
+      });
+
+      if (permissionResponse.outcome.outcome === "cancelled") {
+        return {
+          stopReason: "cancelled"
+        };
+      }
+    }
+
     await connection.sessionUpdate({
       sessionId,
       update: {
@@ -150,6 +232,9 @@ const createAgent = (connection) => ({
   },
 
   async cancel({ sessionId }) {
+    await beforeMethod("cancel", {
+      sessionId
+    });
     cancelledSessionIds.add(sessionId);
   }
 });

@@ -45,6 +45,25 @@ const createOpaqueId = (prefix: string): string =>
     .toString(36)
     .slice(2, 10)}`;
 
+const cloneAgentBinding = (binding: WorkbenchAgentBinding): WorkbenchAgentBinding => ({
+  descriptor: {
+    ...binding.descriptor,
+    capabilities: [...binding.descriptor.capabilities]
+  },
+  integrationTier: binding.integrationTier,
+  transportKind: binding.transportKind,
+  adapter: binding.adapter,
+  runtimeConfig: binding.runtimeConfig,
+  providerKind: binding.providerKind,
+  resolveProviderSessionId: binding.resolveProviderSessionId,
+  sharedCapabilities: binding.sharedCapabilities
+    ? [...binding.sharedCapabilities]
+    : undefined,
+  extensions: binding.extensions
+    ? binding.extensions.map((extension) => ({ ...extension }))
+    : undefined
+});
+
 export class RuntimeOrchestrator {
   private readonly bindings = new Map<string, WorkbenchAgentBinding>();
   private readonly engineSelections = new Map<string, Record<string, unknown> | undefined>();
@@ -94,10 +113,18 @@ export class RuntimeOrchestrator {
         ...engine,
         capabilities: [...engine.capabilities]
       },
+      integrationTier: existing?.integrationTier,
+      transportKind: existing?.transportKind,
       adapter: existing?.adapter,
       runtimeConfig: existing?.runtimeConfig,
       providerKind: existing?.providerKind,
-      resolveProviderSessionId: existing?.resolveProviderSessionId
+      resolveProviderSessionId: existing?.resolveProviderSessionId,
+      sharedCapabilities: existing?.sharedCapabilities
+        ? [...existing.sharedCapabilities]
+        : undefined,
+      extensions: existing?.extensions
+        ? existing.extensions.map((extension) => ({ ...extension }))
+        : undefined
     });
     if (!this.selectedEngineId) {
       this.selectedEngineId = engine.engineId;
@@ -105,16 +132,7 @@ export class RuntimeOrchestrator {
   }
 
   public registerAgentBinding(binding: WorkbenchAgentBinding): void {
-    this.bindings.set(binding.descriptor.engineId, {
-      descriptor: {
-        ...binding.descriptor,
-        capabilities: [...binding.descriptor.capabilities]
-      },
-      adapter: binding.adapter,
-      runtimeConfig: binding.runtimeConfig,
-      providerKind: binding.providerKind,
-      resolveProviderSessionId: binding.resolveProviderSessionId
-    });
+    this.bindings.set(binding.descriptor.engineId, cloneAgentBinding(binding));
     if (!this.selectedEngineId) {
       this.selectedEngineId = binding.descriptor.engineId;
     }

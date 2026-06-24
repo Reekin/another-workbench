@@ -1,8 +1,12 @@
 import type { CodexAppServerRuntimePort } from "./codex-app-server-runtime-port.js";
 import { createFilePathTarget } from "./file-path-target.js";
 import {
-  buildConversationMap,
+  codexProviderKind,
   discoveredCodexSessionId,
+  resolveCodexThreadId
+} from "./codex-session-identity.js";
+import {
+  buildConversationMap,
   discoveredConversationId,
   type DiscoveredSessionRelation,
   type DiscoveredSessionRecord
@@ -15,18 +19,8 @@ import type {
   SessionActionResult
 } from "./session-actions.js";
 
-const codexProviderKind = "codex-thread";
-
 const isoFromUnixSeconds = (value: number): string =>
   new Date(value * 1_000).toISOString();
-
-const resolveThreadId = (
-  input: SessionActionProviderContext,
-  codexRuntimePort: CodexAppServerRuntimePort
-): string | undefined =>
-  codexRuntimePort.getThreadIdForSession(input.sessionId) ??
-  input.providerHandle?.providerSessionId ??
-  input.indexEntry?.providerSessionId;
 
 const resolveWorkspaceId = (
   input: SessionActionProviderContext
@@ -114,13 +108,13 @@ export class CodexSessionActionsProvider implements SessionAgentActionsProvider 
   }
 
   public resolveDisplayedSessionId(input: SessionActionProviderContext): string | undefined {
-    return resolveThreadId(input, this.codexRuntimePort);
+    return resolveCodexThreadId(input);
   }
 
   public async listAdditionalActions(
     input: SessionActionProviderContext
   ): Promise<SessionActionDescriptor[]> {
-    const threadId = resolveThreadId(input, this.codexRuntimePort);
+    const threadId = resolveCodexThreadId(input);
     const workspaceId = resolveWorkspaceId(input);
     return [
       {
@@ -143,7 +137,7 @@ export class CodexSessionActionsProvider implements SessionAgentActionsProvider 
   }
 
   public async prepareArchive(input: SessionActionProviderContext): Promise<void> {
-    const threadId = resolveThreadId(input, this.codexRuntimePort);
+    const threadId = resolveCodexThreadId(input);
     if (!threadId) {
       throw new Error("Archive is unavailable without a provider session id.");
     }
@@ -153,7 +147,7 @@ export class CodexSessionActionsProvider implements SessionAgentActionsProvider 
   public async runAction(
     input: SessionActionProviderContext & { action: SessionActionKind }
   ): Promise<SessionActionResult | undefined> {
-    const threadId = resolveThreadId(input, this.codexRuntimePort);
+    const threadId = resolveCodexThreadId(input);
 
     if (input.action === "refresh") {
       await this.codexRuntimePort.reloadUserConfig();

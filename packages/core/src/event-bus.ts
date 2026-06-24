@@ -22,8 +22,8 @@ export type RuntimeEventListener = (envelope: RuntimeEventEnvelope) => void;
 
 export type RuntimeEventReplayPort = {
   onEventPublished?: (envelope: RuntimeEventEnvelope) => void;
-  readSinceCursor?: (cursor: string) => RuntimeEventEnvelope[];
-  replay?: (input: RuntimeEventReplayInput) => RuntimeEventEnvelope[];
+  readSinceCursor?: (cursor: string) => RuntimeEventReplayPortResult;
+  replay?: (input: RuntimeEventReplayInput) => RuntimeEventReplayPortResult;
 };
 
 export type RuntimeEventReplayInput = {
@@ -32,6 +32,33 @@ export type RuntimeEventReplayInput = {
   filter?: RuntimeEventFilter;
   limit?: number;
 };
+
+export type RuntimeEventReplayGapReason = "cursor_not_found";
+
+export type RuntimeEventReplayOkResult = {
+  status: "ok";
+  replayed: number;
+  fromCursor?: string;
+  toCursor?: string;
+  envelopes: RuntimeEventEnvelope[];
+};
+
+export type RuntimeEventReplayGapResult = {
+  status: "gap";
+  reason: RuntimeEventReplayGapReason;
+  replayed: 0;
+  fromCursor: string;
+  toCursor?: string;
+  envelopes: [];
+};
+
+export type RuntimeEventReplayResult =
+  | RuntimeEventReplayOkResult
+  | RuntimeEventReplayGapResult;
+
+export type RuntimeEventReplayPortResult =
+  | RuntimeEventEnvelope[]
+  | RuntimeEventReplayResult;
 
 type RuntimeEventBusOptions = {
   now?: () => string;
@@ -231,19 +258,41 @@ export class RuntimeEventBus {
     cursor: string,
     filter: RuntimeEventFilter = {}
   ): RuntimeEventEnvelope[] {
-    return this.replay({
+    return this.readSinceCursorResult(cursor, filter).envelopes;
+  }
+
+  public readSinceCursorResult(
+    cursor: string,
+    filter: RuntimeEventFilter = {}
+  ): RuntimeEventReplayResult {
+    return this.replayResult({
       fromCursor: cursor,
       filter
     });
   }
 
   public replay(input: RuntimeEventReplayInput = {}): RuntimeEventEnvelope[] {
+    return this.replayResult(input).envelopes;
+  }
+
+  public replayResult(
+    input: RuntimeEventReplayInput = {}
+  ): RuntimeEventReplayResult {
     const source = this.readReplaySource(input);
-    const filtered = this.sliceByCursor(
-      source.envelopes,
+    if (source.result.status === "gap") {
+      return source.result;
+    }
+
+    const sliced = this.sliceByCursor(
+      source.result.envelopes,
       source.fromCursorAlreadyApplied ? undefined : input.fromCursor,
       input.toCursor
-    ).filter((envelope) =>
+    );
+    if (sliced.status === "gap") {
+      return sliced;
+    }
+
+    const filtered = sliced.envelopes.filter((envelope) =>
       shouldDeliver(
         input.filter ?? {},
         envelope,
@@ -253,13 +302,13 @@ export class RuntimeEventBus {
     const normalized = filtered.map(limitRuntimeEventEnvelopePayload);
 
     if (typeof input.limit !== "number") {
-      return normalized;
+      return this.createReplayOkResult(input, normalized);
     }
     const limit = Math.max(0, Math.floor(input.limit));
     if (limit >= normalized.length) {
-      return normalized;
+      return this.createReplayOkResult(input, normalized);
     }
-    return normalized.slice(0, limit);
+    return this.createReplayOkResult(input, normalized.slice(0, limit));
   }
 
   public getSubscriberCount(): number {
@@ -275,52 +324,104 @@ export class RuntimeEventBus {
   }
 
   private readReplaySource(input: RuntimeEventReplayInput): {
-    envelopes: RuntimeEventEnvelope[];
+    result: RuntimeEventReplayResult;
     fromCursorAlreadyApplied: boolean;
   } {
     if (this.replayPort?.replay) {
+      const replayPortResult = this.replayPort.replay(input);
       return {
-        envelopes: this.replayPort.replay(input),
-        fromCursorAlreadyApplied: false
+        result: this.normalizeReplayPortResult(replayPortResult, input),
+        fromCursorAlreadyApplied: !Array.isArray(replayPortResult)
       };
     }
 
     if (input.fromCursor && this.replayPort?.readSinceCursor) {
       return {
-        envelopes: this.replayPort.readSinceCursor(input.fromCursor),
+        result: this.normalizeReplayPortResult(
+          this.replayPort.readSinceCursor(input.fromCursor),
+          input
+        ),
         fromCursorAlreadyApplied: true
       };
     }
 
     return {
-      envelopes: [...this.replayBuffer],
+      result: this.createReplayOkResult(input, [...this.replayBuffer]),
       fromCursorAlreadyApplied: false
     };
+  }
+
+  private normalizeReplayPortResult(
+    result: RuntimeEventReplayPortResult,
+    input: RuntimeEventReplayInput
+  ): RuntimeEventReplayResult {
+    if (Array.isArray(result)) {
+      return this.createReplayOkResult(input, result);
+    }
+    return result;
   }
 
   private sliceByCursor(
     envelopes: RuntimeEventEnvelope[],
     fromCursor?: string,
     toCursor?: string
-  ): RuntimeEventEnvelope[] {
+  ): RuntimeEventReplayResult {
     const startIndex = this.findStartIndex(envelopes, fromCursor);
-    const endIndex = this.findEndIndex(envelopes, toCursor);
-    if (startIndex >= endIndex) {
-      return [];
+    if (startIndex === "missing") {
+      return this.createReplayGapResult({
+        fromCursor: fromCursor ?? "",
+        toCursor
+      });
     }
-    return envelopes.slice(startIndex, endIndex);
+    const endIndex = this.findEndIndex(envelopes, toCursor);
+    const sliced =
+      startIndex >= endIndex ? [] : envelopes.slice(startIndex, endIndex);
+    return this.createReplayOkResult(
+      {
+        fromCursor,
+        toCursor
+      },
+      sliced
+    );
+  }
+
+  private createReplayOkResult(
+    input: RuntimeEventReplayInput,
+    envelopes: RuntimeEventEnvelope[]
+  ): RuntimeEventReplayOkResult {
+    return {
+      status: "ok",
+      replayed: envelopes.length,
+      fromCursor: input.fromCursor,
+      toCursor: input.toCursor,
+      envelopes
+    };
+  }
+
+  private createReplayGapResult(input: {
+    fromCursor: string;
+    toCursor?: string;
+  }): RuntimeEventReplayGapResult {
+    return {
+      status: "gap",
+      reason: "cursor_not_found",
+      replayed: 0,
+      fromCursor: input.fromCursor,
+      toCursor: input.toCursor,
+      envelopes: []
+    };
   }
 
   private findStartIndex(
     envelopes: RuntimeEventEnvelope[],
     fromCursor?: string
-  ): number {
+  ): number | "missing" {
     if (!fromCursor) {
       return 0;
     }
     const index = envelopes.findIndex((envelope) => envelope.cursor === fromCursor);
     if (index === -1) {
-      return envelopes.length;
+      return "missing";
     }
     return index + 1;
   }

@@ -445,10 +445,7 @@ export class CapabilityRegistry {
           handle: context.providerHandle,
           providerSessionId:
             provider?.resolveDisplayedSessionId?.(context) ??
-            context.indexEntry?.providerSessionId ??
-            (typeof context.session?.metadata?.providerSessionId === "string"
-              ? context.session.metadata.providerSessionId
-              : undefined),
+            context.providerHandle?.providerSessionId,
           workspaceId: context.indexEntry?.workspaceId
         });
         if (!session && indexEntry) {

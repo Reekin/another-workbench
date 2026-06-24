@@ -43,7 +43,10 @@ import {
 import { SessionReconciliationService } from "./session-discovery.js";
 import { SessionIdentityRegistry } from "./session-identity-registry.js";
 import { SessionActionsProvider } from "./session-actions.js";
-import type { WorkbenchRuntimeService } from "./runtime-service.js";
+import type {
+  EventReplayResult,
+  WorkbenchRuntimeService
+} from "./runtime-service.js";
 import type { WorkspaceRecord } from "./workspace-registry.js";
 import { WorkspaceSelectionService } from "./workspace-selection-service.js";
 import { EngineRegistryService } from "./engine-control/engine-registry.js";
@@ -248,7 +251,8 @@ export class WorkbenchShellService {
     this.schedulerBridge = new SchedulerWorkbenchBridge({
       runtimeService: options.runtimeService,
       schedulerStore: options.schedulerStore,
-      smartTakeoverService: options.smartTakeoverService
+      smartTakeoverService: options.smartTakeoverService,
+      resolveDefaultEngineId: () => this.resolveDefaultNewSessionEngineId()
     });
     this.turnChangeService =
       options.turnChangeService ?? new TurnChangeService();
@@ -290,6 +294,17 @@ export class WorkbenchShellService {
 
   public getSelectedEngineId(): string | undefined {
     return this.runtimeService.getSelectedEngineId();
+  }
+
+  private async resolveDefaultNewSessionEngineId(): Promise<string | undefined> {
+    const registry = this.runtimeService.getWorkspaceRegistry?.();
+    await registry?.ready();
+    const workspaceState =
+      typeof registry?.getState === "function" ? registry.getState() : undefined;
+    return (
+      workspaceState?.defaultNewSessionEngineId ??
+      this.runtimeService.getSelectedEngineId?.()
+    );
   }
 
   public async getSettings(): Promise<{
@@ -462,6 +477,10 @@ export class WorkbenchShellService {
 
   public replay(input: RuntimeEventReplayInput = {}): EventEnvelope[] {
     return this.runtimeService.replay(input);
+  }
+
+  public replayResult(input: RuntimeEventReplayInput = {}): EventReplayResult {
+    return this.runtimeService.replayResult(input);
   }
 
   public async dispose(): Promise<void> {

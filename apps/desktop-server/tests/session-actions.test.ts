@@ -155,6 +155,14 @@ describe("SessionActionsProvider", () => {
           engineId: "custom"
         })
       ]),
+      resolveProviderSessionHandle: vi.fn((sessionId: string) =>
+        sessionId === "session-1"
+          ? {
+              providerKind: "custom-provider",
+              providerSessionId: "provider-session-1"
+            }
+          : undefined
+      ),
       executeCommand
     } as unknown as WorkbenchRuntimeService;
     const provider = new SessionActionsProvider({
@@ -165,11 +173,28 @@ describe("SessionActionsProvider", () => {
             ? {
                 sessionId,
                 engineId: "custom",
+                providerKind: "custom-provider",
                 providerSessionId: "provider-session-1",
                 workspaceId: "workspace-1"
               }
             : undefined
         ),
+        listEntries: vi.fn().mockReturnValue([
+          {
+            sessionId: "session-indexed",
+            engineId: "custom",
+            providerKind: "custom-provider",
+            providerSessionId: "provider-session-1",
+            workspaceId: "workspace-1"
+          },
+          {
+            sessionId: "session-1",
+            engineId: "custom",
+            providerKind: "custom-provider",
+            providerSessionId: "provider-session-1",
+            workspaceId: "workspace-1"
+          }
+        ]),
         archiveSession: vi.fn().mockResolvedValue(undefined),
         archiveSessions,
         listEntriesByProviderSessionId: vi.fn().mockReturnValue([

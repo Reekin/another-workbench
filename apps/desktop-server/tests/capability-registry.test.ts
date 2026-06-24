@@ -289,4 +289,62 @@ describe("CapabilityRegistry", () => {
       status: "unsupported"
     });
   });
+
+  it("does not archive provider aliases from unnormalized index metadata", async () => {
+    const runtimeService = createRuntimeService();
+    vi.mocked(runtimeService.resolveProviderSessionHandle).mockReturnValue(undefined);
+    const listEntriesByProviderSessionId = vi.fn().mockReturnValue([
+      {
+        sessionId: "session-alias",
+        providerSessionId: "thread-untyped"
+      }
+    ]);
+    const archiveSessions = vi.fn().mockResolvedValue(undefined);
+    const sessionIndexStore = {
+      getEntry: vi.fn().mockReturnValue({
+        sessionId: "session-codex",
+        workspaceId: "workspace-1",
+        conversationId: "conversation-for-session-codex",
+        engineId: "codex",
+        providerSessionId: "thread-untyped",
+        createdAt: "2026-04-20T00:00:00.000Z",
+        updatedAt: "2026-04-20T00:00:00.000Z",
+        source: "registry"
+      }),
+      listEntries: vi.fn().mockReturnValue([]),
+      listEntriesByProviderSessionId,
+      archiveSessions
+    } as never;
+    const sessionIdentity = new SessionIdentityRegistry({
+      runtimeService,
+      sessionIndexStore
+    });
+    const registry = new CapabilityRegistry({
+      runtimeService,
+      sessionIndexStore,
+      sessionIdentity,
+      capabilities: [
+        {
+          engineId: "codex",
+          sessionActions: {}
+        }
+      ]
+    });
+
+    await expect(registry.runSessionAction("session-codex", "archive")).resolves.toEqual({
+      action: "archive",
+      archived: true
+    });
+
+    expect(listEntriesByProviderSessionId).not.toHaveBeenCalled();
+    expect(archiveSessions).not.toHaveBeenCalled();
+    expect(runtimeService.executeCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: {
+          type: "archiveSession",
+          sessionId: "session-codex"
+        }
+      })
+    );
+  });
 });

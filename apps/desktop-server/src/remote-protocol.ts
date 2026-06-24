@@ -764,7 +764,7 @@ export const createRemoteRpcHandler = (
             });
           }
           case "events.replay": {
-            const envelopes = service.replay({
+            const replayResult = service.replayResult({
               fromCursor: request.params.fromCursor,
               toCursor: request.params.toCursor,
               filter: request.params.filter
@@ -774,10 +774,12 @@ export const createRemoteRpcHandler = (
               method: request.method,
               ok: true,
               result: {
-                replayed: envelopes.length,
+                status: replayResult.status,
+                reason: replayResult.reason,
+                replayed: replayResult.replayed,
                 fromCursor: request.params.fromCursor,
                 toCursor: request.params.toCursor,
-                envelopes
+                envelopes: replayResult.envelopes
               }
             });
           }

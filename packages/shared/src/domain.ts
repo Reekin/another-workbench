@@ -134,7 +134,7 @@ export const zTurnSchema = z.object({
   toolCallIds: z.array(zToolCallId).default([]),
   terminalIds: z.array(zTerminalId).default([]),
   approvalRequestIds: z.array(zRequestId).default([]),
-  interactionRequestIds: z.array(zRequestId).default([]).optional()
+  interactionRequestIds: z.array(zRequestId).default([])
 });
 
 const zMessageBlockActorRef = zActorRef.optional();
@@ -197,7 +197,7 @@ export const zApprovalRequestSchema = z.object({
   title: z.string().min(1),
   details: z.string().optional(),
   note: z.string().optional(),
-  availableActions: z.array(z.string().min(1)).default([]).optional(),
+  availableActions: z.array(z.string().min(1)).default([]),
   metadata: zJsonRecord.optional(),
   actor: zApprovalActorRef,
   requestedAt: zIsoDateTime,
@@ -262,7 +262,7 @@ export const zDomainSnapshotSchema = z.object({
   toolCalls: z.array(zToolCallSchema).default([]),
   terminalStreams: z.array(zTerminalStreamSchema).default([]),
   approvalRequests: z.array(zApprovalRequestSchema).default([]),
-  runtimeInteractions: z.array(zRuntimeInteractionSchema).optional(),
+  runtimeInteractions: z.array(zRuntimeInteractionSchema).default([]),
   participants: z.array(zAgentParticipantSchema).default([]),
   threadGoals: z.array(zThreadGoalSchema).default([]),
   sessionRelations: z.array(zSessionRelationSchema).default([])

@@ -63,15 +63,19 @@ import {
   resolveCodexThreadItemTimestamp
 } from "./engine-extensions/codex/rollout-timestamps.js";
 import { SessionIdentityRegistry } from "./session-identity-registry.js";
+import {
+  codexProviderKind,
+  discoveredCodexSessionId
+} from "./codex-session-identity.js";
+export {
+  codexProviderKind,
+  discoveredCodexSessionId
+} from "./codex-session-identity.js";
 
-const codexProviderKind = "codex-thread";
 const codexAgentId = "codex";
 
 const isoFromUnixSeconds = (value: number): string =>
   new Date(value * 1_000).toISOString();
-
-export const discoveredCodexSessionId = (threadId: string): string =>
-  `codex-thread:${threadId}`;
 
 export const discoveredConversationId = (rootSessionId: string): string =>
   `conversation-discovered:${rootSessionId}`;

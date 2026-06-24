@@ -12,7 +12,7 @@
   "scripts": {
     "build": "pnpm exec tsc -b tsconfig.json",
     "typecheck": "pnpm exec tsc -b tsconfig.json --pretty false",
-    "lint": "node -e \"console.log('lint placeholder: @another-workbench/core')\"",
+    "lint": "pnpm exec tsc -b tsconfig.json --pretty false",
     "test": "pnpm exec vitest run"
   },
   "dependencies": {

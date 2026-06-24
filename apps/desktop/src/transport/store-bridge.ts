@@ -34,10 +34,26 @@ export const connectDesktopTransportToStore = async (
   const shouldHydrateSnapshot =
     input.hydrateSnapshot ?? !hasHydratedDomainState(input.store);
 
-  if (shouldHydrateSnapshot) {
+  const hydrateSnapshot = async (): Promise<void> => {
     const snapshotResult = await input.transport.domain.snapshot();
     input.store.hydrateSnapshot(snapshotResult.snapshot, snapshotResult.cursor);
-    fromCursor = fromCursor ?? snapshotResult.cursor;
+    fromCursor = snapshotResult.cursor ?? fromCursor;
+  };
+
+  if (shouldHydrateSnapshot) {
+    await hydrateSnapshot();
+  } else if (fromCursor) {
+    const replayResult = await input.transport.events.replay({
+      fromCursor,
+      filter: input.filter
+    });
+
+    if (replayResult.status === "gap") {
+      await hydrateSnapshot();
+    } else {
+      input.store.ingestEnvelopes(replayResult.envelopes);
+      fromCursor = replayResult.envelopes.at(-1)?.cursor ?? fromCursor;
+    }
   }
 
   const subscription = await input.transport.events.subscribe({

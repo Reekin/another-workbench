@@ -4,10 +4,97 @@ import type { RuntimeEvent } from "@another-workbench/shared";
 import { readSessionExecutionProfile } from "@another-workbench/shared";
 import { DomainService } from "../src/domain-service.js";
 import { RuntimeOrchestrator } from "../src/runtime-orchestrator.js";
+import type { WorkbenchAgentBinding } from "../src/runtime-types.js";
 
 const flushAsyncWork = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("RuntimeOrchestrator", () => {
+  it("preserves full agent binding metadata and shared capability surface", () => {
+    let orchestrator: RuntimeOrchestrator | undefined;
+    const domainService = new DomainService({
+      now: () => "2026-04-20T00:02:00Z",
+      assertEngineRegistered: (engineId) =>
+        orchestrator?.assertEngineRegistered(engineId),
+      resolveEngineCapabilities: (engineId) =>
+        orchestrator?.getEngineCapabilities(engineId) ?? [],
+      publishRuntimeEvent: () => {}
+    });
+    const extension = {
+      engineId: "codex",
+      key: "changed-files",
+      displayName: "Changed Files",
+      available: true
+    };
+
+    orchestrator = new RuntimeOrchestrator({
+      domainService,
+      sessionIndexSyncService: {
+        syncSession: vi.fn().mockResolvedValue(undefined),
+        syncRelation: vi.fn().mockResolvedValue(undefined),
+        markSessionUnreadCompleted: vi.fn().mockResolvedValue(undefined)
+      } as never,
+      workspaceSelectionService: {
+        activateSelection: vi.fn().mockResolvedValue(undefined),
+        selectWorkspace: vi.fn().mockResolvedValue({
+          workspaceId: "workspace-1"
+        })
+      } as never,
+      publishRuntimeEvent: () => {},
+      agentBindings: [
+        {
+          descriptor: {
+            engineId: "codex",
+            displayName: "Codex",
+            capabilities: ["chat"]
+          },
+          integrationTier: "native",
+          transportKind: "codex",
+          providerKind: "codex-thread",
+          resolveProviderSessionId: () => "thread-1",
+          sharedCapabilities: [
+            "chat",
+            "attachments",
+            "conversationGraph",
+            "goal"
+          ],
+          extensions: [extension]
+        }
+      ]
+    });
+
+    expect(orchestrator.getEngineCapabilities("codex")).toEqual([
+      "chat",
+      "attachments",
+      "conversationGraph",
+      "goal"
+    ]);
+
+    orchestrator.registerEngine({
+      engineId: "codex",
+      displayName: "Codex Native",
+      capabilities: ["chat"]
+    });
+
+    expect(orchestrator.getEngineCapabilities("codex")).toEqual([
+      "chat",
+      "attachments",
+      "conversationGraph",
+      "goal"
+    ]);
+    const binding = (
+      orchestrator as unknown as {
+        bindings: Map<string, WorkbenchAgentBinding>;
+      }
+    ).bindings.get("codex");
+    expect(binding).toMatchObject({
+      integrationTier: "native",
+      transportKind: "codex",
+      providerKind: "codex-thread",
+      extensions: [extension]
+    });
+    expect(binding?.descriptor.displayName).toBe("Codex Native");
+  });
+
   it("initializes adapters once and forwards selected config metadata", async () => {
     const initialize = vi.fn().mockResolvedValue(undefined);
     const subscribe = vi.fn().mockReturnValue(() => {});

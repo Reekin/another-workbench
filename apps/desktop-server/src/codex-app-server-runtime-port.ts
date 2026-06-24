@@ -87,6 +87,7 @@ import type {
   HostToolRegistry,
   HostToolResult
 } from "./host-tools.js";
+import { discoveredCodexSessionId } from "./codex-session-identity.js";
 
 type RuntimeListener = (event: CodexRuntimeEvent) => void;
 
@@ -476,8 +477,6 @@ const isMcpToolCallThreadItem = (
   item: ThreadItem | Record<string, unknown>
 ): item is Extract<ThreadItem, { type: "mcpToolCall" }> =>
   isRecord(item) && item.type === "mcpToolCall" && typeof item.id === "string";
-
-const discoveredCodexSessionId = (threadId: string): string => `codex-thread:${threadId}`;
 
 const mapCollabToolLabel = (
   tool: Extract<ThreadItem, { type: "collabAgentToolCall" }>["tool"]

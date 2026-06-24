@@ -723,6 +723,56 @@ describe("DomainProjector", () => {
     });
   });
 
+  it("keeps synthesized runtime error messages linked to the failed turn", () => {
+    const projector = new DomainProjector();
+
+    projector.apply(
+      {
+        type: "session.created",
+        conversationId: "conversation-a",
+        sessionId: "session-1",
+        engineId: "agent-a",
+        status: "running"
+      },
+      "2026-04-18T00:06:00.000Z"
+    );
+    projector.apply(
+      {
+        type: "turn.started",
+        sessionId: "session-1",
+        turnId: "turn-error"
+      },
+      "2026-04-18T00:06:01.000Z"
+    );
+    projector.apply(
+      {
+        type: "runtime.error",
+        sessionId: "session-1",
+        turnId: "turn-error",
+        code: "RUNTIME_FAIL",
+        message: "Boom",
+        recoverable: false
+      },
+      "2026-04-18T00:06:02.000Z"
+    );
+
+    expect(projector.store.getTurn("turn-error")).toMatchObject({
+      status: "completed",
+      finishReason: "failed",
+      messageIds: ["runtime-error:turn-error"]
+    });
+    expect(projector.store.getMessageBlock("runtime-error:turn-error:md")).toMatchObject({
+      role: "system",
+      text: "Runtime error (RUNTIME_FAIL): Boom"
+    });
+    expect(projector.store.getSessionSnapshot("session-1").turns).toEqual([
+      expect.objectContaining({
+        turnId: "turn-error",
+        messageIds: ["runtime-error:turn-error"]
+      })
+    ]);
+  });
+
   it("keeps active turns running for recoverable runtime errors", () => {
     const projector = new DomainProjector();
 

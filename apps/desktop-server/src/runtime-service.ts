@@ -20,6 +20,7 @@ import { SessionIndexSyncService } from "./session-index-sync-service.js";
 import type { SessionTitleGenerator } from "./title-generation-service.js";
 import type {
   EngineSelectionInput,
+  EventReplayResult,
   CommandReceipt,
   SnapshotResult,
   WorkbenchAgentBinding,
@@ -34,6 +35,7 @@ type IdFactory = () => string;
 
 export type {
   EngineSelectionInput,
+  EventReplayResult,
   CommandReceipt,
   SnapshotResult,
   WorkbenchAgentBinding,
@@ -234,7 +236,15 @@ export class WorkbenchRuntimeService {
   }
 
   public replay(input: RuntimeEventReplayInput = {}): EventEnvelope[] {
-    return this.eventBus.replay(input).map((envelope) => this.toSharedEnvelope(envelope));
+    return this.replayResult(input).envelopes;
+  }
+
+  public replayResult(input: RuntimeEventReplayInput = {}): EventReplayResult {
+    const result = this.eventBus.replayResult(input);
+    return {
+      ...result,
+      envelopes: result.envelopes.map((envelope) => this.toSharedEnvelope(envelope))
+    };
   }
 
   public async dispose(): Promise<void> {

@@ -10,6 +10,10 @@ import {
   safeParseWorkbenchRpcResponse
 } from "@another-workbench/shared";
 import {
+  WorkbenchRuntimeService,
+  createLocalDesktopPreloadApi
+} from "@another-workbench/desktop-server";
+import {
   DesktopTransportError,
   createDesktopTransport
 } from "../src/transport/desktop-transport.js";
@@ -124,6 +128,7 @@ const createPreloadMock = (config?: {
         method: "events.replay",
         ok: true,
         result: {
+          status: "ok",
           replayed: 0,
           fromCursor: payload.params.fromCursor,
           toCursor: payload.params.toCursor,
@@ -820,12 +825,11 @@ describe("Desktop transport facade", () => {
 
     await connectDesktopTransportToStore({
       transport,
-      store,
-      fromCursor: "cursor-10"
+      store
     });
 
     expect(preload.subscribe).toHaveBeenCalledTimes(1);
-    expect(preload.subscribe.mock.calls[0][0].fromCursor).toBe("cursor-10");
+    expect(preload.subscribe.mock.calls[0][0].fromCursor).toBe("cursor-0");
 
     preload.emitPush({
       channel: "workbench.events",
@@ -891,6 +895,7 @@ describe("Desktop transport facade", () => {
     });
 
     expect(replay.fromCursor).toBe("cursor-20");
+    expect(replay.status).toBe("ok");
     expect(replay.envelopes).toEqual([]);
     const request = preload.request.mock.calls[0][0] as WorkbenchRpcRequest;
     expect(request.method).toBe("events.replay");
@@ -1030,7 +1035,7 @@ describe("Desktop transport facade", () => {
     }
   });
 
-  it("skips snapshot hydration when store already has domain state and reuses lastCursor for subscription", async () => {
+  it("preflights replay when store already has domain state and reuses lastCursor for subscription", async () => {
     const preload = createPreloadMock();
     const transport = createDesktopTransport(preload.api, {
       scheduleEventDrain: (callback) => {
@@ -1057,7 +1062,13 @@ describe("Desktop transport facade", () => {
       store
     });
 
-    expect(preload.request).not.toHaveBeenCalled();
+    expect(preload.request).toHaveBeenCalledTimes(1);
+    expect(preload.request.mock.calls[0][0]).toMatchObject({
+      method: "events.replay",
+      params: {
+        fromCursor: "cursor-10"
+      }
+    });
     expect(preload.subscribe).toHaveBeenCalledTimes(1);
     expect(preload.subscribe.mock.calls[0][0].fromCursor).toBe("cursor-10");
 
@@ -1080,6 +1091,168 @@ describe("Desktop transport facade", () => {
     const finalState = store.getState();
     expect(finalState.entities.turns["turn-replay-1"]?.status).toBe("completed");
     expect(finalState.eventStream.lastCursor).toBe("cursor-12");
+  });
+
+  it("hydrates a fresh snapshot and resumes from its cursor when replay reports a gap", async () => {
+    const preload = createPreloadMock({
+      onRequest: async (request) => {
+        if (request.method === "events.replay") {
+          return {
+            id: request.id,
+            method: "events.replay",
+            ok: true,
+            result: {
+              status: "gap",
+              reason: "cursor_not_found",
+              replayed: 0,
+              fromCursor: request.params.fromCursor,
+              toCursor: request.params.toCursor,
+              envelopes: []
+            }
+          } as const;
+        }
+        if (request.method === "domain.snapshot") {
+          return {
+            id: request.id,
+            method: "domain.snapshot",
+            ok: true,
+            result: {
+              snapshot: {
+                conversations: [
+                  {
+                    conversationId: "conversation-snapshot",
+                    createdAt: "2026-04-17T00:00:00.000Z",
+                    updatedAt: "2026-04-17T00:00:00.000Z",
+                    sessionIds: ["session-snapshot"],
+                    activeSessionId: "session-snapshot",
+                    participantEngineIds: []
+                  }
+                ],
+                sessions: [
+                  {
+                    sessionId: "session-snapshot",
+                    conversationId: "conversation-snapshot",
+                    engineId: "agent-1",
+                    title: "Recovered",
+                    status: "idle",
+                    createdAt: "2026-04-17T00:00:00.000Z",
+                    updatedAt: "2026-04-17T00:00:00.000Z"
+                  }
+                ],
+                turns: [],
+                messageBlocks: [],
+                toolCalls: [],
+                terminalStreams: [],
+                approvalRequests: [],
+                participants: [],
+                sessionRelations: []
+              },
+              cursor: "cursor-30"
+            }
+          } as const;
+        }
+        throw new Error(`Unexpected request ${request.method}`);
+      }
+    });
+    const transport = createDesktopTransport(preload.api);
+    const store = createRendererStore();
+    store.ingestEnvelope({
+      eventId: "evt-10",
+      cursor: "cursor-10",
+      occurredAt: "2026-04-17T00:00:00.000Z",
+      event: {
+        type: "session.created",
+        conversationId: "conversation-stale",
+        sessionId: "session-stale",
+        engineId: "agent-1",
+        status: "idle"
+      }
+    });
+
+    await connectDesktopTransportToStore({
+      transport,
+      store
+    });
+
+    expect(preload.request.mock.calls.map((call) => call[0].method)).toEqual([
+      "events.replay",
+      "domain.snapshot"
+    ]);
+    expect(preload.subscribe).toHaveBeenCalledTimes(1);
+    expect(preload.subscribe.mock.calls[0][0].fromCursor).toBe("cursor-30");
+    expect(store.getState().eventStream.lastCursor).toBe("cursor-30");
+    expect(store.getState().entities.sessions["session-snapshot"]?.title).toBe(
+      "Recovered"
+    );
+  });
+
+  it("recovers a stale cursor through local runtime snapshot fallback", async () => {
+    const service = new WorkbenchRuntimeService({
+      now: (() => {
+        let tick = 0;
+        return () => `2026-04-17T00:00:${String(++tick).padStart(2, "0")}Z`;
+      })(),
+      createConversationId: () => "conversation-runtime",
+      createSessionId: () => "session-runtime",
+      createEventId: (() => {
+        let tick = 0;
+        return () => `evt-runtime-${++tick}`;
+      })(),
+      engines: [
+        {
+          engineId: "codex",
+          displayName: "Codex",
+          capabilities: ["chat"]
+        }
+      ]
+    });
+    await service.executeCommand({
+      commandId: "cmd-create",
+      command: {
+        type: "createSession",
+        engineId: "codex"
+      }
+    });
+    const runtimeSnapshot = service.getSnapshotResult();
+    const transport = createDesktopTransport(
+      createLocalDesktopPreloadApi(service, {
+        createSubscriptionId: () => "sub-local-runtime"
+      }),
+      {
+        scheduleEventDrain: (callback) => {
+          callback();
+          return () => undefined;
+        }
+      }
+    );
+    const store = createRendererStore();
+    store.ingestEnvelope({
+      eventId: "evt-stale",
+      cursor: "cursor-stale",
+      occurredAt: "2026-04-17T00:00:00.000Z",
+      event: {
+        type: "session.created",
+        conversationId: "conversation-stale",
+        sessionId: "session-stale",
+        engineId: "codex",
+        status: "idle"
+      }
+    });
+
+    const subscription = await connectDesktopTransportToStore({
+      transport,
+      store
+    });
+
+    expect(store.getState().eventStream.lastCursor).toBe(runtimeSnapshot.cursor);
+    expect(store.getState().entities.sessions["session-runtime"]?.engineId).toBe(
+      "codex"
+    );
+    expect(store.getState().entities.sessions["session-stale"]).toBeUndefined();
+    expect(subscription.subscriptionId).toBe("sub-local-runtime");
+
+    await subscription.unsubscribe();
+    await service.dispose();
   });
 
   it("drains live event pushes in scheduled batches", async () => {

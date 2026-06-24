@@ -4,11 +4,13 @@ import type {
   EventEnvelope,
   RuntimeEvent
 } from "@another-workbench/shared";
+import { DomainProjector } from "@another-workbench/core";
 import { MAX_ACCUMULATED_STREAM_TEXT_LENGTH } from "@another-workbench/shared";
 import { parseIngestEnvelopeAction } from "../src/store/intake.js";
 import { rendererStoreReducer } from "../src/store/reducer.js";
 import { selectEventStreamState, selectTurnsForSession } from "../src/store/selectors.js";
 import { createInitialRendererStoreState } from "../src/store/state.js";
+import type { RendererStoreState } from "../src/store/types.js";
 
 const toEnvelope = (
   eventId: string,
@@ -32,6 +34,206 @@ const toEnvelopeAt = (
   occurredAt,
   event
 });
+
+type ConformanceEvent = {
+  occurredAt: string;
+  event: RuntimeEvent;
+};
+
+const sortBy = <T>(items: readonly T[], selectId: (item: T) => string): T[] =>
+  [...items].sort((left, right) => selectId(left).localeCompare(selectId(right)));
+
+const canonicalProjectionFromSnapshot = (snapshot: DomainSnapshot) => ({
+  conversations: sortBy(snapshot.conversations, (conversation) => conversation.conversationId).map(
+    (conversation) => ({
+      conversationId: conversation.conversationId,
+      workspaceId: conversation.workspaceId,
+      participantEngineIds: [...conversation.participantEngineIds],
+      activeSessionId: conversation.activeSessionId,
+      sessionIds: [...conversation.sessionIds],
+      createdAt: conversation.createdAt,
+      updatedAt: conversation.updatedAt,
+      archivedAt: conversation.archivedAt,
+      metadata: conversation.metadata
+    })
+  ),
+  sessions: sortBy(snapshot.sessions, (session) => session.sessionId).map((session) => ({
+    sessionId: session.sessionId,
+    conversationId: session.conversationId,
+    engineId: session.engineId,
+    status: session.status,
+    title: session.title,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    archivedAt: session.archivedAt,
+    lastTurnId: session.lastTurnId,
+    contextUsage: session.contextUsage,
+    metadata: session.metadata
+  })),
+  turns: sortBy(snapshot.turns, (turn) => turn.turnId).map((turn) => ({
+    turnId: turn.turnId,
+    sessionId: turn.sessionId,
+    status: turn.status,
+    finishReason: turn.finishReason,
+    startedAt: turn.startedAt,
+    completedAt: turn.completedAt,
+    actor: turn.actor,
+    finalMessageId: turn.finalMessageId,
+    messageIds: [...turn.messageIds],
+    toolCallIds: [...turn.toolCallIds],
+    terminalIds: [...turn.terminalIds],
+    approvalRequestIds: [...turn.approvalRequestIds],
+    interactionRequestIds: [...turn.interactionRequestIds]
+  })),
+  messageBlocks: sortBy(snapshot.messageBlocks, (block) => block.blockId).map((block) => ({
+    blockId: block.blockId,
+    messageId: block.messageId,
+    sessionId: block.sessionId,
+    turnId: block.turnId,
+    role: block.role,
+    phase: block.phase,
+    kind: block.kind,
+    text: block.text,
+    toolCallId: block.toolCallId,
+    terminalId: block.terminalId,
+    requestId: block.requestId,
+    actor: block.actor,
+    startedAt: block.startedAt,
+    completedAt: block.completedAt
+  })),
+  toolCalls: sortBy(snapshot.toolCalls, (toolCall) => toolCall.toolCallId).map(
+    (toolCall) => ({
+      toolCallId: toolCall.toolCallId,
+      sessionId: toolCall.sessionId,
+      turnId: toolCall.turnId,
+      toolName: toolCall.toolName,
+      status: toolCall.status,
+      inputSummary: toolCall.inputSummary,
+      outputSummary: toolCall.outputSummary,
+      actor: toolCall.actor,
+      startedAt: toolCall.startedAt,
+      completedAt: toolCall.completedAt
+    })
+  ),
+  terminalStreams: sortBy(snapshot.terminalStreams, (stream) => stream.terminalId).map(
+    (stream) => ({
+      terminalId: stream.terminalId,
+      sessionId: stream.sessionId,
+      turnId: stream.turnId,
+      toolCallId: stream.toolCallId,
+      status: stream.status,
+      outputText: stream.outputText,
+      exitCode: stream.exitCode,
+      actor: stream.actor,
+      startedAt: stream.startedAt,
+      completedAt: stream.completedAt
+    })
+  ),
+  approvalRequests: sortBy(snapshot.approvalRequests, (approval) => approval.requestId).map(
+    (approval) => ({
+      requestId: approval.requestId,
+      sessionId: approval.sessionId,
+      turnId: approval.turnId,
+      approvalKind: approval.approvalKind,
+      status: approval.status,
+      title: approval.title,
+      details: approval.details,
+      note: approval.note,
+      availableActions: [...approval.availableActions],
+      metadata: approval.metadata,
+      actor: approval.actor,
+      requestedAt: approval.requestedAt,
+      resolvedAt: approval.resolvedAt
+    })
+  ),
+  runtimeInteractions: sortBy(
+    snapshot.runtimeInteractions,
+    (interaction) => interaction.requestId
+  ).map((interaction) => ({
+    requestId: interaction.requestId,
+    sessionId: interaction.sessionId,
+    turnId: interaction.turnId,
+    interactionKind: interaction.interactionKind,
+    status: interaction.status,
+    title: interaction.title,
+    details: interaction.details,
+    payload: interaction.payload,
+    response: interaction.response,
+    actor: interaction.actor,
+    requestedAt: interaction.requestedAt,
+    resolvedAt: interaction.resolvedAt
+  })),
+  participants: sortBy(snapshot.participants, (participant) => participant.participantId).map(
+    (participant) => ({
+      participantId: participant.participantId,
+      conversationId: participant.conversationId,
+      engineId: participant.engineId,
+      role: participant.role,
+      capabilities: [...participant.capabilities],
+      activeSessionIds: [...participant.activeSessionIds].sort(),
+      metadata: participant.metadata
+    })
+  ),
+  threadGoals: sortBy(snapshot.threadGoals, (goal) => goal.sessionId).map((goal) => ({
+    sessionId: goal.sessionId,
+    threadId: goal.threadId,
+    objective: goal.objective,
+    status: goal.status,
+    tokenBudget: goal.tokenBudget,
+    tokensUsed: goal.tokensUsed,
+    timeUsedSeconds: goal.timeUsedSeconds,
+    createdAt: goal.createdAt,
+    updatedAt: goal.updatedAt,
+    turnId: goal.turnId
+  })),
+  sessionRelations: sortBy(snapshot.sessionRelations, (relation) => relation.relationId).map(
+    (relation) => ({
+      relationId: relation.relationId,
+      parentSessionId: relation.parentSessionId,
+      childSessionId: relation.childSessionId,
+      relationType: relation.relationType,
+      sourceTurnId: relation.sourceTurnId,
+      createdAt: relation.createdAt,
+      metadata: relation.metadata
+    })
+  )
+});
+
+const snapshotFromRendererState = (state: RendererStoreState): DomainSnapshot => ({
+  conversations: Object.values(state.entities.conversations),
+  sessions: Object.values(state.entities.sessions),
+  turns: Object.values(state.entities.turns),
+  messageBlocks: Object.values(state.entities.messageBlocks),
+  toolCalls: Object.values(state.entities.toolCalls),
+  terminalStreams: Object.values(state.entities.terminalStreams),
+  approvalRequests: Object.values(state.entities.approvalRequests),
+  runtimeInteractions: Object.values(state.entities.runtimeInteractions),
+  participants: Object.values(state.entities.participants),
+  threadGoals: Object.values(state.entities.threadGoals),
+  sessionRelations: Object.values(state.entities.sessionRelations)
+});
+
+const expectRendererToMatchCoreProjection = (
+  conversationId: string,
+  events: ConformanceEvent[]
+): void => {
+  const projector = new DomainProjector();
+  let rendererState = createInitialRendererStoreState();
+
+  events.forEach(({ event, occurredAt }, index) => {
+    projector.apply(event, occurredAt);
+    rendererState = rendererStoreReducer(
+      rendererState,
+      parseIngestEnvelopeAction(
+        toEnvelopeAt(`evt-conformance-${index + 1}`, String(index + 1), occurredAt, event)
+      )
+    );
+  });
+
+  expect(canonicalProjectionFromSnapshot(snapshotFromRendererState(rendererState))).toEqual(
+    canonicalProjectionFromSnapshot(projector.store.getConversationSnapshot(conversationId))
+  );
+};
 
 describe("desktop store reducer", () => {
   it("keeps event envelope metadata for replay/reconnect", () => {
@@ -535,6 +737,276 @@ describe("desktop store reducer", () => {
     const conversation = state.entities.conversations["conversation-a"];
     expect(conversation.sessionIds).toContain("session-a");
     expect(conversation.participantEngineIds).toContain("agent-a");
+  });
+
+  it("matches core canonical projection for session and turn lifecycle entities", () => {
+    expectRendererToMatchCoreProjection("conversation-a", [
+      {
+        occurredAt: "2026-04-17T00:10:00.000Z",
+        event: {
+          type: "session.created",
+          conversationId: "conversation-a",
+          sessionId: "session-a",
+          engineId: "agent-a",
+          status: "running"
+        }
+      },
+      {
+        occurredAt: "2026-04-17T00:10:01.000Z",
+        event: {
+          type: "session.created",
+          conversationId: "conversation-a",
+          sessionId: "session-b",
+          engineId: "agent-a",
+          status: "running",
+          relation: {
+            relationId: "relation-a-b",
+            parentSessionId: "session-a",
+            childSessionId: "session-b",
+            relationType: "fork",
+            createdAt: "2026-04-17T00:10:01.000Z"
+          }
+        }
+      },
+      {
+        occurredAt: "2026-04-17T00:10:02.000Z",
+        event: {
+          type: "participant.updated",
+          conversationId: "conversation-a",
+          participantId: "participant-conversation-a-agent-a",
+          engineId: "agent-a",
+          role: "primary",
+          capabilities: ["chat"]
+        }
+      },
+      {
+        occurredAt: "2026-04-17T00:10:03.000Z",
+        event: {
+          type: "turn.started",
+          sessionId: "session-b",
+          turnId: "turn-a"
+        }
+      },
+      {
+        occurredAt: "2026-04-17T00:10:04.000Z",
+        event: {
+          type: "message.started",
+          sessionId: "session-b",
+          turnId: "turn-a",
+          messageId: "message-a",
+          role: "assistant",
+          phase: "final_answer",
+          engineId: "agent-a"
+        }
+      },
+      {
+        occurredAt: "2026-04-17T00:10:05.000Z",
+        event: {
+          type: "message.delta",
+          sessionId: "session-b",
+          turnId: "turn-a",
+          messageId: "message-a",
+          delta: "hello",
+          phase: "final_answer",
+          engineId: "agent-a"
+        }
+      },
+      {
+        occurredAt: "2026-04-17T00:10:06.000Z",
+        event: {
+          type: "message.completed",
+          sessionId: "session-b",
+          turnId: "turn-a",
+          messageId: "message-a",
+          finalText: "hello",
+          isFinalForTurn: true,
+          phase: "final_answer",
+          engineId: "agent-a"
+        }
+      },
+      {
+        occurredAt: "2026-04-17T00:10:07.000Z",
+        event: {
+          type: "tool.started",
+          sessionId: "session-b",
+          turnId: "turn-a",
+          toolCallId: "tool-a",
+          toolName: "shell",
+          inputSummary: "echo hello",
+          engineId: "agent-a"
+        }
+      },
+      {
+        occurredAt: "2026-04-17T00:10:08.000Z",
+        event: {
+          type: "tool.delta",
+          sessionId: "session-b",
+          turnId: "turn-a",
+          toolCallId: "tool-a",
+          delta: "hello",
+          engineId: "agent-a"
+        }
+      },
+      {
+        occurredAt: "2026-04-17T00:10:09.000Z",
+        event: {
+          type: "tool.completed",
+          sessionId: "session-b",
+          turnId: "turn-a",
+          toolCallId: "tool-a",
+          status: "completed",
+          outputSummary: "hello",
+          engineId: "agent-a"
+        }
+      },
+      {
+        occurredAt: "2026-04-17T00:10:10.000Z",
+        event: {
+          type: "terminal.started",
+          sessionId: "session-b",
+          turnId: "turn-a",
+          terminalId: "terminal-a",
+          toolCallId: "tool-a",
+          engineId: "agent-a"
+        }
+      },
+      {
+        occurredAt: "2026-04-17T00:10:11.000Z",
+        event: {
+          type: "terminal.output",
+          sessionId: "session-b",
+          turnId: "turn-a",
+          terminalId: "terminal-a",
+          chunk: "hello\n",
+          engineId: "agent-a"
+        }
+      },
+      {
+        occurredAt: "2026-04-17T00:10:12.000Z",
+        event: {
+          type: "terminal.completed",
+          sessionId: "session-b",
+          turnId: "turn-a",
+          terminalId: "terminal-a",
+          exitCode: 0,
+          engineId: "agent-a"
+        }
+      },
+      {
+        occurredAt: "2026-04-17T00:10:13.000Z",
+        event: {
+          type: "approval.requested",
+          sessionId: "session-b",
+          turnId: "turn-a",
+          requestId: "approval-a",
+          approvalKind: "command",
+          title: "Run command",
+          details: "Allow echo",
+          availableActions: ["approve", "deny"],
+          engineId: "agent-a"
+        }
+      },
+      {
+        occurredAt: "2026-04-17T00:10:14.000Z",
+        event: {
+          type: "approval.resolved",
+          sessionId: "session-b",
+          turnId: "turn-a",
+          requestId: "approval-a",
+          action: "approve",
+          engineId: "agent-a"
+        }
+      },
+      {
+        occurredAt: "2026-04-17T00:10:15.000Z",
+        event: {
+          type: "interaction.requested",
+          sessionId: "session-b",
+          turnId: "turn-a",
+          requestId: "interaction-a",
+          interactionKind: "tool_user_input",
+          title: "Need input",
+          details: "Provide a value",
+          payload: { prompt: "value" },
+          engineId: "agent-a"
+        }
+      },
+      {
+        occurredAt: "2026-04-17T00:10:16.000Z",
+        event: {
+          type: "interaction.resolved",
+          sessionId: "session-b",
+          turnId: "turn-a",
+          requestId: "interaction-a",
+          action: "submit",
+          response: { value: "ok" },
+          engineId: "agent-a"
+        }
+      },
+      {
+        occurredAt: "2026-04-17T00:10:17.000Z",
+        event: {
+          type: "thread.goal.updated",
+          sessionId: "session-b",
+          threadId: "thread-b",
+          turnId: "turn-a",
+          goal: {
+            sessionId: "session-b",
+            threadId: "thread-b",
+            objective: "Finish task",
+            status: "active",
+            tokensUsed: 1,
+            timeUsedSeconds: 2,
+            createdAt: 10,
+            updatedAt: 20,
+            turnId: "turn-a"
+          }
+        }
+      },
+      {
+        occurredAt: "2026-04-17T00:10:18.000Z",
+        event: {
+          type: "turn.completed",
+          sessionId: "session-b",
+          turnId: "turn-a",
+          finishReason: "completed"
+        }
+      }
+    ]);
+  });
+
+  it("matches core canonical projection for runtime errors", () => {
+    expectRendererToMatchCoreProjection("conversation-a", [
+      {
+        occurredAt: "2026-04-17T00:20:00.000Z",
+        event: {
+          type: "session.created",
+          conversationId: "conversation-a",
+          sessionId: "session-a",
+          engineId: "agent-a",
+          status: "running"
+        }
+      },
+      {
+        occurredAt: "2026-04-17T00:20:01.000Z",
+        event: {
+          type: "turn.started",
+          sessionId: "session-a",
+          turnId: "turn-error"
+        }
+      },
+      {
+        occurredAt: "2026-04-17T00:20:02.000Z",
+        event: {
+          type: "runtime.error",
+          sessionId: "session-a",
+          turnId: "turn-error",
+          code: "RUNTIME_FAIL",
+          message: "Boom",
+          recoverable: false
+        }
+      }
+    ]);
   });
 
   it("coalesces adjacent stream deltas during batch ingestion while preserving cursor metadata", () => {

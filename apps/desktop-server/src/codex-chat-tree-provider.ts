@@ -4,14 +4,7 @@ import type {
   ChatTreeProviderContext,
   ChatTreeSnapshot
 } from "./chat-tree-provider.js";
-
-const resolveThreadId = (
-  input: ChatTreeProviderContext,
-  codexRuntimePort: CodexAppServerRuntimePort
-): string | undefined =>
-  codexRuntimePort.getThreadIdForSession(input.sessionId) ??
-  input.providerHandle?.providerSessionId ??
-  input.indexEntry?.providerSessionId;
+import { resolveCodexThreadId } from "./codex-session-identity.js";
 
 const toSafeNumber = (value: number | bigint): number => Number(value);
 
@@ -30,7 +23,7 @@ export class CodexChatTreeAgentProvider implements ChatTreeAgentProvider {
   }
 
   public async get(input: ChatTreeProviderContext): Promise<ChatTreeSnapshot> {
-    const threadId = resolveThreadId(input, this.codexRuntimePort);
+    const threadId = resolveCodexThreadId(input);
     const chatTree = threadId
       ? await this.codexRuntimePort.readChatTree(threadId)
       : undefined;
@@ -72,7 +65,7 @@ export class CodexChatTreeAgentProvider implements ChatTreeAgentProvider {
     nodeId: string,
     expectedRevision?: number
   ): Promise<boolean> {
-    const threadId = resolveThreadId(input, this.codexRuntimePort);
+    const threadId = resolveCodexThreadId(input);
     if (!threadId) {
       return false;
     }

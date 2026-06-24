@@ -1029,7 +1029,9 @@ export class SmartTakeoverService {
           parentSessionId,
           requestedBy: config.requestedBy ?? {
             engineId: parentSession.engineId,
-            providerSessionId: providerHandle?.providerSessionId ?? parentSessionId
+            ...(providerHandle
+              ? { providerSessionId: providerHandle.providerSessionId }
+              : {})
           },
           sourceTurnId: config.sourceTurnId,
           sourceToolCallId: config.sourceToolCallId,

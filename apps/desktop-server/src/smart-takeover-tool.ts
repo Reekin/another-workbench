@@ -15,7 +15,7 @@ export type SmartTakeoverRequest = {
   sourceToolCallId?: string;
   requestedBy: {
     engineId: string;
-    providerSessionId: string;
+    providerSessionId?: string;
     providerTurnId?: string;
   };
   arguments: HostToolInvocation["arguments"];
@@ -35,7 +35,7 @@ export type TakeoverVerdictRequest = {
   sourceToolCallId?: string;
   requestedBy: {
     engineId: string;
-    providerSessionId: string;
+    providerSessionId?: string;
     providerTurnId?: string;
   };
   arguments: HostToolInvocation["arguments"];

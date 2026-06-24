@@ -363,7 +363,52 @@ describe("RuntimeEventBus", () => {
       turnId: "turn-a-3"
     });
 
+    expect(bus.replayResult({ fromCursor: "1" })).toEqual({
+      status: "gap",
+      reason: "cursor_not_found",
+      replayed: 0,
+      fromCursor: "1",
+      toCursor: undefined,
+      envelopes: []
+    });
     expect(bus.replay({ fromCursor: "1" })).toEqual([]);
+  });
+
+  it("distinguishes a valid empty replay from a cursor gap", () => {
+    const bus = new RuntimeEventBus({
+      now: () => now,
+      createId: (() => {
+        let sequence = 0;
+        return () => `evt-empty-${++sequence}`;
+      })()
+    });
+
+    bus.publish({
+      type: "turn.started",
+      sessionId: "session-a",
+      turnId: "turn-a-1"
+    });
+    bus.publish({
+      type: "turn.completed",
+      sessionId: "session-a",
+      turnId: "turn-a-1",
+      finishReason: "completed"
+    });
+
+    expect(bus.replayResult({ fromCursor: "2" })).toEqual({
+      status: "ok",
+      replayed: 0,
+      fromCursor: "2",
+      toCursor: undefined,
+      envelopes: []
+    });
+    expect(bus.replayResult({ fromCursor: "cursor-missing" })).toMatchObject({
+      status: "gap",
+      reason: "cursor_not_found",
+      replayed: 0,
+      fromCursor: "cursor-missing",
+      envelopes: []
+    });
   });
 
   it("replays backlog before continuing live delivery for fromCursor subscriptions", () => {

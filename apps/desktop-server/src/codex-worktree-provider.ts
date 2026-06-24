@@ -4,14 +4,7 @@ import type {
   WorktreeSnapshot
 } from "./capability-registry.js";
 import type { CodexAppServerRuntimePort } from "./codex-app-server-runtime-port.js";
-
-const resolveThreadId = (
-  input: SessionCapabilityContext,
-  codexRuntimePort: CodexAppServerRuntimePort
-): string | undefined =>
-  codexRuntimePort.getThreadIdForSession(input.sessionId) ??
-  input.providerHandle?.providerSessionId ??
-  input.indexEntry?.providerSessionId;
+import { resolveCodexThreadId } from "./codex-session-identity.js";
 
 export class CodexWorktreeProvider implements WorktreeCapability {
   private readonly codexRuntimePort: CodexAppServerRuntimePort;
@@ -26,7 +19,7 @@ export class CodexWorktreeProvider implements WorktreeCapability {
   }
 
   public async get(input: SessionCapabilityContext): Promise<WorktreeSnapshot> {
-    const threadId = resolveThreadId(input, this.codexRuntimePort);
+    const threadId = resolveCodexThreadId(input);
     if (!threadId) {
       return {
         sessionId: input.sessionId,

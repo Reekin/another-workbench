@@ -83,6 +83,21 @@ export type ListSessionRelationsOptions = {
   childSessionId?: string;
 };
 
+export type DomainStoreRelationErrorCode =
+  | "duplicate_structural_parent"
+  | "cycle"
+  | "conversation_mismatch";
+
+export class DomainStoreRelationError extends Error {
+  public constructor(
+    public readonly code: DomainStoreRelationErrorCode,
+    message: string
+  ) {
+    super(message);
+    this.name = "DomainStoreRelationError";
+  }
+}
+
 const compareIsoAsc = (left?: string, right?: string): number => {
   if (!left && !right) {
     return 0;
@@ -117,6 +132,45 @@ const sortSessionsByUpdatedAtDesc = (sessions: Iterable<ChatSession>): ChatSessi
     }
     return left.sessionId.localeCompare(right.sessionId);
   });
+
+const sortThreadGoalsByUpdatedAtAsc = (goals: Iterable<ThreadGoal>): ThreadGoal[] =>
+  [...goals].sort((left, right) => {
+    const byUpdatedAt = left.updatedAt - right.updatedAt;
+    if (byUpdatedAt !== 0) {
+      return byUpdatedAt;
+    }
+    return left.sessionId.localeCompare(right.sessionId);
+  });
+
+const cloneConversation = (conversation: Conversation): Conversation =>
+  parseConversation(conversation);
+
+const cloneSession = (session: ChatSession): ChatSession => parseChatSession(session);
+
+const cloneTurn = (turn: Turn): Turn => parseTurn(turn);
+
+const cloneMessageBlock = (block: MessageBlock): MessageBlock =>
+  parseMessageBlock(block);
+
+const cloneToolCall = (toolCall: ToolCall): ToolCall => parseToolCall(toolCall);
+
+const cloneTerminalStream = (stream: TerminalStream): TerminalStream =>
+  parseTerminalStream(stream);
+
+const cloneApprovalRequest = (request: ApprovalRequest): ApprovalRequest =>
+  parseApprovalRequest(request);
+
+const cloneRuntimeInteraction = (
+  interaction: RuntimeInteraction
+): RuntimeInteraction => parseRuntimeInteraction(interaction);
+
+const cloneParticipant = (participant: AgentParticipant): AgentParticipant =>
+  parseAgentParticipant(participant);
+
+const cloneThreadGoal = (goal: ThreadGoal): ThreadGoal => parseThreadGoal(goal);
+
+const cloneSessionRelation = (relation: SessionRelation): SessionRelation =>
+  parseSessionRelation(relation);
 
 const addUniqueValue = (map: Map<string, string[]>, key: string, value: string): void => {
   const existing = map.get(key);
@@ -265,47 +319,47 @@ export class DomainStore {
         this.conversations.values(),
         (conversation) => conversation.createdAt,
         (conversation) => conversation.conversationId
-      ),
+      ).map(cloneConversation),
       sessions: this.listSessions({ includeArchived: true }),
       turns: sortByIsoAsc(
         this.turns.values(),
         (turn) => turn.startedAt,
         (turn) => turn.turnId
-      ),
+      ).map(cloneTurn),
       messageBlocks: sortByIsoAsc(
         this.messageBlocks.values(),
         (block) => block.startedAt,
         (block) => block.blockId
-      ),
+      ).map(cloneMessageBlock),
       toolCalls: sortByIsoAsc(
         this.toolCalls.values(),
         (toolCall) => toolCall.startedAt,
         (toolCall) => toolCall.toolCallId
-      ),
+      ).map(cloneToolCall),
       terminalStreams: sortByIsoAsc(
         this.terminalStreams.values(),
         (stream) => stream.startedAt,
         (stream) => stream.terminalId
-      ),
+      ).map(cloneTerminalStream),
       approvalRequests: sortByIsoAsc(
         this.approvalRequests.values(),
         (approval) => approval.requestedAt,
         (approval) => approval.requestId
-      ),
+      ).map(cloneApprovalRequest),
       runtimeInteractions: sortByIsoAsc(
         this.runtimeInteractions.values(),
         (interaction) => interaction.requestedAt,
         (interaction) => interaction.requestId
-      ),
+      ).map(cloneRuntimeInteraction),
       participants: [...this.participants.values()].sort((left, right) =>
         left.participantId.localeCompare(right.participantId)
-      ),
+      ).map(cloneParticipant),
       threadGoals: this.listThreadGoals(),
       sessionRelations: sortByIsoAsc(
         this.sessionRelations.values(),
         (relation) => relation.createdAt,
         (relation) => relation.relationId
-      )
+      ).map(cloneSessionRelation)
     };
   }
 
@@ -387,7 +441,8 @@ export class DomainStore {
   }
 
   public getConversation(conversationId: string): Conversation | undefined {
-    return this.conversations.get(conversationId);
+    const conversation = this.conversations.get(conversationId);
+    return conversation ? cloneConversation(conversation) : undefined;
   }
 
   public listConversations(): Conversation[] {
@@ -395,17 +450,18 @@ export class DomainStore {
       this.conversations.values(),
       (conversation) => conversation.createdAt,
       (conversation) => conversation.conversationId
-    );
+    ).map(cloneConversation);
   }
 
   public upsertConversation(conversation: Conversation | unknown): Conversation {
     const parsedConversation = parseConversation(conversation);
     this.conversations.set(parsedConversation.conversationId, parsedConversation);
-    return parsedConversation;
+    return cloneConversation(parsedConversation);
   }
 
   public getSession(sessionId: string): ChatSession | undefined {
-    return this.sessions.get(sessionId);
+    const session = this.sessions.get(sessionId);
+    return session ? cloneSession(session) : undefined;
   }
 
   public listSessions(options: ListSessionsOptions = {}): ChatSession[] {
@@ -426,11 +482,12 @@ export class DomainStore {
       sessions = sessions.filter((session) => !session.archivedAt);
     }
 
-    return sortSessionsByUpdatedAtDesc(sessions);
+    return sortSessionsByUpdatedAtDesc(sessions).map(cloneSession);
   }
 
   public upsertSession(session: ChatSession | unknown): ChatSession {
     const parsedSession = parseChatSession(session);
+    this.validateSessionConversation(parsedSession);
     const existing = this.sessions.get(parsedSession.sessionId);
     if (existing && existing.conversationId !== parsedSession.conversationId) {
       removeIndexedValue(
@@ -446,7 +503,7 @@ export class DomainStore {
       parsedSession.conversationId,
       parsedSession.sessionId
     );
-    return parsedSession;
+    return cloneSession(parsedSession);
   }
 
   public deleteSession(sessionId: string): boolean {
@@ -464,7 +521,8 @@ export class DomainStore {
   }
 
   public getTurn(turnId: string): Turn | undefined {
-    return this.turns.get(turnId);
+    const turn = this.turns.get(turnId);
+    return turn ? cloneTurn(turn) : undefined;
   }
 
   public listTurns(options: ListTurnsOptions = {}): Turn[] {
@@ -474,7 +532,9 @@ export class DomainStore {
         )
       : [...this.turns.values()];
 
-    return sortByIsoAsc(turns, (turn) => turn.startedAt, (turn) => turn.turnId);
+    return sortByIsoAsc(turns, (turn) => turn.startedAt, (turn) => turn.turnId).map(
+      cloneTurn
+    );
   }
 
   public upsertTurn(turn: Turn | unknown): Turn {
@@ -486,7 +546,7 @@ export class DomainStore {
 
     this.turns.set(parsedTurn.turnId, parsedTurn);
     addUniqueValue(this.turnIdsBySession, parsedTurn.sessionId, parsedTurn.turnId);
-    return parsedTurn;
+    return cloneTurn(parsedTurn);
   }
 
   public deleteTurn(turnId: string): boolean {
@@ -500,7 +560,8 @@ export class DomainStore {
   }
 
   public getMessageBlock(blockId: string): MessageBlock | undefined {
-    return this.messageBlocks.get(blockId);
+    const block = this.messageBlocks.get(blockId);
+    return block ? cloneMessageBlock(block) : undefined;
   }
 
   public listMessageBlocks(options: ListMessageBlocksOptions = {}): MessageBlock[] {
@@ -523,7 +584,9 @@ export class DomainStore {
       blocks = [...this.messageBlocks.values()];
     }
 
-    return sortByIsoAsc(blocks, (block) => block.startedAt, (block) => block.blockId);
+    return sortByIsoAsc(blocks, (block) => block.startedAt, (block) => block.blockId).map(
+      cloneMessageBlock
+    );
   }
 
   public upsertMessageBlock(block: MessageBlock | unknown): MessageBlock {
@@ -549,7 +612,7 @@ export class DomainStore {
       parsedBlock.messageId,
       parsedBlock.blockId
     );
-    return parsedBlock;
+    return cloneMessageBlock(parsedBlock);
   }
 
   public deleteMessageBlock(blockId: string): boolean {
@@ -568,7 +631,8 @@ export class DomainStore {
   }
 
   public getToolCall(toolCallId: string): ToolCall | undefined {
-    return this.toolCalls.get(toolCallId);
+    const toolCall = this.toolCalls.get(toolCallId);
+    return toolCall ? cloneToolCall(toolCall) : undefined;
   }
 
   public listToolCalls(options: ListToolCallsOptions = {}): ToolCall[] {
@@ -587,7 +651,7 @@ export class DomainStore {
       toolCalls,
       (toolCall) => toolCall.startedAt,
       (toolCall) => toolCall.toolCallId
-    );
+    ).map(cloneToolCall);
   }
 
   public upsertToolCall(toolCall: ToolCall | unknown): ToolCall {
@@ -603,7 +667,7 @@ export class DomainStore {
       parsedToolCall.turnId,
       parsedToolCall.toolCallId
     );
-    return parsedToolCall;
+    return cloneToolCall(parsedToolCall);
   }
 
   public deleteToolCall(toolCallId: string): boolean {
@@ -617,7 +681,8 @@ export class DomainStore {
   }
 
   public getTerminalStream(terminalId: string): TerminalStream | undefined {
-    return this.terminalStreams.get(terminalId);
+    const stream = this.terminalStreams.get(terminalId);
+    return stream ? cloneTerminalStream(stream) : undefined;
   }
 
   public listTerminalStreams(options: ListTerminalStreamsOptions = {}): TerminalStream[] {
@@ -636,7 +701,7 @@ export class DomainStore {
       streams,
       (stream) => stream.startedAt,
       (stream) => stream.terminalId
-    );
+    ).map(cloneTerminalStream);
   }
 
   public upsertTerminalStream(terminalStream: TerminalStream | unknown): TerminalStream {
@@ -648,7 +713,7 @@ export class DomainStore {
 
     this.terminalStreams.set(parsedStream.terminalId, parsedStream);
     addUniqueValue(this.terminalIdsByTurn, parsedStream.turnId, parsedStream.terminalId);
-    return parsedStream;
+    return cloneTerminalStream(parsedStream);
   }
 
   public deleteTerminalStream(terminalId: string): boolean {
@@ -662,7 +727,8 @@ export class DomainStore {
   }
 
   public getApprovalRequest(requestId: string): ApprovalRequest | undefined {
-    return this.approvalRequests.get(requestId);
+    const request = this.approvalRequests.get(requestId);
+    return request ? cloneApprovalRequest(request) : undefined;
   }
 
   public listApprovalRequests(options: ListApprovalRequestsOptions = {}): ApprovalRequest[] {
@@ -682,7 +748,7 @@ export class DomainStore {
       approvals,
       (approval) => approval.requestedAt,
       (approval) => approval.requestId
-    );
+    ).map(cloneApprovalRequest);
   }
 
   public upsertApprovalRequest(
@@ -704,7 +770,7 @@ export class DomainStore {
       parsedRequest.turnId,
       parsedRequest.requestId
     );
-    return parsedRequest;
+    return cloneApprovalRequest(parsedRequest);
   }
 
   public deleteApprovalRequest(requestId: string): boolean {
@@ -722,7 +788,8 @@ export class DomainStore {
   }
 
   public getRuntimeInteraction(requestId: string): RuntimeInteraction | undefined {
-    return this.runtimeInteractions.get(requestId);
+    const interaction = this.runtimeInteractions.get(requestId);
+    return interaction ? cloneRuntimeInteraction(interaction) : undefined;
   }
 
   public listRuntimeInteractions(
@@ -744,7 +811,7 @@ export class DomainStore {
       interactions,
       (interaction) => interaction.requestedAt,
       (interaction) => interaction.requestId
-    );
+    ).map(cloneRuntimeInteraction);
   }
 
   public upsertRuntimeInteraction(
@@ -768,7 +835,7 @@ export class DomainStore {
         parsedInteraction.requestId
       );
     }
-    return parsedInteraction;
+    return cloneRuntimeInteraction(parsedInteraction);
   }
 
   public deleteRuntimeInteraction(requestId: string): boolean {
@@ -786,7 +853,8 @@ export class DomainStore {
   }
 
   public getParticipant(participantId: string): AgentParticipant | undefined {
-    return this.participants.get(participantId);
+    const participant = this.participants.get(participantId);
+    return participant ? cloneParticipant(participant) : undefined;
   }
 
   public listParticipants(options: ListParticipantsOptions = {}): AgentParticipant[] {
@@ -805,7 +873,7 @@ export class DomainStore {
 
     return [...participants].sort((left, right) =>
       left.participantId.localeCompare(right.participantId)
-    );
+    ).map(cloneParticipant);
   }
 
   public upsertParticipant(participant: AgentParticipant | unknown): AgentParticipant {
@@ -828,7 +896,7 @@ export class DomainStore {
       parsedParticipant.conversationId,
       parsedParticipant.participantId
     );
-    return parsedParticipant;
+    return cloneParticipant(parsedParticipant);
   }
 
   public deleteParticipant(participantId: string): boolean {
@@ -846,7 +914,8 @@ export class DomainStore {
   }
 
   public getThreadGoal(sessionId: string): ThreadGoal | undefined {
-    return this.threadGoals.get(sessionId);
+    const goal = this.threadGoals.get(sessionId);
+    return goal ? cloneThreadGoal(goal) : undefined;
   }
 
   public listThreadGoals(options: ListThreadGoalsOptions = {}): ThreadGoal[] {
@@ -856,13 +925,13 @@ export class DomainStore {
         )
       : [...this.threadGoals.values()];
 
-    return sortByIsoAsc(goals, (goal) => String(goal.updatedAt), (goal) => goal.sessionId);
+    return sortThreadGoalsByUpdatedAtAsc(goals).map(cloneThreadGoal);
   }
 
   public upsertThreadGoal(goal: ThreadGoal | unknown): ThreadGoal {
     const parsedGoal = parseThreadGoal(goal);
     this.threadGoals.set(parsedGoal.sessionId, parsedGoal);
-    return parsedGoal;
+    return cloneThreadGoal(parsedGoal);
   }
 
   public deleteThreadGoal(sessionId: string): boolean {
@@ -870,7 +939,8 @@ export class DomainStore {
   }
 
   public getSessionRelation(relationId: string): SessionRelation | undefined {
-    return this.sessionRelations.get(relationId);
+    const relation = this.sessionRelations.get(relationId);
+    return relation ? cloneSessionRelation(relation) : undefined;
   }
 
   public listSessionRelations(
@@ -902,17 +972,21 @@ export class DomainStore {
       relations,
       (relation) => relation.createdAt,
       (relation) => relation.relationId
-    );
+    ).map(cloneSessionRelation);
   }
 
   public upsertSessionRelation(relation: SessionRelation | unknown): SessionRelation {
     const parsedRelation = parseSessionRelation(relation);
+    this.validateSessionRelation(parsedRelation);
     const existing = this.sessionRelations.get(parsedRelation.relationId);
     if (existing) {
       if (existing.childSessionId !== parsedRelation.childSessionId) {
         this.parentSessionIdByChild.delete(existing.childSessionId);
       }
-      if (existing.parentSessionId !== parsedRelation.parentSessionId) {
+      if (
+        existing.parentSessionId !== parsedRelation.parentSessionId ||
+        existing.childSessionId !== parsedRelation.childSessionId
+      ) {
         removeIndexedValue(
           this.childSessionIdsByParent,
           existing.parentSessionId,
@@ -931,7 +1005,7 @@ export class DomainStore {
       parsedRelation.parentSessionId,
       parsedRelation.childSessionId
     );
-    return parsedRelation;
+    return cloneSessionRelation(parsedRelation);
   }
 
   public deleteSessionRelation(relationId: string): boolean {
@@ -961,6 +1035,97 @@ export class DomainStore {
 
   public resolveConversationIdBySessionId(sessionId: string): string | undefined {
     return this.sessions.get(sessionId)?.conversationId;
+  }
+
+  private validateSessionConversation(session: ChatSession): void {
+    for (const relation of this.sessionRelations.values()) {
+      if (relation.parentSessionId === session.sessionId) {
+        const child = this.sessions.get(relation.childSessionId);
+        if (child && child.conversationId !== session.conversationId) {
+          throw new DomainStoreRelationError(
+            "conversation_mismatch",
+            `Session ${session.sessionId} cannot move to conversation ${session.conversationId} while child ${child.sessionId} belongs to ${child.conversationId}.`
+          );
+        }
+      }
+      if (relation.childSessionId === session.sessionId) {
+        const parent = this.sessions.get(relation.parentSessionId);
+        if (parent && parent.conversationId !== session.conversationId) {
+          throw new DomainStoreRelationError(
+            "conversation_mismatch",
+            `Session ${session.sessionId} cannot move to conversation ${session.conversationId} while parent ${parent.sessionId} belongs to ${parent.conversationId}.`
+          );
+        }
+      }
+    }
+  }
+
+  private validateSessionRelation(relation: SessionRelation): void {
+    this.assertSameConversation(relation);
+    this.assertSingleStructuralParent(relation);
+    this.assertAcyclicRelation(relation);
+  }
+
+  private assertSameConversation(relation: SessionRelation): void {
+    const parent = this.sessions.get(relation.parentSessionId);
+    const child = this.sessions.get(relation.childSessionId);
+    if (parent && child && parent.conversationId !== child.conversationId) {
+      throw new DomainStoreRelationError(
+        "conversation_mismatch",
+        `Session relation ${relation.relationId} crosses conversations ${parent.conversationId} and ${child.conversationId}.`
+      );
+    }
+  }
+
+  private assertSingleStructuralParent(relation: SessionRelation): void {
+    const existing = [...this.sessionRelations.values()].find(
+      (candidate) =>
+        candidate.relationId !== relation.relationId &&
+        candidate.childSessionId === relation.childSessionId
+    );
+    if (existing) {
+      throw new DomainStoreRelationError(
+        "duplicate_structural_parent",
+        `Session ${relation.childSessionId} already has parent ${existing.parentSessionId}.`
+      );
+    }
+  }
+
+  private assertAcyclicRelation(relation: SessionRelation): void {
+    if (relation.parentSessionId === relation.childSessionId) {
+      throw new DomainStoreRelationError(
+        "cycle",
+        `Session relation ${relation.relationId} points ${relation.parentSessionId} to itself.`
+      );
+    }
+
+    const visited = new Set<string>();
+    let currentSessionId: string | undefined = relation.parentSessionId;
+    while (currentSessionId) {
+      if (currentSessionId === relation.childSessionId) {
+        throw new DomainStoreRelationError(
+          "cycle",
+          `Session relation ${relation.relationId} creates a cycle.`
+        );
+      }
+      if (visited.has(currentSessionId)) {
+        return;
+      }
+      visited.add(currentSessionId);
+      currentSessionId = this.findParentSessionId(currentSessionId, relation.relationId);
+    }
+  }
+
+  private findParentSessionId(
+    childSessionId: string,
+    excludedRelationId: string
+  ): string | undefined {
+    const relation = [...this.sessionRelations.values()].find(
+      (candidate) =>
+        candidate.relationId !== excludedRelationId &&
+        candidate.childSessionId === childSessionId
+    );
+    return relation?.parentSessionId;
   }
 
   public deleteSessionCascade(sessionId: string): boolean {

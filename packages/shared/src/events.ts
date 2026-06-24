@@ -222,7 +222,7 @@ const zApprovalRequestedEvent = z
     approvalKind: z.enum(["command", "file_change", "tool", "custom"]),
     title: z.string().min(1),
     details: z.string().optional(),
-    availableActions: z.array(z.string().min(1)).default([]).optional(),
+    availableActions: z.array(z.string().min(1)).default([]),
     metadata: zJsonRecord.optional(),
     ...zActorFields
   });

@@ -324,6 +324,7 @@ describe("createRemoteRpcHandler", () => {
       method: "events.replay",
       ok: true,
       result: {
+        status: "ok",
         replayed: 1,
         fromCursor: "2"
       }
@@ -333,6 +334,46 @@ describe("createRemoteRpcHandler", () => {
         "conversation.updated"
       ]);
     }
+  });
+
+  it("returns an explicit replay gap when the requested cursor is unavailable", async () => {
+    const service = createService();
+    const handler = createRemoteRpcHandler(service);
+
+    await handler.handleRequest({
+      id: "req-create",
+      method: "runtime.command",
+      params: {
+        envelope: {
+          commandId: "cmd-create",
+          command: {
+            type: "createSession",
+            engineId: "codex"
+          }
+        }
+      }
+    });
+
+    const replayResponse = await handler.handleRequest({
+      id: "req-replay-gap",
+      method: "events.replay",
+      params: {
+        fromCursor: "cursor-missing"
+      }
+    });
+
+    expect(replayResponse).toMatchObject({
+      id: "req-replay-gap",
+      method: "events.replay",
+      ok: true,
+      result: {
+        status: "gap",
+        reason: "cursor_not_found",
+        replayed: 0,
+        fromCursor: "cursor-missing",
+        envelopes: []
+      }
+    });
   });
 
   it("returns a typed domain snapshot with the latest cursor", async () => {

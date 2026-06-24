@@ -2,13 +2,46 @@ import { describe, expect, it, vi } from "vitest";
 import type { CodexAppServerRuntimePort } from "../src/codex-app-server-runtime-port.js";
 import { CodexSessionActionsProvider } from "../src/codex-session-actions-provider.js";
 
+const codexProviderHandle = (providerSessionId = "thread-1") => ({
+  providerKind: "codex-thread",
+  providerSessionId
+});
+
 describe("CodexSessionActionsProvider", () => {
-  it("prefers the live thread id when copying the displayed session id", () => {
+  it("copies the canonical provider session id from the registry handle", () => {
     const provider = new CodexSessionActionsProvider({
-      codexRuntimePort: {
-        getThreadIdForSession: vi.fn().mockReturnValue("thread-live")
-      } as unknown as CodexAppServerRuntimePort
+      codexRuntimePort: {} as unknown as CodexAppServerRuntimePort
     });
+
+    expect(
+      provider.resolveDisplayedSessionId({
+        sessionId: "session-1",
+        engineId: "codex",
+        runtimeService: {} as never,
+        sessionIndexStore: {} as never,
+        providerHandle: codexProviderHandle("thread-handle"),
+        indexEntry: {
+          sessionId: "session-1",
+          providerSessionId: "thread-indexed"
+        } as never
+      })
+    ).toBe("thread-handle");
+  });
+
+  it("uses canonical provider handles without reading raw index identity", () => {
+    const provider = new CodexSessionActionsProvider({
+      codexRuntimePort: {} as unknown as CodexAppServerRuntimePort
+    });
+
+    expect(
+      provider.resolveDisplayedSessionId({
+        sessionId: "session-1",
+        engineId: "codex",
+        runtimeService: {} as never,
+        sessionIndexStore: {} as never,
+        providerHandle: codexProviderHandle("thread-handle")
+      })
+    ).toBe("thread-handle");
 
     expect(
       provider.resolveDisplayedSessionId({
@@ -21,14 +54,12 @@ describe("CodexSessionActionsProvider", () => {
           providerSessionId: "thread-indexed"
         } as never
       })
-    ).toBe("thread-live");
+    ).toBeUndefined();
   });
 
   it("exposes Codex-only action availability based on thread identity", async () => {
     const provider = new CodexSessionActionsProvider({
-      codexRuntimePort: {
-        getThreadIdForSession: vi.fn().mockReturnValue(undefined)
-      } as unknown as CodexAppServerRuntimePort
+      codexRuntimePort: {} as unknown as CodexAppServerRuntimePort
     });
 
     await expect(
@@ -58,7 +89,6 @@ describe("CodexSessionActionsProvider", () => {
     const archiveThread = vi.fn().mockResolvedValue(undefined);
     const provider = new CodexSessionActionsProvider({
       codexRuntimePort: {
-        getThreadIdForSession: vi.fn().mockReturnValue("thread-1"),
         archiveThread
       } as unknown as CodexAppServerRuntimePort
     });
@@ -67,7 +97,8 @@ describe("CodexSessionActionsProvider", () => {
       sessionId: "session-1",
       engineId: "codex",
       runtimeService: {} as never,
-      sessionIndexStore: {} as never
+      sessionIndexStore: {} as never,
+      providerHandle: codexProviderHandle()
     });
 
     expect(archiveThread).toHaveBeenCalledWith("thread-1");
@@ -79,7 +110,6 @@ describe("CodexSessionActionsProvider", () => {
     const listSkills = vi.fn().mockResolvedValue([]);
     const provider = new CodexSessionActionsProvider({
       codexRuntimePort: {
-        getThreadIdForSession: vi.fn().mockReturnValue("thread-1"),
         reloadUserConfig,
         reloadMcpServers,
         listSkills
@@ -116,7 +146,6 @@ describe("CodexSessionActionsProvider", () => {
     const attachThreadToSession = vi.fn();
     const provider = new CodexSessionActionsProvider({
       codexRuntimePort: {
-        getThreadIdForSession: vi.fn().mockReturnValue("thread-1"),
         interruptThread,
         unsubscribeThread,
         resumeThread,
@@ -130,7 +159,8 @@ describe("CodexSessionActionsProvider", () => {
         engineId: "codex",
         action: "resume",
         runtimeService: {} as never,
-        sessionIndexStore: {} as never
+        sessionIndexStore: {} as never,
+        providerHandle: codexProviderHandle()
       })
     ).resolves.toEqual({
       action: "resume",
@@ -162,7 +192,6 @@ describe("CodexSessionActionsProvider", () => {
     const setLastActiveSelection = vi.fn().mockResolvedValue(undefined);
     const provider = new CodexSessionActionsProvider({
       codexRuntimePort: {
-        getThreadIdForSession: vi.fn().mockReturnValue("thread-1"),
         forkThread,
         attachThreadToSession
       } as unknown as CodexAppServerRuntimePort
@@ -191,6 +220,7 @@ describe("CodexSessionActionsProvider", () => {
           upsertRelation,
           listRelations: vi.fn().mockReturnValue([])
         } as never,
+        providerHandle: codexProviderHandle(),
         session: {
           sessionId: "session-1",
           conversationId: "conversation-1",
@@ -267,7 +297,6 @@ describe("CodexSessionActionsProvider", () => {
     const upsertRelation = vi.fn().mockResolvedValue(undefined);
     const provider = new CodexSessionActionsProvider({
       codexRuntimePort: {
-        getThreadIdForSession: vi.fn().mockReturnValue(undefined),
         forkThread,
         attachThreadToSession: vi.fn()
       } as unknown as CodexAppServerRuntimePort
@@ -286,6 +315,7 @@ describe("CodexSessionActionsProvider", () => {
           upsertRelation,
           listRelations: vi.fn().mockReturnValue([])
         } as never,
+        providerHandle: codexProviderHandle("thread-parent"),
         indexEntry: {
           sessionId: "codex-thread:thread-parent",
           workspaceId: "workspace-1",
@@ -325,7 +355,6 @@ describe("CodexSessionActionsProvider", () => {
     const upsertSession = vi.fn().mockResolvedValue(undefined);
     const provider = new CodexSessionActionsProvider({
       codexRuntimePort: {
-        getThreadIdForSession: vi.fn().mockReturnValue("thread-parent"),
         forkThread,
         attachThreadToSession: vi.fn()
       } as unknown as CodexAppServerRuntimePort
@@ -359,6 +388,7 @@ describe("CodexSessionActionsProvider", () => {
           }
         ])
       } as never,
+      providerHandle: codexProviderHandle("thread-parent"),
       session: {
         sessionId: "session-parent",
         conversationId: "conversation-parent",
@@ -382,7 +412,6 @@ describe("CodexSessionActionsProvider", () => {
     const forkThread = vi.fn();
     const provider = new CodexSessionActionsProvider({
       codexRuntimePort: {
-        getThreadIdForSession: vi.fn().mockReturnValue("thread-1"),
         forkThread
       } as unknown as CodexAppServerRuntimePort
     });
@@ -398,6 +427,7 @@ describe("CodexSessionActionsProvider", () => {
           })
         } as never,
         sessionIndexStore: {} as never,
+        providerHandle: codexProviderHandle(),
         session: {
           sessionId: "session-1",
           conversationId: "conversation-1",
@@ -420,7 +450,6 @@ describe("CodexSessionActionsProvider", () => {
       });
     const provider = new CodexSessionActionsProvider({
       codexRuntimePort: {
-        getThreadIdForSession: vi.fn().mockReturnValue("thread-1"),
         readThread
       } as unknown as CodexAppServerRuntimePort
     });
@@ -431,7 +460,8 @@ describe("CodexSessionActionsProvider", () => {
         engineId: "codex",
         action: "open_rollout",
         runtimeService: {} as never,
-        sessionIndexStore: {} as never
+        sessionIndexStore: {} as never,
+        providerHandle: codexProviderHandle()
       })
     ).rejects.toThrow("Codex thread does not expose a rollout path.");
 
@@ -441,7 +471,8 @@ describe("CodexSessionActionsProvider", () => {
         engineId: "codex",
         action: "open_rollout",
         runtimeService: {} as never,
-        sessionIndexStore: {} as never
+        sessionIndexStore: {} as never,
+        providerHandle: codexProviderHandle()
       })
     ).resolves.toEqual({
       action: "open_rollout",

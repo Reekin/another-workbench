@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCodexAdapter } from "@another-workbench/adapters";
 import type { EventEnvelope } from "@another-workbench/shared";
 import { createCodexAppServerRuntimePort } from "../src/codex-app-server-runtime-port.js";
@@ -64,6 +64,9 @@ const createManualTakeoverHarness = async (options: {
     commandId?: string;
     command: Record<string, unknown> & { type: string };
   }) => Promise<{ commandId: string; commandType: string; accepted: boolean }>;
+  resolveProviderSessionHandle?: (
+    sessionId: string
+  ) => { providerKind: string; providerSessionId: string } | undefined;
   defaultTimeoutMs?: number;
   threadGoals?: Array<Record<string, unknown>>;
 } = {}) => {
@@ -117,10 +120,12 @@ const createManualTakeoverHarness = async (options: {
       cursor: `cursor-${++cursorIndex}`
     }),
     getWorkspaceRegistry: () => undefined,
-    resolveProviderSessionHandle: (sessionId: string) => ({
-      providerKind: "codex-thread",
-      providerSessionId: `thread-${sessionId}`
-    }),
+    resolveProviderSessionHandle:
+      options.resolveProviderSessionHandle ??
+      ((sessionId: string) => ({
+        providerKind: "codex-thread",
+        providerSessionId: `thread-${sessionId}`
+      })),
     createRelatedSession: async (input: {
       metadata?: Record<string, unknown>;
       parentSessionId: string;
@@ -901,6 +906,45 @@ describe("SmartTakeoverService", () => {
       "Agent-facing preset picker copy that should not reach takeover"
     );
     expect(initialPrompt).not.toContain("desc:");
+  });
+
+  it("does not synthesize provider identity for configured takeover runs", async () => {
+    const harness = await createManualTakeoverHarness({
+      resolveProviderSessionHandle: () => undefined
+    });
+    const launchTakeover = vi
+      .spyOn(
+        harness.service as unknown as {
+          launchTakeover: (...args: unknown[]) => Promise<unknown>;
+        },
+        "launchTakeover"
+      )
+      .mockRejectedValue(new Error("stop after request capture"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await harness.service.setManualTakeover({
+        sessionId: "session-parent",
+        presetId: "review"
+      });
+      await waitFor(() => launchTakeover.mock.calls.length > 0);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(launchTakeover.mock.calls[0]?.[0]).toMatchObject({
+        parentSessionId: "session-parent",
+        requestedBy: {
+          engineId: "codex"
+        }
+      });
+      expect(
+        (
+          launchTakeover.mock.calls[0]?.[0] as {
+            requestedBy?: { providerSessionId?: string };
+          }
+        )?.requestedBy?.providerSessionId
+      ).toBeUndefined();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("does not send the takeover prompt when disabled during launch", async () => {

@@ -627,6 +627,7 @@ export class DomainProjector {
             title: existing?.title ?? unknownApprovalTitle,
             details: existing?.details,
             note: existing?.note,
+            availableActions: existing?.availableActions ?? [],
             actor: existing?.actor ?? actor,
             requestedAt: existing?.requestedAt ?? timestamp,
             resolvedAt: timestamp
@@ -712,6 +713,9 @@ export class DomainProjector {
         this.store.deleteThreadGoal(event.sessionId);
         return;
       }
+      case "conversationGraph.updated": {
+        return;
+      }
       case "runtime.error": {
         if (event.recoverable) {
           return;
@@ -741,20 +745,23 @@ export class DomainProjector {
             })
           );
           this.appendTurnCollection(event.turnId, "messageIds", messageId, timestamp);
+          const updatedTurn = this.store.getTurn(event.turnId);
           this.upsertTurnRecord({
             turnId: event.turnId,
             sessionId: event.sessionId,
             status: "completed",
             finishReason: "failed",
-            startedAt: existingTurn?.startedAt ?? timestamp,
+            startedAt: updatedTurn?.startedAt ?? existingTurn?.startedAt ?? timestamp,
             completedAt: timestamp,
-            actor: existingTurn?.actor,
-            finalMessageId: existingTurn?.finalMessageId,
-            messageIds: existingTurn?.messageIds,
-            toolCallIds: existingTurn?.toolCallIds,
-            terminalIds: existingTurn?.terminalIds,
-            approvalRequestIds: existingTurn?.approvalRequestIds,
-            interactionRequestIds: existingTurn?.interactionRequestIds
+            actor: updatedTurn?.actor ?? existingTurn?.actor,
+            finalMessageId: updatedTurn?.finalMessageId ?? existingTurn?.finalMessageId,
+            messageIds: updatedTurn?.messageIds ?? existingTurn?.messageIds,
+            toolCallIds: updatedTurn?.toolCallIds ?? existingTurn?.toolCallIds,
+            terminalIds: updatedTurn?.terminalIds ?? existingTurn?.terminalIds,
+            approvalRequestIds:
+              updatedTurn?.approvalRequestIds ?? existingTurn?.approvalRequestIds,
+            interactionRequestIds:
+              updatedTurn?.interactionRequestIds ?? existingTurn?.interactionRequestIds
           });
         }
         if (event.sessionId) {

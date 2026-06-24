@@ -638,6 +638,18 @@ describe("WorkbenchRuntimeService", () => {
       "4:session.archived",
       "5:conversation.updated"
     ]);
+
+    expect(
+      service.replayResult({
+        fromCursor: "cursor-missing"
+      })
+    ).toMatchObject({
+      status: "gap",
+      reason: "cursor_not_found",
+      replayed: 0,
+      fromCursor: "cursor-missing",
+      envelopes: []
+    });
   });
 
   it("tracks the selected engine across runtime configuration changes", () => {

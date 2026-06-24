@@ -6,6 +6,7 @@ import type {
   ChatSession,
   Command,
   DomainSnapshot,
+  EventEnvelope,
   EngineIntegrationTierRpc,
   EngineSharedCapabilityRpc,
   EngineExtensionDescriptorRpc
@@ -36,6 +37,17 @@ export type CommandReceipt = {
 export type SnapshotResult = {
   snapshot: DomainSnapshot;
   cursor?: string;
+};
+
+export type EventReplayGapReason = "cursor_not_found";
+
+export type EventReplayResult = {
+  status: "ok" | "gap";
+  reason?: EventReplayGapReason;
+  replayed: number;
+  fromCursor?: string;
+  toCursor?: string;
+  envelopes: EventEnvelope[];
 };
 
 export type WorkbenchAgentBinding = {

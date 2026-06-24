@@ -163,6 +163,8 @@ export type EventReplayInput = {
 };
 
 export type EventReplayResult = {
+  status: "ok" | "gap";
+  reason?: "cursor_not_found";
   replayed: number;
   fromCursor: string;
   toCursor?: string;
@@ -1276,6 +1278,7 @@ export const createDesktopTransport = (
         });
         return {
           ...result,
+          status: result.status ?? "ok",
           envelopes: result.envelopes ?? []
         };
       }

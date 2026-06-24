@@ -165,7 +165,52 @@ export const zProviderSessionHandleSchema = z.object({
   providerSessionId: z.string().min(1)
 });
 
-const zSessionBrowserNodeSchema: z.ZodType = z.lazy(() =>
+export type ProviderSessionHandle = z.infer<typeof zProviderSessionHandleSchema>;
+
+export type SessionBrowserNodeRpc = {
+  sessionId: string;
+  displaySessionId: string;
+  providerSessionId?: string;
+  providerHandle?: ProviderSessionHandle;
+  workspaceId: string;
+  conversationId?: string;
+  engineId: string;
+  title: string;
+  summaryText?: string;
+  statusDot: z.infer<typeof zSessionStatusDotSchema>;
+  takeoverStatus?: "managed" | "agent";
+  takeoverPresetId?: z.infer<typeof zTakeoverPresetIdSchema>;
+  isExpanded: boolean;
+  isActive: boolean;
+  isArchived: boolean;
+  parentSessionId?: string;
+  children: SessionBrowserNodeRpc[];
+  updatedAt: string;
+  lastCompletedTurnAt?: string;
+};
+
+export type WorkspaceBrowserNodeRpc = {
+  workspaceId: string;
+  label: string;
+  rootPath: string;
+  isExpanded: boolean;
+  isActive: boolean;
+  sessions: SessionBrowserNodeRpc[];
+};
+
+type SessionBrowserNodeRpcInput = Omit<SessionBrowserNodeRpc, "children"> & {
+  children?: SessionBrowserNodeRpcInput[];
+};
+
+type WorkspaceBrowserNodeRpcInput = Omit<WorkspaceBrowserNodeRpc, "sessions"> & {
+  sessions?: SessionBrowserNodeRpcInput[];
+};
+
+const zSessionBrowserNodeSchema: z.ZodType<
+  SessionBrowserNodeRpc,
+  z.ZodTypeDef,
+  SessionBrowserNodeRpcInput
+> = z.lazy(() =>
   z.object({
     sessionId: zSessionId,
     displaySessionId: z.string().min(1),
@@ -189,7 +234,11 @@ const zSessionBrowserNodeSchema: z.ZodType = z.lazy(() =>
   })
 );
 
-const zWorkspaceBrowserNodeSchema = z.object({
+const zWorkspaceBrowserNodeSchema: z.ZodType<
+  WorkspaceBrowserNodeRpc,
+  z.ZodTypeDef,
+  WorkspaceBrowserNodeRpcInput
+> = z.object({
   workspaceId: z.string().min(1),
   label: z.string().min(1),
   rootPath: z.string().min(1),
@@ -1553,6 +1602,8 @@ const zEventsReplayResponseSchema = z.object({
   method: z.literal("events.replay"),
   ok: z.literal(true),
   result: z.object({
+    status: z.enum(["ok", "gap"]).default("ok"),
+    reason: z.enum(["cursor_not_found"]).optional(),
     replayed: z.number().int().nonnegative(),
     fromCursor: zCursor,
     toCursor: zCursor.optional(),
@@ -1656,9 +1707,6 @@ export type WorkbenchRpcResponse = z.infer<typeof zWorkbenchRpcResponseSchema>;
 export type WorkbenchEventPush = z.infer<typeof zWorkbenchEventPushSchema>;
 export type WorkbenchEventPushBatch = z.infer<typeof zWorkbenchEventPushBatchSchema>;
 export type WorkspaceRecordRpc = z.infer<typeof zWorkspaceRecordSchema>;
-export type ProviderSessionHandle = z.infer<typeof zProviderSessionHandleSchema>;
-export type SessionBrowserNodeRpc = z.infer<typeof zSessionBrowserNodeSchema>;
-export type WorkspaceBrowserNodeRpc = z.infer<typeof zWorkspaceBrowserNodeSchema>;
 export type SessionActionKindRpc = z.infer<typeof zSessionActionKindSchema>;
 export type SessionActionDescriptorRpc = z.infer<typeof zSessionActionDescriptorSchema>;
 export type SessionActionResultRpc = z.infer<typeof zSessionActionResultSchema>;

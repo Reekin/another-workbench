@@ -6,7 +6,6 @@ describe("CodexChatTreeAgentProvider", () => {
   it("maps codex chat tree nodes into the shared snapshot shape", async () => {
     const provider = new CodexChatTreeAgentProvider({
       codexRuntimePort: {
-        getThreadIdForSession: vi.fn().mockReturnValue("thread-1"),
         readChatTree: vi.fn().mockResolvedValue({
           threadId: "thread-1",
           chatTree: {
@@ -44,7 +43,11 @@ describe("CodexChatTreeAgentProvider", () => {
         sessionId: "session-codex",
         engineId: "codex",
         runtimeService: {} as never,
-        sessionIndexStore: {} as never
+        sessionIndexStore: {} as never,
+        providerHandle: {
+          providerKind: "codex-thread",
+          providerSessionId: "thread-1"
+        }
       })
     ).resolves.toEqual({
       sessionId: "session-codex",
@@ -83,7 +86,6 @@ describe("CodexChatTreeAgentProvider", () => {
   it("returns a non-jumpable snapshot when no chat tree is available", async () => {
     const provider = new CodexChatTreeAgentProvider({
       codexRuntimePort: {
-        getThreadIdForSession: vi.fn().mockReturnValue("thread-1"),
         readChatTree: vi.fn().mockResolvedValue(undefined)
       } as unknown as CodexAppServerRuntimePort,
       now: () => "2026-04-18T00:10:02Z"
@@ -94,7 +96,11 @@ describe("CodexChatTreeAgentProvider", () => {
         sessionId: "session-codex",
         engineId: "codex",
         runtimeService: {} as never,
-        sessionIndexStore: {} as never
+        sessionIndexStore: {} as never,
+        providerHandle: {
+          providerKind: "codex-thread",
+          providerSessionId: "thread-1"
+        }
       })
     ).resolves.toEqual({
       sessionId: "session-codex",
@@ -105,15 +111,10 @@ describe("CodexChatTreeAgentProvider", () => {
     });
   });
 
-  it("always jumps through the resolved thread id", async () => {
+  it("jumps through canonical provider thread ids only", async () => {
     const setCurrentChatTreeNode = vi.fn().mockResolvedValue(undefined);
-    const getThreadIdForSession = vi
-      .fn()
-      .mockReturnValueOnce("thread-live")
-      .mockReturnValueOnce(undefined);
     const provider = new CodexChatTreeAgentProvider({
       codexRuntimePort: {
-        getThreadIdForSession,
         setCurrentChatTreeNode
       } as unknown as CodexAppServerRuntimePort
     });
@@ -124,7 +125,11 @@ describe("CodexChatTreeAgentProvider", () => {
           sessionId: "session-codex",
           engineId: "codex",
           runtimeService: {} as never,
-          sessionIndexStore: {} as never
+          sessionIndexStore: {} as never,
+          providerHandle: {
+            providerKind: "codex-thread",
+            providerSessionId: "thread-handle"
+          }
         },
         "node-1"
       )
@@ -145,19 +150,31 @@ describe("CodexChatTreeAgentProvider", () => {
         "node-2",
         7
       )
-    ).resolves.toBe(true);
+    ).resolves.toBe(false);
+
+    await expect(
+      provider.jump(
+        {
+          sessionId: "session-codex",
+          engineId: "codex",
+          runtimeService: {} as never,
+          sessionIndexStore: {} as never,
+          indexEntry: {
+            sessionId: "session-codex",
+            providerSessionId: "thread-indexed"
+          } as never
+        },
+        "node-3",
+        8
+      )
+    ).resolves.toBe(false);
 
     expect(setCurrentChatTreeNode).toHaveBeenNthCalledWith(
       1,
-      "thread-live",
+      "thread-handle",
       "node-1",
       undefined
     );
-    expect(setCurrentChatTreeNode).toHaveBeenNthCalledWith(
-      2,
-      "thread-indexed",
-      "node-2",
-      7
-    );
+    expect(setCurrentChatTreeNode).toHaveBeenCalledTimes(1);
   });
 });

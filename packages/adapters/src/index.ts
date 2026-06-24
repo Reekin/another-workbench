@@ -4,6 +4,7 @@ export const adapterDependencies = ["@another-workbench/shared"];
 
 export * from "./types.js";
 export * from "./runtime-lifecycle.js";
+export * from "./lifecycle-gate.js";
 export * from "./runtime-port.js";
 export * from "./mapper.js";
 export * from "./runtime-backed-adapter.js";

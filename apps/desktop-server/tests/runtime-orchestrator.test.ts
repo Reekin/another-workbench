@@ -8,6 +8,20 @@ import type { WorkbenchAgentBinding } from "../src/runtime-types.js";
 
 const flushAsyncWork = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+const createDeferred = <T = void>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return {
+    promise,
+    resolve,
+    reject
+  };
+};
+
 describe("RuntimeOrchestrator", () => {
   it("preserves full agent binding metadata and shared capability surface", () => {
     let orchestrator: RuntimeOrchestrator | undefined;
@@ -185,6 +199,88 @@ describe("RuntimeOrchestrator", () => {
     );
     expect(subscribe).toHaveBeenCalledTimes(1);
     expect(publishedEvents).toEqual([]);
+  });
+
+  it("single-flights concurrent adapter initialization", async () => {
+    const initializeGate = createDeferred();
+    const initialize = vi.fn(() => initializeGate.promise);
+    const subscribe = vi.fn().mockReturnValue(() => {});
+    const adapter: AgentAdapter = {
+      id: "codex-adapter",
+      kind: "codex",
+      getLifecycleState: () => "idle",
+      initialize,
+      executeCommand: vi.fn().mockResolvedValue({
+        commandId: "noop",
+        commandType: "initialize",
+        accepted: true
+      }),
+      subscribe,
+      dispose: vi.fn().mockResolvedValue(undefined)
+    };
+
+    let orchestrator: RuntimeOrchestrator | undefined;
+    const domainService = new DomainService({
+      now: () => "2026-04-20T00:02:00Z",
+      assertEngineRegistered: (engineId) =>
+        orchestrator?.assertEngineRegistered(engineId),
+      resolveEngineCapabilities: (engineId) =>
+        orchestrator?.getEngineCapabilities(engineId) ?? [],
+      publishRuntimeEvent: () => {}
+    });
+
+    orchestrator = new RuntimeOrchestrator({
+      domainService,
+      sessionIndexSyncService: {
+        syncSession: vi.fn().mockResolvedValue(undefined),
+        syncRelation: vi.fn().mockResolvedValue(undefined),
+        markSessionUnreadCompleted: vi.fn().mockResolvedValue(undefined)
+      } as never,
+      workspaceSelectionService: {
+        activateSelection: vi.fn().mockResolvedValue(undefined),
+        selectWorkspace: vi.fn().mockResolvedValue({
+          workspaceId: "workspace-1"
+        })
+      } as never,
+      publishRuntimeEvent: () => {},
+      agentBindings: [
+        {
+          descriptor: {
+            engineId: "codex",
+            displayName: "Codex",
+            capabilities: ["chat", "terminal"]
+          },
+          adapter
+        }
+      ]
+    });
+
+    orchestrator.selectEngine({
+      engineId: "codex"
+    });
+
+    const first = orchestrator.executeCommand({
+      commandId: "init-concurrent-1",
+      command: {
+        type: "initialize"
+      }
+    });
+    const second = orchestrator.executeCommand({
+      commandId: "init-concurrent-2",
+      command: {
+        type: "initialize"
+      }
+    });
+    await flushAsyncWork();
+
+    expect(initialize).toHaveBeenCalledTimes(1);
+    expect(subscribe).not.toHaveBeenCalled();
+
+    initializeGate.resolve();
+    await Promise.all([first, second]);
+
+    expect(initialize).toHaveBeenCalledTimes(1);
+    expect(subscribe).toHaveBeenCalledTimes(1);
   });
 
   it("creates sessions and coordinates index plus workspace side effects", async () => {

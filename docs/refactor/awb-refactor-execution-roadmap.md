@@ -131,7 +131,7 @@ fake runtime 集成测试、真实 Codex/ACP smoke、真实进程 kill 行为验
   - package typecheck
   - contract tests
 
-[ ] task_1_2: 实现 LifecycleGate
+[x] task_1_2: 实现 LifecycleGate
 - tag: infra
 - goal: 消除 adapter/port 并发 start 与 stop 竞态
 - executor: subagent

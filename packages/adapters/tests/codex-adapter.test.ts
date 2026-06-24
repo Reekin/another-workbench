@@ -11,12 +11,29 @@ import type {
 import { describe, expect, it } from "vitest";
 import { CodexAdapter } from "../src/codex/adapter.js";
 
+const createDeferred = <T = void>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return {
+    promise,
+    resolve,
+    reject
+  };
+};
+
 class FakeCodexRuntimePort
   implements
     AdapterRuntimePort<CodexRuntimeRequest, CodexRuntimeResponse, CodexRuntimeEvent>
 {
   public started = false;
   public stopped = false;
+  public startCalls = 0;
+  public subscribeCalls = 0;
+  public startBarrier: Promise<void> | undefined;
   public readonly requests: CodexRuntimeRequest[] = [];
   private lifecycleState: RuntimeLifecycleState = "stopped";
   private listener: ((event: CodexRuntimeEvent) => void) | undefined;
@@ -27,6 +44,8 @@ class FakeCodexRuntimePort
   }
 
   public async start(): Promise<void> {
+    this.startCalls += 1;
+    await this.startBarrier;
     this.started = true;
     this.setState("ready");
   }
@@ -50,6 +69,7 @@ class FakeCodexRuntimePort
   }
 
   public subscribe(listener: (event: CodexRuntimeEvent) => void): () => void {
+    this.subscribeCalls += 1;
     this.listener = listener;
     return () => {
       this.listener = undefined;
@@ -74,6 +94,30 @@ class FakeCodexRuntimePort
 }
 
 describe("CodexAdapter", () => {
+  it("single-flights concurrent runtime initialization", async () => {
+    const runtimePort = new FakeCodexRuntimePort();
+    const startGate = createDeferred();
+    runtimePort.startBarrier = startGate.promise;
+    const adapter = new CodexAdapter({
+      runtimePort,
+      fallbackAgentId: "codex-agent"
+    });
+
+    const first = adapter.initialize();
+    const second = adapter.initialize();
+    await Promise.resolve();
+
+    expect(runtimePort.startCalls).toBe(1);
+    expect(runtimePort.subscribeCalls).toBe(0);
+
+    startGate.resolve();
+    await Promise.all([first, second]);
+
+    expect(runtimePort.startCalls).toBe(1);
+    expect(runtimePort.subscribeCalls).toBe(1);
+    expect(adapter.getLifecycleState()).toBe("ready");
+  });
+
   it("maps commands to codex runtime methods", async () => {
     const runtimePort = new FakeCodexRuntimePort();
     const adapter = new CodexAdapter({

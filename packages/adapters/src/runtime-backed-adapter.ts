@@ -1,4 +1,5 @@
 import { parseEventEnvelope, type CommandEnvelope } from "@another-workbench/shared";
+import { LifecycleGate } from "./lifecycle-gate.js";
 import type { AdapterMapper } from "./mapper.js";
 import type { AdapterRuntimePort } from "./runtime-port.js";
 import type {
@@ -103,6 +104,7 @@ export class RuntimeBackedAdapter<
     | ((sessionId: string) => string | undefined)
     | undefined;
   private readonly subscriptions = new Map<number, Subscription>();
+  private readonly lifecycleGate = new LifecycleGate();
   private teardownRuntimeSubscription: (() => void) | undefined;
   private nextSubscriptionId = 1;
   private lifecycleState: AdapterLifecycleState = "idle";
@@ -127,22 +129,28 @@ export class RuntimeBackedAdapter<
       return;
     }
 
-    this.lifecycleState = "starting";
-    try {
-      await this.runtimePort.start({
-        cwd: config.cwd,
-        env: config.env,
-        auth: config.auth,
-        metadata: config.metadata
-      });
-      this.teardownRuntimeSubscription = this.runtimePort.subscribe((event) => {
-        this.publishRuntimeEvent(event);
-      });
-      this.lifecycleState = "ready";
-    } catch (error) {
-      this.lifecycleState = "error";
-      throw error;
-    }
+    await this.lifecycleGate.start(async () => {
+      if (this.lifecycleState === "ready") {
+        return;
+      }
+
+      this.lifecycleState = "starting";
+      try {
+        await this.runtimePort.start({
+          cwd: config.cwd,
+          env: config.env,
+          auth: config.auth,
+          metadata: config.metadata
+        });
+        this.teardownRuntimeSubscription ??= this.runtimePort.subscribe((event) => {
+          this.publishRuntimeEvent(event);
+        });
+        this.lifecycleState = "ready";
+      } catch (error) {
+        this.lifecycleState = "error";
+        throw error;
+      }
+    });
   }
 
   public async executeCommand(
@@ -172,13 +180,15 @@ export class RuntimeBackedAdapter<
   }
 
   public async dispose(): Promise<void> {
-    if (this.teardownRuntimeSubscription) {
-      this.teardownRuntimeSubscription();
-      this.teardownRuntimeSubscription = undefined;
-    }
-    this.subscriptions.clear();
-    await this.runtimePort.stop();
-    this.lifecycleState = "stopped";
+    await this.lifecycleGate.stop(async () => {
+      if (this.teardownRuntimeSubscription) {
+        this.teardownRuntimeSubscription();
+        this.teardownRuntimeSubscription = undefined;
+      }
+      this.subscriptions.clear();
+      await this.runtimePort.stop();
+      this.lifecycleState = "stopped";
+    });
   }
 
   private publishRuntimeEvent(event: TEvent): void {

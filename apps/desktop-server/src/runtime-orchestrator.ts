@@ -23,6 +23,7 @@ import {
 } from "./runtime-types.js";
 import type { SessionTitleGenerator } from "./title-generation-service.js";
 import { WorkspaceSelectionService } from "./workspace-selection-service.js";
+import { LifecycleGate } from "./runtime/lifecycle-gate.js";
 
 type Clock = () => string;
 type IdFactory = () => string;
@@ -68,6 +69,7 @@ export class RuntimeOrchestrator {
   private readonly bindings = new Map<string, WorkbenchAgentBinding>();
   private readonly engineSelections = new Map<string, Record<string, unknown> | undefined>();
   private readonly adapterUnsubscribeByEngineId = new Map<string, () => void>();
+  private readonly adapterLifecycleGateByEngineId = new Map<string, LifecycleGate>();
   private readonly readyEngineIds = new Set<string>();
   private readonly domainService: DomainService;
   private readonly sessionIndexSyncService: SessionIndexSyncService;
@@ -372,16 +374,21 @@ export class RuntimeOrchestrator {
   }
 
   public async dispose(): Promise<void> {
-    for (const unsubscribe of this.adapterUnsubscribeByEngineId.values()) {
-      unsubscribe();
-    }
-    this.adapterUnsubscribeByEngineId.clear();
-
-    for (const binding of this.bindings.values()) {
-      await binding.adapter?.dispose();
+    for (const [engineId, binding] of this.bindings.entries()) {
+      await this.lifecycleGateForEngine(engineId).stop(async () => {
+        const unsubscribe = this.adapterUnsubscribeByEngineId.get(engineId);
+        if (unsubscribe) {
+          unsubscribe();
+          this.adapterUnsubscribeByEngineId.delete(engineId);
+        }
+        await binding.adapter?.dispose();
+        this.readyEngineIds.delete(engineId);
+      });
     }
     await this.drainBackgroundWork();
     this.readyEngineIds.clear();
+    this.adapterUnsubscribeByEngineId.clear();
+    this.adapterLifecycleGateByEngineId.clear();
   }
 
   public resolveSessionIndexRecord(sessionId: string) {
@@ -568,19 +575,42 @@ export class RuntimeOrchestrator {
       return;
     }
 
-    await binding.adapter.initialize({
-      ...(binding.runtimeConfig ?? {}),
-      metadata: {
-        ...(binding.runtimeConfig?.metadata ?? {}),
-        selectedConfig: this.engineSelections.get(engineId)
+    await this.lifecycleGateForEngine(engineId).start(async () => {
+      if (this.readyEngineIds.has(engineId)) {
+        return;
       }
-    });
 
-    const unsubscribe = binding.adapter.subscribe((envelope) => {
-      this.enqueueAdapterEvent(envelope);
+      const currentBinding = this.requireBinding(engineId);
+      if (!currentBinding.adapter) {
+        return;
+      }
+
+      await currentBinding.adapter.initialize({
+        ...(currentBinding.runtimeConfig ?? {}),
+        metadata: {
+          ...(currentBinding.runtimeConfig?.metadata ?? {}),
+          selectedConfig: this.engineSelections.get(engineId)
+        }
+      });
+
+      if (!this.adapterUnsubscribeByEngineId.has(engineId)) {
+        const unsubscribe = currentBinding.adapter.subscribe((envelope) => {
+          this.enqueueAdapterEvent(envelope);
+        });
+        this.adapterUnsubscribeByEngineId.set(engineId, unsubscribe);
+      }
+      this.readyEngineIds.add(engineId);
     });
-    this.adapterUnsubscribeByEngineId.set(engineId, unsubscribe);
-    this.readyEngineIds.add(engineId);
+  }
+
+  private lifecycleGateForEngine(engineId: string): LifecycleGate {
+    const existing = this.adapterLifecycleGateByEngineId.get(engineId);
+    if (existing) {
+      return existing;
+    }
+    const gate = new LifecycleGate();
+    this.adapterLifecycleGateByEngineId.set(engineId, gate);
+    return gate;
   }
 
   private enqueueAdapterEvent(envelope: EventEnvelope): void {

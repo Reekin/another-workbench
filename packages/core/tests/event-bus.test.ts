@@ -167,6 +167,185 @@ describe("RuntimeEventBus", () => {
     expect(bus.getSubscriberCount()).toBe(0);
   });
 
+  it("isolates listener failures and reports them without blocking delivery", () => {
+    const errors: unknown[] = [];
+    const bus = new RuntimeEventBus({
+      now: () => now,
+      createId: (() => {
+        let sequence = 0;
+        return () => `evt-isolated-${++sequence}`;
+      })(),
+      onListenerError: (error) => {
+        errors.push(error);
+      }
+    });
+    const received: string[] = [];
+
+    bus.subscribe(() => {
+      throw new Error("listener failed");
+    });
+    bus.subscribe((envelope) => {
+      received.push(`b:${envelope.cursor}:${envelope.event.type}`);
+    });
+    bus.subscribe((envelope) => {
+      received.push(`c:${envelope.cursor}:${envelope.event.type}`);
+    });
+
+    const envelope = bus.publish({
+      type: "turn.started",
+      sessionId: "session-a",
+      turnId: "turn-a"
+    });
+
+    expect(envelope.cursor).toBe("1");
+    expect(received).toEqual(["b:1:turn.started", "c:1:turn.started"]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({
+      envelope,
+      subscriptionId: 1,
+      phase: "live"
+    });
+  });
+
+  it("does not let listener error diagnostics break publish", () => {
+    const bus = new RuntimeEventBus({
+      now: () => now,
+      createId: () => "evt-diagnostic-failure",
+      onListenerError: () => {
+        throw new Error("diagnostics failed");
+      }
+    });
+    const received: RuntimeEventEnvelope[] = [];
+
+    bus.subscribe(() => {
+      throw new Error("listener failed");
+    });
+    bus.subscribe((envelope) => {
+      received.push(envelope);
+    });
+
+    expect(() =>
+      bus.publish({
+        type: "turn.started",
+        sessionId: "session-a",
+        turnId: "turn-a"
+      })
+    ).not.toThrow();
+    expect(received).toHaveLength(1);
+  });
+
+  it("reports replay listener failures without cancelling the subscription", () => {
+    const errors: unknown[] = [];
+    const bus = new RuntimeEventBus({
+      now: () => now,
+      createId: (() => {
+        let sequence = 0;
+        return () => `evt-replay-isolated-${++sequence}`;
+      })(),
+      onListenerError: (error) => {
+        errors.push(error);
+      }
+    });
+
+    bus.publish({
+      type: "turn.started",
+      sessionId: "session-a",
+      turnId: "turn-a-1"
+    });
+
+    const received: string[] = [];
+    bus.subscribeWithReplay((envelope) => {
+      received.push(`${envelope.cursor}:${envelope.event.type}`);
+      if (envelope.cursor === "1") {
+        throw new Error("replay failed");
+      }
+    });
+    bus.publish({
+      type: "turn.completed",
+      sessionId: "session-a",
+      turnId: "turn-a-1",
+      finishReason: "completed"
+    });
+
+    expect(received).toEqual(["1:turn.started", "2:turn.completed"]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({
+      phase: "replay"
+    });
+  });
+
+  it("publishes batches with stable cursor and listener order", () => {
+    const bus = new RuntimeEventBus({
+      now: () => now,
+      createId: (() => {
+        let sequence = 0;
+        return () => `evt-batch-${++sequence}`;
+      })()
+    });
+    const received: string[] = [];
+
+    bus.subscribe((envelope) => {
+      received.push(`a:${envelope.cursor}:${envelope.event.type}`);
+    });
+    bus.subscribe((envelope) => {
+      received.push(`b:${envelope.cursor}:${envelope.event.type}`);
+    });
+
+    const envelopes = bus.publishBatch([
+      {
+        type: "turn.started",
+        sessionId: "session-a",
+        turnId: "turn-a"
+      },
+      {
+        type: "turn.completed",
+        sessionId: "session-a",
+        turnId: "turn-a",
+        finishReason: "completed"
+      }
+    ]);
+
+    expect(envelopes.map((envelope) => envelope.cursor)).toEqual(["1", "2"]);
+    expect(envelopes.map((envelope) => envelope.eventId)).toEqual([
+      "evt-batch-1",
+      "evt-batch-2"
+    ]);
+    expect(received).toEqual([
+      "a:1:turn.started",
+      "b:1:turn.started",
+      "a:2:turn.completed",
+      "b:2:turn.completed"
+    ]);
+    expect(bus.replay().map((envelope) => envelope.cursor)).toEqual(["1", "2"]);
+  });
+
+  it("does not advance the cursor when batch parsing fails", () => {
+    const bus = new RuntimeEventBus({
+      now: () => now,
+      createId: (() => {
+        let sequence = 0;
+        return () => `evt-invalid-batch-${++sequence}`;
+      })()
+    });
+
+    expect(() =>
+      bus.publishBatch([
+        {
+          type: "turn.started",
+          sessionId: "session-a",
+          turnId: "turn-a"
+        },
+        {
+          type: "turn.started",
+          sessionId: "",
+          turnId: "turn-b"
+        }
+      ])
+    ).toThrow();
+    expect(bus.getLatestCursor()).toBeUndefined();
+    expect(bus.replay()).toEqual([]);
+  });
+
   it("delegates readSinceCursor to replay port", () => {
     const replayEvents: RuntimeEventEnvelope[] = [
       {

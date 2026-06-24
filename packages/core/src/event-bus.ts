@@ -20,6 +20,13 @@ export type RuntimeEventFilter = {
 
 export type RuntimeEventListener = (envelope: RuntimeEventEnvelope) => void;
 
+export type RuntimeEventListenerError = {
+  error: unknown;
+  envelope: RuntimeEventEnvelope;
+  subscriptionId?: number;
+  phase: "live" | "replay";
+};
+
 export type RuntimeEventReplayPort = {
   onEventPublished?: (envelope: RuntimeEventEnvelope) => void;
   readSinceCursor?: (cursor: string) => RuntimeEventReplayPortResult;
@@ -64,6 +71,7 @@ type RuntimeEventBusOptions = {
   now?: () => string;
   createId?: () => string;
   replayPort?: RuntimeEventReplayPort;
+  onListenerError?: (error: RuntimeEventListenerError) => void;
   resolveConversationIdBySessionId?: (sessionId: string) => string | undefined;
   maxReplayEnvelopes?: number;
 };
@@ -182,6 +190,7 @@ export class RuntimeEventBus {
   private readonly maxReplayEnvelopes: number;
   private readonly now: () => string;
   private readonly createId: () => string;
+  private readonly onListenerError?: (error: RuntimeEventListenerError) => void;
   private sequence = 0;
   private nextSubscriptionId = 1;
 
@@ -192,32 +201,28 @@ export class RuntimeEventBus {
     this.maxReplayEnvelopes = Math.max(1, options.maxReplayEnvelopes ?? 2_000);
     this.now = options.now ?? (() => new Date().toISOString());
     this.createId = options.createId ?? createOpaqueId;
+    this.onListenerError = options.onListenerError;
   }
 
   public publish(event: RuntimeEvent | unknown): RuntimeEventEnvelope {
-    const parsedEvent = limitRuntimeEventPayload(parseRuntimeEvent(event));
-    const envelope: RuntimeEventEnvelope = {
-      eventId: this.createId(),
-      cursor: String(++this.sequence),
-      occurredAt: this.now(),
-      event: parsedEvent
-    };
+    return this.publishBatch([event])[0];
+  }
 
-    this.appendReplayEnvelope(envelope);
-    this.replayPort?.onEventPublished?.(envelope);
-    for (const subscription of this.subscriptions.values()) {
-      if (
-        shouldDeliver(
-          subscription.filter,
-          envelope,
-          this.resolveConversationIdBySessionId
-        )
-      ) {
-        subscription.listener(envelope);
-      }
+  public publishBatch(events: readonly (RuntimeEvent | unknown)[]): RuntimeEventEnvelope[] {
+    const parsedEvents = events.map((event) =>
+      limitRuntimeEventPayload(parseRuntimeEvent(event))
+    );
+    const envelopes = parsedEvents.map((event) => this.createEnvelope(event));
+
+    for (const envelope of envelopes) {
+      this.appendReplayEnvelope(envelope);
+      this.replayPort?.onEventPublished?.(envelope);
+    }
+    for (const envelope of envelopes) {
+      this.deliverEnvelope(envelope);
     }
 
-    return envelope;
+    return envelopes;
   }
 
   public subscribe(
@@ -244,7 +249,11 @@ export class RuntimeEventBus {
     });
 
     for (const envelope of replayed) {
-      listener(envelope);
+      this.deliverToListener({
+        listener,
+        envelope,
+        phase: "replay"
+      });
     }
 
     return unsubscribe;
@@ -320,6 +329,60 @@ export class RuntimeEventBus {
     const overflow = this.replayBuffer.length - this.maxReplayEnvelopes;
     if (overflow > 0) {
       this.replayBuffer.splice(0, overflow);
+    }
+  }
+
+  private createEnvelope(event: RuntimeEvent): RuntimeEventEnvelope {
+    return {
+      eventId: this.createId(),
+      cursor: String(++this.sequence),
+      occurredAt: this.now(),
+      event
+    };
+  }
+
+  private deliverEnvelope(envelope: RuntimeEventEnvelope): void {
+    for (const [subscriptionId, subscription] of this.subscriptions.entries()) {
+      if (
+        shouldDeliver(
+          subscription.filter,
+          envelope,
+          this.resolveConversationIdBySessionId
+        )
+      ) {
+        this.deliverToListener({
+          listener: subscription.listener,
+          envelope,
+          subscriptionId,
+          phase: "live"
+        });
+      }
+    }
+  }
+
+  private deliverToListener(input: {
+    listener: RuntimeEventListener;
+    envelope: RuntimeEventEnvelope;
+    subscriptionId?: number;
+    phase: RuntimeEventListenerError["phase"];
+  }): void {
+    try {
+      input.listener(input.envelope);
+    } catch (error) {
+      this.reportListenerError({
+        error,
+        envelope: input.envelope,
+        subscriptionId: input.subscriptionId,
+        phase: input.phase
+      });
+    }
+  }
+
+  private reportListenerError(error: RuntimeEventListenerError): void {
+    try {
+      this.onListenerError?.(error);
+    } catch {
+      // Error diagnostics must never become another publish failure.
     }
   }
 

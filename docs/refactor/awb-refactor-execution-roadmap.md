@@ -330,7 +330,7 @@ domain property tests、host integration、cold hydration 和真实 archive/fork
   - shared schema tests
   - desktop-server snapshot tests
 
-[ ] task_2_4: EventBus listener 隔离与 publishBatch
+[x] task_2_4: EventBus listener 隔离与 publishBatch
 - tag: prod
 - goal: 一个订阅者失败不产生 partial delivery
 - executor: subagent

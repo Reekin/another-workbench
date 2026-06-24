@@ -652,6 +652,42 @@ describe("WorkbenchRuntimeService", () => {
     });
   });
 
+  it("continues runtime-service delivery when a subscriber throws", async () => {
+    const service = createService();
+    const received: string[] = [];
+    const unsubscribeFailing = service.subscribe(() => {
+      throw new Error("diagnostics subscriber failed");
+    });
+    const unsubscribeReceiving = service.subscribe((envelope) => {
+      received.push(`${envelope.cursor}:${envelope.event.type}`);
+    }, {
+      conversationId: "conversation-1"
+    });
+
+    await expect(
+      service.executeCommand({
+        commandId: "cmd-create",
+        command: {
+          type: "createSession",
+          engineId: "codex"
+        }
+      })
+    ).resolves.toMatchObject({
+      commandId: "cmd-create",
+      commandType: "createSession",
+      accepted: true
+    });
+
+    unsubscribeFailing();
+    unsubscribeReceiving();
+
+    expect(received).toEqual([
+      "1:participant.updated",
+      "2:session.created",
+      "3:conversation.updated"
+    ]);
+  });
+
   it("tracks the selected engine across runtime configuration changes", () => {
     const service = createService();
 

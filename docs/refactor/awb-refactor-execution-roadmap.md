@@ -80,6 +80,8 @@
 
 # Phase 1：Runtime 生命周期
 
+> 阶段状态：已验收通过（2026-06-25）。
+
 ## 阶段目标
 
 建立 single-flight start/stop、进程 generation、request timeout/abort、crash reject-all 和可恢复状态。

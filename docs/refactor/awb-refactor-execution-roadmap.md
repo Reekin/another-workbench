@@ -187,7 +187,7 @@ fake runtime 集成测试、真实 Codex/ACP smoke、真实进程 kill 行为验
   - targeted tests
   - process-level timeout smoke
 
-[ ] task_1_5: Codex runtime 迁移到 supervisor/client
+[x] task_1_5: Codex runtime 迁移到 supervisor/client
 - tag: prod
 - goal: 让默认 native runtime 使用正式生命周期
 - executor: subagent
@@ -204,6 +204,7 @@ fake runtime 集成测试、真实 Codex/ACP smoke、真实进程 kill 行为验
 - verify:
   - `pnpm --filter @another-workbench/desktop-server test -- codex-app-server-runtime-port`
   - `pnpm smoke:codex`
+  - `pnpm smoke:codex:restart`
   - 人工 crash/restart smoke
 
 [ ] task_1_6: ACP runtime 迁移到 supervisor

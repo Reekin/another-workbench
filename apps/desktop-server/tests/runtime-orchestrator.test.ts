@@ -110,12 +110,15 @@ describe("RuntimeOrchestrator", () => {
   });
 
   it("initializes adapters once and forwards selected config metadata", async () => {
-    const initialize = vi.fn().mockResolvedValue(undefined);
+    let lifecycleState: ReturnType<AgentAdapter["getLifecycleState"]> = "idle";
+    const initialize = vi.fn().mockImplementation(async () => {
+      lifecycleState = "ready";
+    });
     const subscribe = vi.fn().mockReturnValue(() => {});
     const adapter: AgentAdapter = {
       id: "codex-adapter",
       kind: "codex",
-      getLifecycleState: () => "idle",
+      getLifecycleState: () => lifecycleState,
       initialize,
       executeCommand: vi.fn().mockResolvedValue({
         commandId: "noop",
@@ -201,14 +204,92 @@ describe("RuntimeOrchestrator", () => {
     expect(publishedEvents).toEqual([]);
   });
 
-  it("single-flights concurrent adapter initialization", async () => {
-    const initializeGate = createDeferred();
-    const initialize = vi.fn(() => initializeGate.promise);
+  it("invalidates cached adapter readiness after a runtime failure", async () => {
+    let lifecycleState: ReturnType<AgentAdapter["getLifecycleState"]> = "idle";
+    const initialize = vi.fn().mockImplementation(async () => {
+      lifecycleState = "ready";
+    });
     const subscribe = vi.fn().mockReturnValue(() => {});
     const adapter: AgentAdapter = {
       id: "codex-adapter",
       kind: "codex",
-      getLifecycleState: () => "idle",
+      getLifecycleState: () => lifecycleState,
+      initialize,
+      executeCommand: vi.fn().mockResolvedValue({
+        commandId: "noop",
+        commandType: "initialize",
+        accepted: true
+      }),
+      subscribe,
+      dispose: vi.fn().mockResolvedValue(undefined)
+    };
+
+    let orchestrator: RuntimeOrchestrator | undefined;
+    const domainService = new DomainService({
+      now: () => "2026-04-20T00:02:00Z",
+      assertEngineRegistered: (engineId) =>
+        orchestrator?.assertEngineRegistered(engineId),
+      resolveEngineCapabilities: (engineId) =>
+        orchestrator?.getEngineCapabilities(engineId) ?? [],
+      publishRuntimeEvent: () => {}
+    });
+
+    orchestrator = new RuntimeOrchestrator({
+      domainService,
+      sessionIndexSyncService: {
+        syncSession: vi.fn().mockResolvedValue(undefined),
+        syncRelation: vi.fn().mockResolvedValue(undefined),
+        markSessionUnreadCompleted: vi.fn().mockResolvedValue(undefined)
+      } as never,
+      workspaceSelectionService: {
+        activateSelection: vi.fn().mockResolvedValue(undefined),
+        selectWorkspace: vi.fn().mockResolvedValue({
+          workspaceId: "workspace-1"
+        })
+      } as never,
+      publishRuntimeEvent: () => {},
+      agentBindings: [
+        {
+          descriptor: {
+            engineId: "codex",
+            displayName: "Codex",
+            capabilities: ["chat", "terminal"]
+          },
+          adapter
+        }
+      ]
+    });
+
+    await orchestrator.executeCommand({
+      commandId: "init-before-crash",
+      command: {
+        type: "initialize"
+      }
+    });
+    lifecycleState = "error";
+    await orchestrator.executeCommand({
+      commandId: "init-after-crash",
+      command: {
+        type: "initialize"
+      }
+    });
+
+    expect(initialize).toHaveBeenCalledTimes(2);
+    expect(subscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it("single-flights concurrent adapter initialization", async () => {
+    const initializeGate = createDeferred();
+    let lifecycleState: ReturnType<AgentAdapter["getLifecycleState"]> = "idle";
+    const initialize = vi.fn(async () => {
+      await initializeGate.promise;
+      lifecycleState = "ready";
+    });
+    const subscribe = vi.fn().mockReturnValue(() => {});
+    const adapter: AgentAdapter = {
+      id: "codex-adapter",
+      kind: "codex",
+      getLifecycleState: () => lifecycleState,
       initialize,
       executeCommand: vi.fn().mockResolvedValue({
         commandId: "noop",
@@ -364,11 +445,15 @@ describe("RuntimeOrchestrator", () => {
       commandType: "sendUserMessage",
       accepted: true
     });
+    let lifecycleState: ReturnType<AgentAdapter["getLifecycleState"]> = "idle";
+    const initialize = vi.fn().mockImplementation(async () => {
+      lifecycleState = "ready";
+    });
     const adapter: AgentAdapter = {
       id: "acp-adapter",
       kind: "acp",
-      getLifecycleState: () => "idle",
-      initialize: vi.fn().mockResolvedValue(undefined),
+      getLifecycleState: () => lifecycleState,
+      initialize,
       executeCommand,
       subscribe: vi.fn().mockReturnValue(() => {}),
       dispose: vi.fn().mockResolvedValue(undefined)
@@ -450,11 +535,15 @@ describe("RuntimeOrchestrator", () => {
       commandType: "sendUserMessage",
       accepted: true
     });
+    let lifecycleState: ReturnType<AgentAdapter["getLifecycleState"]> = "idle";
+    const initialize = vi.fn().mockImplementation(async () => {
+      lifecycleState = "ready";
+    });
     const adapter: AgentAdapter = {
       id: "codex-adapter",
       kind: "codex",
-      getLifecycleState: () => "idle",
-      initialize: vi.fn().mockResolvedValue(undefined),
+      getLifecycleState: () => lifecycleState,
+      initialize,
       executeCommand,
       subscribe: vi.fn().mockReturnValue(() => {}),
       dispose: vi.fn().mockResolvedValue(undefined)
@@ -553,11 +642,15 @@ describe("RuntimeOrchestrator", () => {
       accepted: true
     });
     const dispose = vi.fn().mockResolvedValue(undefined);
+    let lifecycleState: ReturnType<AgentAdapter["getLifecycleState"]> = "idle";
+    const initialize = vi.fn().mockImplementation(async () => {
+      lifecycleState = "ready";
+    });
     const adapter: AgentAdapter = {
       id: "codex-adapter",
       kind: "codex",
-      getLifecycleState: () => "idle",
-      initialize: vi.fn().mockResolvedValue(undefined),
+      getLifecycleState: () => lifecycleState,
+      initialize,
       executeCommand,
       subscribe: vi.fn().mockReturnValue(() => {}),
       dispose
@@ -707,11 +800,15 @@ describe("RuntimeOrchestrator", () => {
     const syncSession = vi.fn().mockResolvedValue(undefined);
     const syncRelation = vi.fn().mockResolvedValue(undefined);
     const subscribe = vi.fn();
+    let lifecycleState: ReturnType<AgentAdapter["getLifecycleState"]> = "idle";
+    const initialize = vi.fn().mockImplementation(async () => {
+      lifecycleState = "ready";
+    });
     const adapter: AgentAdapter = {
       id: "codex-adapter",
       kind: "codex",
-      getLifecycleState: () => "idle",
-      initialize: vi.fn().mockResolvedValue(undefined),
+      getLifecycleState: () => lifecycleState,
+      initialize,
       executeCommand: vi.fn().mockResolvedValue({
         commandId: "noop",
         commandType: "initialize",
@@ -819,11 +916,15 @@ describe("RuntimeOrchestrator", () => {
   it("does not sync the session index for high-volume output deltas", async () => {
     const syncSession = vi.fn().mockResolvedValue(undefined);
     const subscribe = vi.fn();
+    let lifecycleState: ReturnType<AgentAdapter["getLifecycleState"]> = "idle";
+    const initialize = vi.fn().mockImplementation(async () => {
+      lifecycleState = "ready";
+    });
     const adapter: AgentAdapter = {
       id: "codex-adapter",
       kind: "codex",
-      getLifecycleState: () => "idle",
-      initialize: vi.fn().mockResolvedValue(undefined),
+      getLifecycleState: () => lifecycleState,
+      initialize,
       executeCommand: vi.fn().mockResolvedValue({
         commandId: "noop",
         commandType: "initialize",

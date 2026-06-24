@@ -45,6 +45,7 @@ class FakeCodexRuntimePort
 
   public async start(): Promise<void> {
     this.startCalls += 1;
+    this.setState("starting");
     await this.startBarrier;
     this.started = true;
     this.setState("ready");
@@ -87,6 +88,10 @@ class FakeCodexRuntimePort
     this.listener?.(event);
   }
 
+  public fail(): void {
+    this.setState("failed");
+  }
+
   private setState(state: RuntimeLifecycleState): void {
     this.lifecycleState = state;
     this.stateListener?.(state);
@@ -114,6 +119,33 @@ describe("CodexAdapter", () => {
     await Promise.all([first, second]);
 
     expect(runtimePort.startCalls).toBe(1);
+    expect(runtimePort.subscribeCalls).toBe(1);
+    expect(adapter.getLifecycleState()).toBe("ready");
+  });
+
+  it("marks the adapter unavailable when the runtime fails and can reinitialize", async () => {
+    const runtimePort = new FakeCodexRuntimePort();
+    const adapter = new CodexAdapter({
+      runtimePort,
+      fallbackAgentId: "codex-agent"
+    });
+
+    await adapter.initialize();
+    expect(adapter.getLifecycleState()).toBe("ready");
+
+    runtimePort.fail();
+    expect(adapter.getLifecycleState()).toBe("error");
+    await expect(
+      adapter.executeCommand({
+        commandId: "cmd-after-failure",
+        command: {
+          type: "initialize"
+        }
+      })
+    ).rejects.toThrow("is not ready");
+
+    await adapter.initialize();
+    expect(runtimePort.startCalls).toBe(2);
     expect(runtimePort.subscribeCalls).toBe(1);
     expect(adapter.getLifecycleState()).toBe("ready");
   });

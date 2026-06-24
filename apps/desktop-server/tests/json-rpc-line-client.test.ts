@@ -206,6 +206,20 @@ describe("JsonRpcLineClient", () => {
     output.emit("drain");
   });
 
+  it("rejects pending writes when disposed before drain", async () => {
+    const output = new BackpressureOutput();
+    const { client } = createClient({
+      output: output as unknown as Writable
+    });
+
+    const write = client.notify("notify/slow");
+    expect(output.chunks).toHaveLength(1);
+
+    client.dispose(new Error("runtime disposed"));
+
+    await expect(write).rejects.toThrow("runtime disposed");
+  });
+
   it("dispatches server requests, notifications, and parse errors", async () => {
     const { client, input } = createClient();
     const requests: JsonRpcLineRequestPayload[] = [];

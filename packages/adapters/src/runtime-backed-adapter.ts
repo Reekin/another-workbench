@@ -2,6 +2,7 @@ import { parseEventEnvelope, type CommandEnvelope } from "@another-workbench/sha
 import { LifecycleGate } from "./lifecycle-gate.js";
 import type { AdapterMapper } from "./mapper.js";
 import type { AdapterRuntimePort } from "./runtime-port.js";
+import type { RuntimeLifecycleState } from "./runtime-lifecycle.js";
 import type {
   AdapterCommandResult,
   AdapterEventFilter,
@@ -106,6 +107,7 @@ export class RuntimeBackedAdapter<
   private readonly subscriptions = new Map<number, Subscription>();
   private readonly lifecycleGate = new LifecycleGate();
   private teardownRuntimeSubscription: (() => void) | undefined;
+  private teardownRuntimeStateSubscription: (() => void) | undefined;
   private nextSubscriptionId = 1;
   private lifecycleState: AdapterLifecycleState = "idle";
 
@@ -135,6 +137,11 @@ export class RuntimeBackedAdapter<
       }
 
       this.lifecycleState = "starting";
+      this.teardownRuntimeStateSubscription ??= this.runtimePort.subscribeState(
+        (state) => {
+          this.applyRuntimeLifecycleState(state);
+        }
+      );
       try {
         await this.runtimePort.start({
           cwd: config.cwd,
@@ -185,6 +192,10 @@ export class RuntimeBackedAdapter<
         this.teardownRuntimeSubscription();
         this.teardownRuntimeSubscription = undefined;
       }
+      if (this.teardownRuntimeStateSubscription) {
+        this.teardownRuntimeStateSubscription();
+        this.teardownRuntimeStateSubscription = undefined;
+      }
       this.subscriptions.clear();
       await this.runtimePort.stop();
       this.lifecycleState = "stopped";
@@ -216,5 +227,23 @@ export class RuntimeBackedAdapter<
       now: this.now,
       createId: this.createId
     };
+  }
+
+  private applyRuntimeLifecycleState(state: RuntimeLifecycleState): void {
+    switch (state) {
+      case "starting":
+        this.lifecycleState = "starting";
+        break;
+      case "ready":
+        this.lifecycleState = "ready";
+        break;
+      case "stopping":
+      case "stopped":
+        this.lifecycleState = "stopped";
+        break;
+      case "failed":
+        this.lifecycleState = "error";
+        break;
+    }
   }
 }

@@ -572,18 +572,21 @@ export class RuntimeOrchestrator {
   }
 
   private async ensureAdapterReady(engineId: string): Promise<void> {
-    if (this.readyEngineIds.has(engineId)) {
+    if (this.hasUsableReadyAdapter(engineId)) {
       return;
     }
+    this.readyEngineIds.delete(engineId);
+
     const binding = this.requireBinding(engineId);
     if (!binding.adapter) {
       return;
     }
 
     await this.lifecycleGateForEngine(engineId).start(async () => {
-      if (this.readyEngineIds.has(engineId)) {
+      if (this.hasUsableReadyAdapter(engineId)) {
         return;
       }
+      this.readyEngineIds.delete(engineId);
 
       const currentBinding = this.requireBinding(engineId);
       if (!currentBinding.adapter) {
@@ -606,6 +609,15 @@ export class RuntimeOrchestrator {
       }
       this.readyEngineIds.add(engineId);
     });
+  }
+
+  private hasUsableReadyAdapter(engineId: string): boolean {
+    if (!this.readyEngineIds.has(engineId)) {
+      return false;
+    }
+    const binding = this.bindings.get(engineId);
+    const state = binding?.adapter?.getLifecycleState();
+    return state === "ready";
   }
 
   private lifecycleGateForEngine(engineId: string): LifecycleGate {

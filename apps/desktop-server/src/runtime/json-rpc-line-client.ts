@@ -48,6 +48,10 @@ type PendingRequest = {
   signal: AbortSignal | undefined;
 };
 
+type PendingWrite = {
+  reject: (error: Error) => void;
+};
+
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 const localRequestId = (id: JsonRpcLineId): string => String(id);
@@ -63,6 +67,7 @@ export class JsonRpcLineClient {
   >();
   private readonly protocolErrorListeners = new Set<Listener<Error>>();
   private readonly pendingById = new Map<string, PendingRequest>();
+  private readonly pendingWrites = new Set<PendingWrite>();
   private buffer = "";
   private nextRequestId = 0;
 
@@ -82,14 +87,14 @@ export class JsonRpcLineClient {
   };
 
   private readonly handleOutputError = (error: Error): void => {
-    this.rejectAll(
-      createRuntimePortError({
+    const writeError = createRuntimePortError({
         code: "runtime_write_failed",
         message: "Runtime input stream failed.",
         retryable: true,
         cause: error
-      })
-    );
+    });
+    this.rejectAll(writeError);
+    this.rejectAllWrites(writeError);
   };
 
   public constructor(options: JsonRpcLineClientOptions = {}) {
@@ -122,15 +127,16 @@ export class JsonRpcLineClient {
   }
 
   public dispose(error?: Error): void {
-    this.detachStreams();
-    this.rejectAll(
+    const disposalError =
       error ??
-        createRuntimePortError({
-          code: "runtime_process_exited",
-          message: "Runtime line client was disposed.",
-          retryable: true
-        })
-    );
+      createRuntimePortError({
+        code: "runtime_process_exited",
+        message: "Runtime line client was disposed.",
+        retryable: true
+      });
+    this.rejectAll(disposalError);
+    this.rejectAllWrites(disposalError);
+    this.detachStreams();
   }
 
   public getPendingCount(): number {
@@ -280,6 +286,12 @@ export class JsonRpcLineClient {
   public rejectAll(error: Error): void {
     for (const requestId of [...this.pendingById.keys()]) {
       this.rejectPending(requestId, error);
+    }
+  }
+
+  public rejectAllWrites(error: Error): void {
+    for (const pendingWrite of [...this.pendingWrites]) {
+      pendingWrite.reject(error);
     }
   }
 
@@ -441,6 +453,7 @@ export class JsonRpcLineClient {
     return new Promise((resolve, reject) => {
       let settled = false;
       let abortListener: (() => void) | undefined;
+      let pendingWrite: PendingWrite | undefined;
       const settle = (error?: Error | null) => {
         if (settled) {
           return;
@@ -448,6 +461,9 @@ export class JsonRpcLineClient {
         settled = true;
         output.off("drain", onDrain);
         output.off("error", onError);
+        if (pendingWrite) {
+          this.pendingWrites.delete(pendingWrite);
+        }
         if (options.signal && abortListener) {
           options.signal.removeEventListener("abort", abortListener);
         }
@@ -460,6 +476,10 @@ export class JsonRpcLineClient {
       const onDrain = () => settle();
       const onError = (error: Error) => settle(error);
       abortListener = () => settle(this.createAbortError(payload.method ?? "write"));
+      pendingWrite = {
+        reject: (error) => settle(error)
+      };
+      this.pendingWrites.add(pendingWrite);
 
       output.once("error", onError);
       if (options.signal) {

@@ -19,6 +19,7 @@
     "remote:smoke:relay": "pnpm exec tsx ./scripts/remote-smoke-relay.ts",
     "remote:smoke:host-register": "pnpm exec tsx ./scripts/remote-smoke-host-register.ts",
     "smoke:codex": "pnpm exec tsx ./scripts/smoke-real-codex-runtime.ts",
+    "smoke:codex:restart": "pnpm exec tsx ./scripts/smoke-codex-runtime-restart.ts",
     "smoke:pi": "pnpm exec tsx ./scripts/smoke-real-pi-acp-runtime.ts"
   },
   "pnpm": {

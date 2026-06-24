@@ -325,6 +325,52 @@ describe("Codex app-server runtime port", () => {
         code: 23
       })
     });
+    expect(port.getState()).toBe("failed");
+  });
+
+  it("cleans up failed initialize attempts and can start a fresh process", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    await expect(
+      port.start({
+        env: {
+          FAKE_CODEX_EXIT_ON_METHOD: "initialize",
+          FAKE_CODEX_EXIT_CODE: "24"
+        }
+      })
+    ).rejects.toMatchObject({
+      code: "runtime_process_exited",
+      details: expect.objectContaining({
+        code: 24
+      })
+    });
+    expect(port.getState()).toBe("failed");
+
+    await port.start();
+    expect(port.getState()).toBe("ready");
+    await expect(
+      port.request(
+        {
+          id: "turn-after-retry",
+          method: "turn/start",
+          params: {
+            sessionId: "session-after-retry",
+            content: "the retry path should use the fresh process"
+          }
+        },
+        {
+          timeoutMs: 1000
+        }
+      )
+    ).resolves.toMatchObject({
+      id: "turn-after-retry",
+      ok: true
+    });
   });
 
   it("refreshes persisted thread goals through thread/goal/get", async () => {

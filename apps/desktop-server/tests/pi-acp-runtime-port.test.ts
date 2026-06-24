@@ -3,11 +3,13 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type {
-  AcpRuntimeEvent,
-  AcpRuntimeRequest,
-  AcpRuntimeResponse,
-  AdapterRuntimePort
+import {
+  createAcpAdapter,
+  type AcpRuntimeEvent,
+  type AcpRuntimeRequest,
+  type AcpRuntimeResponse,
+  type AdapterRuntimePort,
+  type RuntimeOperationOptions,
 } from "@another-workbench/adapters";
 import { createPiAcpRuntimePort } from "../src/pi-acp-runtime-port.js";
 
@@ -59,17 +61,21 @@ const sendTurn = (
     requestId: string;
     sessionId: string;
     content: string;
-  }
+  },
+  options: RuntimeOperationOptions = {}
 ): Promise<AcpRuntimeResponse> =>
-  port.request({
-    id: input.requestId,
-    method: "turn.send",
-    params: {
-      sessionId: input.sessionId,
-      content: input.content,
-      attachments: []
-    }
-  });
+  port.request(
+    {
+      id: input.requestId,
+      method: "turn.send",
+      params: {
+        sessionId: input.sessionId,
+        content: input.content,
+        attachments: []
+      }
+    },
+    options
+  );
 
 describe("Pi ACP runtime port", () => {
   const disposers: Array<() => Promise<void>> = [];
@@ -228,5 +234,102 @@ describe("Pi ACP runtime port", () => {
       event.event === "turn.completed" &&
       event.payload.finishReason === "interrupted"
     )).toBe(true);
+  });
+
+  it("times out a hung prompt without waiting for the ACP provider", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "awb-pi-acp-timeout-"));
+    tempDirs.push(tempDir);
+    const requestLogPath = join(tempDir, "requests.jsonl");
+    const port = createPort();
+    const events: AcpRuntimeEvent[] = [];
+    port.subscribe((event) => events.push(event));
+    disposers.push(() => port.stop({
+      timeoutMs: 250
+    }));
+
+    await port.start({
+      env: {
+        FAKE_PI_ACP_HANG_ON_METHOD: "prompt",
+        FAKE_PI_ACP_REQUEST_LOG: requestLogPath
+      }
+    });
+
+    const response = await sendTurn(
+      port,
+      {
+        requestId: "send-timeout",
+        sessionId: "session-timeout",
+        content: "hang until timeout"
+      },
+      {
+        timeoutMs: 30
+      }
+    );
+
+    expect(response).toMatchObject({
+      ok: false,
+      error: {
+        code: "runtime_request_timeout"
+      }
+    });
+    expect(readRequestLog(requestLogPath).some((request) =>
+      request.method === "prompt"
+    )).toBe(true);
+    expect(events.some((event) =>
+      event.event === "turn.completed" &&
+      event.payload.finishReason === "failed"
+    )).toBe(true);
+
+    await port.stop({
+      timeoutMs: 250
+    });
+    expect(port.getState()).toBe("stopped");
+  });
+
+  it("lets adapter dispose abort and settle a hung ACP prompt", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "awb-pi-acp-dispose-"));
+    tempDirs.push(tempDir);
+    const requestLogPath = join(tempDir, "requests.jsonl");
+    const port = createPort();
+    const adapter = createAcpAdapter(port, {
+      fallbackAgentId: "pi-acp"
+    });
+    disposers.push(() => adapter.dispose());
+
+    await adapter.initialize({
+      env: {
+        FAKE_PI_ACP_HANG_ON_METHOD: "prompt",
+        FAKE_PI_ACP_REQUEST_LOG: requestLogPath
+      }
+    });
+
+    const commandPromise = adapter.executeCommand({
+      commandId: "send-dispose-hung-acp",
+      command: {
+        type: "sendUserMessage",
+        sessionId: "session-dispose",
+        messageId: "message-dispose",
+        content: "hang until adapter dispose",
+        attachments: []
+      }
+    });
+
+    await waitFor(() => readRequestLog(requestLogPath).some((request) =>
+      request.method === "prompt"
+    ));
+    let disposeSettled = false;
+    const disposePromise = adapter.dispose().then(() => {
+      disposeSettled = true;
+    });
+    await waitFor(() => disposeSettled);
+
+    await expect(commandPromise).resolves.toMatchObject({
+      accepted: false,
+      error: {
+        code: "runtime_request_aborted"
+      }
+    });
+    await disposePromise;
+    expect(port.getState()).toBe("stopped");
   });
 });

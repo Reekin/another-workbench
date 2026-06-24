@@ -32,7 +32,12 @@ import type { Attachment } from "@another-workbench/shared";
 import { buildAcpPromptContent } from "./attachment-inputs.js";
 import { ChildProcessSupervisor } from "./runtime/child-process-supervisor.js";
 import { LifecycleGate } from "./runtime/lifecycle-gate.js";
-import { createRuntimeNotStartedError } from "./runtime/runtime-lifecycle.js";
+import {
+  createRuntimeNotStartedError,
+  createRuntimePortError,
+  createRuntimeRequestTimeoutError,
+  isRuntimePortError
+} from "./runtime/runtime-lifecycle.js";
 
 type RuntimeListener = (event: AcpRuntimeEvent) => void;
 
@@ -488,8 +493,15 @@ class PiAcpRuntimePort
 
   public async request(
     payload: AcpRuntimeRequest,
-    _options: RuntimeOperationOptions = {}
+    options: RuntimeOperationOptions = {}
   ): Promise<AcpRuntimeResponse> {
+    if (options.signal?.aborted) {
+      return this.runtimePortErrorResponse(
+        payload.id,
+        this.createRuntimeAbortError(payload.method)
+      );
+    }
+
     switch (payload.method) {
       case "agent.initialize":
         return {
@@ -500,7 +512,7 @@ class PiAcpRuntimePort
           }
         };
       case "turn.send":
-        return this.handlePrompt(payload);
+        return this.handlePrompt(payload, options);
       case "turn.steer":
         return {
           id: payload.id,
@@ -511,7 +523,7 @@ class PiAcpRuntimePort
           }
         };
       case "turn.interrupt":
-        return this.handleCancel(payload);
+        return this.handleCancel(payload, options);
       case "approval.respond":
         return this.handleApprovalResolution(payload);
       default:
@@ -538,7 +550,8 @@ class PiAcpRuntimePort
   }
 
   private async handlePrompt(
-    payload: AcpRuntimeRequest
+    payload: AcpRuntimeRequest,
+    options: RuntimeOperationOptions = {}
   ): Promise<AcpRuntimeResponse> {
     const sessionId = String(payload.params.sessionId ?? "");
     const content = String(payload.params.content ?? "");
@@ -561,7 +574,11 @@ class PiAcpRuntimePort
     }
 
     try {
-      const backingSession = await this.ensureBackingSession(sessionId, cwd);
+      const backingSession = await this.ensureBackingSession(
+        sessionId,
+        cwd,
+        options
+      );
       const turnState: TurnState = {
         sessionId,
         turnId: `acp-turn-${randomUUID()}`,
@@ -574,10 +591,19 @@ class PiAcpRuntimePort
         turnId: turnState.turnId
       });
 
-      const response = await this.requireConnection().prompt({
-        sessionId: backingSession.acpSessionId,
-        prompt: buildAcpPromptContent(normalizePromptText(content), attachments)
-      });
+      const response = await this.withOperationControls(
+        this.requireConnection().prompt({
+          sessionId: backingSession.acpSessionId,
+          prompt: buildAcpPromptContent(normalizePromptText(content), attachments)
+        }),
+        options,
+        {
+          method: payload.method,
+          onCancel: () => {
+            this.cancelActiveAcpTurn(sessionId, backingSession.acpSessionId);
+          }
+        }
+      );
 
       this.completeTurn(turnState, response.stopReason);
       return {
@@ -590,22 +616,23 @@ class PiAcpRuntimePort
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const responseCode = this.responseErrorCode(error, "ACP_PROMPT_FAILED");
       const turnState = this.turnStateBySessionId.get(sessionId);
       if (turnState) {
         this.emitEvent("runtime.error", {
           sessionId,
           turnId: turnState.turnId,
-          code: "ACP_PROMPT_FAILED",
+          code: responseCode,
           message,
-          recoverable: false
+          recoverable: isRuntimePortError(error) ? error.retryable : false
         });
         this.completeTurn(turnState, "refusal");
       } else {
         this.emitEvent("runtime.error", {
           sessionId,
-          code: "ACP_PROMPT_FAILED",
+          code: responseCode,
           message,
-          recoverable: false
+          recoverable: isRuntimePortError(error) ? error.retryable : false
         });
       }
       this.emitSessionUpdated(sessionId, "error");
@@ -613,7 +640,7 @@ class PiAcpRuntimePort
         id: payload.id,
         ok: false,
         error: {
-          code: "ACP_PROMPT_FAILED",
+          code: responseCode,
           message
         }
       };
@@ -621,7 +648,8 @@ class PiAcpRuntimePort
   }
 
   private async handleCancel(
-    payload: AcpRuntimeRequest
+    payload: AcpRuntimeRequest,
+    options: RuntimeOperationOptions = {}
   ): Promise<AcpRuntimeResponse> {
     const sessionId = String(payload.params.sessionId ?? "");
     const backingSession = this.backingSessionByWorkbenchId.get(sessionId);
@@ -637,9 +665,18 @@ class PiAcpRuntimePort
     }
 
     try {
-      await this.requireConnection().cancel({
-        sessionId: backingSession.acpSessionId
-      });
+      await this.withOperationControls(
+        this.requireConnection().cancel({
+          sessionId: backingSession.acpSessionId
+        }),
+        options,
+        {
+          method: payload.method,
+          onCancel: () => {
+            this.cancelPendingApprovalsForSession(sessionId);
+          }
+        }
+      );
     } catch (error) {
       this.cancelPendingApprovalsForSession(sessionId);
       const message = error instanceof Error ? error.message : String(error);
@@ -647,7 +684,7 @@ class PiAcpRuntimePort
         id: payload.id,
         ok: false,
         error: {
-          code: "ACP_CANCEL_FAILED",
+          code: this.responseErrorCode(error, "ACP_CANCEL_FAILED"),
           message
         }
       };
@@ -710,7 +747,8 @@ class PiAcpRuntimePort
 
   private async ensureBackingSession(
     workbenchSessionId: string,
-    cwdOverride?: string
+    cwdOverride?: string,
+    options: RuntimeOperationOptions = {}
   ): Promise<BackingSession> {
     const existing = this.backingSessionByWorkbenchId.get(workbenchSessionId);
     if (existing) {
@@ -718,10 +756,16 @@ class PiAcpRuntimePort
     }
 
     const cwd = this.resolveSessionCwd(cwdOverride);
-    const response = await this.requireConnection().newSession({
-      cwd,
-      mcpServers: []
-    });
+    const response = await this.withOperationControls(
+      this.requireConnection().newSession({
+        cwd,
+        mcpServers: []
+      }),
+      options,
+      {
+        method: "session.create"
+      }
+    );
 
     const session: BackingSession = {
       workbenchSessionId,
@@ -1084,6 +1128,105 @@ class PiAcpRuntimePort
     }
   }
 
+  private withOperationControls<T>(
+    operation: Promise<T>,
+    options: RuntimeOperationOptions,
+    input: {
+      method: string;
+      onCancel?: () => void;
+    }
+  ): Promise<T> {
+    const timeoutMs = options.timeoutMs;
+    const hasTimeout = typeof timeoutMs === "number" && timeoutMs > 0;
+    if (!options.signal && !hasTimeout) {
+      return operation;
+    }
+
+    return new Promise<T>((resolve, reject) => {
+      let settled = false;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const cleanup = () => {
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = undefined;
+        }
+        options.signal?.removeEventListener("abort", onAbort);
+      };
+      const settle = (callback: () => void) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        callback();
+      };
+      const cancel = (error: Error) => {
+        try {
+          input.onCancel?.();
+        } catch (cancelError) {
+          this.emitEvent("runtime.error", {
+            code: "ACP_CANCEL_FAILED",
+            message:
+              cancelError instanceof Error
+                ? cancelError.message
+                : String(cancelError),
+            recoverable: true
+          });
+        }
+        settle(() => reject(error));
+      };
+      const onAbort = () => {
+        cancel(this.createRuntimeAbortError(input.method));
+      };
+
+      if (options.signal?.aborted) {
+        cancel(this.createRuntimeAbortError(input.method));
+        return;
+      }
+      if (options.signal) {
+        options.signal.addEventListener("abort", onAbort, {
+          once: true
+        });
+      }
+      if (hasTimeout) {
+        timeout = setTimeout(() => {
+          cancel(
+            createRuntimeRequestTimeoutError(timeoutMs, {
+              engineId: this.engineId,
+              method: input.method
+            })
+          );
+        }, timeoutMs);
+      }
+
+      operation.then(
+        (value) => settle(() => resolve(value)),
+        (error) => settle(() => reject(error))
+      );
+    });
+  }
+
+  private cancelActiveAcpTurn(
+    workbenchSessionId: string,
+    acpSessionId: string
+  ): void {
+    this.cancelPendingApprovalsForSession(workbenchSessionId);
+    const connection = this.connection;
+    if (!connection) {
+      return;
+    }
+    void connection.cancel({
+      sessionId: acpSessionId
+    }).catch((error: unknown) => {
+      this.emitEvent("runtime.error", {
+        sessionId: workbenchSessionId,
+        code: "ACP_CANCEL_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        recoverable: true
+      });
+    });
+  }
+
   private clearBackingSessions(): void {
     this.backingSessionByWorkbenchId.clear();
     this.workbenchSessionIdByAcpId.clear();
@@ -1096,6 +1239,36 @@ class PiAcpRuntimePort
       });
     }
     return this.connection;
+  }
+
+  private createRuntimeAbortError(method: string): Error {
+    return createRuntimePortError({
+      code: "runtime_request_aborted",
+      message: "Runtime request was aborted.",
+      retryable: true,
+      details: {
+        engineId: this.engineId,
+        method
+      }
+    });
+  }
+
+  private responseErrorCode(error: unknown, fallbackCode: string): string {
+    return isRuntimePortError(error) ? error.code : fallbackCode;
+  }
+
+  private runtimePortErrorResponse(
+    id: string,
+    error: Error
+  ): AcpRuntimeResponse {
+    return {
+      id,
+      ok: false,
+      error: {
+        code: this.responseErrorCode(error, "ACP_RUNTIME_ERROR"),
+        message: error.message
+      }
+    };
   }
 
   private markRuntimeFailed(input: {

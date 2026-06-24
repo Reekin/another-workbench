@@ -134,6 +134,46 @@ describe("CodexAdapter", () => {
     expect(adapter.getLifecycleState()).toBe("ready");
   });
 
+  it("keeps commands disabled when dispose races a blocked initialize", async () => {
+    const runtimePort = new FakeCodexRuntimePort();
+    const startGate = createDeferred();
+    runtimePort.startBarrier = startGate.promise;
+    const adapter = new CodexAdapter({
+      runtimePort,
+      fallbackAgentId: "codex-agent"
+    });
+
+    const initializePromise = adapter.initialize();
+    await Promise.resolve();
+    expect(runtimePort.startCalls).toBe(1);
+
+    const disposePromise = adapter.dispose();
+    await Promise.resolve();
+
+    await expect(
+      adapter.executeCommand({
+        commandId: "cmd-during-dispose",
+        command: {
+          type: "initialize"
+        }
+      })
+    ).rejects.toThrow("not accepting commands");
+
+    startGate.resolve();
+    await initializePromise;
+    await expect(
+      adapter.executeCommand({
+        commandId: "cmd-after-stale-initialize",
+        command: {
+          type: "initialize"
+        }
+      })
+    ).rejects.toThrow("not accepting commands");
+    await disposePromise;
+    expect(runtimePort.stopped).toBe(true);
+    expect(adapter.getLifecycleState()).toBe("stopped");
+  });
+
   it("marks the adapter unavailable when the runtime fails and can reinitialize", async () => {
     const runtimePort = new FakeCodexRuntimePort();
     const adapter = new CodexAdapter({

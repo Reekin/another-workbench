@@ -114,6 +114,7 @@ export class RuntimeBackedAdapter<
   private teardownRuntimeSubscription: (() => void) | undefined;
   private nextSubscriptionId = 1;
   private acceptingCommands = true;
+  private commandGeneration = 0;
 
   public constructor(options: RuntimeBackedAdapterOptions<TRequest, TResponse, TEvent>) {
     this.id = options.id;
@@ -150,6 +151,7 @@ export class RuntimeBackedAdapter<
         return;
       }
 
+      const commandGeneration = this.commandGeneration;
       await this.runtimePort.start({
         cwd: config.cwd,
         env: config.env,
@@ -159,7 +161,9 @@ export class RuntimeBackedAdapter<
       this.teardownRuntimeSubscription ??= this.runtimePort.subscribe((event) => {
         this.publishRuntimeEvent(event);
       });
-      this.acceptingCommands = true;
+      if (this.commandGeneration === commandGeneration) {
+        this.acceptingCommands = true;
+      }
     });
   }
 
@@ -214,6 +218,7 @@ export class RuntimeBackedAdapter<
   }
 
   public async dispose(): Promise<void> {
+    this.commandGeneration += 1;
     this.acceptingCommands = false;
     await this.lifecycleGate.stop(async () => {
       const inFlightSettled = Promise.allSettled(

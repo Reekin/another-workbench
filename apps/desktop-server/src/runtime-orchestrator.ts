@@ -70,7 +70,6 @@ export class RuntimeOrchestrator {
   private readonly engineSelections = new Map<string, Record<string, unknown> | undefined>();
   private readonly adapterUnsubscribeByEngineId = new Map<string, () => void>();
   private readonly adapterLifecycleGateByEngineId = new Map<string, LifecycleGate>();
-  private readonly readyEngineIds = new Set<string>();
   private readonly domainService: DomainService;
   private readonly sessionIndexSyncService: SessionIndexSyncService;
   private readonly workspaceSelectionService: WorkspaceSelectionService;
@@ -384,11 +383,9 @@ export class RuntimeOrchestrator {
           this.adapterUnsubscribeByEngineId.delete(engineId);
         }
         await binding.adapter?.dispose();
-        this.readyEngineIds.delete(engineId);
       });
     }
     await this.drainBackgroundWork();
-    this.readyEngineIds.clear();
     this.adapterUnsubscribeByEngineId.clear();
     this.adapterLifecycleGateByEngineId.clear();
   }
@@ -572,10 +569,9 @@ export class RuntimeOrchestrator {
   }
 
   private async ensureAdapterReady(engineId: string): Promise<void> {
-    if (this.hasUsableReadyAdapter(engineId)) {
+    if (this.hasReadyAdapterWithSubscription(engineId)) {
       return;
     }
-    this.readyEngineIds.delete(engineId);
 
     const binding = this.requireBinding(engineId);
     if (!binding.adapter) {
@@ -583,23 +579,24 @@ export class RuntimeOrchestrator {
     }
 
     await this.lifecycleGateForEngine(engineId).start(async () => {
-      if (this.hasUsableReadyAdapter(engineId)) {
+      if (this.hasReadyAdapterWithSubscription(engineId)) {
         return;
       }
-      this.readyEngineIds.delete(engineId);
 
       const currentBinding = this.requireBinding(engineId);
       if (!currentBinding.adapter) {
         return;
       }
 
-      await currentBinding.adapter.initialize({
-        ...(currentBinding.runtimeConfig ?? {}),
-        metadata: {
-          ...(currentBinding.runtimeConfig?.metadata ?? {}),
-          selectedConfig: this.engineSelections.get(engineId)
-        }
-      });
+      if (currentBinding.adapter.getLifecycleState() !== "ready") {
+        await currentBinding.adapter.initialize({
+          ...(currentBinding.runtimeConfig ?? {}),
+          metadata: {
+            ...(currentBinding.runtimeConfig?.metadata ?? {}),
+            selectedConfig: this.engineSelections.get(engineId)
+          }
+        });
+      }
 
       if (!this.adapterUnsubscribeByEngineId.has(engineId)) {
         const unsubscribe = currentBinding.adapter.subscribe((envelope) => {
@@ -607,12 +604,11 @@ export class RuntimeOrchestrator {
         });
         this.adapterUnsubscribeByEngineId.set(engineId, unsubscribe);
       }
-      this.readyEngineIds.add(engineId);
     });
   }
 
-  private hasUsableReadyAdapter(engineId: string): boolean {
-    if (!this.readyEngineIds.has(engineId)) {
+  private hasReadyAdapterWithSubscription(engineId: string): boolean {
+    if (!this.adapterUnsubscribeByEngineId.has(engineId)) {
       return false;
     }
     const binding = this.bindings.get(engineId);

@@ -2,7 +2,6 @@ import { parseEventEnvelope, type CommandEnvelope } from "@another-workbench/sha
 import { LifecycleGate } from "./lifecycle-gate.js";
 import type { AdapterMapper } from "./mapper.js";
 import type { AdapterRuntimePort } from "./runtime-port.js";
-import type { RuntimeLifecycleState } from "./runtime-lifecycle.js";
 import type {
   AdapterCommandResult,
   AdapterEventFilter,
@@ -30,6 +29,11 @@ type RuntimeBackedAdapterOptions<
 type Subscription = {
   listener: AdapterEventListener;
   filter: AdapterEventFilter;
+};
+
+type InFlightCommand = {
+  controller: AbortController;
+  settled: Promise<void>;
 };
 
 const createOpaqueId = (): string =>
@@ -105,11 +109,11 @@ export class RuntimeBackedAdapter<
     | ((sessionId: string) => string | undefined)
     | undefined;
   private readonly subscriptions = new Map<number, Subscription>();
+  private readonly inFlightCommands = new Set<InFlightCommand>();
   private readonly lifecycleGate = new LifecycleGate();
   private teardownRuntimeSubscription: (() => void) | undefined;
-  private teardownRuntimeStateSubscription: (() => void) | undefined;
   private nextSubscriptionId = 1;
-  private lifecycleState: AdapterLifecycleState = "idle";
+  private acceptingCommands = true;
 
   public constructor(options: RuntimeBackedAdapterOptions<TRequest, TResponse, TEvent>) {
     this.id = options.id;
@@ -123,56 +127,79 @@ export class RuntimeBackedAdapter<
   }
 
   public getLifecycleState(): AdapterLifecycleState {
-    return this.lifecycleState;
+    switch (this.runtimePort.getState()) {
+      case "starting":
+        return "starting";
+      case "ready":
+        return "ready";
+      case "failed":
+        return "error";
+      case "stopping":
+      case "stopped":
+        return "stopped";
+    }
   }
 
   public async initialize(config: AgentAdapterRuntimeConfig = {}): Promise<void> {
-    if (this.lifecycleState === "ready") {
+    if (this.getLifecycleState() === "ready") {
       return;
     }
 
     await this.lifecycleGate.start(async () => {
-      if (this.lifecycleState === "ready") {
+      if (this.getLifecycleState() === "ready") {
         return;
       }
 
-      this.lifecycleState = "starting";
-      this.teardownRuntimeStateSubscription ??= this.runtimePort.subscribeState(
-        (state) => {
-          this.applyRuntimeLifecycleState(state);
-        }
-      );
-      try {
-        await this.runtimePort.start({
-          cwd: config.cwd,
-          env: config.env,
-          auth: config.auth,
-          metadata: config.metadata
-        });
-        this.teardownRuntimeSubscription ??= this.runtimePort.subscribe((event) => {
-          this.publishRuntimeEvent(event);
-        });
-        this.lifecycleState = "ready";
-      } catch (error) {
-        this.lifecycleState = "error";
-        throw error;
-      }
+      await this.runtimePort.start({
+        cwd: config.cwd,
+        env: config.env,
+        auth: config.auth,
+        metadata: config.metadata
+      });
+      this.teardownRuntimeSubscription ??= this.runtimePort.subscribe((event) => {
+        this.publishRuntimeEvent(event);
+      });
+      this.acceptingCommands = true;
     });
   }
 
   public async executeCommand(
     envelope: CommandEnvelope
   ): Promise<AdapterCommandResult> {
-    if (this.lifecycleState !== "ready") {
+    if (!this.acceptingCommands) {
+      throw new Error(`Adapter ${this.id} is not accepting commands.`);
+    }
+
+    const state = this.getLifecycleState();
+    if (state !== "ready") {
       throw new Error(
-        `Adapter ${this.id} is not ready. Current state: ${this.lifecycleState}`
+        `Adapter ${this.id} is not ready. Current state: ${state}`
       );
     }
 
     const context = this.createMapperContext();
     const runtimeRequest = this.mapper.mapCommand(envelope, context);
-    const runtimeResponse = await this.runtimePort.request(runtimeRequest);
-    return this.mapper.mapCommandResult(runtimeResponse, envelope, context);
+    const controller = new AbortController();
+    const commandPromise = this.runtimePort
+      .request(runtimeRequest, {
+        signal: controller.signal
+      })
+      .then((runtimeResponse) =>
+        this.mapper.mapCommandResult(runtimeResponse, envelope, context)
+      );
+    const inFlight: InFlightCommand = {
+      controller,
+      settled: commandPromise.then(
+        () => undefined,
+        () => undefined
+      )
+    };
+    this.inFlightCommands.add(inFlight);
+    try {
+      return await commandPromise;
+    } finally {
+      this.inFlightCommands.delete(inFlight);
+    }
   }
 
   public subscribe(
@@ -187,18 +214,24 @@ export class RuntimeBackedAdapter<
   }
 
   public async dispose(): Promise<void> {
+    this.acceptingCommands = false;
     await this.lifecycleGate.stop(async () => {
+      const inFlightSettled = Promise.allSettled(
+        [...this.inFlightCommands].map((command) => {
+          command.controller.abort();
+          return command.settled;
+        })
+      );
       if (this.teardownRuntimeSubscription) {
         this.teardownRuntimeSubscription();
         this.teardownRuntimeSubscription = undefined;
       }
-      if (this.teardownRuntimeStateSubscription) {
-        this.teardownRuntimeStateSubscription();
-        this.teardownRuntimeStateSubscription = undefined;
-      }
       this.subscriptions.clear();
-      await this.runtimePort.stop();
-      this.lifecycleState = "stopped";
+      try {
+        await this.runtimePort.stop();
+      } finally {
+        await inFlightSettled;
+      }
     });
   }
 
@@ -227,23 +260,5 @@ export class RuntimeBackedAdapter<
       now: this.now,
       createId: this.createId
     };
-  }
-
-  private applyRuntimeLifecycleState(state: RuntimeLifecycleState): void {
-    switch (state) {
-      case "starting":
-        this.lifecycleState = "starting";
-        break;
-      case "ready":
-        this.lifecycleState = "ready";
-        break;
-      case "stopping":
-      case "stopped":
-        this.lifecycleState = "stopped";
-        break;
-      case "failed":
-        this.lifecycleState = "error";
-        break;
-    }
   }
 }

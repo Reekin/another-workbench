@@ -364,6 +364,156 @@ describe("RuntimeOrchestrator", () => {
     expect(subscribe).toHaveBeenCalledTimes(1);
   });
 
+  it("initializes switched engines independently and reinitializes only failed adapters", async () => {
+    const codexUnsubscribe = vi.fn();
+    const piUnsubscribe = vi.fn();
+    let codexLifecycleState: ReturnType<AgentAdapter["getLifecycleState"]> = "idle";
+    let piLifecycleState: ReturnType<AgentAdapter["getLifecycleState"]> = "idle";
+    const codexInitialize = vi.fn().mockImplementation(async () => {
+      codexLifecycleState = "ready";
+    });
+    const piInitialize = vi.fn().mockImplementation(async () => {
+      piLifecycleState = "ready";
+    });
+    const codexDispose = vi.fn().mockImplementation(async () => {
+      codexLifecycleState = "stopped";
+    });
+    const piDispose = vi.fn().mockImplementation(async () => {
+      piLifecycleState = "stopped";
+    });
+    const codexAdapter: AgentAdapter = {
+      id: "codex-adapter",
+      kind: "codex",
+      getLifecycleState: () => codexLifecycleState,
+      initialize: codexInitialize,
+      executeCommand: vi.fn().mockResolvedValue({
+        commandId: "codex-noop",
+        commandType: "initialize",
+        accepted: true
+      }),
+      subscribe: vi.fn().mockReturnValue(codexUnsubscribe),
+      dispose: codexDispose
+    };
+    const piAdapter: AgentAdapter = {
+      id: "pi-adapter",
+      kind: "acp",
+      getLifecycleState: () => piLifecycleState,
+      initialize: piInitialize,
+      executeCommand: vi.fn().mockResolvedValue({
+        commandId: "pi-noop",
+        commandType: "initialize",
+        accepted: true
+      }),
+      subscribe: vi.fn().mockReturnValue(piUnsubscribe),
+      dispose: piDispose
+    };
+
+    let orchestrator: RuntimeOrchestrator | undefined;
+    const domainService = new DomainService({
+      now: () => "2026-04-20T00:02:00Z",
+      assertEngineRegistered: (engineId) =>
+        orchestrator?.assertEngineRegistered(engineId),
+      resolveEngineCapabilities: (engineId) =>
+        orchestrator?.getEngineCapabilities(engineId) ?? [],
+      publishRuntimeEvent: () => {}
+    });
+
+    orchestrator = new RuntimeOrchestrator({
+      domainService,
+      sessionIndexSyncService: {
+        syncSession: vi.fn().mockResolvedValue(undefined),
+        syncRelation: vi.fn().mockResolvedValue(undefined),
+        markSessionUnreadCompleted: vi.fn().mockResolvedValue(undefined)
+      } as never,
+      workspaceSelectionService: {
+        activateSelection: vi.fn().mockResolvedValue(undefined),
+        selectWorkspace: vi.fn().mockResolvedValue({
+          workspaceId: "workspace-1"
+        })
+      } as never,
+      publishRuntimeEvent: () => {},
+      agentBindings: [
+        {
+          descriptor: {
+            engineId: "codex",
+            displayName: "Codex",
+            capabilities: ["chat"]
+          },
+          adapter: codexAdapter
+        },
+        {
+          descriptor: {
+            engineId: "pi-acp",
+            displayName: "Pi",
+            capabilities: ["chat"]
+          },
+          adapter: piAdapter
+        }
+      ]
+    });
+
+    await orchestrator.executeCommand({
+      commandId: "init-codex-1",
+      command: {
+        type: "initialize"
+      }
+    });
+    orchestrator.selectEngine({
+      engineId: "pi-acp",
+      config: {
+        profile: "fallback"
+      }
+    });
+    await orchestrator.executeCommand({
+      commandId: "init-pi-1",
+      command: {
+        type: "initialize"
+      }
+    });
+    await orchestrator.executeCommand({
+      commandId: "init-pi-2",
+      command: {
+        type: "initialize"
+      }
+    });
+
+    expect(codexInitialize).toHaveBeenCalledTimes(1);
+    expect(piInitialize).toHaveBeenCalledTimes(1);
+    expect(piInitialize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          selectedConfig: {
+            profile: "fallback"
+          }
+        })
+      })
+    );
+    expect(codexAdapter.subscribe).toHaveBeenCalledTimes(1);
+    expect(piAdapter.subscribe).toHaveBeenCalledTimes(1);
+
+    orchestrator.selectEngine({
+      engineId: "codex"
+    });
+    codexLifecycleState = "error";
+    await orchestrator.executeCommand({
+      commandId: "init-codex-after-failure",
+      command: {
+        type: "initialize"
+      }
+    });
+
+    expect(codexInitialize).toHaveBeenCalledTimes(2);
+    expect(piInitialize).toHaveBeenCalledTimes(1);
+    expect(codexAdapter.subscribe).toHaveBeenCalledTimes(1);
+
+    await orchestrator.dispose();
+
+    expect(codexUnsubscribe).toHaveBeenCalledTimes(1);
+    expect(piUnsubscribe).toHaveBeenCalledTimes(1);
+    expect(codexDispose).toHaveBeenCalledTimes(1);
+    expect(piDispose).toHaveBeenCalledTimes(1);
+  });
+
   it("creates sessions and coordinates index plus workspace side effects", async () => {
     const syncSession = vi.fn().mockResolvedValue(undefined);
     const activateSelection = vi.fn().mockResolvedValue(undefined);

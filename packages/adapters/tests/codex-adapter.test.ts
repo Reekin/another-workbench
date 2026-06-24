@@ -1,5 +1,6 @@
 import type { AdapterRuntimePort } from "../src/runtime-port.js";
 import type {
+  RuntimeOperationOptions,
   RuntimeLifecycleState,
   RuntimeStateListener
 } from "../src/runtime-lifecycle.js";
@@ -34,6 +35,12 @@ class FakeCodexRuntimePort
   public startCalls = 0;
   public subscribeCalls = 0;
   public startBarrier: Promise<void> | undefined;
+  public requestHandler:
+    | ((
+        payload: CodexRuntimeRequest,
+        options: RuntimeOperationOptions
+      ) => Promise<CodexRuntimeResponse>)
+    | undefined;
   public readonly requests: CodexRuntimeRequest[] = [];
   private lifecycleState: RuntimeLifecycleState = "stopped";
   private listener: ((event: CodexRuntimeEvent) => void) | undefined;
@@ -57,9 +64,13 @@ class FakeCodexRuntimePort
   }
 
   public async request(
-    payload: CodexRuntimeRequest
+    payload: CodexRuntimeRequest,
+    options: RuntimeOperationOptions = {}
   ): Promise<CodexRuntimeResponse> {
     this.requests.push(payload);
+    if (this.requestHandler) {
+      return this.requestHandler(payload, options);
+    }
     return {
       id: payload.id,
       ok: true,
@@ -291,6 +302,81 @@ describe("CodexAdapter", () => {
         }
       })
     ).rejects.toThrow("is not ready");
+  });
+
+  it("aborts in-flight runtime requests and waits for settlement during dispose", async () => {
+    const runtimePort = new FakeCodexRuntimePort();
+    const adapter = new CodexAdapter({
+      runtimePort,
+      fallbackAgentId: "codex-agent"
+    });
+    const requestStarted = createDeferred<void>();
+    const requestCanSettle = createDeferred<CodexRuntimeResponse>();
+    let abortObserved = false;
+
+    runtimePort.requestHandler = async (payload, options) => {
+      requestStarted.resolve();
+      await new Promise<void>((resolve, reject) => {
+        if (!options.signal) {
+          reject(new Error("Expected runtime request AbortSignal."));
+          return;
+        }
+        options.signal.addEventListener(
+          "abort",
+          () => {
+            abortObserved = true;
+            resolve();
+          },
+          {
+            once: true
+          }
+        );
+      });
+      return requestCanSettle.promise.then((response) => ({
+        ...response,
+        id: payload.id
+      }));
+    };
+
+    await adapter.initialize();
+    const commandPromise = adapter.executeCommand({
+      commandId: "cmd-dispose-in-flight",
+      command: {
+        type: "sendUserMessage",
+        sessionId: "session-1",
+        messageId: "message-1",
+        content: "wait for dispose",
+        attachments: []
+      }
+    });
+    await requestStarted.promise;
+
+    let disposeSettled = false;
+    const disposePromise = adapter.dispose().then(() => {
+      disposeSettled = true;
+    });
+    await Promise.resolve();
+
+    expect(abortObserved).toBe(true);
+    expect(disposeSettled).toBe(false);
+
+    requestCanSettle.resolve({
+      id: "cmd-dispose-in-flight",
+      ok: false,
+      error: {
+        message: "aborted by dispose"
+      }
+    });
+
+    await expect(commandPromise).resolves.toMatchObject({
+      accepted: false,
+      error: {
+        message: "aborted by dispose"
+      }
+    });
+    await disposePromise;
+    expect(disposeSettled).toBe(true);
+    expect(runtimePort.stopped).toBe(true);
   });
 
   it("supports conversation filtering for session-scoped events", async () => {

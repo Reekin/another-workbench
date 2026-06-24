@@ -226,7 +226,7 @@ fake runtime 集成测试、真实 Codex/ACP smoke、真实进程 kill 行为验
   - `pnpm smoke:pi`
   - `pnpm smoke:pi:restart`
 
-[ ] task_1_7: 删除 Orchestrator/Adapter 重复 ready 状态
+[x] task_1_7: 删除 Orchestrator/Adapter 重复 ready 状态
 - tag: prod
 - goal: runtime 可执行性只由 runtime lifecycle owner 决定
 - executor: subagent

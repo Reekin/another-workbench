@@ -262,13 +262,13 @@ export const useSessionOpenController = (input: {
         if (input.viewport.displayedSessionIdRef.current !== input.displayedSessionId) {
           return;
         }
+        applySessionWindow(result.page, "prepend", {
+          activate: false
+        });
         input.viewport.queuePrependScrollRestore({
           sessionId: input.displayedSessionId,
           previousScrollHeight,
           previousScrollTop
-        });
-        applySessionWindow(result.page, "prepend", {
-          activate: false
         });
       } catch (error) {
         input.onStatusNotice({

@@ -6,6 +6,7 @@ describe("desktop-server browser entry", () => {
     expect(typeof browserEntry.createLocalDesktopPreloadApi).toBe("function");
     expect(typeof browserEntry.createRemoteRpcHandler).toBe("function");
     expect(typeof browserEntry.createDemoWorkbenchRuntimeService).toBe("function");
+    expect(typeof browserEntry.createDemoWorkbenchShellService).toBe("function");
     expect("WorkbenchRemoteServer" in browserEntry).toBe(false);
     expect("isRemoteRequestAuthorized" in browserEntry).toBe(false);
   });

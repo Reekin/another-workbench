@@ -129,10 +129,16 @@ export const createRendererStore = (
 
   const dispatch = (action: RendererStoreAction): RendererStoreState => {
     const previousState = state;
-    const stagedReplica = new DomainReplica({
-      snapshot: domainReplica.getSnapshot()
-    });
-    const stagedSnapshot = applySnapshotActionToReplica(stagedReplica, action);
+    const stagedSnapshot =
+      action.type === "store/hydrateSnapshot" ||
+      action.type === "store/hydrateSessionWindow"
+        ? applySnapshotActionToReplica(
+            new DomainReplica({
+              snapshot: domainReplica.getSnapshot()
+            }),
+            action
+          )
+        : undefined;
     const reducedState = rendererStoreReducer(state, action);
     let nextState = reducedState;
     let domainChanged = false;

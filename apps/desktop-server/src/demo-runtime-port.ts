@@ -181,7 +181,10 @@ class DemoRuntimePort<TRequest, TResponse, TEvent>
     const sessionId = String(params.sessionId ?? "");
     const content = String(params.content ?? "");
     const turnId = String(params.turnId ?? `turn-${++this.turnCounter}`);
-    const messageId = String(params.messageId ?? `message-${this.turnCounter}`);
+    const messageId =
+      typeof params.messageId === "string" && params.messageId.length > 0
+        ? `${params.messageId}-assistant`
+        : `message-${this.turnCounter}`;
     const toolCallId = `tool-${this.turnCounter}`;
     const terminalId = `terminal-${this.turnCounter}`;
     const requestId = `approval-${this.turnCounter}`;

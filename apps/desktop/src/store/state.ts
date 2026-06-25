@@ -3,6 +3,7 @@ import type {
   ApprovalRequest,
   ChatSession,
   Conversation,
+  DomainSnapshot,
   MessageBlock,
   RuntimeInteraction,
   SessionRelation,
@@ -389,3 +390,126 @@ export const upsertSessionRelation = (
     )
   }
 });
+
+const legacyStartBlockSuffix = ":start";
+const markdownBlockSuffix = ":md";
+
+export const normalizeSnapshotMessageBlocks = (
+  blocks: MessageBlock[]
+): MessageBlock[] => {
+  // Older snapshots produced separate start and markdown stream blocks. Keep
+  // this renderer boundary normalization until shared snapshot migration owns it.
+  const grouped = new Map<string, MessageBlock[]>();
+  for (const block of blocks) {
+    const bucket = grouped.get(block.messageId);
+    if (bucket) {
+      bucket.push(block);
+    } else {
+      grouped.set(block.messageId, [block]);
+    }
+  }
+
+  const normalized: MessageBlock[] = [];
+  for (const [messageId, group] of grouped.entries()) {
+    const expectedStartId = `${messageId}${legacyStartBlockSuffix}`;
+    const expectedMarkdownId = `${messageId}${markdownBlockSuffix}`;
+
+    const startBlock = group.find((block) => block.blockId === expectedStartId);
+    const markdownBlock = group.find((block) => block.blockId === expectedMarkdownId);
+
+    if (markdownBlock) {
+      const merged: MessageBlock = startBlock
+        ? {
+            ...markdownBlock,
+            role: markdownBlock.role ?? startBlock.role,
+            actor: markdownBlock.actor ?? startBlock.actor,
+            startedAt:
+              Date.parse(startBlock.startedAt) <= Date.parse(markdownBlock.startedAt)
+                ? startBlock.startedAt
+                : markdownBlock.startedAt
+          }
+        : markdownBlock;
+
+      normalized.push(merged);
+      for (const block of group) {
+        if (block.blockId === expectedStartId || block.blockId === expectedMarkdownId) {
+          continue;
+        }
+        normalized.push(block);
+      }
+      continue;
+    }
+
+    if (startBlock) {
+      normalized.push({
+        ...startBlock,
+        blockId: expectedMarkdownId
+      });
+      for (const block of group) {
+        if (block.blockId === expectedStartId) {
+          continue;
+        }
+        normalized.push(block);
+      }
+      continue;
+    }
+
+    normalized.push(...group);
+  }
+
+  return normalized;
+};
+
+export const normalizeRendererDomainSnapshot = (
+  snapshot: DomainSnapshot
+): DomainSnapshot => ({
+  ...snapshot,
+  messageBlocks: normalizeSnapshotMessageBlocks(snapshot.messageBlocks)
+});
+
+export const withDomainSnapshot = (
+  state: RendererStoreState,
+  snapshot: DomainSnapshot
+): RendererStoreState => {
+  let domainState = createInitialRendererStoreState();
+
+  for (const conversation of snapshot.conversations) {
+    domainState = upsertConversation(domainState, conversation);
+  }
+  for (const session of snapshot.sessions) {
+    domainState = upsertSession(domainState, session);
+  }
+  for (const turn of snapshot.turns) {
+    domainState = upsertTurn(domainState, turn);
+  }
+  for (const block of normalizeSnapshotMessageBlocks(snapshot.messageBlocks)) {
+    domainState = upsertMessageBlock(domainState, block);
+  }
+  for (const toolCall of snapshot.toolCalls) {
+    domainState = upsertToolCall(domainState, toolCall);
+  }
+  for (const terminal of snapshot.terminalStreams) {
+    domainState = upsertTerminalStream(domainState, terminal);
+  }
+  for (const approval of snapshot.approvalRequests) {
+    domainState = upsertApprovalRequest(domainState, approval);
+  }
+  for (const interaction of snapshot.runtimeInteractions ?? []) {
+    domainState = upsertRuntimeInteraction(domainState, interaction);
+  }
+  for (const participant of snapshot.participants) {
+    domainState = upsertParticipant(domainState, participant);
+  }
+  for (const goal of snapshot.threadGoals ?? []) {
+    domainState = upsertThreadGoal(domainState, goal);
+  }
+  for (const relation of snapshot.sessionRelations) {
+    domainState = upsertSessionRelation(domainState, relation);
+  }
+
+  return {
+    ...state,
+    entities: domainState.entities,
+    indexes: domainState.indexes
+  };
+};

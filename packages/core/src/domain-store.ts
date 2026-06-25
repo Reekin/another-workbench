@@ -371,6 +371,21 @@ export class DomainStore {
     return this.getSnapshot();
   }
 
+  public replaceSessionWindowSnapshot(
+    sessionId: string,
+    snapshot: DomainSnapshot | unknown
+  ): DomainSnapshot {
+    const parsedSnapshot = parseDomainSnapshot(snapshot);
+    const staged = DomainStore.fromSnapshot(this.getSnapshot());
+    staged.assertSnapshotWithinMergeScope(parsedSnapshot, { sessionId });
+    staged.deleteSessionWindowCoverage(sessionId, parsedSnapshot);
+    staged.applyParsedSnapshot(parsedSnapshot, {
+      merge: true
+    });
+    this.swapFrom(staged);
+    return this.getSnapshot();
+  }
+
   private applyParsedSnapshot(
     parsedSnapshot: DomainSnapshot,
     options: {
@@ -614,6 +629,77 @@ export class DomainStore {
         assertSessionId(relation.parentSessionId, "Session relation parent");
         assertSessionId(relation.childSessionId, "Session relation child");
       }
+    }
+  }
+
+  private deleteSessionWindowCoverage(
+    sessionId: string,
+    snapshot: DomainSnapshot
+  ): void {
+    const coveredTurns = snapshot.turns.filter((turn) => turn.sessionId === sessionId);
+    if (coveredTurns.length === 0) {
+      return;
+    }
+
+    const coveredTurnIds = new Set(coveredTurns.map((turn) => turn.turnId));
+    const coveredMessageIds = new Set(
+      coveredTurns.flatMap((turn) => turn.messageIds)
+    );
+    const coveredToolCallIds = new Set(
+      coveredTurns.flatMap((turn) => turn.toolCallIds)
+    );
+    const coveredTerminalIds = new Set(
+      coveredTurns.flatMap((turn) => turn.terminalIds)
+    );
+    const coveredApprovalRequestIds = new Set(
+      coveredTurns.flatMap((turn) => turn.approvalRequestIds)
+    );
+    const coveredInteractionRequestIds = new Set(
+      coveredTurns.flatMap((turn) => turn.interactionRequestIds ?? [])
+    );
+
+    for (const block of this.listMessageBlocks({ sessionId })) {
+      if (
+        coveredTurnIds.has(block.turnId) ||
+        coveredMessageIds.has(block.messageId)
+      ) {
+        this.deleteMessageBlock(block.blockId);
+      }
+    }
+    for (const toolCall of this.listToolCalls({ sessionId })) {
+      if (
+        coveredTurnIds.has(toolCall.turnId) ||
+        coveredToolCallIds.has(toolCall.toolCallId)
+      ) {
+        this.deleteToolCall(toolCall.toolCallId);
+      }
+    }
+    for (const terminal of this.listTerminalStreams({ sessionId })) {
+      if (
+        coveredTurnIds.has(terminal.turnId) ||
+        coveredTerminalIds.has(terminal.terminalId)
+      ) {
+        this.deleteTerminalStream(terminal.terminalId);
+      }
+    }
+    for (const approval of this.listApprovalRequests({ sessionId })) {
+      if (
+        coveredTurnIds.has(approval.turnId) ||
+        coveredApprovalRequestIds.has(approval.requestId)
+      ) {
+        this.deleteApprovalRequest(approval.requestId);
+      }
+    }
+    for (const interaction of this.listRuntimeInteractions({ sessionId })) {
+      if (
+        coveredTurnIds.has(interaction.turnId ?? "") ||
+        coveredInteractionRequestIds.has(interaction.requestId)
+      ) {
+        this.deleteRuntimeInteraction(interaction.requestId);
+      }
+    }
+    for (const turn of coveredTurns) {
+      this.deleteTurn(turn.turnId);
     }
   }
 

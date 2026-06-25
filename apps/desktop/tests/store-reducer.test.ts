@@ -10,6 +10,7 @@ import { parseIngestEnvelopeAction } from "../src/store/intake.js";
 import { rendererStoreReducer } from "../src/store/reducer.js";
 import { selectEventStreamState, selectTurnsForSession } from "../src/store/selectors.js";
 import { createInitialRendererStoreState } from "../src/store/state.js";
+import { createRendererStore } from "../src/store/store.js";
 import type { RendererStoreState } from "../src/store/types.js";
 
 const toEnvelope = (
@@ -288,7 +289,7 @@ describe("desktop store reducer", () => {
         {
           turnId: "turn-a",
           sessionId: "session-a",
-          status: "running",
+          status: "streaming",
           messageIds: ["message-a"],
           toolCallIds: [],
           terminalIds: [],
@@ -317,72 +318,59 @@ describe("desktop store reducer", () => {
       sessionRelations: []
     };
 
-    let state = rendererStoreReducer(createInitialRendererStoreState(), {
-      type: "store/hydrateSessionWindow",
-      sessionId: "session-a",
-      snapshot,
-      mode: "replace",
-      cursor: "cursor-10"
-    });
+    const store = createRendererStore();
+    store.hydrateSessionWindow("session-a", snapshot, "replace", "cursor-10");
 
-    state = rendererStoreReducer(
-      state,
-      parseIngestEnvelopeAction(
-        toEnvelope("evt-stale-delta", "cursor-9", {
-          type: "message.delta",
-          sessionId: "session-a",
-          turnId: "turn-a",
-          messageId: "message-a",
-          delta: " stale"
-        })
-      )
+    store.ingestEnvelope(
+      toEnvelope("evt-stale-delta", "cursor-9", {
+        type: "message.delta",
+        sessionId: "session-a",
+        turnId: "turn-a",
+        messageId: "message-a",
+        delta: " stale"
+      })
     );
+    let state = store.getState();
 
     expect(state.entities.messageBlocks["message-a:md"]?.text).toBe("latest text");
     expect(state.eventStream.lastCursor).toBeUndefined();
 
-    state = rendererStoreReducer(
-      state,
-      parseIngestEnvelopeAction(
-        toEnvelope("evt-other-session", "cursor-9", {
-          type: "turn.started",
-          sessionId: "session-b",
-          turnId: "turn-b"
-        })
-      )
+    store.ingestEnvelope(
+      toEnvelope("evt-other-session", "cursor-9", {
+        type: "turn.started",
+        sessionId: "session-b",
+        turnId: "turn-b"
+      })
     );
+    state = store.getState();
 
     expect(state.entities.turns["turn-b"]?.sessionId).toBe("session-b");
     expect(state.eventStream.lastCursor).toBe("cursor-9");
 
-    state = rendererStoreReducer(
-      state,
-      parseIngestEnvelopeAction(
-        toEnvelope("evt-covered-delta", "cursor-10", {
-          type: "message.delta",
-          sessionId: "session-a",
-          turnId: "turn-a",
-          messageId: "message-a",
-          delta: " covered"
-        })
-      )
+    store.ingestEnvelope(
+      toEnvelope("evt-covered-delta", "cursor-10", {
+        type: "message.delta",
+        sessionId: "session-a",
+        turnId: "turn-a",
+        messageId: "message-a",
+        delta: " covered"
+      })
     );
+    state = store.getState();
 
     expect(state.entities.messageBlocks["message-a:md"]?.text).toBe("latest text");
     expect(state.eventStream.lastCursor).toBe("cursor-9");
 
-    state = rendererStoreReducer(
-      state,
-      parseIngestEnvelopeAction(
-        toEnvelope("evt-live-delta", "cursor-11", {
-          type: "message.delta",
-          sessionId: "session-a",
-          turnId: "turn-a",
-          messageId: "message-a",
-          delta: " live"
-        })
-      )
+    store.ingestEnvelope(
+      toEnvelope("evt-live-delta", "cursor-11", {
+        type: "message.delta",
+        sessionId: "session-a",
+        turnId: "turn-a",
+        messageId: "message-a",
+        delta: " live"
+      })
     );
+    state = store.getState();
 
     expect(state.entities.messageBlocks["message-a:md"]?.text).toBe(
       "latest text live"
@@ -417,7 +405,7 @@ describe("desktop store reducer", () => {
         {
           turnId: "turn-current",
           sessionId: "session-a",
-          status: "running",
+          status: "streaming",
           messageIds: ["message-current"],
           toolCallIds: [],
           terminalIds: [],
@@ -483,33 +471,20 @@ describe("desktop store reducer", () => {
       sessionRelations: []
     };
 
-    let state = rendererStoreReducer(createInitialRendererStoreState(), {
-      type: "store/hydrateSessionWindow",
-      sessionId: "session-a",
-      snapshot: currentSnapshot,
-      mode: "replace"
-    });
+    const store = createRendererStore();
+    store.hydrateSessionWindow("session-a", currentSnapshot, "replace");
+    store.hydrateSessionWindow("session-a", olderSnapshot, "prepend", "cursor-10");
 
-    state = rendererStoreReducer(state, {
-      type: "store/hydrateSessionWindow",
-      sessionId: "session-a",
-      snapshot: olderSnapshot,
-      mode: "prepend",
-      cursor: "cursor-10"
-    });
-
-    state = rendererStoreReducer(
-      state,
-      parseIngestEnvelopeAction(
-        toEnvelope("evt-current-queued-delta", "cursor-9", {
-          type: "message.delta",
-          sessionId: "session-a",
-          turnId: "turn-current",
-          messageId: "message-current",
-          delta: " queued"
-        })
-      )
+    store.ingestEnvelope(
+      toEnvelope("evt-current-queued-delta", "cursor-9", {
+        type: "message.delta",
+        sessionId: "session-a",
+        turnId: "turn-current",
+        messageId: "message-current",
+        delta: " queued"
+      })
     );
+    const state = store.getState();
 
     expect(state.entities.turns["turn-older"]?.sessionId).toBe("session-a");
     expect(state.entities.messageBlocks["message-current:md"]?.text).toBe(
@@ -1270,23 +1245,24 @@ describe("desktop store reducer", () => {
   });
 
   it("disposes one session without disturbing the others", () => {
-    let state = createInitialRendererStoreState();
-
-    state = rendererStoreReducer(state, {
-      type: "store/hydrateSnapshot",
-      snapshot: {
+    const store = createRendererStore();
+    store.hydrateSnapshot({
         conversations: [
           {
             conversationId: "conversation-a",
             participantEngineIds: ["agent-a"],
             activeSessionId: "session-a",
-            sessionIds: ["session-a"]
+            sessionIds: ["session-a"],
+            createdAt: "2026-04-19T00:00:00.000Z",
+            updatedAt: "2026-04-19T00:00:00.000Z"
           },
           {
             conversationId: "conversation-b",
             participantEngineIds: ["agent-b"],
             activeSessionId: "session-b",
-            sessionIds: ["session-b"]
+            sessionIds: ["session-b"],
+            createdAt: "2026-04-19T00:00:01.000Z",
+            updatedAt: "2026-04-19T00:00:01.000Z"
           }
         ],
         sessions: [
@@ -1337,13 +1313,9 @@ describe("desktop store reducer", () => {
         approvalRequests: [],
         participants: [],
         sessionRelations: []
-      }
     });
 
-    state = rendererStoreReducer(state, {
-      type: "store/disposeSession",
-      sessionId: "session-a"
-    });
+    const state = store.disposeSession("session-a");
 
     expect(state.entities.sessions["session-a"]).toBeUndefined();
     expect(state.entities.turns["turn-a"]).toBeUndefined();
@@ -1564,17 +1536,13 @@ describe("desktop store reducer", () => {
         }
       ]
     };
-    let state = rendererStoreReducer(createInitialRendererStoreState(), {
-      type: "store/hydrateSnapshot",
-      snapshot: baseSnapshot
-    });
-
-    state = rendererStoreReducer(state, {
-      type: "store/hydrateSessionWindow",
-      sessionId: "session-a",
-      snapshot: movedSnapshot,
-      mode: "prepend"
-    });
+    const store = createRendererStore();
+    store.hydrateSnapshot(baseSnapshot);
+    const state = store.hydrateSessionWindow(
+      "session-a",
+      movedSnapshot,
+      "prepend"
+    );
 
     expect(state.indexes.messageBlockIdsByTurn["turn-old"]).toBeUndefined();
     expect(state.indexes.toolCallIdsByTurn["turn-old"]).toBeUndefined();
@@ -2293,11 +2261,8 @@ describe("desktop store reducer", () => {
   });
 
   it("disposes a session by pruning session-scoped entities and rebuilding indexes only", () => {
-    let state = createInitialRendererStoreState();
-
-    state = rendererStoreReducer(state, {
-      type: "store/hydrateSnapshot",
-      snapshot: {
+    const store = createRendererStore();
+    store.hydrateSnapshot({
         conversations: [
           {
             conversationId: "conversation-a",
@@ -2408,6 +2373,8 @@ describe("desktop store reducer", () => {
             participantId: "participant-a",
             conversationId: "conversation-a",
             engineId: "agent-a",
+            role: "primary",
+            capabilities: [],
             activeSessionIds: ["session-a"],
             joinedAt: "2026-04-17T00:00:00.000Z"
           },
@@ -2415,18 +2382,16 @@ describe("desktop store reducer", () => {
             participantId: "participant-b",
             conversationId: "conversation-b",
             engineId: "agent-b",
+            role: "primary",
+            capabilities: [],
             activeSessionIds: ["session-b"],
             joinedAt: "2026-04-17T00:01:00.000Z"
           }
         ],
         sessionRelations: []
-      }
     });
 
-    state = rendererStoreReducer(state, {
-      type: "store/disposeSession",
-      sessionId: "session-a"
-    });
+    const state = store.disposeSession("session-a");
 
     expect(state.entities.sessions["session-a"]).toBeUndefined();
     expect(state.entities.turns["turn-a"]).toBeUndefined();
@@ -2444,11 +2409,8 @@ describe("desktop store reducer", () => {
   });
 
   it("preserves active session while replacing the active session window", () => {
-    let state = createInitialRendererStoreState();
-
-    state = rendererStoreReducer(state, {
-      type: "store/hydrateSnapshot",
-      snapshot: {
+    const store = createRendererStore();
+    store.hydrateSnapshot({
         conversations: [
           {
             conversationId: "conversation-a",
@@ -2492,22 +2454,17 @@ describe("desktop store reducer", () => {
         approvalRequests: [],
         participants: [],
         sessionRelations: []
-      }
     });
-    state = rendererStoreReducer(state, {
+    store.dispatch({
       type: "store/setActiveConversation",
       conversationId: "conversation-a"
     });
-    state = rendererStoreReducer(state, {
+    store.dispatch({
       type: "store/setActiveSession",
       sessionId: "session-a"
     });
 
-    state = rendererStoreReducer(state, {
-      type: "store/hydrateSessionWindow",
-      sessionId: "session-a",
-      mode: "replace",
-      snapshot: {
+    const state = store.hydrateSessionWindow("session-a", {
         conversations: [
           {
             conversationId: "conversation-a",
@@ -2559,8 +2516,9 @@ describe("desktop store reducer", () => {
         approvalRequests: [],
         participants: [],
         sessionRelations: []
-      }
-    });
+      },
+      "replace"
+    );
 
     expect(state.activeConversationId).toBe("conversation-a");
     expect(state.activeSessionId).toBe("session-a");
@@ -2571,9 +2529,8 @@ describe("desktop store reducer", () => {
   });
 
   it("preserves already loaded session turns outside the replaced session window", () => {
-    let state = rendererStoreReducer(createInitialRendererStoreState(), {
-      type: "store/hydrateSnapshot",
-      snapshot: {
+    const store = createRendererStore();
+    store.hydrateSnapshot({
         conversations: [
           {
             conversationId: "conversation-a",
@@ -2654,14 +2611,9 @@ describe("desktop store reducer", () => {
         approvalRequests: [],
         participants: [],
         sessionRelations: []
-      }
     });
 
-    state = rendererStoreReducer(state, {
-      type: "store/hydrateSessionWindow",
-      sessionId: "session-a",
-      mode: "replace",
-      snapshot: {
+    const state = store.hydrateSessionWindow("session-a", {
         conversations: [
           {
             conversationId: "conversation-a",
@@ -2713,8 +2665,9 @@ describe("desktop store reducer", () => {
         participants: [],
         sessionRelations: []
       },
-      cursor: "cursor-20"
-    });
+      "replace",
+      "cursor-20"
+    );
 
     expect(state.entities.turns["turn-old"]).toBeDefined();
     expect(state.entities.messageBlocks["message-old:md"]?.text).toBe("old prompt");

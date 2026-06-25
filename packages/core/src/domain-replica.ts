@@ -79,6 +79,15 @@ export class DomainReplica {
     return this.mutate(() => this.store.mergeSnapshot(snapshot, options));
   }
 
+  public replaceSessionWindowSnapshot(
+    sessionId: string,
+    snapshot: DomainSnapshot | unknown
+  ): DomainSnapshot {
+    return this.mutate(() =>
+      this.store.replaceSessionWindowSnapshot(sessionId, snapshot)
+    );
+  }
+
   public upsertConversation(conversation: Conversation | unknown): Conversation {
     return this.mutate(() => this.store.upsertConversation(conversation));
   }

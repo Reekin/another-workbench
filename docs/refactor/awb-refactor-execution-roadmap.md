@@ -415,7 +415,7 @@ shared projector tests、renderer sync tests、真实 GUI 连续观察流式输�
   - renderer typecheck
   - GUI snapshot/open smoke
 
-[ ] task_3_3: 迁移 hydration/window/barrier
+[x] task_3_3: 迁移 hydration/window/barrier
 - tag: prod
 - goal: 保留 renderer-only 同步语义，删除领域 merge 逻辑
 - executor: subagent

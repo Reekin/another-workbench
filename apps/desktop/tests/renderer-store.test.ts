@@ -129,4 +129,194 @@ describe("renderer store domain replica", () => {
     expect(store.getRevision()).toBe(1);
     expect(store.getDomainReadModel().getRevision()).toBe(1);
   });
+
+  it("uses the replica to replace covered session-window entities", () => {
+    const store = createRendererStore();
+    store.hydrateSnapshot(
+      parseDomainSnapshot({
+        conversations: [
+          {
+            conversationId: "conversation-a",
+            participantEngineIds: ["agent-a"],
+            activeSessionId: "session-a",
+            sessionIds: ["session-a"],
+            createdAt: now,
+            updatedAt: now
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-a",
+            conversationId: "conversation-a",
+            engineId: "agent-a",
+            status: "running",
+            createdAt: now,
+            updatedAt: now,
+            lastTurnId: "turn-new"
+          }
+        ],
+        turns: [
+          {
+            turnId: "turn-old",
+            sessionId: "session-a",
+            status: "completed",
+            messageIds: ["message-old"],
+            toolCallIds: [],
+            terminalIds: [],
+            approvalRequestIds: [],
+            startedAt: "2026-04-21T00:00:00.000Z",
+            completedAt: "2026-04-21T00:00:01.000Z"
+          },
+          {
+            turnId: "turn-new",
+            sessionId: "session-a",
+            status: "streaming",
+            messageIds: ["message-new"],
+            toolCallIds: ["tool-stale"],
+            terminalIds: [],
+            approvalRequestIds: [],
+            startedAt: "2026-04-21T00:00:02.000Z"
+          }
+        ],
+        messageBlocks: [
+          {
+            blockId: "message-old:md",
+            messageId: "message-old",
+            sessionId: "session-a",
+            turnId: "turn-old",
+            role: "user",
+            kind: "markdown",
+            text: "old prompt",
+            startedAt: "2026-04-21T00:00:00.000Z"
+          },
+          {
+            blockId: "message-new:md",
+            messageId: "message-new",
+            sessionId: "session-a",
+            turnId: "turn-new",
+            role: "assistant",
+            kind: "markdown",
+            text: "stale",
+            startedAt: "2026-04-21T00:00:02.000Z"
+          }
+        ],
+        toolCalls: [
+          {
+            toolCallId: "tool-stale",
+            sessionId: "session-a",
+            turnId: "turn-new",
+            toolName: "shell",
+            status: "running",
+            startedAt: "2026-04-21T00:00:02.500Z"
+          }
+        ]
+      })
+    );
+
+    const state = store.hydrateSessionWindow(
+      "session-a",
+      parseDomainSnapshot({
+        conversations: [
+          {
+            conversationId: "conversation-a",
+            participantEngineIds: ["agent-a"],
+            activeSessionId: "session-a",
+            sessionIds: ["session-a"],
+            createdAt: now,
+            updatedAt: "2026-04-21T00:00:03.000Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-a",
+            conversationId: "conversation-a",
+            engineId: "agent-a",
+            status: "running",
+            createdAt: now,
+            updatedAt: "2026-04-21T00:00:03.000Z",
+            lastTurnId: "turn-new"
+          }
+        ],
+        turns: [
+          {
+            turnId: "turn-new",
+            sessionId: "session-a",
+            status: "streaming",
+            messageIds: ["message-new"],
+            toolCallIds: [],
+            terminalIds: [],
+            approvalRequestIds: [],
+            startedAt: "2026-04-21T00:00:02.000Z"
+          }
+        ],
+        messageBlocks: [
+          {
+            blockId: "message-new:md",
+            messageId: "message-new",
+            sessionId: "session-a",
+            turnId: "turn-new",
+            role: "assistant",
+            kind: "markdown",
+            text: "fresh",
+            startedAt: "2026-04-21T00:00:02.000Z"
+          }
+        ]
+      }),
+      "replace",
+      "cursor-20"
+    );
+
+    expect(store.getDomainReadModel().getTurn("turn-old")).toBeDefined();
+    expect(store.getDomainReadModel().getToolCall("tool-stale")).toBeUndefined();
+    expect(store.getDomainReadModel().getMessageBlock("message-new:md")?.text).toBe(
+      "fresh"
+    );
+    expect(state.entities.turns["turn-old"]).toBeDefined();
+    expect(state.entities.toolCalls["tool-stale"]).toBeUndefined();
+    expect(state.entities.messageBlocks["message-new:md"]?.text).toBe("fresh");
+    expect(state.eventStream.cursorBarrierBySessionId?.["session-a"]).toBe(
+      "cursor-20"
+    );
+  });
+
+  it("does not partially commit state when scoped window validation fails", () => {
+    const store = createRendererStore();
+    store.hydrateSnapshot(sessionSnapshot(), "cursor-1");
+    const before = store.getSubscriptionSnapshot();
+
+    expect(() =>
+      store.hydrateSessionWindow(
+        "session-a",
+        parseDomainSnapshot({
+          conversations: [
+            {
+              conversationId: "conversation-b",
+              participantEngineIds: ["agent-b"],
+              activeSessionId: "session-b",
+              sessionIds: ["session-b"],
+              createdAt: now,
+              updatedAt: now
+            }
+          ],
+          sessions: [
+            {
+              sessionId: "session-b",
+              conversationId: "conversation-b",
+              engineId: "agent-b",
+              status: "idle",
+              createdAt: now,
+              updatedAt: now
+            }
+          ]
+        }),
+        "replace",
+        "cursor-2"
+      )
+    ).toThrow(/outside merge scope/);
+
+    expect(store.getSubscriptionSnapshot()).toBe(before);
+    expect(store.getState().eventStream.lastCursor).toBe("cursor-1");
+    expect(store.getDomainReadModel().getSession("session-a")).toBeDefined();
+    expect(store.getDomainReadModel().getSession("session-b")).toBeUndefined();
+  });
 });

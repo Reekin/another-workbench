@@ -5,7 +5,11 @@ import {
   createIngestEventAction
 } from "./intake.js";
 import { rendererStoreReducer } from "./reducer.js";
-import { createInitialRendererStoreState } from "./state.js";
+import {
+  createInitialRendererStoreState,
+  normalizeRendererDomainSnapshot,
+  withDomainSnapshot
+} from "./state.js";
 import type { RendererStoreAction, RendererStoreState } from "./types.js";
 import { DomainReplica, type DomainReadModel } from "@another-workbench/core";
 import type {
@@ -59,18 +63,41 @@ const snapshotFromRendererState = (state: RendererStoreState): DomainSnapshot =>
 
 const actionTouchesDomain = (action: RendererStoreAction): boolean => {
   switch (action.type) {
-    case "store/hydrateSnapshot":
-    case "store/hydrateSessionWindow":
     case "store/disposeSession":
     case "store/ingestEvent":
     case "store/ingestEnvelope":
     case "store/ingestEnvelopes":
       return true;
+    case "store/hydrateSnapshot":
+    case "store/hydrateSessionWindow":
     case "store/setActiveConversation":
     case "store/setActiveSession":
       return false;
     default:
-      return false;
+      return action satisfies never;
+  }
+};
+
+const applySnapshotActionToReplica = (
+  replica: DomainReplica,
+  action: RendererStoreAction
+): DomainSnapshot | undefined => {
+  switch (action.type) {
+    case "store/hydrateSnapshot":
+      return replica.replaceSnapshot(
+        normalizeRendererDomainSnapshot(action.snapshot)
+      );
+    case "store/hydrateSessionWindow": {
+      const snapshot = normalizeRendererDomainSnapshot(action.snapshot);
+      if (action.mode === "prepend") {
+        return replica.mergeSnapshot(snapshot, {
+          scope: { sessionId: action.sessionId }
+        });
+      }
+      return replica.replaceSessionWindowSnapshot(action.sessionId, snapshot);
+    }
+    default:
+      return undefined;
   }
 };
 
@@ -90,7 +117,7 @@ export const createRendererStore = (
 ): RendererStore => {
   let state = initialState ?? createInitialRendererStoreState();
   const domainReplica = new DomainReplica({
-    snapshot: snapshotFromRendererState(state)
+    snapshot: normalizeRendererDomainSnapshot(snapshotFromRendererState(state))
   });
   let revision = 0;
   let subscriptionSnapshot = createSubscriptionSnapshot(
@@ -102,11 +129,28 @@ export const createRendererStore = (
 
   const dispatch = (action: RendererStoreAction): RendererStoreState => {
     const previousState = state;
-    state = rendererStoreReducer(state, action);
-    if (state !== previousState) {
-      if (actionTouchesDomain(action)) {
-        domainReplica.replaceSnapshot(snapshotFromRendererState(state));
-      }
+    const stagedReplica = new DomainReplica({
+      snapshot: domainReplica.getSnapshot()
+    });
+    const stagedSnapshot = applySnapshotActionToReplica(stagedReplica, action);
+    const reducedState = rendererStoreReducer(state, action);
+    let nextState = reducedState;
+    let domainChanged = false;
+
+    if (stagedSnapshot) {
+      const nextDomainSnapshot = domainReplica.replaceSnapshot(stagedSnapshot);
+      nextState = withDomainSnapshot(reducedState, nextDomainSnapshot);
+      domainChanged = true;
+    } else if (reducedState !== previousState && actionTouchesDomain(action)) {
+      const nextDomainSnapshot = domainReplica.replaceSnapshot(
+        snapshotFromRendererState(reducedState)
+      );
+      nextState = withDomainSnapshot(reducedState, nextDomainSnapshot);
+      domainChanged = true;
+    }
+
+    if (nextState !== previousState || domainChanged) {
+      state = nextState;
       revision += 1;
       subscriptionSnapshot = createSubscriptionSnapshot(
         state,

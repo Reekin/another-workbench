@@ -1,6 +1,5 @@
 import type {
   ActorRef,
-  DomainSnapshot,
   EventEnvelope,
   MessageBlock,
   RuntimeEvent
@@ -29,7 +28,6 @@ const nowIso = (): string => new Date().toISOString();
 const unknownAgentId = "unknown-agent";
 const unknownToolName = "unknown-tool";
 const markdownBlockSuffix = ":md";
-const legacyStartBlockSuffix = ":start";
 const maxSeenEventIds = 2_048;
 
 type ActorFields = { participantId?: string; engineId?: string };
@@ -347,101 +345,6 @@ const setSessionStatus = (
   });
 };
 
-const hydrateFromSnapshot = (
-  initialState: RendererStoreState,
-  snapshot: DomainSnapshot
-): RendererStoreState => {
-  let state = createInitialRendererStoreState();
-
-  for (const conversation of snapshot.conversations) {
-    state = upsertConversation(state, conversation);
-  }
-  for (const session of snapshot.sessions) {
-    state = upsertSession(state, session);
-  }
-  for (const turn of snapshot.turns) {
-    state = upsertTurn(state, turn);
-  }
-  for (const block of normalizeSnapshotMessageBlocks(snapshot.messageBlocks)) {
-    state = upsertMessageBlock(state, block);
-  }
-  for (const toolCall of snapshot.toolCalls) {
-    state = upsertToolCall(state, toolCall);
-  }
-  for (const terminal of snapshot.terminalStreams) {
-    state = upsertTerminalStream(state, terminal);
-  }
-  for (const approval of snapshot.approvalRequests) {
-    state = upsertApprovalRequest(state, approval);
-  }
-  for (const interaction of snapshot.runtimeInteractions ?? []) {
-    state = upsertRuntimeInteraction(state, interaction);
-  }
-  for (const participant of snapshot.participants) {
-    state = upsertParticipant(state, participant);
-  }
-  for (const goal of snapshot.threadGoals ?? []) {
-    state = upsertThreadGoal(state, goal);
-  }
-  for (const relation of snapshot.sessionRelations) {
-    state = upsertSessionRelation(state, relation);
-  }
-
-  return {
-    ...state,
-    eventStream: initialState.eventStream,
-    activeConversationId:
-      initialState.activeConversationId ?? snapshot.conversations.at(0)?.conversationId,
-    activeSessionId:
-      initialState.activeSessionId ?? snapshot.sessions.at(0)?.sessionId,
-    lastEventType: initialState.lastEventType,
-    lastError: initialState.lastError
-  };
-};
-
-const mergeSnapshotIntoState = (
-  initialState: RendererStoreState,
-  snapshot: DomainSnapshot
-): RendererStoreState => {
-  let state = initialState;
-
-  for (const conversation of snapshot.conversations) {
-    state = upsertConversation(state, conversation);
-  }
-  for (const session of snapshot.sessions) {
-    state = upsertSession(state, session);
-  }
-  for (const turn of snapshot.turns) {
-    state = upsertTurn(state, turn);
-  }
-  for (const block of normalizeSnapshotMessageBlocks(snapshot.messageBlocks)) {
-    state = upsertMessageBlock(state, block);
-  }
-  for (const toolCall of snapshot.toolCalls) {
-    state = upsertToolCall(state, toolCall);
-  }
-  for (const terminal of snapshot.terminalStreams) {
-    state = upsertTerminalStream(state, terminal);
-  }
-  for (const approval of snapshot.approvalRequests) {
-    state = upsertApprovalRequest(state, approval);
-  }
-  for (const interaction of snapshot.runtimeInteractions ?? []) {
-    state = upsertRuntimeInteraction(state, interaction);
-  }
-  for (const participant of snapshot.participants) {
-    state = upsertParticipant(state, participant);
-  }
-  for (const goal of snapshot.threadGoals ?? []) {
-    state = upsertThreadGoal(state, goal);
-  }
-  for (const relation of snapshot.sessionRelations) {
-    state = upsertSessionRelation(state, relation);
-  }
-
-  return state;
-};
-
 const buildMessageDeltaBlock = (
   event: Extract<RuntimeEvent, { type: "message.delta" }>,
   timestamp: string
@@ -457,74 +360,6 @@ const buildMessageDeltaBlock = (
     actor: buildActorRef(event),
     startedAt: timestamp
   };
-};
-
-const normalizeSnapshotMessageBlocks = (blocks: MessageBlock[]): MessageBlock[] => {
-  // Older snapshots produced two markdown blocks per message:
-  // - `${messageId}:start` (empty placeholder)
-  // - `${messageId}:md` (actual markdown stream)
-  //
-  // We normalize those into a single `${messageId}:md` block so the renderer
-  // has a stable display unit and doesn't render a pseudo-empty message.
-  const grouped = new Map<string, MessageBlock[]>();
-  for (const block of blocks) {
-    const bucket = grouped.get(block.messageId);
-    if (bucket) {
-      bucket.push(block);
-    } else {
-      grouped.set(block.messageId, [block]);
-    }
-  }
-
-  const normalized: MessageBlock[] = [];
-  for (const [messageId, group] of grouped.entries()) {
-    const expectedStartId = `${messageId}${legacyStartBlockSuffix}`;
-    const expectedMarkdownId = `${messageId}${markdownBlockSuffix}`;
-
-    const startBlock = group.find((block) => block.blockId === expectedStartId);
-    const markdownBlock = group.find((block) => block.blockId === expectedMarkdownId);
-
-    if (markdownBlock) {
-      const merged: MessageBlock = startBlock
-        ? {
-            ...markdownBlock,
-            role: markdownBlock.role ?? startBlock.role,
-            actor: markdownBlock.actor ?? startBlock.actor,
-            startedAt:
-              Date.parse(startBlock.startedAt) <= Date.parse(markdownBlock.startedAt)
-                ? startBlock.startedAt
-                : markdownBlock.startedAt
-          }
-        : markdownBlock;
-
-      normalized.push(merged);
-      for (const block of group) {
-        if (block.blockId === expectedStartId || block.blockId === expectedMarkdownId) {
-          continue;
-        }
-        normalized.push(block);
-      }
-      continue;
-    }
-
-    if (startBlock) {
-      normalized.push({
-        ...startBlock,
-        blockId: expectedMarkdownId
-      });
-      for (const block of group) {
-        if (block.blockId === expectedStartId) {
-          continue;
-        }
-        normalized.push(block);
-      }
-      continue;
-    }
-
-    normalized.push(...group);
-  }
-
-  return normalized;
 };
 
 const compareIsoAsc = (left?: string, right?: string): number => {
@@ -715,89 +550,6 @@ const disposeSessionState = (
     indexes: rebuildIndexesFromEntities(nextEntities),
     activeConversationId: nextActiveConversationId,
     activeSessionId: nextActiveSessionId
-  };
-};
-
-const disposeSessionWindowCoverage = (
-  state: RendererStoreState,
-  sessionId: string,
-  snapshot: DomainSnapshot
-): RendererStoreState => {
-  const coveredTurns = snapshot.turns.filter((turn) => turn.sessionId === sessionId);
-  if (coveredTurns.length === 0) {
-    return state;
-  }
-  const coveredTurnIds = new Set(coveredTurns.map((turn) => turn.turnId));
-  const coveredMessageIds = new Set(
-    coveredTurns.flatMap((turn) => turn.messageIds)
-  );
-  const coveredToolCallIds = new Set(
-    coveredTurns.flatMap((turn) => turn.toolCallIds)
-  );
-  const coveredTerminalIds = new Set(
-    coveredTurns.flatMap((turn) => turn.terminalIds)
-  );
-  const coveredApprovalRequestIds = new Set(
-    coveredTurns.flatMap((turn) => turn.approvalRequestIds)
-  );
-  const coveredInteractionRequestIds = new Set(
-    coveredTurns.flatMap((turn) => turn.interactionRequestIds ?? [])
-  );
-
-  const nextEntities: RendererStoreState["entities"] = {
-    ...state.entities,
-    turns: Object.fromEntries(
-      Object.entries(state.entities.turns).filter(
-        ([turnId, turn]) =>
-          turn.sessionId !== sessionId || !coveredTurnIds.has(turnId)
-      )
-    ),
-    messageBlocks: Object.fromEntries(
-      Object.entries(state.entities.messageBlocks).filter(
-        ([, block]) =>
-          block.sessionId !== sessionId ||
-          (!coveredTurnIds.has(block.turnId) &&
-            !coveredMessageIds.has(block.messageId))
-      )
-    ),
-    toolCalls: Object.fromEntries(
-      Object.entries(state.entities.toolCalls).filter(
-        ([toolCallId, toolCall]) =>
-          toolCall.sessionId !== sessionId ||
-          (!coveredTurnIds.has(toolCall.turnId) &&
-            !coveredToolCallIds.has(toolCallId))
-      )
-    ),
-    terminalStreams: Object.fromEntries(
-      Object.entries(state.entities.terminalStreams).filter(
-        ([terminalId, terminal]) =>
-          terminal.sessionId !== sessionId ||
-          (!coveredTurnIds.has(terminal.turnId) &&
-            !coveredTerminalIds.has(terminalId))
-      )
-    ),
-    approvalRequests: Object.fromEntries(
-      Object.entries(state.entities.approvalRequests).filter(
-        ([requestId, approval]) =>
-          approval.sessionId !== sessionId ||
-          (!coveredTurnIds.has(approval.turnId) &&
-            !coveredApprovalRequestIds.has(requestId))
-      )
-    ),
-    runtimeInteractions: Object.fromEntries(
-      Object.entries(state.entities.runtimeInteractions).filter(
-        ([requestId, interaction]) =>
-          interaction.sessionId !== sessionId ||
-          (!coveredTurnIds.has(interaction.turnId ?? "") &&
-            !coveredInteractionRequestIds.has(requestId))
-      )
-    )
-  };
-
-  return {
-    ...state,
-    entities: nextEntities,
-    indexes: rebuildIndexesFromEntities(nextEntities)
   };
 };
 
@@ -1764,33 +1516,34 @@ export const rendererStoreReducer = (
   switch (action.type) {
     case "store/hydrateSnapshot":
       return markGlobalCursorBarrier(
-        hydrateFromSnapshot(state, action.snapshot),
+        {
+          ...state,
+          activeConversationId:
+            state.activeConversationId ??
+            action.snapshot.conversations.at(0)?.conversationId,
+          activeSessionId:
+            state.activeSessionId ?? action.snapshot.sessions.at(0)?.sessionId
+        },
         action.cursor
       );
     case "store/hydrateSessionWindow": {
       const shouldPreserveActiveSession =
         action.mode !== "prepend" && state.activeSessionId === action.sessionId;
-      const baseState =
-        action.mode === "prepend"
-          ? state
-          : disposeSessionWindowCoverage(
-              state,
-              action.sessionId,
-              action.snapshot
-            );
-      const mergedState = mergeSnapshotIntoState(baseState, action.snapshot);
       const nextState =
         action.mode === "prepend"
-          ? mergedState
+          ? state
           : markSessionCursorBarrier(
-              mergedState,
+              state,
               action.sessionId,
               action.cursor
             );
       if (!shouldPreserveActiveSession) {
         return nextState;
       }
-      const restoredSession = nextState.entities.sessions[action.sessionId];
+      const restoredSession =
+        action.snapshot.sessions.find(
+          (session) => session.sessionId === action.sessionId
+        ) ?? state.entities.sessions[action.sessionId];
       if (!restoredSession) {
         return nextState;
       }

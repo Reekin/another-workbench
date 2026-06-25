@@ -7,6 +7,6 @@ export const useRendererStoreState = (
 ): RendererStoreState =>
   useSyncExternalStore(
     (onStoreChange) => store.subscribe(() => onStoreChange()),
-    () => store.getState(),
-    () => store.getState()
-  );
+    () => store.getSubscriptionSnapshot(),
+    () => store.getSubscriptionSnapshot()
+  ).state;

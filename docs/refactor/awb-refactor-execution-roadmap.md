@@ -396,7 +396,7 @@ shared projector tests、renderer sync tests、真实 GUI 连续观察流式输�
   - browser-entry build test
   - desktop-server tests
 
-[ ] task_3_2: RendererStore 私有持有 DomainReplica
+[x] task_3_2: RendererStore 私有持有 DomainReplica
 - tag: prod
 - goal: 让 renderer 开始消费 shared replica
 - executor: subagent

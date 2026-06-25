@@ -1,7 +1,4 @@
-import {
-  DomainProjector,
-  DomainStore
-} from "@another-workbench/core";
+import { DomainReplica } from "@another-workbench/core";
 import type {
   AgentParticipant,
   ChatSession,
@@ -80,8 +77,7 @@ export class DomainService {
   private readonly now: Clock;
   private readonly createRelationId: IdFactory;
   private readonly createSessionId: IdFactory;
-  private readonly domainStore: DomainStore;
-  private readonly domainProjector: DomainProjector;
+  private readonly domainReplica: DomainReplica;
 
   public constructor(options: DomainServiceOptions) {
     this.assertEngineRegistered = options.assertEngineRegistered;
@@ -91,9 +87,7 @@ export class DomainService {
     this.now = options.now ?? (() => new Date().toISOString());
     this.createRelationId = options.createRelationId ?? (() => createOpaqueId("relation"));
     this.createSessionId = options.createSessionId ?? (() => createOpaqueId("session"));
-    this.domainStore = new DomainStore();
-    this.domainProjector = new DomainProjector({
-      store: this.domainStore,
+    this.domainReplica = new DomainReplica({
       now: this.now
     });
   }
@@ -104,7 +98,7 @@ export class DomainService {
       relatedIndexRelations?: SessionRelationIndex[];
     } = {}
   ): ChatSession {
-    const existingConversation = this.domainStore.getConversation(
+    const existingConversation = this.domainReplica.getConversation(
       snapshot.conversation.conversationId
     );
     const relatedIndexRelations = (input.relatedIndexRelations ?? []).map(
@@ -117,7 +111,7 @@ export class DomainService {
         createdAt: relation.createdAt
       })
     );
-    this.domainStore.mergeSnapshot(
+    this.domainReplica.mergeSnapshot(
       {
         conversations: [
           withConversationSession(
@@ -162,15 +156,15 @@ export class DomainService {
   }
 
   public listSessions(options: WorkbenchSessionListOptions = {}): ChatSession[] {
-    return this.domainStore.listSessions(options);
+    return this.domainReplica.listSessions(options);
   }
 
   public getSession(sessionId: string): ChatSession | undefined {
-    return this.domainStore.getSession(sessionId);
+    return this.domainReplica.getSession(sessionId);
   }
 
   public requireSession(sessionId: string): ChatSession {
-    const session = this.domainStore.getSession(sessionId);
+    const session = this.domainReplica.getSession(sessionId);
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`);
     }
@@ -178,11 +172,11 @@ export class DomainService {
   }
 
   public getConversation(conversationId: string): Conversation | undefined {
-    return this.domainStore.getConversation(conversationId);
+    return this.domainReplica.getConversation(conversationId);
   }
 
   public requireConversation(conversationId: string): Conversation {
-    const conversation = this.domainStore.getConversation(conversationId);
+    const conversation = this.domainReplica.getConversation(conversationId);
     if (!conversation) {
       throw new Error(`Conversation not found: ${conversationId}`);
     }
@@ -460,11 +454,11 @@ export class DomainService {
   }
 
   public resolveConversationIdForSession(sessionId: string): string | undefined {
-    return this.domainStore.resolveConversationIdBySessionId(sessionId);
+    return this.domainReplica.resolveConversationIdBySessionId(sessionId);
   }
 
   public getSnapshot(): DomainSnapshot {
-    return this.domainStore.getSnapshot();
+    return this.domainReplica.getSnapshot();
   }
 
   public ingestRuntimeEvent(event: RuntimeEvent, occurredAt?: string): void {
@@ -477,7 +471,7 @@ export class DomainService {
   }
 
   private applyRuntimeEvent(event: RuntimeEvent, occurredAt?: string): void {
-    this.domainProjector.apply(event, occurredAt);
+    this.domainReplica.apply(event, occurredAt);
     if (event.type === "turn.completed") {
       this.markSessionUnreadCompleted?.(event.sessionId);
     }
@@ -509,7 +503,7 @@ export class DomainService {
         existingSession.status === "completed" ? "idle" : existingSession.status,
       updatedAt: this.now()
     });
-    this.domainStore.upsertSession(resumedSession);
+    this.domainReplica.upsertSession(resumedSession);
     return resumedSession;
   }
 
@@ -518,7 +512,7 @@ export class DomainService {
     workspaceId?: string
   ): Conversation {
     const conversation = withConversationSession(
-      this.domainStore.getConversation(session.conversationId),
+      this.domainReplica.getConversation(session.conversationId),
       {
         conversationId: session.conversationId,
         sessionId: session.sessionId,
@@ -527,8 +521,8 @@ export class DomainService {
         timestamp: session.updatedAt
       }
     );
-    this.domainStore.upsertConversation(conversation);
-    this.domainStore.upsertSession(session);
+    this.domainReplica.upsertConversation(conversation);
+    this.domainReplica.upsertSession(session);
     return conversation;
   }
 
@@ -536,7 +530,7 @@ export class DomainService {
     const conversation = this.requireConversation(session.conversationId);
     this.assertEngineRegistered(session.engineId);
     const participantId = participantIdFor(session.conversationId, session.engineId);
-    const existing = this.domainStore.getParticipant(participantId);
+    const existing = this.domainReplica.getParticipant(participantId);
     const role =
       existing?.role ??
       (conversation.participantEngineIds[0] === session.engineId ? "primary" : "secondary");
@@ -570,8 +564,8 @@ export class DomainService {
     workspaceId?: string;
     activeSessionId?: string;
   }): Conversation {
-    const conversation = this.domainStore.getConversation(input.conversationId);
-    const participantIds = this.domainStore
+    const conversation = this.domainReplica.getConversation(input.conversationId);
+    const participantIds = this.domainReplica
       .listParticipants({ conversationId: input.conversationId })
       .map((participant) => participant.participantId);
 
@@ -590,7 +584,7 @@ export class DomainService {
     conversationId: string,
     engineId: string
   ): string[] {
-    return this.domainStore
+    return this.domainReplica
       .listSessions({
         conversationId,
         engineId,

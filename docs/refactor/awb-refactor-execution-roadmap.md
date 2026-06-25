@@ -376,7 +376,7 @@ shared projector tests、renderer sync tests、真实 GUI 连续观察流式输�
 - 只把 renderer switch 移到另一个 desktop 文件。
 - RendererStore 直接把 mutable class 塞进 React state，造成更新不可观测。
 
-[ ] task_3_1: 建立 DomainReadModel/DomainReplica
+[x] task_3_1: 建立 DomainReadModel/DomainReplica
 - tag: prod
 - goal: 提供 browser-safe 的共享领域副本
 - executor: subagent

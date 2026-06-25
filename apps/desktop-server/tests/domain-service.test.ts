@@ -65,7 +65,7 @@ describe("DomainService", () => {
     ]);
   });
 
-  it("uses the domain store for session list/get/archive/resume/dispose state", () => {
+  it("uses the domain replica for session list/get/archive/resume/dispose state", () => {
     const service = new DomainService({
       now: (() => {
         let tick = 0;

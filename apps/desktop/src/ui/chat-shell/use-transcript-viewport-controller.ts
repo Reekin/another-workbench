@@ -115,15 +115,20 @@ export const useTranscriptViewportController = (input: {
     }
 
     if (intent.type === "prepend") {
+      const nextScrollTop = resolvePrependScrollTop({
+        scrollHeight: element.scrollHeight,
+        previousScrollHeight: intent.previousScrollHeight,
+        previousScrollTop: intent.previousScrollTop
+      });
+      if (nextScrollTop === undefined) {
+        return;
+      }
       viewportIntentRef.current = {
         sessionId: displayedSessionId,
         type: "manual"
       };
       runProgrammaticScroll(() => {
-        element.scrollTop =
-          element.scrollHeight -
-          intent.previousScrollHeight +
-          intent.previousScrollTop;
+        element.scrollTop = nextScrollTop;
       });
       return;
     }
@@ -182,7 +187,8 @@ export const useTranscriptViewportController = (input: {
       if (
         !shouldUpdateViewportIntentFromScroll({
           isApplyingProgrammaticScroll: isApplyingProgrammaticScrollRef.current,
-          hasRecentUserScrollInput
+          hasRecentUserScrollInput,
+          hasPendingPrependRestore: viewportIntentRef.current?.type === "prepend"
         })
       ) {
         return;
@@ -434,6 +440,17 @@ export const isTranscriptNearBottom = (element: {
   element.scrollHeight - element.scrollTop - element.clientHeight <=
   STICKY_BOTTOM_THRESHOLD_PX;
 
+export const resolvePrependScrollTop = (input: {
+  scrollHeight: number;
+  previousScrollHeight: number;
+  previousScrollTop: number;
+}): number | undefined => {
+  if (input.scrollHeight <= input.previousScrollHeight) {
+    return undefined;
+  }
+  return input.scrollHeight - input.previousScrollHeight + input.previousScrollTop;
+};
+
 export const resolveTranscriptScrollIntent = (input: {
   displayedSessionId: string | undefined;
   isNearBottom: boolean;
@@ -453,8 +470,10 @@ export const resolveTranscriptScrollIntent = (input: {
 export const shouldUpdateViewportIntentFromScroll = (input: {
   isApplyingProgrammaticScroll: boolean;
   hasRecentUserScrollInput: boolean;
+  hasPendingPrependRestore?: boolean;
 }): boolean =>
-  !input.isApplyingProgrammaticScroll || input.hasRecentUserScrollInput;
+  !input.hasPendingPrependRestore &&
+  (!input.isApplyingProgrammaticScroll || input.hasRecentUserScrollInput);
 
 export const shouldPreserveManualIntentDuringScroll = (input: {
   hasRecentFollowTailInterrupt: boolean;

@@ -3,6 +3,7 @@ import {
   createTranscriptBottomTarget,
   isTranscriptNearBottom,
   isTranscriptScrollInputKey,
+  resolvePrependScrollTop,
   resolveTranscriptScrollIntent,
   resolveTranscriptBottomRequest,
   shouldInterruptFollowTailForKeyboardScroll,
@@ -31,6 +32,23 @@ describe("transcript viewport controller", () => {
         clientHeight: 250
       })
     ).toBe(false);
+  });
+
+  it("waits for prepended content before restoring the previous scroll anchor", () => {
+    expect(
+      resolvePrependScrollTop({
+        scrollHeight: 1_000,
+        previousScrollHeight: 1_000,
+        previousScrollTop: 120
+      })
+    ).toBeUndefined();
+    expect(
+      resolvePrependScrollTop({
+        scrollHeight: 1_450,
+        previousScrollHeight: 1_000,
+        previousScrollTop: 120
+      })
+    ).toBe(570);
   });
 
   it("keeps an explicit bottom intent while the user remains near the bottom", () => {
@@ -113,6 +131,13 @@ describe("transcript viewport controller", () => {
         hasRecentUserScrollInput: true
       })
     ).toBe(true);
+    expect(
+      shouldUpdateViewportIntentFromScroll({
+        isApplyingProgrammaticScroll: false,
+        hasRecentUserScrollInput: false,
+        hasPendingPrependRestore: true
+      })
+    ).toBe(false);
   });
 
   it("keeps a recent upward user scroll from being overwritten while it is still near bottom", () => {

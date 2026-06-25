@@ -27,14 +27,7 @@ type ManualViewportIntent = {
   type: "manual";
 };
 
-type PrependViewportIntent = PendingPrependScroll & {
-  type: "prepend";
-};
-
-type ViewportIntent =
-  | ManualViewportIntent
-  | PendingViewportTarget
-  | PrependViewportIntent;
+type ViewportIntent = ManualViewportIntent | PendingViewportTarget;
 
 export type TranscriptViewportController = {
   transcriptRef: RefObject<HTMLElement | null>;
@@ -63,6 +56,9 @@ export const useTranscriptViewportController = (input: {
   const displayedSessionIdRef = useRef<string | undefined>(undefined);
   const isOpeningSelectedSessionRef = useRef(false);
   const viewportIntentRef = useRef<ViewportIntent | undefined>(undefined);
+  const pendingPrependScrollRef = useRef<PendingPrependScroll | undefined>(
+    undefined
+  );
   const pendingApplyFrameRef = useRef<number | undefined>(undefined);
   const isApplyingProgrammaticScrollRef = useRef(false);
   const programmaticScrollFrameRef = useRef<number | undefined>(undefined);
@@ -93,8 +89,48 @@ export const useTranscriptViewportController = (input: {
     [clearProgrammaticScrollAfterFrame]
   );
 
+  const applyPendingPrependScroll = useCallback((): boolean => {
+    const element = transcriptRef.current;
+    const displayedSessionId = displayedSessionIdRef.current;
+    const pendingPrependScroll = pendingPrependScrollRef.current;
+    if (
+      !element ||
+      !displayedSessionId ||
+      !pendingPrependScroll ||
+      isOpeningSelectedSessionRef.current
+    ) {
+      return false;
+    }
+    if (pendingPrependScroll.sessionId !== displayedSessionId) {
+      return false;
+    }
+
+    const nextScrollTop = resolvePrependScrollTop({
+      scrollHeight: element.scrollHeight,
+      previousScrollHeight: pendingPrependScroll.previousScrollHeight,
+      previousScrollTop: pendingPrependScroll.previousScrollTop
+    });
+    if (nextScrollTop === undefined) {
+      return false;
+    }
+
+    pendingPrependScrollRef.current = undefined;
+    viewportIntentRef.current = {
+      sessionId: displayedSessionId,
+      type: "manual"
+    };
+    runProgrammaticScroll(() => {
+      element.scrollTop = nextScrollTop;
+    });
+    return true;
+  }, [runProgrammaticScroll]);
+
   const applyViewportIntent = useCallback(() => {
     pendingApplyFrameRef.current = undefined;
+    if (applyPendingPrependScroll()) {
+      return;
+    }
+
     const element = transcriptRef.current;
     const displayedSessionId = displayedSessionIdRef.current;
     const intent = viewportIntentRef.current;
@@ -114,25 +150,6 @@ export const useTranscriptViewportController = (input: {
       return;
     }
 
-    if (intent.type === "prepend") {
-      const nextScrollTop = resolvePrependScrollTop({
-        scrollHeight: element.scrollHeight,
-        previousScrollHeight: intent.previousScrollHeight,
-        previousScrollTop: intent.previousScrollTop
-      });
-      if (nextScrollTop === undefined) {
-        return;
-      }
-      viewportIntentRef.current = {
-        sessionId: displayedSessionId,
-        type: "manual"
-      };
-      runProgrammaticScroll(() => {
-        element.scrollTop = nextScrollTop;
-      });
-      return;
-    }
-
     if (intent.type === "turn" && intent.turnId) {
       const targetRow = queryTurnRow(element, intent.turnId);
       if (targetRow) {
@@ -148,7 +165,7 @@ export const useTranscriptViewportController = (input: {
     runProgrammaticScroll(() => {
       scrollTranscriptToBottom(element);
     });
-  }, [runProgrammaticScroll]);
+  }, [applyPendingPrependScroll, runProgrammaticScroll]);
 
   const scheduleViewportApply = useCallback(() => {
     if (pendingApplyFrameRef.current !== undefined) {
@@ -188,7 +205,9 @@ export const useTranscriptViewportController = (input: {
         !shouldUpdateViewportIntentFromScroll({
           isApplyingProgrammaticScroll: isApplyingProgrammaticScrollRef.current,
           hasRecentUserScrollInput,
-          hasPendingPrependRestore: viewportIntentRef.current?.type === "prepend"
+          hasPendingPrependRestore:
+            pendingPrependScrollRef.current?.sessionId ===
+            displayedSessionIdRef.current
         })
       ) {
         return;
@@ -209,6 +228,12 @@ export const useTranscriptViewportController = (input: {
       viewportIntentRef.current = nextIntent;
     };
     const markUserScrollInput = (options: { interruptFollowTail?: boolean } = {}): void => {
+      if (
+        pendingPrependScrollRef.current?.sessionId ===
+        displayedSessionIdRef.current
+      ) {
+        pendingPrependScrollRef.current = undefined;
+      }
       const now = performance.now();
       userScrollInputExpiresAtRef.current = now + USER_SCROLL_INPUT_GRACE_MS;
       if (!options.interruptFollowTail) {
@@ -337,13 +362,19 @@ export const useTranscriptViewportController = (input: {
       return;
     }
     const resizeObserver = new ResizeObserver(() => {
+      if (applyPendingPrependScroll()) {
+        return;
+      }
       scheduleViewportApply();
     });
     resizeObserver.observe(contentElement);
     return () => resizeObserver.disconnect();
-  }, [input.displayedSessionId, scheduleViewportApply]);
+  }, [applyPendingPrependScroll, input.displayedSessionId, scheduleViewportApply]);
 
   useLayoutEffect(() => {
+    if (applyPendingPrependScroll()) {
+      return;
+    }
     scheduleViewportApply();
   }, [
     input.displayedSessionId,
@@ -352,6 +383,7 @@ export const useTranscriptViewportController = (input: {
     input.windowEndTurnId,
     input.renderedTranscriptRowCount,
     input.transcriptContentVersion,
+    applyPendingPrependScroll,
     scheduleViewportApply
   ]);
 
@@ -363,9 +395,10 @@ export const useTranscriptViewportController = (input: {
       displayedSessionIdRef.current = sessionId;
     },
     queuePrependScrollRestore: (next) => {
+      pendingPrependScrollRef.current = next;
       viewportIntentRef.current = {
-        ...next,
-        type: "prepend"
+        sessionId: next.sessionId,
+        type: "manual"
       };
       scheduleViewportApply();
     },
@@ -392,6 +425,7 @@ export const useTranscriptViewportController = (input: {
     },
     clearPendingViewportState: () => {
       viewportIntentRef.current = undefined;
+      pendingPrependScrollRef.current = undefined;
       userScrollInputExpiresAtRef.current = 0;
       followTailInterruptExpiresAtRef.current = 0;
     }

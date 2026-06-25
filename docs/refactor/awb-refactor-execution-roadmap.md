@@ -249,6 +249,8 @@ fake runtime 集成测试、真实 Codex/ACP smoke、真实进程 kill 行为验
 
 # Phase 2：Domain 唯一 owner
 
+> 阶段状态：已验收通过（2026-06-25）。
+
 ## 阶段目标
 
 删除 SessionManager 双状态，DomainStore snapshot/关系/index 更新原子化。

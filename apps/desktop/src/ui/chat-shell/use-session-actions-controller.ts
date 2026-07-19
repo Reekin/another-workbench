@@ -1,11 +1,14 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
-import type { SessionActionDescriptorRpc, WorkspaceBrowserNodeRpc } from "@another-workbench/shared";
+import type { SessionActionDescriptorRpc } from "@another-workbench/shared";
 import type { DesktopTransport } from "../../transport/desktop-transport.js";
 import {
   statusNoticeErrorDetails,
   type ComposerStatusNotice
 } from "./composer-status.js";
-import { findSessionNode } from "./workspace-browser-tree.js";
+import {
+  findSessionNode,
+  type WorkspaceBrowserViewNode
+} from "./workspace-browser-tree.js";
 
 export type SessionMenuState = {
   sessionId: string;
@@ -39,7 +42,7 @@ export const formatSessionCopyStatusNotice = (
 
 export const useSessionActionsController = (input: {
   transport?: DesktopTransport;
-  workspaceTree: WorkspaceBrowserNodeRpc[];
+  workspaceTree: WorkspaceBrowserViewNode[];
   refreshSessionBrowser: (input?: {
     mode?: "all" | "visible" | "workspace";
     workspaceId?: string;

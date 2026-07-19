@@ -133,12 +133,6 @@ const buildRelationId = (
   relationType: SessionRelation["relationType"]
 ): string => `relation-discovered:${parentSessionId}:${childSessionId}:${relationType}`;
 
-const relationKey = (
-  parentSessionId: string,
-  childSessionId: string,
-  relationType: SessionRelation["relationType"]
-): string => `${parentSessionId}:${childSessionId}:${relationType}`;
-
 const lastTimestamp = (timestamps: string[]): string | undefined => {
   let latest: string | undefined;
   for (const timestamp of timestamps) {
@@ -1487,14 +1481,8 @@ export class SessionReconciliationService {
     hydrated: T,
     relatedIndexRelations: SessionRelationIndex[]
   ): T {
-    const relatedRelationKeys = new Set(
-      relatedIndexRelations.map((relation) =>
-        relationKey(
-          relation.parentSessionId,
-          relation.childSessionId,
-          relation.relationType
-        )
-      )
+    const indexOwnedChildSessionIds = new Set(
+      relatedIndexRelations.map((relation) => relation.childSessionId)
     );
     const normalizedRelations = hydrated.sessionRelations
       .map((relation) => {
@@ -1519,13 +1507,7 @@ export class SessionReconciliationService {
       })
       .filter(
         (relation) =>
-          !relatedRelationKeys.has(
-            relationKey(
-              relation.parentSessionId,
-              relation.childSessionId,
-              relation.relationType
-            )
-          )
+          !indexOwnedChildSessionIds.has(relation.childSessionId)
       );
     return {
       ...hydrated,

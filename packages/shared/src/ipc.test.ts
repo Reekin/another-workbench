@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionBrowserNodeRpc, WorkspaceBrowserNodeRpc } from "./ipc.js";
-import { safeParseWorkbenchRpcResponse } from "./ipc.js";
+import { parseWorkbenchRpcRequest, safeParseWorkbenchRpcResponse } from "./ipc.js";
 
 describe("IPC schemas", () => {
   it("parses recursive session browser nodes with typed child defaults", () => {
@@ -84,5 +84,35 @@ describe("IPC schemas", () => {
       sessionId: "session-child",
       children: []
     });
+  });
+
+  it("parses bounded session browser pages without transcript metadata", () => {
+    const request = parseWorkbenchRpcRequest({
+      id: "req-roots",
+      method: "sessionBrowser.listRoots",
+      params: { workspaceId: "workspace-1" }
+    });
+    expect(request.params).toMatchObject({ limit: 20 });
+
+    const parsed = safeParseWorkbenchRpcResponse({
+      id: "req-roots",
+      method: "sessionBrowser.listRoots",
+      ok: true,
+      result: {
+        workspaceId: "workspace-1",
+        revision: "revision-1",
+        items: [{
+          sessionId: "session-1",
+          engineId: "codex",
+          title: "Session",
+          statusDot: "none",
+          isActive: true,
+          childCount: 2
+        }],
+        hasMore: false,
+        totalCount: 1
+      }
+    });
+    expect(parsed.success).toBe(true);
   });
 });

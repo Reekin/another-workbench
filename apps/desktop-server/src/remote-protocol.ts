@@ -10,6 +10,7 @@ import {
 } from "@another-workbench/shared";
 import type { WorkbenchRuntimeService } from "./runtime-service.js";
 import type { WorkbenchShellService } from "./workbench-shell-service.js";
+import { SessionBrowserCursorStaleError } from "./session-browser-read-model.js";
 
 type Clock = () => string;
 type IdFactory = () => string;
@@ -381,6 +382,48 @@ export const createRemoteRpcHandler = (
               method: request.method,
               ok: true,
               result: await shellService.listSessionTree(request.params.workspaceId)
+            });
+          case "sessionBrowser.listRoots":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "SESSION_BROWSER_UNAVAILABLE",
+                "Session browser APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: await shellService.listSessionRoots(request.params)
+            });
+          case "sessionBrowser.listChildren":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "SESSION_BROWSER_UNAVAILABLE",
+                "Session browser APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: await shellService.listSessionChildren(request.params)
+            });
+          case "sessionBrowser.getPath":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "SESSION_BROWSER_UNAVAILABLE",
+                "Session browser APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: await shellService.getSessionBrowserPath(request.params.sessionId)
             });
           case "sessionBrowser.reconcile":
             if (!shellService) {
@@ -812,6 +855,11 @@ export const createRemoteRpcHandler = (
           }
         }
       } catch (error) {
+        if (error instanceof SessionBrowserCursorStaleError) {
+          return toErrorResponse(request, error.code, error.message, {
+            failedAt: now()
+          });
+        }
         return toErrorResponse(
           request,
           "REMOTE_REQUEST_FAILED",

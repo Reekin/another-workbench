@@ -51,10 +51,10 @@ describe("session graph selectors", () => {
       })
     );
 
-    const state = store.getState();
-    const rootSummary = selectSessionSummary(state, "session-root");
-    const childSummary = selectSessionSummary(state, "session-child");
-    const graph = selectSessionGraphForConversation(state, "conv-1");
+    const domain = store.getDomainReadModel();
+    const rootSummary = selectSessionSummary(domain, "session-root");
+    const childSummary = selectSessionSummary(domain, "session-child");
+    const graph = selectSessionGraphForConversation(domain, "conv-1");
 
     expect(rootSummary).toMatchObject({
       childSessionIds: ["session-child"]

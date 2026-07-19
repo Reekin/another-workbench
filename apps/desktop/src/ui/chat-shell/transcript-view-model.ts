@@ -7,6 +7,7 @@ import type {
   ToolCall,
   Turn
 } from "@another-workbench/shared";
+import type { DomainReadModel } from "@another-workbench/core";
 import { selectMessageBlocksForMessage } from "../../store/selectors.js";
 import type { RendererStoreState } from "../../store/types.js";
 import {
@@ -443,6 +444,10 @@ export type TurnTranscriptRow = {
   defaultProcessExpanded: boolean;
 };
 
+const isRendererStoreState = (
+  source: DomainReadModel | RendererStoreState
+): source is RendererStoreState => "entities" in source;
+
 const buildRunningTurnRows = (
   turn: Turn,
   blocks: MessageBlock[],
@@ -586,17 +591,49 @@ const buildRunningTurnRows = (
 };
 
 export const buildTurnTranscriptRows = (
-  state: RendererStoreState,
+  source: DomainReadModel | RendererStoreState,
   turns: Turn[],
   participantDirectory = buildParticipantDirectory([])
 ): TurnTranscriptRow[] => {
-  const indexes = buildTranscriptEntityIndexes(state, turns);
+  let legacyState: RendererStoreState | undefined;
+  let domain: DomainReadModel | undefined;
+  if (isRendererStoreState(source)) {
+    legacyState = source;
+  } else {
+    domain = source;
+  }
+  const legacyIndexes = legacyState
+    ? buildTranscriptEntityIndexes(legacyState, turns)
+    : undefined;
   return sortTurnsForTranscript(turns).flatMap((turn) => {
-    const blocks = selectMessageBlocksForTurn(state, turn, indexes);
-    const toolCalls = selectToolCallsForTurn(state, turn, indexes);
-    const terminalStreams = selectTerminalStreamsForTurn(state, turn, indexes);
-    const approvals = selectApprovalRequestsForTurn(state, turn, indexes);
-    const interactions = selectRuntimeInteractionsForTurn(state, turn, indexes);
+    const blocks = domain
+      ? (() => {
+          const referenced = turn.messageIds
+            .flatMap((messageId) => domain.listMessageBlocks({ messageId }))
+            .filter((block) => block.turnId === turn.turnId);
+          const referencedIds = new Set(referenced.map((block) => block.blockId));
+          const fallback = domain
+            .listMessageBlocks({ turnId: turn.turnId })
+            .filter((block) => !referencedIds.has(block.blockId));
+          return uniqueById(
+            [...referenced, ...sortByStartTime(fallback, (block) => block.blockId)],
+            (block) => block.blockId
+          );
+        })()
+      : selectMessageBlocksForTurn(legacyState!, turn, legacyIndexes!);
+    const toolCalls = domain
+      ? domain.listToolCalls({ turnId: turn.turnId })
+      : selectToolCallsForTurn(legacyState!, turn, legacyIndexes!);
+    const terminalStreams = domain
+      ? domain.listTerminalStreams({ turnId: turn.turnId })
+      : selectTerminalStreamsForTurn(legacyState!, turn, legacyIndexes!);
+    const approvals = domain
+      ? domain.listApprovalRequests({ turnId: turn.turnId })
+      : selectApprovalRequestsForTurn(legacyState!, turn, legacyIndexes!);
+    const interactions = domain
+      ? domain.listRuntimeInteractions({ sessionId: turn.sessionId })
+          .filter((interaction) => interaction.turnId === turn.turnId)
+      : selectRuntimeInteractionsForTurn(legacyState!, turn, legacyIndexes!);
 
     const blockGroups = splitBlocksByRole(blocks, turn.finalMessageId);
     const hasProcessDetails =

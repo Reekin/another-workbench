@@ -28,7 +28,7 @@ const createPreloadMock = (
 };
 
 describe("session browser transport contracts", () => {
-  it("wires workspace + session tree operations through typed rpc methods", async () => {
+  it("wires workspace + paged session browser operations through typed rpc methods", async () => {
     const preload = createPreloadMock(async (request) => {
       switch (request.method) {
         case "workspace.pickDirectory":
@@ -71,54 +71,58 @@ describe("session browser transport contracts", () => {
               removed: true
             }
           } as const;
-        case "sessionBrowser.listTree":
-          expect(request.params.workspaceId).toBe("workspace-1");
+        case "sessionBrowser.listRoots":
           return {
             id: request.id,
-            method: "sessionBrowser.listTree",
+            method: "sessionBrowser.listRoots",
             ok: true,
             result: {
-              workspaces: [
-                {
-                  workspaceId: "workspace-1",
-                  label: "Workspace 1",
-                  rootPath: "I:\\repo-a",
-                  isExpanded: true,
-                  isActive: true,
-                  sessions: [
-                    {
-                      sessionId: "session-root",
-                      displaySessionId: "thread-root",
-                      providerSessionId: "thread-root",
-                      workspaceId: "workspace-1",
-                      engineId: "agent-codex",
-                      title: "Root Session",
-                      statusDot: "running",
-                      isExpanded: true,
-                      isActive: true,
-                      isArchived: false,
-                      updatedAt: "2026-04-18T00:00:00.000Z",
-                      children: [
-                        {
-                          sessionId: "session-child",
-                          displaySessionId: "thread-child",
-                          providerSessionId: "thread-child",
-                          workspaceId: "workspace-1",
-                          engineId: "agent-codex",
-                          title: "Child Session",
-                          statusDot: "unread_completed",
-                          isExpanded: false,
-                          isActive: false,
-                          isArchived: false,
-                          parentSessionId: "session-root",
-                          updatedAt: "2026-04-18T00:01:00.000Z",
-                          children: []
-                        }
-                      ]
-                    }
-                  ]
-                }
-              ]
+              workspaceId: request.params.workspaceId,
+              revision: "revision-1",
+              items: [{
+                sessionId: "session-root",
+                engineId: "agent-codex",
+                title: "Root Session",
+                statusDot: "running",
+                isActive: true,
+                childCount: 1
+              }],
+              nextCursor: "cursor-2",
+              hasMore: true,
+              totalCount: 11
+            }
+          } as const;
+        case "sessionBrowser.listChildren":
+          return {
+            id: request.id,
+            method: "sessionBrowser.listChildren",
+            ok: true,
+            result: {
+              workspaceId: request.params.workspaceId,
+              parentSessionId: request.params.parentSessionId,
+              revision: "revision-1",
+              items: [{
+                sessionId: "session-child",
+                parentSessionId: request.params.parentSessionId,
+                engineId: "agent-codex",
+                title: "Child Session",
+                statusDot: "unread_completed",
+                isActive: false,
+                childCount: 0
+              }],
+              hasMore: false,
+              totalCount: 1
+            }
+          } as const;
+        case "sessionBrowser.getPath":
+          return {
+            id: request.id,
+            method: "sessionBrowser.getPath",
+            ok: true,
+            result: {
+              workspaceId: "workspace-1",
+              revision: "revision-1",
+              items: []
             }
           } as const;
         case "sessionBrowser.reconcile":
@@ -229,7 +233,12 @@ describe("session browser transport contracts", () => {
     const workspaceRemoval = await transport.workspace.remove({
       workspaceId: "workspace-1"
     });
-    const tree = await transport.sessionBrowser.listTree("workspace-1");
+    const roots = await transport.sessionBrowser.listRoots({ workspaceId: "workspace-1" });
+    const children = await transport.sessionBrowser.listChildren({
+      workspaceId: "workspace-1",
+      parentSessionId: "session-root"
+    });
+    const path = await transport.sessionBrowser.getPath("session-child");
     const reconcile = await transport.sessionBrowser.reconcile("workspace-1");
     const openResult = await transport.sessionBrowser.open("session-child");
     const forceOpenResult = await transport.sessionBrowser.open("session-force", {
@@ -263,7 +272,9 @@ describe("session browser transport contracts", () => {
       workspaceId: "workspace-1",
       removed: true
     });
-    expect(tree.workspaces[0]?.sessions[0]?.children[0]?.sessionId).toBe("session-child");
+    expect(roots.items[0]?.sessionId).toBe("session-root");
+    expect(children.items[0]?.sessionId).toBe("session-child");
+    expect(path.workspaceId).toBe("workspace-1");
     expect(reconcile).toEqual({
       workspaces: 1,
       sessions: 2,
@@ -316,7 +327,9 @@ describe("session browser transport contracts", () => {
       "workspace.select",
       "workspace.toggleExpanded",
       "workspace.remove",
-      "sessionBrowser.listTree",
+      "sessionBrowser.listRoots",
+      "sessionBrowser.listChildren",
+      "sessionBrowser.getPath",
       "sessionBrowser.reconcile",
       "sessionBrowser.open",
       "sessionBrowser.open",

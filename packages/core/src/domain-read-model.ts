@@ -27,6 +27,9 @@ import type {
 
 export type DomainReadModel = {
   getRevision(): number;
+  getConversationRevision(conversationId: string): number;
+  getSessionRevision(sessionId: string): number;
+  getTurnRevision(turnId: string): number;
   isDisposed(): boolean;
   getSnapshot(): DomainSnapshot;
   getConversationSnapshot(conversationId: string): DomainSnapshot;

@@ -23,6 +23,8 @@ import type {
   FilePreviewRpc,
   SchedulerTaskDocumentRpc,
   SchedulerTaskScheduleRpc,
+  SessionBrowserPageRpc,
+  SessionBrowserPathRpc,
   SkillDescriptorRpc,
   SessionActionDescriptorRpc,
   SessionActionKindRpc,
@@ -308,6 +310,20 @@ export type DesktopTransport = {
   };
   sessionBrowser: {
     listTree: (workspaceId?: string) => Promise<{ workspaces: WorkspaceBrowserNodeRpc[] }>;
+    listRoots: (input: {
+      workspaceId: string;
+      cursor?: string;
+      limit?: number;
+      expectedRevision?: string;
+    }) => Promise<SessionBrowserPageRpc>;
+    listChildren: (input: {
+      workspaceId: string;
+      parentSessionId: string;
+      cursor?: string;
+      limit?: number;
+      expectedRevision?: string;
+    }) => Promise<SessionBrowserPageRpc>;
+    getPath: (sessionId: string) => Promise<SessionBrowserPathRpc>;
     reconcile: (workspaceId?: string) => Promise<{
       workspaces: number;
       sessions: number;
@@ -429,6 +445,7 @@ export type DesktopTransportOptions = {
   createId?: IdFactory;
   now?: Clock;
   eventBatchMaxSize?: number;
+  eventBatchMaxBytes?: number;
   eventDrainBudgetMs?: number;
   eventBacklogPressurePendingThreshold?: number;
   eventBacklogPressureStreamThreshold?: number;
@@ -436,6 +453,7 @@ export type DesktopTransportOptions = {
 };
 
 const defaultEventBatchMaxSize = 500;
+const defaultEventBatchMaxBytes = 256 * 1024;
 const defaultEventDrainBudgetMs = 8;
 const defaultEventBacklogPressurePendingThreshold = 2_000;
 const defaultEventBacklogPressureStreamThreshold = 500;
@@ -471,6 +489,9 @@ const isStreamBacklogEnvelope = (envelope: EventEnvelope): boolean =>
   streamBacklogEventTypes.has(envelope.event.type) &&
   Boolean(eventSessionId(envelope.event));
 
+const utf8ByteLength = (value: unknown): number =>
+  new TextEncoder().encode(JSON.stringify(value)).byteLength;
+
 const toTransportError = (
   method: string,
   requestId: string,
@@ -493,6 +514,7 @@ export const createDesktopTransport = (
   const createId = options.createId ?? createOpaqueId;
   const now = options.now ?? (() => new Date().toISOString());
   const eventBatchMaxSize = options.eventBatchMaxSize ?? defaultEventBatchMaxSize;
+  const eventBatchMaxBytes = options.eventBatchMaxBytes ?? defaultEventBatchMaxBytes;
   const eventDrainBudgetMs = options.eventDrainBudgetMs ?? defaultEventDrainBudgetMs;
   const eventBacklogPressurePendingThreshold =
     options.eventBacklogPressurePendingThreshold ??
@@ -906,6 +928,20 @@ export const createDesktopTransport = (
     },
     sessionBrowser: {
       listTree: requestSessionTree,
+      listRoots: (input) =>
+        rpc.request("sessionBrowser.listRoots", {
+          ...input,
+          limit: input.limit ?? 20
+        }),
+      listChildren: (input) =>
+        rpc.request("sessionBrowser.listChildren", {
+          ...input,
+          limit: input.limit ?? 20
+        }),
+      getPath: (sessionId: string) =>
+        rpc.request("sessionBrowser.getPath", {
+          sessionId
+        }),
       reconcile: (workspaceId?: string) =>
         rpc.request("sessionBrowser.reconcile", {
           workspaceId
@@ -1107,7 +1143,10 @@ export const createDesktopTransport = (
       subscribe: async (input: EventSubscribeInput) => {
         let disposed = false;
         let cancelScheduledDrain: CancelScheduledWork | undefined;
-        const envelopeQueue: EventEnvelope[] = [];
+        const envelopeQueue: Array<{ envelope: EventEnvelope; bytes: number }> = [];
+        let envelopeQueueHead = 0;
+        const pendingEnvelopeCount = (): number =>
+          envelopeQueue.length - envelopeQueueHead;
         let streamPendingCount = 0;
         const sessionStreamBacklog = new Map<
           string,
@@ -1154,16 +1193,16 @@ export const createDesktopTransport = (
         const maybeReportBacklogPressure = (): void => {
           if (
             !input.onBacklogPressure ||
-            envelopeQueue.length < eventBacklogPressurePendingThreshold ||
+            pendingEnvelopeCount() < eventBacklogPressurePendingThreshold ||
             streamPendingCount < eventBacklogPressureStreamThreshold
           ) {
             return;
           }
           const sessions = Object.fromEntries(sessionStreamBacklog.entries());
           input.onBacklogPressure({
-            pendingCount: envelopeQueue.length,
+            pendingCount: pendingEnvelopeCount(),
             streamPendingCount,
-            lastCursor: envelopeQueue.at(-1)?.cursor,
+            lastCursor: envelopeQueue.at(-1)?.envelope.cursor,
             sessions
           });
         };
@@ -1181,26 +1220,44 @@ export const createDesktopTransport = (
         };
         const drainQueuedEnvelopes = (): void => {
           cancelScheduledDrain = undefined;
-          if (disposed || envelopeQueue.length === 0) {
+          if (disposed || pendingEnvelopeCount() === 0) {
             return;
           }
           const startedAt = monotonicNow();
           const batch: EventEnvelope[] = [];
-          while (envelopeQueue.length > 0 && batch.length < eventBatchMaxSize) {
+          let batchBytes = 0;
+          while (
+            pendingEnvelopeCount() > 0 &&
+            batch.length < eventBatchMaxSize
+          ) {
+            const queued = envelopeQueue[envelopeQueueHead];
+            if (!queued) {
+              break;
+            }
             if (
               batch.length > 0 &&
-              monotonicNow() - startedAt >= eventDrainBudgetMs
+              (batchBytes + queued.bytes > eventBatchMaxBytes ||
+                monotonicNow() - startedAt >= eventDrainBudgetMs)
             ) {
               break;
             }
-            const envelope = envelopeQueue.shift();
-            if (envelope) {
-              removeEnvelopeFromBacklogStats(envelope);
-              batch.push(envelope);
-            }
+            envelopeQueueHead += 1;
+            batchBytes += queued.bytes;
+            removeEnvelopeFromBacklogStats(queued.envelope);
+            batch.push(queued.envelope);
           }
           deliverEnvelopes(batch);
-          if (envelopeQueue.length > 0) {
+          if (pendingEnvelopeCount() === 0) {
+            envelopeQueue.length = 0;
+            envelopeQueueHead = 0;
+          } else if (
+            envelopeQueueHead >= 1_024 &&
+            envelopeQueueHead * 2 >= envelopeQueue.length
+          ) {
+            envelopeQueue.splice(0, envelopeQueueHead);
+            envelopeQueueHead = 0;
+          }
+          if (pendingEnvelopeCount() > 0) {
             scheduleDrain();
           }
         };
@@ -1215,10 +1272,14 @@ export const createDesktopTransport = (
             cancelScheduledDrain();
             cancelScheduledDrain = undefined;
           }
-          if (envelopeQueue.length === 0) {
+          if (pendingEnvelopeCount() === 0) {
             return;
           }
-          const pending = envelopeQueue.splice(0, envelopeQueue.length);
+          const pending = envelopeQueue
+            .slice(envelopeQueueHead)
+            .map((queued) => queued.envelope);
+          envelopeQueue.length = 0;
+          envelopeQueueHead = 0;
           streamPendingCount = 0;
           sessionStreamBacklog.clear();
           deliverEnvelopes(pending);
@@ -1245,7 +1306,10 @@ export const createDesktopTransport = (
               flushEventPushStats("threshold");
             }
             input.onPush?.(push);
-            envelopeQueue.push(push.envelope);
+            envelopeQueue.push({
+              envelope: push.envelope,
+              bytes: utf8ByteLength(push.envelope)
+            });
             addEnvelopeToBacklogStats(push.envelope);
             maybeReportBacklogPressure();
             scheduleDrain();

@@ -8,13 +8,6 @@ type RendererDiagnosticsContext = {
   eventCursor?: string;
 };
 
-type RendererDiagnosticSample = {
-  at: string;
-  kind: DiagnosticsWriteInputRpc["kind"];
-  metrics?: Record<string, unknown>;
-  context?: Record<string, unknown>;
-};
-
 type PerformanceWithMemory = Performance & {
   memory?: {
     usedJSHeapSize: number;
@@ -26,14 +19,125 @@ type PerformanceWithMemory = Performance & {
 const diagnosticId = `renderer-${Date.now().toString(36)}-${Math.random()
   .toString(36)
   .slice(2, 10)}`;
-const maxRecentSamples = 120;
-const heartbeatIntervalMs = 15_000;
+const heartbeatIntervalMs = 30_000;
 const eventLoopProbeIntervalMs = 1_000;
 const stallWarningThresholdMs = 1_000;
 const inputDelayWarningThresholdMs = 250;
 const longTaskWarningThresholdMs = 250;
+const incidentCooldownMs = 60_000;
+const maxDiagnosticBytes = 32 * 1024;
 
 const nowIso = (): string => new Date().toISOString();
+
+type DiagnosticTransport = Pick<DesktopTransport, "diagnostics">;
+
+export type BoundedDiagnosticWriter = {
+  write: (
+    entry: DiagnosticsWriteInputRpc,
+    options?: { cooldownKey?: string; cooldownMs?: number }
+  ) => void;
+  dispose: () => void;
+};
+
+const fitDiagnosticInput = (
+  entry: DiagnosticsWriteInputRpc,
+  maxBytes: number
+): DiagnosticsWriteInputRpc => {
+  if (new TextEncoder().encode(JSON.stringify(entry)).byteLength <= maxBytes) {
+    return entry;
+  }
+  const trimmed = {
+    ...entry,
+    message: entry.message?.slice(0, 512),
+    context: {
+      truncated: true,
+      reason: "Renderer diagnostic exceeded the configured byte limit."
+    }
+  };
+  if (new TextEncoder().encode(JSON.stringify(trimmed)).byteLength <= maxBytes) {
+    return trimmed;
+  }
+  return {
+    ...trimmed,
+    metrics: undefined
+  };
+};
+
+export const createBoundedDiagnosticWriter = (input: {
+  transport: DiagnosticTransport;
+  getContext: () => RendererDiagnosticsContext;
+  nowMs?: () => number;
+  maxBytes?: number;
+}): BoundedDiagnosticWriter => {
+  const nowMs = input.nowMs ?? (() => Date.now());
+  const cooldowns = new Map<string, number>();
+  let disposed = false;
+  let inFlight = false;
+  let pending: DiagnosticsWriteInputRpc | undefined;
+  let droppedByCooldown = 0;
+  let droppedByOverwrite = 0;
+
+  const drain = (): void => {
+    if (disposed || inFlight || !pending) {
+      return;
+    }
+    const queuedEntry = pending;
+    pending = undefined;
+    const context = input.getContext();
+    const entry = fitDiagnosticInput(
+      {
+        diagnosticId,
+        sessionId: context.activeSessionId,
+        workspaceId: context.activeWorkspaceId,
+        cursor: context.eventCursor,
+        ...queuedEntry,
+        metrics: {
+          ...queuedEntry.metrics,
+          droppedByCooldown,
+          droppedByOverwrite
+        }
+      },
+      input.maxBytes ?? maxDiagnosticBytes
+    );
+    droppedByCooldown = 0;
+    droppedByOverwrite = 0;
+    inFlight = true;
+    void input.transport.diagnostics.write(entry).catch(() => undefined).finally(() => {
+      inFlight = false;
+      drain();
+    });
+  };
+
+  return {
+    write: (entry, options = {}) => {
+      if (disposed) {
+        return;
+      }
+      if (options.cooldownKey) {
+        const currentMs = nowMs();
+        const availableAt = cooldowns.get(options.cooldownKey) ?? 0;
+        if (currentMs < availableAt) {
+          droppedByCooldown += 1;
+          return;
+        }
+        cooldowns.set(
+          options.cooldownKey,
+          currentMs + (options.cooldownMs ?? incidentCooldownMs)
+        );
+      }
+      if (pending) {
+        droppedByOverwrite += 1;
+      }
+      pending = entry;
+      drain();
+    },
+    dispose: () => {
+      disposed = true;
+      pending = undefined;
+      cooldowns.clear();
+    }
+  };
+};
 
 const getMemorySnapshot = (): Record<string, unknown> | undefined => {
   const memory = (window.performance as PerformanceWithMemory).memory;
@@ -74,7 +178,6 @@ export const useRendererDiagnostics = (input: {
   eventCursor?: string;
 }): void => {
   const contextRef = useRef<RendererDiagnosticsContext>({});
-  const samplesRef = useRef<RendererDiagnosticSample[]>([]);
   const lagStatsRef = useRef({
     maxLagMs: 0,
     sampleCount: 0,
@@ -99,41 +202,11 @@ export const useRendererDiagnostics = (input: {
       return;
     }
     const transport = input.transport;
-    let disposed = false;
 
-    const recordSample = (sample: RendererDiagnosticSample): void => {
-      samplesRef.current = [...samplesRef.current.slice(-(maxRecentSamples - 1)), sample];
-    };
-
-    const writeDiagnostic = (entry: DiagnosticsWriteInputRpc): void => {
-      if (disposed) {
-        return;
-      }
-      const context = contextRef.current;
-      void transport.diagnostics
-        .write({
-          diagnosticId,
-          sessionId: context.activeSessionId,
-          workspaceId: context.activeWorkspaceId,
-          cursor: context.eventCursor,
-          ...entry
-        })
-        .catch(() => undefined);
-    };
-
-    const writeBuffer = (reason: string): void => {
-      writeDiagnostic({
-        kind: "diagnostic-buffer",
-        severity: "warning",
-        source: "renderer-diagnostics",
-        message: `Recent renderer diagnostic samples after ${reason}.`,
-        occurredAt: nowIso(),
-        context: {
-          reason,
-          samples: samplesRef.current
-        }
-      });
-    };
+    const writer = createBoundedDiagnosticWriter({
+      transport,
+      getContext: () => contextRef.current
+    });
 
     let expectedTick = window.performance.now() + eventLoopProbeIntervalMs;
     const eventLoopIntervalId = window.setInterval(() => {
@@ -158,8 +231,7 @@ export const useRendererDiagnostics = (input: {
             memory: getMemorySnapshot()
           }
         };
-        recordSample(sample);
-        writeDiagnostic({
+        writer.write({
           kind: "renderer-stall",
           severity: "warning",
           source: "renderer-diagnostics",
@@ -167,8 +239,7 @@ export const useRendererDiagnostics = (input: {
           occurredAt: sample.at,
           metrics: sample.metrics,
           context: sample.context
-        });
-        writeBuffer("renderer-stall");
+        }, { cooldownKey: "renderer-stall" });
       }
     }, eventLoopProbeIntervalMs);
 
@@ -185,16 +256,7 @@ export const useRendererDiagnostics = (input: {
         totalLongTaskDurationMs: Math.round(longTaskStats.totalDurationMs),
         memory: getMemorySnapshot()
       };
-      recordSample({
-        at: occurredAt,
-        kind: "renderer-heartbeat",
-        metrics,
-        context: {
-          href: window.location.href,
-          visibilityState: document.visibilityState
-        }
-      });
-      writeDiagnostic({
+      writer.write({
         kind: "renderer-heartbeat",
         severity:
           lagStats.stallCount > 0 || longTaskStats.maxDurationMs >= longTaskWarningThresholdMs
@@ -247,8 +309,7 @@ export const useRendererDiagnostics = (input: {
                     memory: getMemorySnapshot()
                   }
                 };
-                recordSample(sample);
-                writeDiagnostic({
+                writer.write({
                   kind: "renderer-long-task",
                   severity: "warning",
                   source: "renderer-diagnostics",
@@ -256,7 +317,7 @@ export const useRendererDiagnostics = (input: {
                   occurredAt: sample.at,
                   metrics: sample.metrics,
                   context: sample.context
-                });
+                }, { cooldownKey: "renderer-long-task" });
               }
             }
           })
@@ -283,9 +344,8 @@ export const useRendererDiagnostics = (input: {
             href: window.location.href
           }
         };
-        recordSample(sample);
         if (delayMs >= inputDelayWarningThresholdMs) {
-          writeDiagnostic({
+          writer.write({
             kind: "ui-input-delay",
             severity: "warning",
             source: "renderer-diagnostics",
@@ -293,8 +353,7 @@ export const useRendererDiagnostics = (input: {
             occurredAt: startedAt,
             metrics: sample.metrics,
             context: sample.context
-          });
-          writeBuffer("ui-input-delay");
+          }, { cooldownKey: "ui-input-delay" });
         }
       });
     };
@@ -309,7 +368,7 @@ export const useRendererDiagnostics = (input: {
     });
 
     return () => {
-      disposed = true;
+      writer.dispose();
       window.clearInterval(eventLoopIntervalId);
       window.clearInterval(heartbeatIntervalId);
       observer?.disconnect();

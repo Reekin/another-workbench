@@ -24,8 +24,7 @@ import type {
   Turn,
   SessionWindowRpc,
   TakeoverSessionStateRpc,
-  TakeoverPresetSummaryRpc,
-  WorkspaceBrowserNodeRpc
+  TakeoverPresetSummaryRpc
 } from "@another-workbench/shared";
 import "xterm/css/xterm.css";
 import type { RendererStore } from "../../store/store.js";
@@ -53,14 +52,21 @@ import {
 import { filterTranscriptRowsForChatTree } from "./chat-tree-transcript.js";
 import { buildTurnTranscriptRows } from "./transcript-view-model.js";
 import { useFileBrowserController } from "./use-file-browser-controller.js";
-import { useRendererStoreState } from "./use-renderer-store-state.js";
+import {
+  useRendererConversationRevision,
+  useRendererSessionRevision,
+  useRendererStoreState
+} from "./use-renderer-store-state.js";
 import {
   findActiveSessionNode,
-  findSessionNode
+  findSessionNode,
+  type SessionBrowserViewNode,
+  type WorkspaceBrowserViewNode
 } from "./workspace-browser-tree.js";
 import { useTranscriptViewportController } from "./use-transcript-viewport-controller.js";
 import { useWorkspaceBrowserController } from "./use-workspace-browser-controller.js";
 import { useSessionOpenController } from "./use-session-open-controller.js";
+import type { SessionWindowCoverage } from "./use-session-open-controller.js";
 import {
   shouldDismissFloatingMenuForContextMenu,
   useSessionActionsController,
@@ -118,7 +124,7 @@ type TranscriptPaneProps = {
   engineId?: string;
   engineSurface?: EngineSurfaceRpc;
   engineExtensionRefreshSignal: number;
-  activeSessionWindow?: SessionWindowRpc;
+  activeSessionWindow?: Omit<SessionWindowRpc, "snapshot">;
   activeSessionId?: string;
   isOpeningSelectedSession: boolean;
   loadingOlderTurns: boolean;
@@ -303,7 +309,7 @@ export const getWorkspaceSessionPage = <Session,>(
 };
 
 const buildWorkspaceEngineFallbacks = (
-  workspaces: WorkspaceBrowserNodeRpc[]
+  workspaces: WorkspaceBrowserViewNode[]
 ): EngineDefinitionRpc[] => {
   const engineIds = new Set<string>();
   for (const workspace of workspaces) {
@@ -327,7 +333,7 @@ const buildWorkspaceEngineFallbacks = (
 };
 
 const resolveStatusDotLabel = (
-  statusDot: WorkspaceBrowserNodeRpc["sessions"][number]["statusDot"]
+  statusDot: SessionBrowserViewNode["statusDot"]
 ): string | undefined => {
   switch (statusDot) {
     case "running":
@@ -1804,7 +1810,7 @@ export const ChatShellApp = ({
   const [selectedEngineId, setSelectedEngineId] = useState<string>("");
   const [statusNotice, setStatusNoticeState] = useState<ComposerStatusNotice | undefined>();
   const [sessionWindows, setSessionWindows] = useState<
-    Record<string, SessionWindowRpc | undefined>
+    Record<string, SessionWindowCoverage | undefined>
   >({});
   const [loadingOlderSessionId, setLoadingOlderSessionId] = useState<
     string | undefined
@@ -1822,9 +1828,6 @@ export const ChatShellApp = ({
   const [workspaceMenu, setWorkspaceMenu] = useState<WorkspaceMenuState | undefined>();
   const [scheduleWorkspace, setScheduleWorkspace] =
     useState<ScheduleWorkspaceTarget | undefined>();
-  const [workspaceSessionPages, setWorkspaceSessionPages] = useState<
-    Record<string, number>
-  >({});
   const [takeoverPresets, setTakeoverPresets] = useState<
     TakeoverPresetSummaryRpc[]
   >([]);
@@ -1953,12 +1956,17 @@ export const ChatShellApp = ({
   const {
     workspaceTree,
     refreshSessionBrowser,
+    ensureSessionVisible,
     onAddWorkspace,
     onToggleWorkspace,
-    onToggleSessionTree
+    onToggleSessionTree,
+    onLoadMoreSessionChildren,
+    onPreviousWorkspacePage,
+    onNextWorkspacePage
   } = useWorkspaceBrowserController({
     transport,
     refreshSignal: state.refreshSignals.sessionBrowser,
+    focusSessionId: openingSessionId ?? browserSelectedSessionId ?? state.activeSessionId,
     openingSessionId,
     onStatusNotice: setStatusNotice
   });
@@ -1995,6 +2003,15 @@ export const ChatShellApp = ({
   );
   const displayedSessionId =
     openingSessionId ?? browserSelectedSessionId ?? activeSessionId;
+  const displayedSessionRevision = useRendererSessionRevision(
+    store,
+    displayedSessionId
+  );
+  const activeSessionRevision = useRendererSessionRevision(
+    store,
+    activeSessionId !== displayedSessionId ? activeSessionId : undefined
+  );
+  const domain = store.getDomainReadModel();
   const activeSessionWindow =
     displayedSessionId ? sessionWindows[displayedSessionId] : undefined;
   const loadingOlderTurns = loadingOlderSessionId === displayedSessionId;
@@ -2002,15 +2019,15 @@ export const ChatShellApp = ({
     ? findSessionNode(workspaceTree, displayedSessionId)
     : activeSessionNode;
   const displayedSession = displayedSessionId
-    ? state.entities.sessions[displayedSessionId]
+    ? domain.getSession(displayedSessionId)
     : undefined;
   const displayedEngineId =
     displayedSession?.engineId ?? displayedSessionNode?.engineId ?? selectedEngineId;
   const activeSession = activeSessionId
-    ? state.entities.sessions[activeSessionId]
+    ? domain.getSession(activeSessionId)
     : undefined;
   const activeThreadGoal = activeSessionId
-    ? state.entities.threadGoals[activeSessionId]
+    ? domain.getThreadGoal(activeSessionId)
     : undefined;
   const cacheTakeoverContext = useCallback(
     (sessionId?: string, presetId?: string, context?: string): void => {
@@ -2175,35 +2192,12 @@ export const ChatShellApp = ({
     eventCursor: state.eventStream.lastCursor
   });
 
-  useEffect(() => {
-    setWorkspaceSessionPages((current) => {
-      const workspaceIds = new Set(workspaceTree.map((workspace) => workspace.workspaceId));
-      let changed = false;
-      const next: Record<string, number> = {};
-      for (const workspace of workspaceTree) {
-        const totalPages = getWorkspaceSessionPage(
-          workspace.sessions,
-          current[workspace.workspaceId] ?? 0
-        ).totalPages;
-        const currentPageIndex = current[workspace.workspaceId] ?? 0;
-        const clampedPageIndex = Math.min(currentPageIndex, totalPages - 1);
-        if (clampedPageIndex > 0) {
-          next[workspace.workspaceId] = clampedPageIndex;
-        }
-        if (currentPageIndex !== clampedPageIndex) {
-          changed = true;
-        }
-      }
-      for (const workspaceId of Object.keys(current)) {
-        if (!workspaceIds.has(workspaceId)) {
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
-  }, [workspaceTree]);
   const displayedConversationId =
-    displayedSession?.conversationId ?? displayedSessionNode?.conversationId;
+    displayedSession?.conversationId;
+  const displayedConversationRevision = useRendererConversationRevision(
+    store,
+    displayedConversationId
+  );
   const highlightedSessionId = displayedSessionId;
   const isOpeningSelectedSession =
     Boolean(openingSessionId) && openingSessionId === displayedSessionId;
@@ -2211,47 +2205,31 @@ export const ChatShellApp = ({
     displayedSessionId && !isOpeningSelectedSession ? displayedSessionId : undefined;
   const activeConversation =
     (displayedConversationId
-      ? state.entities.conversations[
-          displayedConversationId
-        ]
+      ? domain.getConversation(displayedConversationId)
       : undefined) ??
     (displayedSession?.conversationId
-      ? state.entities.conversations[displayedSession.conversationId]
+      ? domain.getConversation(displayedSession.conversationId)
       : undefined) ??
     (state.activeConversationId
-      ? state.entities.conversations[state.activeConversationId]
+      ? domain.getConversation(state.activeConversationId)
       : undefined);
-  const turnIds = displayedSessionId
-    ? state.indexes.turnIdsBySession[displayedSessionId]
-    : undefined;
   const turns = useMemo(
-    () =>
-      turnIds
-        ? turnIds
-            .map((turnId) => state.entities.turns[turnId])
-            .filter((turn): turn is Turn => Boolean(turn))
-        : emptyTurns,
-    [state.entities.turns, turnIds]
+    () => displayedSessionId ? domain.listTurns({ sessionId: displayedSessionId }) : emptyTurns,
+    [domain, displayedSessionId, displayedSessionRevision]
   );
-  const participantIds = activeConversation
-    ? state.indexes.participantIdsByConversation[activeConversation.conversationId]
-    : undefined;
   const participants = useMemo(
-    () =>
-      participantIds
-        ? participantIds
-            .map((participantId) => state.entities.participants[participantId])
-            .filter((participant): participant is AgentParticipant => Boolean(participant))
-        : emptyParticipants,
-    [participantIds, state.entities.participants]
+    () => activeConversation
+      ? domain.listParticipants({ conversationId: activeConversation.conversationId })
+      : emptyParticipants,
+    [activeConversation?.conversationId, displayedConversationRevision, domain]
   );
   const participantDirectory = useMemo(
     () => buildParticipantDirectory(participants),
     [participants]
   );
   const transcriptRows = useMemo(
-    () => buildTurnTranscriptRows(state, turns, participantDirectory),
-    [state, turns, participantDirectory]
+    () => buildTurnTranscriptRows(domain, turns, participantDirectory),
+    [domain, turns, participantDirectory]
   );
   const transcriptContentVersion = useMemo(
     () => buildTranscriptContentVersion(transcriptRows),
@@ -2296,7 +2274,8 @@ export const ChatShellApp = ({
     viewport,
     onResetSessionSwitchState: resetSessionSwitchState,
     onStatusNotice: setStatusNotice,
-    refreshSessionBrowser
+    refreshSessionBrowser,
+    ensureSessionVisible
   });
   const backlogAutoRefreshRef = useRef<{
     displayedSessionId?: string;
@@ -2410,22 +2389,22 @@ export const ChatShellApp = ({
   const activeSessionApprovals = useMemo(
     () =>
       activeSessionId
-        ? Object.values(state.entities.approvalRequests).filter(
+        ? domain.listApprovalRequests().filter(
             (approval): approval is ApprovalRequest =>
               approval.sessionId === activeSessionId && approval.status === "pending"
           )
         : [],
-    [activeSessionId, state.entities.approvalRequests]
+    [activeSessionId, activeSessionRevision, displayedSessionRevision, domain]
   );
   const activeSessionInteractions = useMemo(
     () =>
       activeSessionId
-        ? Object.values(state.entities.runtimeInteractions).filter(
+        ? domain.listRuntimeInteractions({ sessionId: activeSessionId }).filter(
             (interaction): interaction is RuntimeInteraction =>
               interaction.sessionId === activeSessionId && interaction.status === "pending"
           )
         : [],
-    [activeSessionId, state.entities.runtimeInteractions]
+    [activeSessionId, activeSessionRevision, displayedSessionRevision, domain]
   );
 
   const fileBrowser = useFileBrowserController({
@@ -2671,7 +2650,7 @@ export const ChatShellApp = ({
   const onOpenWorkspaceMenu = useCallback(
     (
       event: ReactMouseEvent,
-      workspace: WorkspaceBrowserNodeRpc
+      workspace: WorkspaceBrowserViewNode
     ): void => {
       event.preventDefault();
       event.stopPropagation();
@@ -2747,16 +2726,6 @@ export const ChatShellApp = ({
       });
     },
     [refreshSessionBrowser, transport, setStatusNotice]
-  );
-
-  const onSetWorkspaceSessionPage = useCallback(
-    (workspaceId: string, pageIndex: number): void => {
-      setWorkspaceSessionPages((current) => ({
-        ...current,
-        [workspaceId]: Math.max(0, pageIndex)
-      }));
-    },
-    []
   );
 
   const onSelectTakeoverPreset = useCallback(
@@ -2933,7 +2902,7 @@ export const ChatShellApp = ({
   }, [isTakeoverMenuOpen, setStatusNotice, transport]);
 
   const renderSessionNode = (
-    session: WorkspaceBrowserNodeRpc["sessions"][number],
+    session: SessionBrowserViewNode,
     depth = 0
   ): ReactElement => {
     const statusDot = resolveStatusDotLabel(session.statusDot);
@@ -2959,7 +2928,7 @@ export const ChatShellApp = ({
         >
           <div className="awb-tree__session-main">
             {statusDot ? <span className={`awb-tree__dot is-${statusDot}`} /> : <span className="awb-tree__dot-placeholder" />}
-            {session.children.length > 0 ? (
+            {session.childCount > 0 ? (
               <button
                 type="button"
                 className="awb-tree__disclosure"
@@ -2971,7 +2940,7 @@ export const ChatShellApp = ({
                 aria-expanded={session.isExpanded}
                 onClick={(event) => {
                   event.stopPropagation();
-                  void onToggleSessionTree(session.sessionId);
+                  void onToggleSessionTree(session.sessionId, session.workspaceId);
                 }}
               >
                 {session.isExpanded ? "▾" : "▸"}
@@ -3006,11 +2975,30 @@ export const ChatShellApp = ({
             </div>
           </div>
         </div>
-        {session.isExpanded && session.children.length > 0 && (
+        {session.isExpanded && (
           <ul className="awb-tree__branch">
-            {session.children.map((child: WorkspaceBrowserNodeRpc["sessions"][number]) =>
+            {session.children.map((child) =>
               renderSessionNode(child, depth + 1)
             )}
+            {session.isLoadingChildren ? (
+              <li className="awb-list__empty">Loading…</li>
+            ) : null}
+            {session.childrenHasMore && session.childrenNextCursor ? (
+              <li className="awb-tree__item">
+                <button
+                  type="button"
+                  className="awb-ghost-button"
+                  onClick={() =>
+                    void onLoadMoreSessionChildren(
+                      session.sessionId,
+                      session.workspaceId
+                    )
+                  }
+                >
+                  Load more
+                </button>
+              </li>
+            ) : null}
           </ul>
         )}
       </li>
@@ -3190,46 +3178,36 @@ export const ChatShellApp = ({
                   {workspace.isExpanded && (
                     <>
                       <ul className="awb-tree__branch awb-tree__branch--workspace">
-                        {getWorkspaceSessionPage(
-                          workspace.sessions,
-                          workspaceSessionPages[workspace.workspaceId] ?? 0
-                        ).sessions.map((session) => renderSessionNode(session))}
+                        {workspace.sessions.map((session) => renderSessionNode(session))}
+                        {workspace.isLoadingRoots ? (
+                          <li className="awb-list__empty">Loading…</li>
+                        ) : null}
                       </ul>
                       {(() => {
-                        const page = getWorkspaceSessionPage(
-                          workspace.sessions,
-                          workspaceSessionPages[workspace.workspaceId] ?? 0
+                        const totalPages = Math.max(
+                          1,
+                          Math.ceil(workspace.rootTotalCount / workspaceSessionPageSize)
                         );
-                        if (page.totalPages <= 1) {
+                        if (totalPages <= 1) {
                           return null;
                         }
                         return (
                           <div className="awb-workspace__pagination">
                             <button
                               type="button"
-                              disabled={page.pageIndex === 0}
-                              onClick={() =>
-                                onSetWorkspaceSessionPage(
-                                  workspace.workspaceId,
-                                  page.pageIndex - 1
-                                )
-                              }
+                              disabled={workspace.rootPageIndex === 0 || workspace.isLoadingRoots}
+                              onClick={() => void onPreviousWorkspacePage(workspace.workspaceId)}
                               aria-label={`Previous sessions page for ${workspace.label}`}
                             >
                               ‹
                             </button>
                             <span>
-                              {page.pageIndex + 1}/{page.totalPages}
+                              {workspace.rootPageIndex + 1}/{totalPages}
                             </span>
                             <button
                               type="button"
-                              disabled={page.pageIndex >= page.totalPages - 1}
-                              onClick={() =>
-                                onSetWorkspaceSessionPage(
-                                  workspace.workspaceId,
-                                  page.pageIndex + 1
-                                )
-                              }
+                              disabled={!workspace.rootHasMore || workspace.isLoadingRoots}
+                              onClick={() => void onNextWorkspacePage(workspace.workspaceId)}
                               aria-label={`Next sessions page for ${workspace.label}`}
                             >
                               ›

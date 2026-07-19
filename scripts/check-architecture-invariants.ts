@@ -206,12 +206,53 @@ const assertReplayGapContract = (): void => {
   }
 };
 
+const assertInteractivePerformanceBoundaries = (): void => {
+  const sessionBrowserController = readRepoFile(
+    "apps/desktop/src/ui/chat-shell/use-workspace-browser-controller.ts"
+  );
+  if (sessionBrowserController.includes("sessionBrowser.listTree")) {
+    fail("The normal desktop session browser must use bounded page queries, not listTree.");
+  }
+
+  const rendererStore = readRepoFile("apps/desktop/src/store/store.ts");
+  if (
+    rendererStore.includes("snapshotFromRendererState") ||
+    rendererStore.includes("withDomainSnapshot")
+  ) {
+    fail("The renderer live store must not rebuild the complete domain snapshot.");
+  }
+
+  const runtimePort = readRepoFile(
+    "apps/desktop-server/src/codex-app-server-runtime-port.ts"
+  );
+  const commandOutputCase = runtimePort.match(
+    /case\s+"item\/commandExecution\/outputDelta":\s*\{([\s\S]*?)case\s+"serverRequest\/resolved"/
+  )?.[1];
+  if (!commandOutputCase || !commandOutputCase.includes('emitEvent("terminal.output"')) {
+    fail("Codex command output must publish terminal.output.");
+  }
+  if (commandOutputCase.includes('emitEvent("tool.delta"')) {
+    fail("Codex command output must not duplicate raw bytes through tool.delta.");
+  }
+
+  const rendererDiagnostics = readRepoFile(
+    "apps/desktop/src/ui/chat-shell/use-renderer-diagnostics.ts"
+  );
+  if (
+    rendererDiagnostics.includes('kind: "diagnostic-buffer"') ||
+    rendererDiagnostics.includes("samples: recentSamples")
+  ) {
+    fail("Renderer diagnostics must not attach the complete rolling sample buffer.");
+  }
+};
+
 assertRpcRegistryMatchesSchemas();
 assertSessionBrowserSchemaIsTyped();
 assertCodexExtensionRpcAllowlist();
 assertProviderIdentityBoundaries();
 assertRuntimeEventSwitchCoverage();
 assertReplayGapContract();
+assertInteractivePerformanceBoundaries();
 
 console.log("Architecture invariants passed.");
 console.log(`Codex extension RPC allowlist: ${codexExtensionRpcMethods.join(", ")}`);

@@ -64,6 +64,43 @@ describe("DomainReplica", () => {
     });
   });
 
+  it("rejects an invalid batch before projecting any earlier event", () => {
+    const replica = new DomainReplica({ now: () => now });
+
+    expect(() =>
+      replica.applyBatch([
+        {
+          event: {
+            type: "session.created",
+            conversationId: "conversation-a",
+            sessionId: "session-a",
+            engineId: "agent-a",
+            status: "idle"
+          }
+        },
+        {
+          event: {
+            type: "session.created",
+            conversationId: "conversation-a",
+            sessionId: "session-b",
+            engineId: "agent-a",
+            status: "idle",
+            relation: {
+              relationId: "relation-cycle",
+              parentSessionId: "session-b",
+              childSessionId: "session-b",
+              relationType: "subagent",
+              createdAt: now
+            }
+          }
+        }
+      ])
+    ).toThrow(/cycle/);
+
+    expect(replica.getRevision()).toBe(0);
+    expect(replica.readModel.listSessions({ includeArchived: true })).toEqual([]);
+  });
+
   it("replaces and merges snapshots through the same read model", () => {
     const replica = new DomainReplica();
 

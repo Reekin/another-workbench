@@ -1,5 +1,5 @@
-import type { WorkspaceBrowserNodeRpc } from "@another-workbench/shared";
 import type { DesktopTransport } from "../../transport/desktop-transport.js";
+import type { WorkspaceBrowserViewNode } from "./workspace-browser-tree.js";
 import {
   statusNoticeErrorDetails,
   type ComposerStatusNotice
@@ -13,7 +13,7 @@ export const workspaceDirectoryActionLabel = "Open workspace directory";
 
 export const openWorkspaceDirectory = async (input: {
   transport?: DesktopTransport;
-  workspace: Pick<WorkspaceBrowserNodeRpc, "label" | "rootPath">;
+  workspace: Pick<WorkspaceBrowserViewNode, "label" | "rootPath">;
   onStatusNotice: StatusNoticeSetter;
 }): Promise<void> => {
   if (!input.transport) {

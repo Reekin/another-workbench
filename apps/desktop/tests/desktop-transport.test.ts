@@ -849,7 +849,7 @@ describe("Desktop transport facade", () => {
     const nextState = store.getState();
     expect(nextState.eventStream.lastEventId).toBe("evt-1");
     expect(nextState.eventStream.lastCursor).toBe("cursor-11");
-    expect(nextState.entities.turns["turn-1"]?.sessionId).toBe("session-1");
+    expect(store.getDomainReadModel().getTurn("turn-1")?.sessionId).toBe("session-1");
   });
 
   it("subscribes without a conversation filter by default so renderer state stays globally mirrored", async () => {
@@ -1089,7 +1089,7 @@ describe("Desktop transport facade", () => {
     });
 
     const finalState = store.getState();
-    expect(finalState.entities.turns["turn-replay-1"]?.status).toBe("completed");
+    expect(store.getDomainReadModel().getTurn("turn-replay-1")?.status).toBe("completed");
     expect(finalState.eventStream.lastCursor).toBe("cursor-12");
   });
 
@@ -1181,7 +1181,7 @@ describe("Desktop transport facade", () => {
     expect(preload.subscribe).toHaveBeenCalledTimes(1);
     expect(preload.subscribe.mock.calls[0][0].fromCursor).toBe("cursor-30");
     expect(store.getState().eventStream.lastCursor).toBe("cursor-30");
-    expect(store.getState().entities.sessions["session-snapshot"]?.title).toBe(
+    expect(store.getDomainReadModel().getSession("session-snapshot")?.title).toBe(
       "Recovered"
     );
   });
@@ -1245,10 +1245,10 @@ describe("Desktop transport facade", () => {
     });
 
     expect(store.getState().eventStream.lastCursor).toBe(runtimeSnapshot.cursor);
-    expect(store.getState().entities.sessions["session-runtime"]?.engineId).toBe(
+    expect(store.getDomainReadModel().getSession("session-runtime")?.engineId).toBe(
       "codex"
     );
-    expect(store.getState().entities.sessions["session-stale"]).toBeUndefined();
+    expect(store.getDomainReadModel().getSession("session-stale")).toBeUndefined();
     expect(subscription.subscriptionId).toBe("sub-local-runtime");
 
     await subscription.unsubscribe();
@@ -1277,6 +1277,23 @@ describe("Desktop transport facade", () => {
       fromCursor: "cursor-0"
     });
 
+    preload.emitPush({
+      channel: "workbench.events",
+      subscriptionId: "sub-1",
+      envelope: {
+        eventId: "evt-session-created",
+        cursor: "cursor-session-created",
+        occurredAt: "2026-04-17T00:00:00.000Z",
+        event: {
+          type: "session.created",
+          conversationId: "conversation-1",
+          sessionId: "session-1",
+          engineId: "agent-1",
+          status: "idle"
+        }
+      }
+    });
+
     for (let index = 1; index <= 3; index += 1) {
       preload.emitPush({
         channel: "workbench.events",
@@ -1302,8 +1319,51 @@ describe("Desktop transport facade", () => {
     scheduled.shift()?.();
 
     expect(store.getState().eventStream.lastCursor).toBe("cursor-3");
-    expect(store.getState().entities.messageBlocks["message-1:md"]?.text).toBe("123");
+    expect(store.getDomainReadModel().getMessageBlock("message-1:md")?.text).toBe("123");
     expect(actions).toEqual(["store/hydrateSnapshot", "store/ingestEnvelopes"]);
+  });
+
+  it("bounds renderer drain batches by serialized bytes", async () => {
+    const scheduled: Array<() => void> = [];
+    const preload = createPreloadMock();
+    const transport = createDesktopTransport(preload.api, {
+      eventBatchMaxSize: 100,
+      eventBatchMaxBytes: 700,
+      scheduleEventDrain: (callback) => {
+        scheduled.push(callback);
+        return () => undefined;
+      }
+    });
+    const batches: EventEnvelope[][] = [];
+
+    await transport.events.subscribe({
+      fromCursor: "cursor-0",
+      onEnvelope: () => undefined,
+      onEnvelopes: (envelopes) => batches.push(envelopes)
+    });
+    for (let index = 1; index <= 3; index += 1) {
+      preload.emitPush({
+        channel: "workbench.events",
+        subscriptionId: "sub-1",
+        envelope: {
+          eventId: `evt-byte-${index}`,
+          cursor: `cursor-${index}`,
+          occurredAt: "2026-07-19T00:00:00.000Z",
+          event: {
+            type: "message.delta",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            messageId: "message-1",
+            delta: "x".repeat(400)
+          }
+        }
+      });
+    }
+
+    scheduled.shift()?.();
+    scheduled.shift()?.();
+    scheduled.shift()?.();
+    expect(batches.map((batch) => batch.length)).toEqual([1, 1, 1]);
   });
 
   it("reports backlog pressure for queued stream events", async () => {
@@ -1408,6 +1468,23 @@ describe("Desktop transport facade", () => {
       channel: "workbench.events",
       subscriptionId: "sub-1",
       envelope: {
+        eventId: "evt-session-created",
+        cursor: "cursor-session-created",
+        occurredAt: "2026-04-17T00:00:00.000Z",
+        event: {
+          type: "session.created",
+          conversationId: "conversation-1",
+          sessionId: "session-1",
+          engineId: "agent-1",
+          status: "idle"
+        }
+      }
+    });
+
+    preload.emitPush({
+      channel: "workbench.events",
+      subscriptionId: "sub-1",
+      envelope: {
         eventId: "evt-unsubscribe-1",
         cursor: "cursor-1",
         occurredAt: "2026-04-17T00:00:01.000Z",
@@ -1428,7 +1505,7 @@ describe("Desktop transport facade", () => {
 
     expect(cancelled.has(scheduled[0]!)).toBe(true);
     expect(store.getState().eventStream.lastCursor).toBe("cursor-2");
-    expect(store.getState().entities.messageBlocks["message-1:md"]?.text).toBe("12");
+    expect(store.getDomainReadModel().getMessageBlock("message-1:md")?.text).toBe("12");
     expect(actions).toEqual(["store/hydrateSnapshot", "store/ingestEnvelopes"]);
   });
 });

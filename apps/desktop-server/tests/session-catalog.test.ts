@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DomainSnapshot } from "@another-workbench/shared";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionCatalogService } from "../src/session-catalog.js";
 import { SessionIndexStore } from "../src/session-index.js";
 import type { WorkbenchRuntimeService } from "../src/runtime-service.js";
@@ -537,5 +537,65 @@ describe("SessionCatalogService", () => {
       isActive: true,
       statusDot: "none"
     });
+  });
+
+  it("returns bounded lightweight pages and the selected session path", async () => {
+    const baseDir = await createTempDir();
+    const workspaceRegistry = new WorkspaceRegistryService({ baseDir });
+    const indexStore = new SessionIndexStore({ baseDir });
+    await workspaceRegistry.registerWorkspace({
+      workspaceId: "workspace-1",
+      absolutePath: "I:/workspace-alpha"
+    });
+    for (let index = 0; index < 25; index += 1) {
+      await indexStore.upsertSession({
+        workspaceId: "workspace-1",
+        session: {
+          sessionId: `session-${index.toString().padStart(2, "0")}`,
+          conversationId: `conversation-${index}`,
+          engineId: "codex",
+          title: `Session ${index}`,
+          createdAt: `2026-07-19T00:${index.toString().padStart(2, "0")}:00Z`,
+          updatedAt: `2026-07-19T00:${index.toString().padStart(2, "0")}:00Z`
+        },
+        providerSessionId: `thread-${index}`,
+        summaryText: "x".repeat(10_000)
+      });
+    }
+    await indexStore.upsertRelation({
+      workspaceId: "workspace-1",
+      parentSessionId: "session-23",
+      childSessionId: "session-24",
+      relationType: "subagent",
+      createdAt: "2026-07-19T01:00:00Z"
+    });
+    const getSnapshot = vi.fn(() => emptySnapshot());
+    const service = new SessionCatalogService({
+      runtimeService: {
+        getSnapshot,
+        getRevision: () => "runtime-1"
+      } as unknown as WorkbenchRuntimeService,
+      workspaceRegistry,
+      sessionIndexStore: indexStore
+    });
+
+    const roots = await service.listRoots({ workspaceId: "workspace-1" });
+    expect(roots.items).toHaveLength(20);
+    expect(roots.totalCount).toBe(24);
+    expect(roots.hasMore).toBe(true);
+    expect(JSON.stringify(roots)).not.toContain("summaryText");
+    expect((await service.getPath("session-24")).items.map((item) => item.sessionId)).toEqual([
+      "session-23",
+      "session-24"
+    ]);
+    expect(getSnapshot).toHaveBeenCalledTimes(1);
+
+    await workspaceRegistry.setSessionExpanded("session-23", true);
+    await service.listRoots({ workspaceId: "workspace-1" });
+    expect(getSnapshot).toHaveBeenCalledTimes(1);
+
+    await indexStore.markSessionUnreadCompleted("session-00");
+    await service.listRoots({ workspaceId: "workspace-1" });
+    expect(getSnapshot).toHaveBeenCalledTimes(2);
   });
 });

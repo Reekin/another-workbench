@@ -52,6 +52,9 @@ export const workbenchRpcMethods = [
   "workspace.toggleExpanded",
   "workspace.select",
   "sessionBrowser.listTree",
+  "sessionBrowser.listRoots",
+  "sessionBrowser.listChildren",
+  "sessionBrowser.getPath",
   "sessionBrowser.reconcile",
   "sessionBrowser.toggleExpanded",
   "sessionBrowser.create",
@@ -188,6 +191,64 @@ export type SessionBrowserNodeRpc = {
   updatedAt: string;
   lastCompletedTurnAt?: string;
 };
+
+export type SessionBrowserItemRpc = {
+  sessionId: string;
+  parentSessionId?: string;
+  engineId: string;
+  title: string;
+  statusDot: z.infer<typeof zSessionStatusDotSchema>;
+  takeoverStatus?: "managed" | "agent";
+  takeoverPresetId?: z.infer<typeof zTakeoverPresetIdSchema>;
+  isActive: boolean;
+  childCount: number;
+  lastCompletedTurnAt?: string;
+};
+
+export type SessionBrowserPageRpc = {
+  workspaceId: string;
+  parentSessionId?: string;
+  revision: string;
+  items: SessionBrowserItemRpc[];
+  nextCursor?: string;
+  hasMore: boolean;
+  totalCount: number;
+};
+
+export type SessionBrowserPathRpc = {
+  workspaceId: string;
+  revision: string;
+  items: SessionBrowserItemRpc[];
+};
+
+const zSessionBrowserItemSchema = z.object({
+  sessionId: zSessionId,
+  parentSessionId: zSessionId.optional(),
+  engineId: zEngineId,
+  title: z.string().min(1),
+  statusDot: zSessionStatusDotSchema,
+  takeoverStatus: z.enum(["managed", "agent"]).optional(),
+  takeoverPresetId: zTakeoverPresetIdSchema.optional(),
+  isActive: z.boolean(),
+  childCount: z.number().int().nonnegative(),
+  lastCompletedTurnAt: z.string().min(1).optional()
+});
+
+const zSessionBrowserPageSchema = z.object({
+  workspaceId: z.string().min(1),
+  parentSessionId: zSessionId.optional(),
+  revision: z.string().min(1),
+  items: z.array(zSessionBrowserItemSchema),
+  nextCursor: z.string().min(1).optional(),
+  hasMore: z.boolean(),
+  totalCount: z.number().int().nonnegative()
+});
+
+const zSessionBrowserPathSchema = z.object({
+  workspaceId: z.string().min(1),
+  revision: z.string().min(1),
+  items: z.array(zSessionBrowserItemSchema)
+});
 
 export type WorkspaceBrowserNodeRpc = {
   workspaceId: string;
@@ -764,6 +825,33 @@ const zWorkspaceSelectRequestSchema = z.object({
   })
 });
 
+const zSessionBrowserPageParamsSchema = z.object({
+  workspaceId: z.string().min(1),
+  cursor: z.string().min(1).optional(),
+  expectedRevision: z.string().min(1).optional(),
+  limit: z.number().int().positive().max(100).default(20)
+});
+
+const zSessionBrowserListRootsRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.listRoots"),
+  params: zSessionBrowserPageParamsSchema
+});
+
+const zSessionBrowserListChildrenRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.listChildren"),
+  params: zSessionBrowserPageParamsSchema.extend({
+    parentSessionId: zSessionId
+  })
+});
+
+const zSessionBrowserGetPathRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.getPath"),
+  params: z.object({ sessionId: zSessionId })
+});
+
 const zSessionBrowserListTreeRequestSchema = z.object({
   id: zRequestId,
   method: z.literal("sessionBrowser.listTree"),
@@ -1079,6 +1167,9 @@ export const zWorkbenchRpcRequestSchema = z.discriminatedUnion("method", [
   zWorkspaceToggleExpandedRequestSchema,
   zWorkspaceSelectRequestSchema,
   zSessionBrowserListTreeRequestSchema,
+  zSessionBrowserListRootsRequestSchema,
+  zSessionBrowserListChildrenRequestSchema,
+  zSessionBrowserGetPathRequestSchema,
   zSessionBrowserReconcileRequestSchema,
   zSessionBrowserToggleExpandedRequestSchema,
   zSessionBrowserCreateRequestSchema,
@@ -1313,6 +1404,27 @@ const zWorkspaceSelectResponseSchema = z.object({
     workspaceId: z.string().min(1),
     activeSessionId: zSessionId.optional()
   })
+});
+
+const zSessionBrowserListRootsResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.listRoots"),
+  ok: z.literal(true),
+  result: zSessionBrowserPageSchema
+});
+
+const zSessionBrowserListChildrenResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.listChildren"),
+  ok: z.literal(true),
+  result: zSessionBrowserPageSchema
+});
+
+const zSessionBrowserGetPathResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("sessionBrowser.getPath"),
+  ok: z.literal(true),
+  result: zSessionBrowserPathSchema
 });
 
 const zSessionBrowserListTreeResponseSchema = z.object({
@@ -1649,6 +1761,9 @@ export const zWorkbenchRpcResponseSchema = z.union([
   zWorkspaceToggleExpandedResponseSchema,
   zWorkspaceSelectResponseSchema,
   zSessionBrowserListTreeResponseSchema,
+  zSessionBrowserListRootsResponseSchema,
+  zSessionBrowserListChildrenResponseSchema,
+  zSessionBrowserGetPathResponseSchema,
   zSessionBrowserReconcileResponseSchema,
   zSessionBrowserToggleExpandedResponseSchema,
   zSessionBrowserCreateResponseSchema,

@@ -377,19 +377,21 @@ describe("desktop store reducer", () => {
     );
     let state = store.getState();
 
-    expect(state.entities.messageBlocks["message-a:md"]?.text).toBe("latest text");
+    expect(store.getDomainReadModel().getMessageBlock("message-a:md")?.text).toBe("latest text");
     expect(state.eventStream.lastCursor).toBeUndefined();
 
     store.ingestEnvelope(
       toEnvelope("evt-other-session", "cursor-9", {
-        type: "turn.started",
+        type: "session.created",
+        conversationId: "conversation-b",
         sessionId: "session-b",
-        turnId: "turn-b"
+        engineId: "agent-b",
+        status: "idle"
       })
     );
     state = store.getState();
 
-    expect(state.entities.turns["turn-b"]?.sessionId).toBe("session-b");
+    expect(store.getDomainReadModel().getSession("session-b")?.sessionId).toBe("session-b");
     expect(state.eventStream.lastCursor).toBe("cursor-9");
 
     store.ingestEnvelope(
@@ -403,7 +405,7 @@ describe("desktop store reducer", () => {
     );
     state = store.getState();
 
-    expect(state.entities.messageBlocks["message-a:md"]?.text).toBe("latest text");
+    expect(store.getDomainReadModel().getMessageBlock("message-a:md")?.text).toBe("latest text");
     expect(state.eventStream.lastCursor).toBe("cursor-9");
 
     store.ingestEnvelope(
@@ -417,7 +419,7 @@ describe("desktop store reducer", () => {
     );
     state = store.getState();
 
-    expect(state.entities.messageBlocks["message-a:md"]?.text).toBe(
+    expect(store.getDomainReadModel().getMessageBlock("message-a:md")?.text).toBe(
       "latest text live"
     );
     expect(state.eventStream.lastCursor).toBe("cursor-11");
@@ -531,8 +533,8 @@ describe("desktop store reducer", () => {
     );
     const state = store.getState();
 
-    expect(state.entities.turns["turn-older"]?.sessionId).toBe("session-a");
-    expect(state.entities.messageBlocks["message-current:md"]?.text).toBe(
+    expect(store.getDomainReadModel().getTurn("turn-older")?.sessionId).toBe("session-a");
+    expect(store.getDomainReadModel().getMessageBlock("message-current:md")?.text).toBe(
       "current text queued"
     );
     expect(state.eventStream.lastCursor).toBe("cursor-9");
@@ -1362,10 +1364,10 @@ describe("desktop store reducer", () => {
 
     const state = store.disposeSession("session-a");
 
-    expect(state.entities.sessions["session-a"]).toBeUndefined();
-    expect(state.entities.turns["turn-a"]).toBeUndefined();
-    expect(state.entities.sessions["session-b"]).toBeDefined();
-    expect(state.entities.turns["turn-b"]).toBeDefined();
+    expect(store.getDomainReadModel().getSession("session-a")).toBeUndefined();
+    expect(store.getDomainReadModel().getTurn("turn-a")).toBeUndefined();
+    expect(store.getDomainReadModel().getSession("session-b")).toBeDefined();
+    expect(store.getDomainReadModel().getTurn("turn-b")).toBeDefined();
   });
 
   it("reconciles message text from message.completed finalText", () => {
@@ -1589,18 +1591,17 @@ describe("desktop store reducer", () => {
       "prepend"
     );
 
-    expect(state.indexes.messageBlockIdsByTurn["turn-old"]).toBeUndefined();
-    expect(state.indexes.toolCallIdsByTurn["turn-old"]).toBeUndefined();
-    expect(state.indexes.terminalIdsByTurn["turn-old"]).toBeUndefined();
-    expect(state.indexes.approvalRequestIdsByTurn["turn-old"]).toBeUndefined();
-    expect(state.indexes.runtimeInteractionIdsByTurn["turn-old"]).toBeUndefined();
-    expect(state.indexes.messageBlockIdsByTurn["turn-new"]).toEqual(["message-a:md"]);
-    expect(state.indexes.toolCallIdsByTurn["turn-new"]).toEqual(["tool-a"]);
-    expect(state.indexes.terminalIdsByTurn["turn-new"]).toEqual(["terminal-a"]);
-    expect(state.indexes.approvalRequestIdsByTurn["turn-new"]).toEqual(["approval-a"]);
-    expect(state.indexes.runtimeInteractionIdsByTurn["turn-new"]).toEqual([
-      "interaction-a"
-    ]);
+    const domain = store.getDomainReadModel();
+    expect(domain.listMessageBlocks({ turnId: "turn-old" })).toEqual([]);
+    expect(domain.listToolCalls({ turnId: "turn-old" })).toEqual([]);
+    expect(domain.listTerminalStreams({ turnId: "turn-old" })).toEqual([]);
+    expect(domain.listApprovalRequests({ turnId: "turn-old" })).toEqual([]);
+    expect(domain.listRuntimeInteractions({ sessionId: "session-a" }).filter((item) => item.turnId === "turn-old")).toEqual([]);
+    expect(domain.listMessageBlocks({ turnId: "turn-new" }).map((item) => item.blockId)).toEqual(["message-a:md"]);
+    expect(domain.listToolCalls({ turnId: "turn-new" }).map((item) => item.toolCallId)).toEqual(["tool-a"]);
+    expect(domain.listTerminalStreams({ turnId: "turn-new" }).map((item) => item.terminalId)).toEqual(["terminal-a"]);
+    expect(domain.listApprovalRequests({ turnId: "turn-new" }).map((item) => item.requestId)).toEqual(["approval-a"]);
+    expect(domain.listRuntimeInteractions({ sessionId: "session-a" }).filter((item) => item.turnId === "turn-new").map((item) => item.requestId)).toEqual(["interaction-a"]);
   });
 
   it("stores explicit final-message truth on the turn when message.completed marks it", () => {
@@ -2438,19 +2439,18 @@ describe("desktop store reducer", () => {
 
     const state = store.disposeSession("session-a");
 
-    expect(state.entities.sessions["session-a"]).toBeUndefined();
-    expect(state.entities.turns["turn-a"]).toBeUndefined();
-    expect(state.entities.messageBlocks["message-a:md"]).toBeUndefined();
-    expect(state.entities.toolCalls["tool-a"]).toBeUndefined();
-    expect(state.entities.terminalStreams["terminal-a"]).toBeUndefined();
-    expect(state.entities.approvalRequests["approval-a"]).toBeUndefined();
-    expect(state.entities.conversations["conversation-a"]).toBeUndefined();
-    expect(state.entities.participants["participant-a"]).toBeUndefined();
-    expect(state.indexes.turnIdsBySession["session-a"]).toBeUndefined();
-    expect(state.indexes.sessionIdsByConversation["conversation-a"]).toBeUndefined();
+    const domain = store.getDomainReadModel();
+    expect(domain.getSession("session-a")).toBeUndefined();
+    expect(domain.getTurn("turn-a")).toBeUndefined();
+    expect(domain.getMessageBlock("message-a:md")).toBeUndefined();
+    expect(domain.getToolCall("tool-a")).toBeUndefined();
+    expect(domain.getTerminalStream("terminal-a")).toBeUndefined();
+    expect(domain.getApprovalRequest("approval-a")).toBeUndefined();
+    expect(domain.getConversation("conversation-a")?.sessionIds).toEqual([]);
+    expect(domain.getParticipant("participant-a")?.activeSessionIds).toEqual([]);
     expect(state.activeSessionId).toBe("session-b");
-    expect(state.entities.sessions["session-b"]).toBeDefined();
-    expect(state.entities.turns["turn-b"]).toBeDefined();
+    expect(domain.getSession("session-b")).toBeDefined();
+    expect(domain.getTurn("turn-b")).toBeDefined();
   });
 
   it("preserves active session while replacing the active session window", () => {
@@ -2567,10 +2567,10 @@ describe("desktop store reducer", () => {
 
     expect(state.activeConversationId).toBe("conversation-a");
     expect(state.activeSessionId).toBe("session-a");
-    expect(state.entities.conversations["conversation-b"]).toBeDefined();
-    expect(state.entities.sessions["session-b"]).toBeDefined();
-    expect(state.entities.turns["turn-a"]).toBeDefined();
-    expect(state.entities.messageBlocks["message-a:md"]?.text).toBe("updated");
+    expect(store.getDomainReadModel().getConversation("conversation-b")).toBeDefined();
+    expect(store.getDomainReadModel().getSession("session-b")).toBeDefined();
+    expect(store.getDomainReadModel().getTurn("turn-a")).toBeDefined();
+    expect(store.getDomainReadModel().getMessageBlock("message-a:md")?.text).toBe("updated");
   });
 
   it("preserves already loaded session turns outside the replaced session window", () => {
@@ -2714,15 +2714,16 @@ describe("desktop store reducer", () => {
       "cursor-20"
     );
 
-    expect(state.entities.turns["turn-old"]).toBeDefined();
-    expect(state.entities.messageBlocks["message-old:md"]?.text).toBe("old prompt");
-    expect(state.entities.turns["turn-new"]?.messageIds).toEqual(["message-new"]);
-    expect(state.entities.messageBlocks["message-new:md"]?.text).toBe("fresh");
-    expect(state.entities.toolCalls["tool-stale"]).toBeUndefined();
-    expect(state.indexes.turnIdsBySession["session-a"]).toEqual([
+    const domain = store.getDomainReadModel();
+    expect(domain.getTurn("turn-old")).toBeDefined();
+    expect(domain.getMessageBlock("message-old:md")?.text).toBe("old prompt");
+    expect(domain.getTurn("turn-new")?.messageIds).toEqual(["message-new"]);
+    expect(domain.getMessageBlock("message-new:md")?.text).toBe("fresh");
+    expect(domain.getToolCall("tool-stale")).toBeUndefined();
+    expect(domain.listTurns({ sessionId: "session-a" }).map((turn) => turn.turnId)).toEqual([
       "turn-old",
       "turn-new"
     ]);
-    expect(state.indexes.toolCallIdsByTurn["turn-new"]).toBeUndefined();
+    expect(domain.listToolCalls({ turnId: "turn-new" })).toEqual([]);
   });
 });

@@ -9,6 +9,7 @@ import type {
   ToolCall,
   Turn
 } from "@another-workbench/shared";
+import type { DomainReadModel } from "@another-workbench/core";
 import type { RendererStoreState } from "./types.js";
 
 const byIds = <T>(map: Record<string, T>, ids: readonly string[]): T[] =>
@@ -120,17 +121,17 @@ export const selectSessionRelationsForChild = (
   );
 
 export const selectSessionSummary = (
-  state: RendererStoreState,
+  domain: DomainReadModel,
   sessionId: string
 ): SessionSummary | undefined => {
-  const session = state.entities.sessions[sessionId];
+  const session = domain.getSession(sessionId);
   if (!session) {
     return undefined;
   }
 
-  const parentRelations = selectSessionRelationsForChild(state, sessionId);
-  const childRelations = selectSessionRelationsForParent(state, sessionId);
-  const conversation = state.entities.conversations[session.conversationId];
+  const parentRelations = domain.listSessionRelations({ childSessionId: sessionId });
+  const childRelations = domain.listSessionRelations({ parentSessionId: sessionId });
+  const conversation = domain.getConversation(session.conversationId);
 
   return {
     session,
@@ -140,19 +141,17 @@ export const selectSessionSummary = (
       ...parentRelations.map((relation) => relation.relationId),
       ...childRelations.map((relation) => relation.relationId)
     ],
-    isActive:
-      conversation?.activeSessionId === sessionId ||
-      state.activeSessionId === sessionId,
+    isActive: conversation?.activeSessionId === sessionId,
     isArchived: Boolean(session.archivedAt)
   };
 };
 
 export const selectSessionSummariesForConversation = (
-  state: RendererStoreState,
+  domain: DomainReadModel,
   conversationId: string
 ): SessionSummary[] =>
-  selectSessionsForConversation(state, conversationId)
-    .map((session) => selectSessionSummary(state, session.sessionId))
+  domain.listSessions({ conversationId, includeArchived: true })
+    .map((session) => selectSessionSummary(domain, session.sessionId))
     .filter((summary): summary is SessionSummary => Boolean(summary))
     .sort((left, right) => {
       const byUpdatedAt = compareIsoDesc(
@@ -166,12 +165,12 @@ export const selectSessionSummariesForConversation = (
     });
 
 export const selectSessionGraphForConversation = (
-  state: RendererStoreState,
+  domain: DomainReadModel,
   conversationId: string
 ): SessionGraph => {
-  const summaries = selectSessionSummariesForConversation(state, conversationId);
+  const summaries = selectSessionSummariesForConversation(domain, conversationId);
   const sessionIds = new Set(summaries.map((summary) => summary.session.sessionId));
-  const relationEdges = Object.values(state.entities.sessionRelations).filter(
+  const relationEdges = domain.listSessionRelations().filter(
     (relation) =>
       sessionIds.has(relation.parentSessionId) || sessionIds.has(relation.childSessionId)
   );

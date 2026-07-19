@@ -17,6 +17,10 @@ type SubscriptionRecord = {
 
 type CancelScheduledPushDrain = () => void;
 type PushDrainScheduler = (callback: () => void) => CancelScheduledPushDrain;
+type QueuedPush = {
+  push: WorkbenchEventPush;
+  bytes: number;
+};
 
 export type WorkbenchIpcRouter = {
   handleRequest: (rawRequest: unknown) => Promise<WorkbenchRpcResponse>;
@@ -29,10 +33,16 @@ export type CreateWorkbenchIpcRouterOptions = {
   onPushBatch?: (batch: WorkbenchEventPushBatch) => void;
   createSubscriptionId?: () => string;
   pushBatchMaxSize?: number;
+  pushBatchMaxBytes?: number;
+  pushDrainBudgetMs?: number;
   schedulePushDrain?: PushDrainScheduler;
 };
 
 const defaultPushBatchMaxSize = 500;
+const defaultPushBatchMaxBytes = 256 * 1024;
+const defaultPushDrainBudgetMs = 8;
+const utf8ByteLength = (value: unknown): number =>
+  new TextEncoder().encode(JSON.stringify(value)).byteLength;
 
 const scheduleDefaultPushDrain: PushDrainScheduler = (callback) => {
   const timeoutId = setTimeout(callback, 0);
@@ -70,10 +80,13 @@ export const createWorkbenchIpcRouter = (
     createSubscriptionId
   });
   const pushBatchMaxSize = options.pushBatchMaxSize ?? defaultPushBatchMaxSize;
+  const pushBatchMaxBytes = options.pushBatchMaxBytes ?? defaultPushBatchMaxBytes;
+  const pushDrainBudgetMs = options.pushDrainBudgetMs ?? defaultPushDrainBudgetMs;
   const schedulePushDrain = options.schedulePushDrain ?? scheduleDefaultPushDrain;
 
   const subscriptions = new Map<string, SubscriptionRecord>();
-  const pushQueue: WorkbenchEventPush[] = [];
+  const pushQueue: QueuedPush[] = [];
+  let pushQueueHead = 0;
   let cancelScheduledPushDrain: CancelScheduledPushDrain | undefined;
 
   const deliverPushes = (pushes: WorkbenchEventPush[]): void => {
@@ -93,19 +106,47 @@ export const createWorkbenchIpcRouter = (
   };
 
   const schedulePushQueueDrain = (): void => {
-    if (cancelScheduledPushDrain || pushQueue.length === 0) {
+    if (cancelScheduledPushDrain || pushQueueHead >= pushQueue.length) {
       return;
     }
     cancelScheduledPushDrain = schedulePushDrain(() => {
       cancelScheduledPushDrain = undefined;
-      const pushes = pushQueue.splice(0, pushBatchMaxSize);
+      const startedAt = performance.now();
+      const pushes: WorkbenchEventPush[] = [];
+      let batchBytes = 0;
+      while (pushQueueHead < pushQueue.length && pushes.length < pushBatchMaxSize) {
+        const queued = pushQueue[pushQueueHead];
+        if (!queued) {
+          break;
+        }
+        if (
+          pushes.length > 0 &&
+          (batchBytes + queued.bytes > pushBatchMaxBytes ||
+            performance.now() - startedAt >= pushDrainBudgetMs)
+        ) {
+          break;
+        }
+        pushQueueHead += 1;
+        pushes.push(queued.push);
+        batchBytes += queued.bytes;
+      }
       deliverPushes(pushes);
+      if (pushQueueHead >= pushQueue.length) {
+        pushQueue.length = 0;
+        pushQueueHead = 0;
+      } else if (pushQueueHead >= 1_024 && pushQueueHead * 2 >= pushQueue.length) {
+        pushQueue.splice(0, pushQueueHead);
+        pushQueueHead = 0;
+      }
       schedulePushQueueDrain();
     });
   };
 
   const enqueuePush = (push: WorkbenchEventPush): void => {
-    pushQueue.push(push);
+    pushQueue.push({
+      push,
+      bytes: utf8ByteLength(push)
+    });
     schedulePushQueueDrain();
   };
 
@@ -115,9 +156,16 @@ export const createWorkbenchIpcRouter = (
       cancelScheduledPushDrain = undefined;
     }
     if (!subscriptionId) {
-      while (pushQueue.length > 0) {
-        deliverPushes(pushQueue.splice(0, pushBatchMaxSize));
+      while (pushQueueHead < pushQueue.length) {
+        deliverPushes(
+          pushQueue
+            .slice(pushQueueHead, pushQueueHead + pushBatchMaxSize)
+            .map((queued) => queued.push)
+        );
+        pushQueueHead += pushBatchMaxSize;
       }
+      pushQueue.length = 0;
+      pushQueueHead = 0;
       return;
     }
     // Targeted unsubscribe drain is scoped to the subscription being torn down.
@@ -126,14 +174,26 @@ export const createWorkbenchIpcRouter = (
     // full-domain subscription rather than merging independent subscriptions.
     const pendingForSubscription: WorkbenchEventPush[] = [];
     const retainedPushes: WorkbenchEventPush[] = [];
-    for (const push of pushQueue) {
-      if (push.subscriptionId === subscriptionId) {
-        pendingForSubscription.push(push);
+    for (let index = pushQueueHead; index < pushQueue.length; index += 1) {
+      const queued = pushQueue[index];
+      if (!queued) {
+        continue;
+      }
+      if (queued.push.subscriptionId === subscriptionId) {
+        pendingForSubscription.push(queued.push);
       } else {
-        retainedPushes.push(push);
+        retainedPushes.push(queued.push);
       }
     }
-    pushQueue.splice(0, pushQueue.length, ...retainedPushes);
+    pushQueue.splice(
+      0,
+      pushQueue.length,
+      ...retainedPushes.map((push) => ({
+        push,
+        bytes: utf8ByteLength(push)
+      }))
+    );
+    pushQueueHead = 0;
     while (pendingForSubscription.length > 0) {
       deliverPushes(pendingForSubscription.splice(0, pushBatchMaxSize));
     }

@@ -23,6 +23,10 @@ import type {
 import { createAcpDemoRuntimePort, createCodexDemoRuntimePort } from "./demo-runtime-port.js";
 import { WorkbenchRuntimeService } from "./runtime-service.js";
 import { buildSessionWindowSnapshot } from "./session-window.js";
+import {
+  SessionBrowserReadModel,
+  type SessionBrowserReadModelSeed
+} from "./session-browser-read-model.js";
 
 export const createDemoWorkbenchRuntimeService = () => {
   const codexAgentId = "codex";
@@ -245,6 +249,45 @@ export const createDemoWorkbenchShellService = (
         )[0]?.completedAt
   });
 
+  const buildSessionBrowserReadModel = (): SessionBrowserReadModel => {
+    const snapshot = service.getSnapshot();
+    const parentByChildId = new Map(
+      snapshot.sessionRelations.map((relation) => [
+        relation.childSessionId,
+        relation.parentSessionId
+      ] as const)
+    );
+    const childCountByParentId = new Map<string, number>();
+    for (const parentSessionId of parentByChildId.values()) {
+      childCountByParentId.set(
+        parentSessionId,
+        (childCountByParentId.get(parentSessionId) ?? 0) + 1
+      );
+    }
+    const seeds: SessionBrowserReadModelSeed[] = snapshot.sessions
+      .filter((session) => !session.archivedAt)
+      .map((session) => {
+        const lastCompletedTurnAt = snapshot.turns
+          .filter((turn) => turn.sessionId === session.sessionId && turn.completedAt)
+          .sort((left, right) =>
+            (right.completedAt ?? "").localeCompare(left.completedAt ?? "")
+          )[0]?.completedAt;
+        return {
+          sessionId: session.sessionId,
+          parentSessionId: parentByChildId.get(session.sessionId),
+          workspaceId: demoWorkspace.workspaceId,
+          engineId: session.engineId,
+          title: session.title ?? `${session.engineId.toUpperCase()} Demo Session`,
+          statusDot: session.status === "running" ? "running" : "none",
+          isActive: lastActiveSessionId === session.sessionId,
+          childCount: childCountByParentId.get(session.sessionId) ?? 0,
+          lastCompletedTurnAt,
+          sortAt: lastCompletedTurnAt ?? session.updatedAt ?? session.createdAt
+        };
+      });
+    return new SessionBrowserReadModel(seeds);
+  };
+
   const unsupportedChatTree = (sessionId: string): ChatTreeSnapshotRpc => {
     const { session } = resolveSession(sessionId);
     return {
@@ -392,6 +435,21 @@ export const createDemoWorkbenchShellService = (
               }
             ]
     }),
+    listSessionRoots: async (input: {
+      workspaceId: string;
+      cursor?: string;
+      limit?: number;
+      expectedRevision?: string;
+    }) => buildSessionBrowserReadModel().listRoots(input),
+    listSessionChildren: async (input: {
+      workspaceId: string;
+      parentSessionId: string;
+      cursor?: string;
+      limit?: number;
+      expectedRevision?: string;
+    }) => buildSessionBrowserReadModel().listChildren(input),
+    getSessionBrowserPath: async (sessionId: string) =>
+      buildSessionBrowserReadModel().getPath(sessionId),
     reconcileSessionBrowser: async () => ({
       workspaces: 1,
       sessions: service.getSnapshot().sessions.length,

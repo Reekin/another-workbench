@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseDomainSnapshot } from "@another-workbench/shared";
 import { selectTurnsForSession } from "../src/store/selectors.js";
 import { createRendererStore } from "../src/store/store.js";
+import { createInitialRendererStoreState, withDomainSnapshot } from "../src/store/state.js";
 import { buildParticipantDirectory } from "../src/ui/chat-shell/participant-directory.js";
 import { buildTurnTranscriptRows } from "../src/ui/chat-shell/transcript-view-model.js";
 
@@ -194,12 +195,12 @@ describe("transcript view model", () => {
       })
     );
 
-    const state = store.getState();
-    const turns = selectTurnsForSession(state, "session-1");
+    const domain = store.getDomainReadModel();
+    const turns = domain.listTurns({ sessionId: "session-1" });
     const participantDirectory = buildParticipantDirectory(
-      Object.values(state.entities.participants)
+      domain.listParticipants({ conversationId: "conv-1" })
     );
-    const rows = buildTurnTranscriptRows(state, turns, participantDirectory);
+    const rows = buildTurnTranscriptRows(domain, turns, participantDirectory);
 
     expect(rows).toHaveLength(8);
     expect(rows[0]?.turn.turnId).toBe("turn-1");
@@ -347,9 +348,9 @@ describe("transcript view model", () => {
       })
     );
 
-    const state = store.getState();
-    const turns = selectTurnsForSession(state, "session-1");
-    const rows = buildTurnTranscriptRows(state, turns);
+    const domain = store.getDomainReadModel();
+    const turns = domain.listTurns({ sessionId: "session-1" });
+    const rows = buildTurnTranscriptRows(domain, turns);
 
     expect(rows).toHaveLength(2);
     expect(rows.map((row) => row.rowId)).toEqual([
@@ -447,8 +448,8 @@ describe("transcript view model", () => {
     );
 
     const rows = buildTurnTranscriptRows(
-      store.getState(),
-      selectTurnsForSession(store.getState(), "session-1"),
+      store.getDomainReadModel(),
+      store.getDomainReadModel().listTurns({ sessionId: "session-1" }),
       buildParticipantDirectory([])
     );
 
@@ -546,8 +547,8 @@ describe("transcript view model", () => {
     );
 
     const rows = buildTurnTranscriptRows(
-      store.getState(),
-      selectTurnsForSession(store.getState(), "session-1"),
+      store.getDomainReadModel(),
+      store.getDomainReadModel().listTurns({ sessionId: "session-1" }),
       buildParticipantDirectory([])
     );
 
@@ -644,8 +645,8 @@ describe("transcript view model", () => {
     );
 
     const rows = buildTurnTranscriptRows(
-      store.getState(),
-      selectTurnsForSession(store.getState(), "session-1"),
+      store.getDomainReadModel(),
+      store.getDomainReadModel().listTurns({ sessionId: "session-1" }),
       buildParticipantDirectory([])
     );
 
@@ -738,9 +739,9 @@ describe("transcript view model", () => {
       })
     );
 
-    const state = store.getState();
-    const turns = selectTurnsForSession(state, "session-1");
-    const rows = buildTurnTranscriptRows(state, turns);
+    const domain = store.getDomainReadModel();
+    const turns = domain.listTurns({ sessionId: "session-1" });
+    const rows = buildTurnTranscriptRows(domain, turns);
 
     expect(rows).toHaveLength(2);
     expect(rows[0]?.messageRole).toBe("user");
@@ -813,8 +814,8 @@ describe("transcript view model", () => {
     );
 
     const rows = buildTurnTranscriptRows(
-      store.getState(),
-      selectTurnsForSession(store.getState(), "session-1"),
+      store.getDomainReadModel(),
+      store.getDomainReadModel().listTurns({ sessionId: "session-1" }),
       buildParticipantDirectory([])
     );
 
@@ -916,8 +917,8 @@ describe("transcript view model", () => {
     );
 
     const rows = buildTurnTranscriptRows(
-      store.getState(),
-      selectTurnsForSession(store.getState(), "session-1"),
+      store.getDomainReadModel(),
+      store.getDomainReadModel().listTurns({ sessionId: "session-1" }),
       buildParticipantDirectory([])
     );
 
@@ -1019,8 +1020,8 @@ describe("transcript view model", () => {
     );
 
     const rows = buildTurnTranscriptRows(
-      store.getState(),
-      selectTurnsForSession(store.getState(), "session-1"),
+      store.getDomainReadModel(),
+      store.getDomainReadModel().listTurns({ sessionId: "session-1" }),
       buildParticipantDirectory([])
     );
 
@@ -1099,7 +1100,10 @@ describe("transcript view model", () => {
       })
     );
 
-    const state = store.getState();
+    const state = withDomainSnapshot(
+      createInitialRendererStoreState(),
+      store.getDomainReadModel().getSnapshot()
+    );
     const withPoisonedBackgroundEntity = <T extends object>(items: T, key: string): T => {
       const next = { ...items };
       Object.defineProperty(next, key, {
@@ -1208,7 +1212,10 @@ describe("transcript view model", () => {
       })
     );
 
-    const state = store.getState();
+    const state = withDomainSnapshot(
+      createInitialRendererStoreState(),
+      store.getDomainReadModel().getSnapshot()
+    );
     const stateWithStaleIndex = {
       ...state,
       entities: {
@@ -1359,7 +1366,10 @@ describe("transcript view model", () => {
       })
     );
 
-    const state = store.getState();
+    const state = withDomainSnapshot(
+      createInitialRendererStoreState(),
+      store.getDomainReadModel().getSnapshot()
+    );
     const oldTurn = state.entities.turns["turn-old"];
     const newTurn = state.entities.turns["turn-new"];
     expect(oldTurn).toBeDefined();

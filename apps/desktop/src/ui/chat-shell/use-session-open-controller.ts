@@ -4,7 +4,7 @@ import {
   type Dispatch,
   type SetStateAction
 } from "react";
-import type { SessionWindowRpc, WorkspaceBrowserNodeRpc } from "@another-workbench/shared";
+import type { SessionWindowRpc } from "@another-workbench/shared";
 import type { RendererStore } from "../../store/store.js";
 import type { DesktopTransport } from "../../transport/desktop-transport.js";
 import {
@@ -12,7 +12,10 @@ import {
   type ComposerStatusNotice
 } from "./composer-status.js";
 import type { TranscriptViewportController } from "./use-transcript-viewport-controller.js";
-import { findSessionNode } from "./workspace-browser-tree.js";
+import {
+  findSessionNode,
+  type WorkspaceBrowserViewNode
+} from "./workspace-browser-tree.js";
 
 type StatusNoticeSetter = Dispatch<
   SetStateAction<ComposerStatusNotice | undefined>
@@ -23,13 +26,22 @@ type SessionWindowHydrationOptions = {
   preserveViewport?: boolean;
 };
 
+export type SessionWindowCoverage = Omit<SessionWindowRpc, "snapshot">;
+
+const toSessionWindowCoverage = (
+  page: SessionWindowRpc
+): SessionWindowCoverage => {
+  const { snapshot: _snapshot, ...coverage } = page;
+  return coverage;
+};
+
 export const useSessionOpenController = (input: {
   store: RendererStore;
   transport?: DesktopTransport;
-  workspaceTree: WorkspaceBrowserNodeRpc[];
-  sessionWindows: Record<string, SessionWindowRpc | undefined>;
+  workspaceTree: WorkspaceBrowserViewNode[];
+  sessionWindows: Record<string, SessionWindowCoverage | undefined>;
   setSessionWindows: Dispatch<
-    SetStateAction<Record<string, SessionWindowRpc | undefined>>
+    SetStateAction<Record<string, SessionWindowCoverage | undefined>>
   >;
   loadingOlderSessionId?: string;
   setLoadingOlderSessionId: Dispatch<SetStateAction<string | undefined>>;
@@ -38,7 +50,7 @@ export const useSessionOpenController = (input: {
   openingSessionId?: string;
   setOpeningSessionId: Dispatch<SetStateAction<string | undefined>>;
   displayedSessionId?: string;
-  activeSessionWindow?: SessionWindowRpc;
+  activeSessionWindow?: SessionWindowCoverage;
   isOpeningSelectedSession: boolean;
   viewport: TranscriptViewportController;
   onResetSessionSwitchState: () => void;
@@ -47,6 +59,7 @@ export const useSessionOpenController = (input: {
     mode?: "all" | "visible" | "workspace";
     workspaceId?: string;
   }) => Promise<void>;
+  ensureSessionVisible?: (sessionId: string) => Promise<string | undefined>;
   onReleasedSession?: (sessionId: string | undefined) => void;
 }): {
   reloadSessionWindow: (
@@ -80,7 +93,7 @@ export const useSessionOpenController = (input: {
   };
 
   const activateLoadedSession = (sessionId: string): boolean => {
-    const session = input.store.getState().entities.sessions[sessionId];
+    const session = input.store.getDomainReadModel().getSession(sessionId);
     if (!session) {
       return false;
     }
@@ -130,14 +143,13 @@ export const useSessionOpenController = (input: {
             olderCursor: page.olderCursor,
             newerCursor: existing.newerCursor ?? page.newerCursor,
             hasOlder: page.hasOlder,
-            snapshot: existing.snapshot,
             hasNewer: existing.hasNewer
           }
         };
       }
       return {
         ...current,
-        [page.sessionId]: page
+        [page.sessionId]: toSessionWindowCoverage(page)
       };
     });
     if (mode === "replace" && !options.preserveViewport) {
@@ -303,6 +315,9 @@ export const useSessionOpenController = (input: {
         requestId = ++openSessionRequestIdRef.current;
         input.setBrowserSelectedSessionId(created.sessionId);
         input.setOpeningSessionId(created.sessionId);
+        if (input.ensureSessionVisible) {
+          await input.ensureSessionVisible(created.sessionId);
+        }
         await hydrateOpenedSession(created.sessionId, requestId);
         if (openSessionRequestIdRef.current !== requestId) {
           return;
@@ -337,6 +352,13 @@ export const useSessionOpenController = (input: {
       const manualOpenToken = beginManualSessionOpen();
       const requestId = ++openSessionRequestIdRef.current;
       try {
+        let visibleWorkspaceId = findSessionNode(
+          input.workspaceTree,
+          sessionId
+        )?.workspaceId;
+        if (!visibleWorkspaceId && input.ensureSessionVisible) {
+          visibleWorkspaceId = await input.ensureSessionVisible(sessionId);
+        }
         const previousSessionId = input.viewport.displayedSessionIdRef.current;
         if (previousSessionId && previousSessionId !== sessionId) {
           await releaseSessionCache(previousSessionId);
@@ -356,7 +378,7 @@ export const useSessionOpenController = (input: {
             }
             await input.refreshSessionBrowser({
               mode: "workspace",
-              workspaceId: findSessionNode(input.workspaceTree, sessionId)?.workspaceId
+              workspaceId: visibleWorkspaceId
             });
             input.setOpeningSessionId(undefined);
             input.onStatusNotice(undefined);
@@ -386,7 +408,7 @@ export const useSessionOpenController = (input: {
           }
           await input.refreshSessionBrowser({
             mode: "workspace",
-            workspaceId: findSessionNode(input.workspaceTree, sessionId)?.workspaceId
+            workspaceId: visibleWorkspaceId
           });
           input.setOpeningSessionId(undefined);
           input.onStatusNotice(undefined);

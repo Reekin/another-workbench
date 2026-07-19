@@ -60,6 +60,8 @@ export class WorkspaceRegistryService {
     expandedSessionIds: []
   };
   private loadPromise: Promise<void> | undefined;
+  private revision = 0;
+  private sessionBrowserRevision = 0;
 
   public constructor(options: WorkspaceRegistryServiceOptions = {}) {
     const baseDir = options.baseDir ?? defaultBaseDir();
@@ -90,6 +92,14 @@ export class WorkspaceRegistryService {
       expandedWorkspaceIds: [...this.document.expandedWorkspaceIds],
       expandedSessionIds: [...this.document.expandedSessionIds]
     };
+  }
+
+  public getRevision(): number {
+    return this.revision;
+  }
+
+  public getSessionBrowserRevision(): number {
+    return this.sessionBrowserRevision;
   }
 
   public async registerWorkspace(
@@ -165,6 +175,7 @@ export class WorkspaceRegistryService {
       return false;
     }
 
+    const removedActiveSelection = this.document.lastActiveWorkspaceId === workspaceId;
     this.document = {
       ...this.document,
       workspaces: this.document.workspaces.filter(
@@ -182,6 +193,9 @@ export class WorkspaceRegistryService {
           ? undefined
           : this.document.lastActiveSessionId
     };
+    if (removedActiveSelection) {
+      this.sessionBrowserRevision += 1;
+    }
     await this.persist();
     return true;
   }
@@ -224,6 +238,7 @@ export class WorkspaceRegistryService {
       lastActiveWorkspaceId: input.workspaceId,
       lastActiveSessionId: input.sessionId
     };
+    this.sessionBrowserRevision += 1;
     await this.persist();
   }
 
@@ -270,12 +285,15 @@ export class WorkspaceRegistryService {
           expandedWorkspaceIds: [],
           expandedSessionIds: []
         };
+    this.revision += 1;
+    this.sessionBrowserRevision += 1;
     if (loaded.corrupted || !parsed.success || hadLegacySessionViewState) {
       await this.persist();
     }
   }
 
   private async persist(): Promise<void> {
+    this.revision += 1;
     await saveJsonFile(this.filePath, this.document);
   }
 }

@@ -1224,10 +1224,10 @@ describe("Session discovery and reconciliation", () => {
       sessionRelations: [
         {
           relationId:
-            "relation-discovered:codex-thread:thread-root:codex-thread:thread-child:fork",
-          parentSessionId: "codex-thread:thread-root",
+            "relation-discovered:codex-thread:thread-other-parent:codex-thread:thread-child:subagent",
+          parentSessionId: "codex-thread:thread-other-parent",
           childSessionId: "codex-thread:thread-child",
-          relationType: "fork",
+          relationType: "subagent",
           createdAt: "2026-04-18T00:00:05Z"
         }
       ]

@@ -19,12 +19,8 @@ export type ConnectDesktopTransportToStoreInput = {
 };
 
 const hasHydratedDomainState = (store: RendererStore): boolean => {
-  const state = store.getState();
-  return (
-    Object.keys(state.entities.conversations).length > 0 ||
-    Object.keys(state.entities.sessions).length > 0 ||
-    Object.keys(state.entities.turns).length > 0
-  );
+  const domain = store.getDomainReadModel();
+  return domain.listConversations().length > 0 || domain.listSessions().length > 0;
 };
 
 export const connectDesktopTransportToStore = async (

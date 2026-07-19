@@ -505,6 +505,7 @@ describe("Codex app-server runtime port", () => {
 
     const events: string[] = [];
     const chunks: string[] = [];
+    const commandOutputEvents: Array<{ method: string; text: string }> = [];
     const completedMessages: Array<Record<string, unknown>> = [];
     const contextUpdates: Array<Record<string, unknown>> = [];
     port.subscribe((event) => {
@@ -517,6 +518,19 @@ describe("Codex app-server runtime port", () => {
       }
       if (event.method === "terminal.output") {
         chunks.push(String(event.params.chunk));
+        commandOutputEvents.push({
+          method: event.method,
+          text: String(event.params.chunk)
+        });
+      }
+      if (
+        event.method === "tool.delta" &&
+        String(event.params.delta).includes("D:/workspace")
+      ) {
+        commandOutputEvents.push({
+          method: event.method,
+          text: String(event.params.delta)
+        });
       }
       if (event.method === "session.context.updated") {
         contextUpdates.push(event.params);
@@ -553,7 +567,6 @@ describe("Codex app-server runtime port", () => {
         "message.delta",
         "message.completed",
         "tool.started",
-        "tool.delta",
         "tool.completed",
         "terminal.started",
         "terminal.output",
@@ -564,6 +577,12 @@ describe("Codex app-server runtime port", () => {
     );
     expect(chunks.join("")).toContain("Real Codex says: hello from test");
     expect(chunks.join("")).toContain("D:/workspace");
+    expect(commandOutputEvents.every((event) => event.method === "terminal.output")).toBe(
+      true
+    );
+    expect(commandOutputEvents.map((event) => event.text).join("")).toContain(
+      "D:/workspace"
+    );
     expect(completedMessages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

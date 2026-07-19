@@ -111,6 +111,7 @@ export class SessionIndexStore {
   private loadPromise: Promise<void> | undefined;
   private persistPromise: Promise<void> | undefined;
   private persistRequested = false;
+  private revision = 0;
 
   public constructor(options: SessionIndexStoreOptions = {}) {
     const baseDir = options.baseDir ?? defaultBaseDir();
@@ -131,6 +132,10 @@ export class SessionIndexStore {
       entries: [...this.document.entries],
       relations: [...this.document.relations]
     };
+  }
+
+  public getRevision(): number {
+    return this.revision;
   }
 
   public listEntries(workspaceId?: string): SessionIndexEntry[] {
@@ -403,12 +408,14 @@ export class SessionIndexStore {
           entries: [],
           relations: []
         };
+    this.revision += 1;
     if (loaded.corrupted || !parsed.success) {
       await this.persist();
     }
   }
 
   private async persist(): Promise<void> {
+    this.revision += 1;
     this.persistRequested = true;
     if (!this.persistPromise) {
       this.persistPromise = this.flushPersistRequests().finally(() => {

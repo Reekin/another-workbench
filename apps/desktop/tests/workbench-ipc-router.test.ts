@@ -164,4 +164,53 @@ describe("Workbench IPC router", () => {
       .toEqual(["sub-b"]);
     expect(onPushBatch.mock.calls[1]?.[0].pushes[0]?.envelope.eventId).toBe("evt-2");
   });
+
+  it("bounds each scheduled IPC batch by serialized bytes", async () => {
+    let subscribed: ((envelope: EventEnvelope) => void) | undefined;
+    const scheduled: Array<() => void> = [];
+    const service = {
+      subscribeFromCursor: vi.fn((handler: (envelope: EventEnvelope) => void) => {
+        subscribed = handler;
+        return vi.fn();
+      }),
+      dispose: vi.fn(async () => {})
+    } as unknown as WorkbenchShellService;
+    const onPushBatch = vi.fn<(batch: WorkbenchEventPushBatch) => void>();
+    const router = createWorkbenchIpcRouter({
+      service,
+      onPush: vi.fn(),
+      onPushBatch,
+      pushBatchMaxSize: 100,
+      pushBatchMaxBytes: 700,
+      schedulePushDrain: (callback) => {
+        scheduled.push(callback);
+        return () => undefined;
+      }
+    });
+
+    await router.handleRequest({
+      id: "req-subscribe",
+      method: "events.subscribe",
+      params: {}
+    } satisfies WorkbenchRpcRequest);
+    for (let index = 1; index <= 3; index += 1) {
+      const envelope = createEnvelope(index);
+      subscribed?.({
+        ...envelope,
+        event: {
+          ...envelope.event,
+          delta: "x".repeat(400)
+        }
+      });
+    }
+
+    scheduled.shift()?.();
+    scheduled.shift()?.();
+    scheduled.shift()?.();
+    expect(onPushBatch.mock.calls.map(([batch]) => batch.pushes.length)).toEqual([
+      1,
+      1,
+      1
+    ]);
+  });
 });

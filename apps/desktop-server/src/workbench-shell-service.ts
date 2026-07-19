@@ -16,6 +16,8 @@ import type {
   ErrorLogWriteInputRpc,
   ErrorLogWriteResultRpc,
   SchedulerTaskDocumentRpc,
+  SessionBrowserPageRpc,
+  SessionBrowserPathRpc,
   SkillDescriptorRpc,
   TakeoverPresetDocumentRpc,
   TakeoverPresetSummaryRpc,
@@ -564,6 +566,29 @@ export class WorkbenchShellService {
     return {
       workspaces: await this.sessionCatalog.listWorkspaceTree(workspaceId)
     };
+  }
+
+  public async listSessionRoots(input: {
+    workspaceId: string;
+    cursor?: string;
+    limit?: number;
+    expectedRevision?: string;
+  }): Promise<SessionBrowserPageRpc> {
+    return this.sessionCatalog.listRoots(input);
+  }
+
+  public async listSessionChildren(input: {
+    workspaceId: string;
+    parentSessionId: string;
+    cursor?: string;
+    limit?: number;
+    expectedRevision?: string;
+  }): Promise<SessionBrowserPageRpc> {
+    return this.sessionCatalog.listChildren(input);
+  }
+
+  public async getSessionBrowserPath(sessionId: string): Promise<SessionBrowserPathRpc> {
+    return this.sessionCatalog.getPath(sessionId);
   }
 
   public async reconcileSessionBrowser(workspaceId?: string): Promise<{

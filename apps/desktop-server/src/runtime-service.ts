@@ -217,6 +217,10 @@ export class WorkbenchRuntimeService {
     };
   }
 
+  public getRevision(): string {
+    return this.eventBus.getLatestCursor() ?? "initial";
+  }
+
   public subscribe(
     listener: (envelope: EventEnvelope) => void,
     filter: RuntimeEventFilter = {}

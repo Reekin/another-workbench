@@ -2497,13 +2497,6 @@ export class CodexAppServerRuntimePort
         if (!sessionId || !turnId || !toolCallId || !delta) {
           return;
         }
-        this.emitEvent("tool.delta", {
-          sessionId,
-          turnId,
-          toolCallId,
-          delta,
-          engineId: this.engineId
-        });
         this.emitEvent("terminal.output", {
           sessionId,
           turnId,

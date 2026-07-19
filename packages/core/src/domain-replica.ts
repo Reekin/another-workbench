@@ -6,6 +6,7 @@ import type {
   RuntimeEvent,
   SessionRelation
 } from "@another-workbench/shared";
+import { parseDomainSnapshot, parseRuntimeEvent } from "@another-workbench/shared";
 import { createEmptyDomainSnapshot } from "./domain.js";
 import { DomainProjector } from "./domain-projector.js";
 import type { RuntimeEventEnvelope } from "./event-bus.js";
@@ -30,11 +31,115 @@ export type DomainReplicaOptions = {
   now?: () => string;
 };
 
+export type DomainChangeSet = {
+  revision: number;
+  fullReset: boolean;
+  conversationIds: ReadonlySet<string>;
+  sessionIds: ReadonlySet<string>;
+  turnIds: ReadonlySet<string>;
+};
+
+const addEventScopes = (
+  changeSet: {
+    conversationIds: Set<string>;
+    sessionIds: Set<string>;
+    turnIds: Set<string>;
+  },
+  event: RuntimeEvent,
+  store: DomainStore
+): void => {
+  if ("conversationId" in event && typeof event.conversationId === "string") {
+    changeSet.conversationIds.add(event.conversationId);
+  }
+  if ("sessionId" in event && typeof event.sessionId === "string") {
+    changeSet.sessionIds.add(event.sessionId);
+    const conversationId = store.resolveConversationIdBySessionId(event.sessionId);
+    if (conversationId) {
+      changeSet.conversationIds.add(conversationId);
+    }
+  }
+  if ("turnId" in event && typeof event.turnId === "string") {
+    changeSet.turnIds.add(event.turnId);
+    const turn = store.getTurn(event.turnId);
+    if (turn) {
+      changeSet.sessionIds.add(turn.sessionId);
+    }
+  }
+};
+
+const preflightRuntimeEvents = (
+  events: readonly RuntimeEvent[],
+  store: DomainStore
+): void => {
+  const conversationBySession = new Map(
+    store
+      .listSessions({ includeArchived: true })
+      .map((session) => [session.sessionId, session.conversationId] as const)
+  );
+  const parentByChild = new Map<string, string>();
+  for (const relation of store.listSessionRelations()) {
+    parentByChild.set(relation.childSessionId, relation.parentSessionId);
+  }
+
+  const assertSameConversation = (parentId: string, childId: string): void => {
+    const parentConversationId = conversationBySession.get(parentId);
+    const childConversationId = conversationBySession.get(childId);
+    if (
+      parentConversationId &&
+      childConversationId &&
+      parentConversationId !== childConversationId
+    ) {
+      throw new Error(
+        `Session relation crosses conversations ${parentConversationId} and ${childConversationId}.`
+      );
+    }
+  };
+
+  for (const event of events) {
+    if (event.type === "session.created" || event.type === "session.updated") {
+      conversationBySession.set(event.sessionId, event.conversationId);
+      const parentId = parentByChild.get(event.sessionId);
+      if (parentId) assertSameConversation(parentId, event.sessionId);
+      for (const [childId, candidateParentId] of parentByChild) {
+        if (candidateParentId === event.sessionId) {
+          assertSameConversation(event.sessionId, childId);
+        }
+      }
+    }
+    if (event.type !== "session.created" || !event.relation) {
+      continue;
+    }
+    const relation = event.relation;
+    const existingParent = parentByChild.get(relation.childSessionId);
+    if (existingParent && existingParent !== relation.parentSessionId) {
+      throw new Error(
+        `Session ${relation.childSessionId} already has parent ${existingParent}.`
+      );
+    }
+    assertSameConversation(relation.parentSessionId, relation.childSessionId);
+    const visited = new Set<string>();
+    let current: string | undefined = relation.parentSessionId;
+    while (current) {
+      if (current === relation.childSessionId) {
+        throw new Error(`Session relation ${relation.relationId} creates a cycle.`);
+      }
+      if (visited.has(current)) break;
+      visited.add(current);
+      current = parentByChild.get(current);
+    }
+    parentByChild.set(relation.childSessionId, relation.parentSessionId);
+  }
+};
+
 export class DomainReplica {
   public readonly readModel: DomainReadModel;
   private readonly store: DomainStore;
   private readonly projector: DomainProjector;
   private revision = 0;
+  private readonly conversationRevisions = new Map<string, number>();
+  private readonly sessionRevisions = new Map<string, number>();
+  private readonly turnRevisions = new Map<string, number>();
+  private scopeResetRevision = 0;
   private disposed = false;
 
   public constructor(options: DomainReplicaOptions = {}) {
@@ -52,14 +157,24 @@ export class DomainReplica {
     return this.revision;
   }
 
+  public getConversationRevision(conversationId: string): number {
+    return this.conversationRevisions.get(conversationId) ?? this.scopeResetRevision;
+  }
+
+  public getSessionRevision(sessionId: string): number {
+    return this.sessionRevisions.get(sessionId) ?? this.scopeResetRevision;
+  }
+
+  public getTurnRevision(turnId: string): number {
+    return this.turnRevisions.get(turnId) ?? this.scopeResetRevision;
+  }
+
   public isDisposed(): boolean {
     return this.disposed;
   }
 
   public apply(event: RuntimeEvent | unknown, occurredAt?: string): void {
-    this.mutate(() => {
-      this.projector.apply(event, occurredAt);
-    });
+    this.applyBatch([{ event, occurredAt }]);
   }
 
   public applyEnvelope(
@@ -68,24 +183,79 @@ export class DomainReplica {
     this.apply(envelope.event, envelope.occurredAt);
   }
 
+  public applyBatch(
+    envelopes: ReadonlyArray<{
+      event: RuntimeEvent | unknown;
+      occurredAt?: string;
+    }>
+  ): DomainChangeSet {
+    this.assertActive();
+    if (envelopes.length === 0) {
+      return this.emptyChangeSet(false);
+    }
+    const parsed = envelopes.map((envelope) => ({
+      event: parseRuntimeEvent(envelope.event),
+      occurredAt: envelope.occurredAt
+    }));
+    preflightRuntimeEvents(
+      parsed.map((envelope) => envelope.event),
+      this.store
+    );
+    const scopes = {
+      conversationIds: new Set<string>(),
+      sessionIds: new Set<string>(),
+      turnIds: new Set<string>()
+    };
+    for (const envelope of parsed) {
+      addEventScopes(scopes, envelope.event, this.store);
+      this.projector.apply(envelope.event, envelope.occurredAt);
+      addEventScopes(scopes, envelope.event, this.store);
+    }
+    return this.commitChangeSet(scopes, false);
+  }
+
   public replaceSnapshot(snapshot: DomainSnapshot | unknown): DomainSnapshot {
-    return this.mutate(() => this.store.replaceSnapshot(snapshot));
+    const result = this.store.replaceSnapshot(snapshot);
+    this.commitFullReset();
+    return result;
   }
 
   public mergeSnapshot(
     snapshot: DomainSnapshot | unknown,
     options: DomainSnapshotMergeOptions = {}
   ): DomainSnapshot {
-    return this.mutate(() => this.store.mergeSnapshot(snapshot, options));
+    const parsedSnapshot = parseDomainSnapshot(snapshot);
+    const result = this.store.mergeSnapshot(parsedSnapshot, options);
+    this.commitSnapshotScopes(parsedSnapshot);
+    return result;
   }
 
   public replaceSessionWindowSnapshot(
     sessionId: string,
     snapshot: DomainSnapshot | unknown
   ): DomainSnapshot {
-    return this.mutate(() =>
-      this.store.replaceSessionWindowSnapshot(sessionId, snapshot)
+    const parsedSnapshot = parseDomainSnapshot(snapshot);
+    const result = this.store.replaceSessionWindowSnapshot(sessionId, parsedSnapshot);
+    this.commitSnapshotScopes(parsedSnapshot, sessionId);
+    return result;
+  }
+
+  public deleteSessionCascade(sessionId: string): boolean {
+    this.assertActive();
+    const conversationId = this.store.resolveConversationIdBySessionId(sessionId);
+    const changed = this.store.deleteSessionCascade(sessionId);
+    if (!changed) {
+      return false;
+    }
+    this.commitChangeSet(
+      {
+        conversationIds: new Set(conversationId ? [conversationId] : []),
+        sessionIds: new Set([sessionId]),
+        turnIds: new Set()
+      },
+      false
     );
+    return true;
   }
 
   public upsertConversation(conversation: Conversation | unknown): Conversation {
@@ -110,7 +280,7 @@ export class DomainReplica {
     }
     this.store.replaceSnapshot(createEmptyDomainSnapshot());
     this.disposed = true;
-    this.revision += 1;
+    this.commitFullReset();
   }
 
   public getSnapshot(): DomainSnapshot {
@@ -232,6 +402,52 @@ export class DomainReplica {
     return result;
   }
 
+  private emptyChangeSet(fullReset: boolean): DomainChangeSet {
+    return {
+      revision: this.revision,
+      fullReset,
+      conversationIds: new Set(),
+      sessionIds: new Set(),
+      turnIds: new Set()
+    };
+  }
+
+  private commitFullReset(): DomainChangeSet {
+    this.revision += 1;
+    this.conversationRevisions.clear();
+    this.sessionRevisions.clear();
+    this.turnRevisions.clear();
+    this.scopeResetRevision = this.revision;
+    return this.emptyChangeSet(true);
+  }
+
+  private commitSnapshotScopes(snapshot: DomainSnapshot, forcedSessionId?: string): DomainChangeSet {
+    const scopes = {
+      conversationIds: new Set(snapshot.conversations.map((item) => item.conversationId)),
+      sessionIds: new Set(snapshot.sessions.map((item) => item.sessionId)),
+      turnIds: new Set(snapshot.turns.map((item) => item.turnId))
+    };
+    if (forcedSessionId) {
+      scopes.sessionIds.add(forcedSessionId);
+    }
+    return this.commitChangeSet(scopes, false);
+  }
+
+  private commitChangeSet(
+    scopes: {
+      conversationIds: Set<string>;
+      sessionIds: Set<string>;
+      turnIds: Set<string>;
+    },
+    fullReset: boolean
+  ): DomainChangeSet {
+    this.revision += 1;
+    for (const id of scopes.conversationIds) this.conversationRevisions.set(id, this.revision);
+    for (const id of scopes.sessionIds) this.sessionRevisions.set(id, this.revision);
+    for (const id of scopes.turnIds) this.turnRevisions.set(id, this.revision);
+    return { revision: this.revision, fullReset, ...scopes };
+  }
+
   private assertActive(): void {
     if (this.disposed) {
       throw new Error("DomainReplica has been disposed.");
@@ -241,6 +457,10 @@ export class DomainReplica {
   private createReadModel(): DomainReadModel {
     return {
       getRevision: () => this.getRevision(),
+      getConversationRevision: (conversationId) =>
+        this.getConversationRevision(conversationId),
+      getSessionRevision: (sessionId) => this.getSessionRevision(sessionId),
+      getTurnRevision: (turnId) => this.getTurnRevision(turnId),
       isDisposed: () => this.isDisposed(),
       getSnapshot: () => this.getSnapshot(),
       getConversationSnapshot: (conversationId) =>

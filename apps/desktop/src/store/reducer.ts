@@ -1476,11 +1476,7 @@ const ingestEnvelope = (
   ) {
     return state;
   }
-  const next = applyRuntimeEvent(
-    state,
-    envelope.event,
-    envelope.occurredAt
-  );
+  const next = applyRuntimeEvent(state, envelope.event, envelope.occurredAt);
   return markEnvelopeInEventStream(next, envelope);
 };
 
@@ -1506,13 +1502,33 @@ const ingestEnvelopeBatch = (
   }
   let nextState = state;
   for (const envelope of coalesceEnvelopesForIngestion(pending)) {
-    nextState = applyRuntimeEvent(
-      nextState,
-      envelope.event,
-      envelope.occurredAt
-    );
+    nextState = applyRuntimeEvent(nextState, envelope.event, envelope.occurredAt);
   }
   return markEnvelopesInEventStream(nextState, pending);
+};
+
+const applyRendererMetaEvent = (
+  state: RendererStoreState,
+  event: RuntimeEvent
+): RendererStoreState => {
+  const next = withEventType(state, event);
+  if (event.type === "session.disposed" && state.activeSessionId === event.sessionId) {
+    return {
+      ...next,
+      activeSessionId: undefined
+    };
+  }
+  if (event.type !== "runtime.error") {
+    return next;
+  }
+  return {
+    ...next,
+    lastError: {
+      code: event.code ?? "runtime_error",
+      message: event.message,
+      recoverable: event.recoverable
+    }
+  };
 };
 
 export const rendererStoreReducer = (
@@ -1577,6 +1593,104 @@ export const rendererStoreReducer = (
         ...state,
         activeSessionId: action.sessionId
       };
+    default:
+      return state;
+  }
+};
+
+const ingestMetaEnvelope = (
+  state: RendererStoreState,
+  envelope: EventEnvelope
+): RendererStoreState => {
+  if (
+    state.eventStream.seenEventIds[envelope.eventId] ||
+    isEnvelopeCoveredByBarrier(state, envelope)
+  ) {
+    return state;
+  }
+  return markEnvelopeInEventStream(
+    applyRendererMetaEvent(state, envelope.event),
+    envelope
+  );
+};
+
+const ingestMetaEnvelopeBatch = (
+  state: RendererStoreState,
+  envelopes: EventEnvelope[]
+): RendererStoreState => {
+  const pending: EventEnvelope[] = [];
+  const seenInBatch = new Set<string>();
+  for (const envelope of envelopes) {
+    if (
+      state.eventStream.seenEventIds[envelope.eventId] ||
+      seenInBatch.has(envelope.eventId) ||
+      isEnvelopeCoveredByBarrier(state, envelope)
+    ) {
+      continue;
+    }
+    seenInBatch.add(envelope.eventId);
+    pending.push(envelope);
+  }
+  if (pending.length === 0) {
+    return state;
+  }
+  let nextState = state;
+  for (const envelope of coalesceEnvelopesForIngestion(pending)) {
+    nextState = applyRendererMetaEvent(nextState, envelope.event);
+  }
+  return markEnvelopesInEventStream(nextState, pending);
+};
+
+export const rendererMetaReducer = (
+  state: RendererStoreState = createInitialRendererStoreState(),
+  action: RendererStoreAction
+): RendererStoreState => {
+  switch (action.type) {
+    case "store/hydrateSnapshot":
+      return markGlobalCursorBarrier(
+        {
+          ...state,
+          activeConversationId:
+            state.activeConversationId ??
+            action.snapshot.conversations.at(0)?.conversationId,
+          activeSessionId:
+            state.activeSessionId ?? action.snapshot.sessions.at(0)?.sessionId
+        },
+        action.cursor
+      );
+    case "store/hydrateSessionWindow": {
+      const nextState =
+        action.mode === "prepend"
+          ? state
+          : markSessionCursorBarrier(state, action.sessionId, action.cursor);
+      if (action.mode === "prepend" || state.activeSessionId !== action.sessionId) {
+        return nextState;
+      }
+      const restoredSession = action.snapshot.sessions.find(
+        (session) => session.sessionId === action.sessionId
+      );
+      return restoredSession
+        ? {
+            ...nextState,
+            activeConversationId: restoredSession.conversationId,
+            activeSessionId: action.sessionId
+          }
+        : nextState;
+    }
+    case "store/disposeSession":
+      return state.activeSessionId === action.sessionId
+        ? { ...state, activeSessionId: undefined }
+        : state;
+    case "store/ingestEvent":
+      return applyRendererMetaEvent(state, action.event);
+    case "store/ingestEnvelope":
+      return ingestMetaEnvelope(state, action.envelope);
+    case "store/ingestEnvelopes":
+      return ingestMetaEnvelopeBatch(state, action.envelopes);
+    case "store/setActiveConversation":
+      return { ...state, activeConversationId: action.conversationId };
+    case "store/setActiveSession":
+      return { ...state, activeSessionId: action.sessionId };
     default:
       return state;
   }

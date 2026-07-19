@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseDomainSnapshot, type EventEnvelope } from "@another-workbench/shared";
 import { selectSessionsForConversation } from "../src/store/selectors.js";
 import { createRendererStore } from "../src/store/store.js";
@@ -74,9 +74,7 @@ describe("renderer store domain replica", () => {
       sessionId: "session-a",
       title: "Initial session"
     });
-    expect(store.getDomainReadModel().getSnapshot().sessions).toEqual(
-      Object.values(store.getState().entities.sessions)
-    );
+    expect(store.getState().entities.sessions).toEqual({});
   });
 
   it("keeps renderer-only selection revision separate from domain revision", () => {
@@ -96,7 +94,7 @@ describe("renderer store domain replica", () => {
     expect(store.getDomainReadModel().getSession("session-a")).toBeDefined();
   });
 
-  it("syncs ingested envelopes to the read model without changing legacy selector results", () => {
+  it("projects ingested envelopes only through the domain replica", () => {
     const store = createRendererStore();
     const seenRevisions: number[] = [];
     store.subscribe(() => {
@@ -107,19 +105,18 @@ describe("renderer store domain replica", () => {
     store.ingestEnvelope(firstEnvelope);
 
     const state = store.getState();
-    expect(store.getDomainReadModel().getSession("session-b")).toEqual(
-      state.entities.sessions["session-b"]
-    );
+    expect(store.getDomainReadModel().getSession("session-b")).toMatchObject({
+      sessionId: "session-b",
+      conversationId: "conversation-b"
+    });
+    expect(state.entities.sessions["session-b"]).toBeUndefined();
     expect(
       store
         .getDomainReadModel()
         .listSessions({ conversationId: "conversation-b" })
         .map((session) => session.sessionId)
-    ).toEqual(
-      selectSessionsForConversation(state, "conversation-b").map(
-        (session) => session.sessionId
-      )
-    );
+    ).toEqual(["session-b"]);
+    expect(selectSessionsForConversation(state, "conversation-b")).toEqual([]);
     expect(seenRevisions).toEqual([1]);
 
     const beforeDuplicate = store.getSubscriptionSnapshot();
@@ -271,11 +268,84 @@ describe("renderer store domain replica", () => {
     expect(store.getDomainReadModel().getMessageBlock("message-new:md")?.text).toBe(
       "fresh"
     );
-    expect(state.entities.turns["turn-old"]).toBeDefined();
-    expect(state.entities.toolCalls["tool-stale"]).toBeUndefined();
-    expect(state.entities.messageBlocks["message-new:md"]?.text).toBe("fresh");
+    expect(state.entities.turns["turn-old"]).toBeUndefined();
     expect(state.eventStream.cursorBarrierBySessionId?.["session-a"]).toBe(
       "cursor-20"
+    );
+  });
+
+  it("notifies only the affected session scope for live events", () => {
+    const store = createRendererStore();
+    store.hydrateSnapshot(sessionSnapshot(), "cursor-0");
+    const sessionA = vi.fn();
+    const sessionB = vi.fn();
+    store.subscribeSession("session-a", sessionA);
+    store.subscribeSession("session-b", sessionB);
+
+    store.ingestEnvelope({
+      eventId: "event-a",
+      cursor: "cursor-1",
+      occurredAt: now,
+      event: {
+        type: "message.delta",
+        sessionId: "session-a",
+        turnId: "turn-a",
+        messageId: "message-a",
+        delta: "hello"
+      }
+    });
+
+    expect(sessionA).toHaveBeenCalledTimes(1);
+    expect(sessionB).not.toHaveBeenCalled();
+    expect(store.getDomainReadModel().getMessageBlock("message-a:md")?.text).toBe(
+      "hello"
+    );
+  });
+
+  it("does not commit renderer metadata or domain state for an invalid batch", () => {
+    const store = createRendererStore();
+    const before = store.getSubscriptionSnapshot();
+
+    expect(() =>
+      store.ingestEnvelopes([
+        {
+          eventId: "event-valid",
+          cursor: "cursor-1",
+          occurredAt: now,
+          event: {
+            type: "session.created",
+            conversationId: "conversation-a",
+            sessionId: "session-a",
+            engineId: "agent-a",
+            status: "idle"
+          }
+        },
+        {
+          eventId: "event-invalid",
+          cursor: "cursor-2",
+          occurredAt: now,
+          event: {
+            type: "session.created",
+            conversationId: "conversation-a",
+            sessionId: "session-b",
+            engineId: "agent-a",
+            status: "idle",
+            relation: {
+              relationId: "relation-cycle",
+              parentSessionId: "session-b",
+              childSessionId: "session-b",
+              relationType: "subagent",
+              createdAt: now
+            }
+          }
+        }
+      ])
+    ).toThrow(/cycle/);
+
+    expect(store.getSubscriptionSnapshot()).toBe(before);
+    expect(store.getState().eventStream.lastCursor).toBeUndefined();
+    expect(store.getDomainReadModel().listSessions({ includeArchived: true })).toEqual(
+      []
     );
   });
 

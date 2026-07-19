@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -57,5 +57,54 @@ describe("DiagnosticLogService", () => {
         href: "file:///app/index.html"
       }
     });
+  });
+
+  it("serializes concurrent writes and rotates bounded log files", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "another-workbench-diagnostics-"));
+    let entrySequence = 0;
+    const service = new DiagnosticLogService({
+      baseDir,
+      now: () => "2026-07-19T10:00:00.000Z",
+      createEntryId: () => `diagnostic-${++entrySequence}`,
+      maxEntryBytes: 256,
+      maxFileBytes: 320,
+      maxFiles: 3
+    });
+
+    await Promise.all(
+      Array.from({ length: 8 }, (_, index) =>
+        service.write({
+          kind: "renderer-long-task",
+          severity: "warning",
+          message: `entry-${index}-${"x".repeat(120)}`,
+          context: {
+            oversized: "y".repeat(1_000)
+          }
+        })
+      )
+    );
+
+    const logsDir = join(baseDir, "logs");
+    const names = (await readdir(logsDir)).sort();
+    expect(names).toEqual([
+      "perf-2026-07-19.jsonl",
+      "perf-2026-07-19.jsonl.1",
+      "perf-2026-07-19.jsonl.2"
+    ]);
+    for (const name of names) {
+      expect((await stat(join(logsDir, name))).size).toBeLessThanOrEqual(320);
+      const lines = (await readFile(join(logsDir, name), "utf8"))
+        .trim()
+        .split("\n")
+        .filter(Boolean);
+      for (const line of lines) {
+        expect(Buffer.from(line, "utf8").length).toBeLessThanOrEqual(256);
+        expect(JSON.parse(line)).toMatchObject({
+          context: {
+            truncated: true
+          }
+        });
+      }
+    }
   });
 });

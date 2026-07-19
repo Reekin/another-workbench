@@ -2,8 +2,14 @@ import type {
   ChatSession,
   DomainSnapshot,
   ProviderSessionHandle,
+  SessionBrowserPageRpc,
+  SessionBrowserPathRpc,
   SessionRelation
 } from "@another-workbench/shared";
+import {
+  SessionBrowserReadModel,
+  type SessionBrowserReadModelSeed
+} from "./session-browser-read-model.js";
 import type { WorkbenchRuntimeService } from "./runtime-service.js";
 import type {
   SessionIndexEntry,
@@ -150,6 +156,13 @@ export class SessionCatalogService {
   private readonly resolveTakeoverMarker:
     | SessionCatalogServiceOptions["resolveTakeoverMarker"]
     | undefined;
+  private catalogRevision = 0;
+  private materialized:
+    | { sourceRevision: string; model: SessionBrowserReadModel }
+    | undefined;
+  private materializing:
+    | { sourceRevision: string; promise: Promise<SessionBrowserReadModel> }
+    | undefined;
 
   public constructor(options: SessionCatalogServiceOptions) {
     this.runtimeService = options.runtimeService;
@@ -251,8 +264,177 @@ export class SessionCatalogService {
       });
   }
 
+  public async listRoots(input: {
+    workspaceId: string;
+    cursor?: string;
+    limit?: number;
+    expectedRevision?: string;
+  }): Promise<SessionBrowserPageRpc> {
+    return (await this.getReadModel()).listRoots(input);
+  }
+
+  public async listChildren(input: {
+    workspaceId: string;
+    parentSessionId: string;
+    cursor?: string;
+    limit?: number;
+    expectedRevision?: string;
+  }): Promise<SessionBrowserPageRpc> {
+    return (await this.getReadModel()).listChildren(input);
+  }
+
+  public async getPath(sessionId: string): Promise<SessionBrowserPathRpc> {
+    return (await this.getReadModel()).getPath(sessionId);
+  }
+
+  public invalidate(): void {
+    this.catalogRevision += 1;
+    this.materialized = undefined;
+  }
+
   public async markSessionRead(sessionId: string): Promise<void> {
     await this.sessionIndexStore.markSessionRead(sessionId);
+  }
+
+  private async getReadModel(): Promise<SessionBrowserReadModel> {
+    await this.workspaceRegistry.ready();
+    await this.sessionIndexStore.ready();
+    while (true) {
+      const sourceRevision = this.getSourceRevision();
+      if (this.materialized?.sourceRevision === sourceRevision) {
+        return this.materialized.model;
+      }
+      if (this.materializing?.sourceRevision === sourceRevision) {
+        const model = await this.materializing.promise;
+        if (this.getSourceRevision() === sourceRevision) {
+          this.materialized = { sourceRevision, model };
+          return model;
+        }
+        continue;
+      }
+      const promise = this.materializeReadModel();
+      this.materializing = { sourceRevision, promise };
+      let model: SessionBrowserReadModel;
+      try {
+        model = await promise;
+      } finally {
+        if (this.materializing?.promise === promise) {
+          this.materializing = undefined;
+        }
+      }
+      if (this.getSourceRevision() === sourceRevision) {
+        this.materialized = { sourceRevision, model };
+        return model;
+      }
+    }
+  }
+
+  private getSourceRevision(): string {
+    const runtimeRevision = (
+      this.runtimeService as WorkbenchRuntimeService & { getRevision?: () => string }
+    ).getRevision?.() ?? "snapshot";
+    return [
+      runtimeRevision,
+      this.sessionIndexStore.getRevision(),
+      this.workspaceRegistry.getSessionBrowserRevision(),
+      this.catalogRevision
+    ].join(":");
+  }
+
+  private async materializeReadModel(): Promise<SessionBrowserReadModel> {
+    const snapshot = this.runtimeService.getSnapshot();
+    const registryState = this.workspaceRegistry.getState();
+    const runtimeSessionIds = new Set(snapshot.sessions.map((session) => session.sessionId));
+    const lastCompletedTurnAtBySessionId = collectLastCompletedTurnAtBySessionId(snapshot.turns);
+    const bySessionId = new Map<string, SessionCatalogSeed>();
+
+    for (const entry of this.sessionIndexStore.listEntries()) {
+      bySessionId.set(entry.sessionId, {
+        sessionId: entry.sessionId,
+        providerKind: entry.providerKind,
+        providerSessionId: entry.providerSessionId,
+        workspaceId: entry.workspaceId,
+        conversationId: entry.conversationId,
+        engineId: entry.engineId,
+        title: entry.title,
+        summaryText: entry.summaryText,
+        createdAt: entry.createdAt,
+        updatedAt: entry.updatedAt,
+        lastCompletedTurnAt: entry.lastCompletedTurnAt,
+        archivedAt: entry.archivedAt,
+        unreadState: entry.unreadState,
+        metadata: entry.metadata
+      });
+    }
+    for (const session of snapshot.sessions) {
+      const runtimeSeed = toSeedFromRuntime(snapshot, session, lastCompletedTurnAtBySessionId);
+      if (!runtimeSeed) {
+        continue;
+      }
+      const existing = bySessionId.get(runtimeSeed.sessionId);
+      bySessionId.set(runtimeSeed.sessionId, {
+        ...existing,
+        ...runtimeSeed,
+        lastCompletedTurnAt: runtimeSeed.lastCompletedTurnAt ?? existing?.lastCompletedTurnAt,
+        summaryText: existing?.summaryText,
+        unreadState: existing?.unreadState,
+        metadata: runtimeSeed.metadata ?? existing?.metadata
+      });
+    }
+
+    const visible = new Map(
+      [...bySessionId.values()]
+        .filter((seed) => isBrowserVisibleSeed(seed, runtimeSessionIds))
+        .map((seed) => [seed.sessionId, seed] as const)
+    );
+    const parentByChildId = new Map<string, string>();
+    for (const relation of this.mergeRelations(snapshot.sessionRelations, this.sessionIndexStore.listRelations())) {
+      const parent = visible.get(relation.parentSessionId);
+      const child = visible.get(relation.childSessionId);
+      if (
+        parent &&
+        child &&
+        parent.workspaceId === child.workspaceId &&
+        !parentByChildId.has(child.sessionId)
+      ) {
+        parentByChildId.set(child.sessionId, parent.sessionId);
+      }
+    }
+    const childCountByParentId = new Map<string, number>();
+    for (const parentSessionId of parentByChildId.values()) {
+      childCountByParentId.set(
+        parentSessionId,
+        (childCountByParentId.get(parentSessionId) ?? 0) + 1
+      );
+    }
+
+    const seeds: SessionBrowserReadModelSeed[] = [...visible.values()].map((seed) => {
+      const marker =
+        this.resolveTakeoverMarker?.(seed.sessionId) ??
+        this.resolveMetadataTakeoverMarker(seed.metadata);
+      return {
+        sessionId: seed.sessionId,
+        parentSessionId: parentByChildId.get(seed.sessionId),
+        workspaceId: seed.workspaceId,
+        engineId: seed.engineId,
+        title: seed.title ?? seed.sessionId,
+        statusDot:
+          seed.runtimeStatus === "running" || seed.runtimeStatus === "awaiting_approval"
+            ? "running"
+            : registryState.lastActiveSessionId === seed.sessionId
+              ? "none"
+              : seed.unreadState === "unread_completed"
+                ? "unread_completed"
+                : "none",
+        takeoverStatus: marker.takeoverStatus,
+        takeoverPresetId: marker.takeoverPresetId,
+        isActive: registryState.lastActiveSessionId === seed.sessionId,
+        childCount: childCountByParentId.get(seed.sessionId) ?? 0,
+        lastCompletedTurnAt: seed.lastCompletedTurnAt,
+        sortAt: seed.lastCompletedTurnAt ?? seed.updatedAt ?? seed.createdAt
+      };
+    });
+    return new SessionBrowserReadModel(seeds);
   }
 
   private mergeRelations(

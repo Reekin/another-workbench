@@ -60,7 +60,7 @@ describe("demo runtime fixture", () => {
     expect(received.some((item) => item.startsWith("terminal:> codex"))).toBe(true);
 
     const snapshot = service.getSnapshot();
-    expect(snapshot.turns).toHaveLength(2);
+    expect(snapshot.turns).toHaveLength(1);
     expect(snapshot.messageBlocks.some((block) => block.messageId === "msg-1")).toBe(true);
     expect(
       snapshot.messageBlocks.some((block) => block.messageId === "msg-1" && block.role === "user")

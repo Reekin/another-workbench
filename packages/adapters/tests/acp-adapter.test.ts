@@ -38,7 +38,14 @@ class FakeAcpRuntimePort
       id: payload.id,
       ok: true,
       result: {
-        accepted: true
+        accepted: true,
+        ...(payload.method === "turn.send"
+          ? {
+              sessionId: String(payload.params.sessionId),
+              turnId: "turn-canonical",
+              providerSessionId: "pi-session-canonical"
+            }
+          : {})
       }
     };
   }

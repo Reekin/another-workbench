@@ -446,6 +446,51 @@ const isTextThreadItem = (
 ): item is Extract<ThreadItem, { type: "agentMessage" }> =>
   isRecord(item) && item.type === "agentMessage" && typeof item.id === "string";
 
+const isUserMessageThreadItem = (
+  item: ThreadItem | Record<string, unknown>
+): item is Extract<ThreadItem, { type: "userMessage" }> =>
+  isRecord(item) && item.type === "userMessage" && typeof item.id === "string";
+
+const summarizeUserMessage = (
+  item: Extract<ThreadItem, { type: "userMessage" }>
+): string =>
+  item.content
+    .map((input) => {
+      switch (input.type) {
+        case "text":
+          return input.text;
+        case "image":
+          return `![image](${input.url})`;
+        case "localImage":
+          return `![image](${input.path})`;
+        case "skill":
+          return `skill: ${input.name} (${input.path})`;
+        case "mention":
+          return `mention: ${input.name} (${input.path})`;
+        default:
+          return undefined;
+      }
+    })
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value))
+    .join("\n\n");
+
+const subagentParentThreadId = (thread: Thread): string | undefined => {
+  const source = thread.source as unknown;
+  if (!isRecord(source)) {
+    return undefined;
+  }
+  const subagentSource = isRecord(source.subAgent)
+    ? source.subAgent
+    : isRecord(source.subagent)
+      ? source.subagent
+      : undefined;
+  const threadSpawn = isRecord(subagentSource?.thread_spawn)
+    ? subagentSource.thread_spawn
+    : undefined;
+  return optionalString(threadSpawn?.parent_thread_id);
+};
+
 const isFinalAnswerMessageItem = (
   item: Extract<ThreadItem, { type: "agentMessage" }>
 ): boolean => item.phase === "final_answer";
@@ -831,7 +876,14 @@ export class CodexAppServerRuntimePort
   });
   private readonly threadIdBySessionId = new Map<string, string>();
   private readonly sessionIdByThreadId = new Map<string, string>();
-  private readonly activeTurnIdByThreadId = new Map<string, string>();
+  private readonly pendingTurnSessionIdByThreadId = new Map<string, string>();
+  private readonly sessionIdByThreadAndTurnId = new Map<string, string>();
+  private readonly activeTurnByThreadId = new Map<
+    string,
+    { turnId: string; sessionId: string }
+  >();
+  private readonly subagentSessionIds = new Set<string>();
+  private readonly announcedSubagentSessionIds = new Set<string>();
   private readonly hookTurnIdByThreadAndRun = new Map<string, string>();
   private readonly rawCustomToolNameByTurnAndCall = new Map<string, string>();
   private readonly startedCodexToolItemIds = new Set<string>();
@@ -1010,7 +1062,9 @@ export class CodexAppServerRuntimePort
     this.pendingApprovalResolutionsById.clear();
     this.threadIdBySessionId.clear();
     this.sessionIdByThreadId.clear();
-    this.activeTurnIdByThreadId.clear();
+    this.pendingTurnSessionIdByThreadId.clear();
+    this.sessionIdByThreadAndTurnId.clear();
+    this.activeTurnByThreadId.clear();
     this.hookTurnIdByThreadAndRun.clear();
     this.rawCustomToolNameByTurnAndCall.clear();
     this.startedCodexToolItemIds.clear();
@@ -1038,14 +1092,20 @@ export class CodexAppServerRuntimePort
           }
         };
       case "turn/start":
-        await this.handleTurnStart(payload, options);
-        return {
-          id: payload.id,
-          ok: true,
-          result: {
-            accepted: true
-          }
-        };
+        {
+          const started = await this.handleTurnStart(payload, options);
+          return {
+            id: payload.id,
+            ok: true,
+            result: {
+              accepted: true,
+              type: "turn_started",
+              sessionId: started.sessionId,
+              turnId: started.turnId,
+              providerSessionId: started.threadId
+            }
+          };
+        }
       case "turn/steer":
         await this.handleTurnSteer(payload, options);
         return {
@@ -1404,7 +1464,7 @@ export class CodexAppServerRuntimePort
   private async handleTurnStart(
     payload: CodexRuntimeRequest,
     options: RuntimeOperationOptions
-  ): Promise<void> {
+  ): Promise<{ sessionId: string; turnId: string; threadId: string }> {
     const sessionId = String(payload.params.sessionId ?? "");
     const content = String(payload.params.content ?? "");
     const attachments = Array.isArray(payload.params.attachments)
@@ -1417,22 +1477,36 @@ export class CodexAppServerRuntimePort
     const threadId = await this.ensureThreadForSession(sessionId, cwd, options);
     const input = buildCodexTurnInput(content, attachments);
 
-    const result = (await this.rpc(
-      "turn/start",
-      {
-        threadId,
-        input
-      },
-      options
-    )) as TurnStartResponse;
-
-    if (result?.turn?.id) {
-      this.setActiveTurnForThread(threadId, result.turn.id);
-      this.emitEvent("turn.started", {
-        sessionId,
-        turnId: result.turn.id
-      });
+    this.pendingTurnSessionIdByThreadId.set(threadId, sessionId);
+    let result: TurnStartResponse;
+    try {
+      result = (await this.rpc(
+        "turn/start",
+        {
+          threadId,
+          input
+        },
+        options
+      )) as TurnStartResponse;
+    } finally {
+      if (this.pendingTurnSessionIdByThreadId.get(threadId) === sessionId) {
+        this.pendingTurnSessionIdByThreadId.delete(threadId);
+      }
     }
+
+    if (!result?.turn?.id) {
+      throw new Error("Codex turn/start did not return a canonical turn id.");
+    }
+    this.setActiveTurnForThread(threadId, result.turn.id, sessionId);
+    this.emitEvent("turn.started", {
+      sessionId,
+      turnId: result.turn.id
+    });
+    return {
+      sessionId,
+      turnId: result.turn.id,
+      threadId
+    };
   }
 
   private async handleTurnSteer(
@@ -1787,7 +1861,8 @@ export class CodexAppServerRuntimePort
     }
     const params = isRecord(payload.params) ? payload.params : {};
     const threadId = String(params.threadId ?? "");
-    const sessionId = this.sessionIdByThreadId.get(threadId) ?? threadId;
+    const sessionId =
+      this.resolveSessionIdForTurn(threadId, params.turnId) ?? threadId;
     const requestId = localRequestId(rawRequestId);
 
     switch (method) {
@@ -2009,7 +2084,7 @@ export class CodexAppServerRuntimePort
       return;
     }
 
-    const sessionId = this.sessionIdByThreadId.get(threadId);
+    const sessionId = this.resolveSessionIdForTurn(threadId, turnId);
     if (!sessionId) {
       await this.writeDynamicToolCallResponse(rawRequestId, {
         contentItems: [
@@ -2093,6 +2168,53 @@ export class CodexAppServerRuntimePort
 
   private handleNotification(method: string, params: Record<string, unknown>): void {
     switch (method) {
+      case "thread/started": {
+        const thread = isRecord(params.thread) ? (params.thread as Thread) : undefined;
+        if (!thread || typeof thread.id !== "string") {
+          return;
+        }
+        const parentThreadId = subagentParentThreadId(thread);
+        if (!parentThreadId) {
+          return;
+        }
+        const parentSessionId = this.resolveSessionIdFromThreadId(parentThreadId);
+        const conversationId = parentSessionId
+          ? this.resolveConversationIdBySessionId?.(parentSessionId)
+          : undefined;
+        if (!parentSessionId || !conversationId) {
+          return;
+        }
+        const childSessionId = discoveredCodexSessionId(thread.id);
+        this.subagentSessionIds.add(childSessionId);
+        this.attachThreadToSession(childSessionId, thread.id);
+        if (!this.announcedSubagentSessionIds.has(childSessionId)) {
+          this.announcedSubagentSessionIds.add(childSessionId);
+          this.emitEvent("session.created", {
+            conversationId,
+            sessionId: childSessionId,
+            engineId: this.engineId,
+            status: mapSessionStatus(thread.status),
+            relation: {
+              relationId: `subagent:${parentSessionId}:${childSessionId}`,
+              parentSessionId,
+              childSessionId,
+              relationType: "subagent",
+              createdAt: this.now()
+            }
+          });
+        }
+        this.emitEvent("session.updated", {
+          conversationId,
+          sessionId: childSessionId,
+          status: mapSessionStatus(thread.status),
+          ...(thread.agentNickname ? { title: thread.agentNickname } : {}),
+          metadata: {
+            providerKind: "codex-thread",
+            providerSessionId: thread.id
+          }
+        });
+        return;
+      }
       case "thread/status/changed": {
         const threadId = String(params.threadId ?? "");
         const sessionId = this.sessionIdByThreadId.get(threadId);
@@ -2185,13 +2307,13 @@ export class CodexAppServerRuntimePort
       case "turn/started": {
         const threadId =
           typeof params.threadId === "string" ? params.threadId : undefined;
-        const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
         const turn = isRecord(params.turn) ? params.turn : undefined;
+        const sessionId = this.resolveSessionIdForTurn(params.threadId, turn?.id);
         if (!sessionId || !turn || typeof turn.id !== "string") {
           return;
         }
         if (threadId) {
-          this.setActiveTurnForThread(threadId, turn.id);
+          this.setActiveTurnForThread(threadId, turn.id, sessionId);
         }
         this.emitEvent("turn.started", {
           sessionId,
@@ -2202,8 +2324,8 @@ export class CodexAppServerRuntimePort
       case "turn/completed": {
         const threadId =
           typeof params.threadId === "string" ? params.threadId : undefined;
-        const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
         const turn = isRecord(params.turn) ? params.turn : undefined;
+        const sessionId = this.resolveSessionIdForTurn(params.threadId, turn?.id);
         if (!sessionId || !turn || typeof turn.id !== "string") {
           return;
         }
@@ -2223,8 +2345,8 @@ export class CodexAppServerRuntimePort
         return;
       }
       case "turn/diff/updated": {
-        const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
         const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
+        const sessionId = this.resolveSessionIdForTurn(params.threadId, turnId);
         const diff = typeof params.diff === "string" ? params.diff : undefined;
         if (!sessionId || !turnId || diff === undefined) {
           return;
@@ -2244,9 +2366,8 @@ export class CodexAppServerRuntimePort
       case "hook/completed": {
         const threadId =
           typeof params.threadId === "string" ? params.threadId : undefined;
-        const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
         const run = normalizeCodexHookRun(params.run);
-        if (!sessionId || !run) {
+        if (!run) {
           return;
         }
         const turnId = this.resolveHookActivityTurnId({
@@ -2255,6 +2376,10 @@ export class CodexAppServerRuntimePort
           run
         });
         if (!turnId) {
+          return;
+        }
+        const sessionId = this.resolveSessionIdForTurn(params.threadId, turnId);
+        if (!sessionId) {
           return;
         }
         recordCodexHookRun({
@@ -2279,8 +2404,8 @@ export class CodexAppServerRuntimePort
       }
       case "item/started":
       case "item/completed": {
-        const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
         const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
+        const sessionId = this.resolveSessionIdForTurn(params.threadId, turnId);
         const item = isRecord(params.item) ? (params.item as ThreadItem) : undefined;
         if (!sessionId || !turnId || !item) {
           return;
@@ -2289,8 +2414,8 @@ export class CodexAppServerRuntimePort
         return;
       }
       case "rawResponseItem/completed": {
-        const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
         const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
+        const sessionId = this.resolveSessionIdForTurn(params.threadId, turnId);
         const item = isRecord(params.item) ? (params.item as ResponseItem) : undefined;
         if (!sessionId || !turnId || !item) {
           return;
@@ -2299,8 +2424,8 @@ export class CodexAppServerRuntimePort
         return;
       }
       case "item/agentMessage/delta": {
-        const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
         const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
+        const sessionId = this.resolveSessionIdForTurn(params.threadId, turnId);
         const messageId = typeof params.itemId === "string" ? params.itemId : undefined;
         const delta = typeof params.delta === "string" ? params.delta : "";
         if (!sessionId || !turnId || !messageId || !delta) {
@@ -2320,8 +2445,8 @@ export class CodexAppServerRuntimePort
       }
       case "item/reasoning/summaryTextDelta":
       case "item/reasoning/textDelta": {
-        const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
         const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
+        const sessionId = this.resolveSessionIdForTurn(params.threadId, turnId);
         const toolCallId = typeof params.itemId === "string" ? params.itemId : undefined;
         const delta = typeof params.delta === "string" ? params.delta : "";
         if (!sessionId || !turnId || !toolCallId || !delta) {
@@ -2348,8 +2473,8 @@ export class CodexAppServerRuntimePort
         return;
       }
       case "item/mcpToolCall/progress": {
-        const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
         const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
+        const sessionId = this.resolveSessionIdForTurn(params.threadId, turnId);
         const toolCallId = typeof params.itemId === "string" ? params.itemId : undefined;
         const delta = typeof params.message === "string" ? params.message : "";
         if (!sessionId || !turnId || !toolCallId || !delta) {
@@ -2365,8 +2490,8 @@ export class CodexAppServerRuntimePort
         return;
       }
       case "item/commandExecution/outputDelta": {
-        const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
         const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
+        const sessionId = this.resolveSessionIdForTurn(params.threadId, turnId);
         const toolCallId = typeof params.itemId === "string" ? params.itemId : undefined;
         const delta = typeof params.delta === "string" ? params.delta : "";
         if (!sessionId || !turnId || !toolCallId || !delta) {
@@ -2392,7 +2517,10 @@ export class CodexAppServerRuntimePort
         this.handleServerRequestResolved(params);
         return;
       case "error": {
-        const sessionId = this.resolveSessionIdFromThreadId(params.threadId);
+        const sessionId = this.resolveSessionIdForTurn(
+          params.threadId,
+          params.turnId
+        );
         const error = isRecord(params.error) ? params.error : undefined;
         const codexErrorInfo = error?.codexErrorInfo;
         const additionalDetails = error?.additionalDetails;
@@ -2486,6 +2614,20 @@ export class CodexAppServerRuntimePort
     turnId: string,
     item: ThreadItem
   ): void {
+    if (isUserMessageThreadItem(item) && this.subagentSessionIds.has(sessionId)) {
+      this.emitEvent(method === "item/started" ? "message.started" : "message.completed", {
+        sessionId,
+        turnId,
+        messageId: item.id,
+        role: "user",
+        ...(method === "item/completed"
+          ? { finalText: summarizeUserMessage(item) }
+          : {}),
+        engineId: this.engineId
+      });
+      return;
+    }
+
     if (isTextThreadItem(item)) {
       this.emitEvent(method === "item/started" ? "message.started" : "message.completed", {
         sessionId,
@@ -3038,25 +3180,29 @@ export class CodexAppServerRuntimePort
 
     for (const receiverThreadId of item.receiverThreadIds) {
       const childSessionId = discoveredCodexSessionId(receiverThreadId);
+      this.subagentSessionIds.add(childSessionId);
       this.attachThreadToSession(childSessionId, receiverThreadId);
 
       const childState = item.agentsStates[receiverThreadId];
 
       if (item.tool === "spawnAgent") {
-        this.emitEvent("session.created", {
-          conversationId,
-          sessionId: childSessionId,
-          engineId: this.engineId,
-          status: mapCollabAgentStatus(childState?.status),
-          relation: {
-            relationId: `subagent:${parentSessionId}:${childSessionId}`,
-            parentSessionId,
-            childSessionId,
-            relationType: "subagent",
-            sourceTurnId: turnId,
-            createdAt: this.now()
-          }
-        });
+        if (!this.announcedSubagentSessionIds.has(childSessionId)) {
+          this.announcedSubagentSessionIds.add(childSessionId);
+          this.emitEvent("session.created", {
+            conversationId,
+            sessionId: childSessionId,
+            engineId: this.engineId,
+            status: mapCollabAgentStatus(childState?.status),
+            relation: {
+              relationId: `subagent:${parentSessionId}:${childSessionId}`,
+              parentSessionId,
+              childSessionId,
+              relationType: "subagent",
+              sourceTurnId: turnId,
+              createdAt: this.now()
+            }
+          });
+        }
       }
 
       this.emitEvent("session.updated", {
@@ -3111,14 +3257,48 @@ export class CodexAppServerRuntimePort
     };
   }
 
-  private setActiveTurnForThread(threadId: string, turnId: string): void {
-    this.activeTurnIdByThreadId.set(threadId, turnId);
+  private turnRouteKey(threadId: string, turnId: string): string {
+    return `${threadId}\u0000${turnId}`;
+  }
+
+  private setActiveTurnForThread(
+    threadId: string,
+    turnId: string,
+    sessionId: string
+  ): void {
+    this.sessionIdByThreadAndTurnId.set(
+      this.turnRouteKey(threadId, turnId),
+      sessionId
+    );
+    this.activeTurnByThreadId.set(threadId, { turnId, sessionId });
   }
 
   private clearActiveTurnForThread(threadId: string, turnId: string): void {
-    if (this.activeTurnIdByThreadId.get(threadId) === turnId) {
-      this.activeTurnIdByThreadId.delete(threadId);
+    if (this.activeTurnByThreadId.get(threadId)?.turnId === turnId) {
+      this.activeTurnByThreadId.delete(threadId);
     }
+  }
+
+  private resolveSessionIdForTurn(
+    rawThreadId: unknown,
+    rawTurnId: unknown
+  ): string | undefined {
+    if (typeof rawThreadId !== "string") {
+      return undefined;
+    }
+    if (typeof rawTurnId === "string") {
+      const routedSessionId = this.sessionIdByThreadAndTurnId.get(
+        this.turnRouteKey(rawThreadId, rawTurnId)
+      );
+      if (routedSessionId) {
+        return routedSessionId;
+      }
+    }
+    return (
+      this.pendingTurnSessionIdByThreadId.get(rawThreadId) ??
+      this.activeTurnByThreadId.get(rawThreadId)?.sessionId ??
+      this.sessionIdByThreadId.get(rawThreadId)
+    );
   }
 
   private hookTurnKey(threadId: string, runId: string): string {
@@ -3158,7 +3338,7 @@ export class CodexAppServerRuntimePort
       return existingTurnId;
     }
     const activeTurnId = input.threadId
-      ? this.activeTurnIdByThreadId.get(input.threadId)
+      ? this.activeTurnByThreadId.get(input.threadId)?.turnId
       : undefined;
     if (activeTurnId) {
       return activeTurnId;

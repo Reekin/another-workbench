@@ -13,7 +13,6 @@ export type AutoRefreshBacklogDecisionInput = {
 
 export type AutoRefreshBacklogDecision = {
   sessionId: string;
-  barrierCursor?: string;
 };
 
 export type AutoRefreshBacklogAttemptInput = Omit<
@@ -69,8 +68,7 @@ export const resolveAutoRefreshBacklogDecision = (
     return undefined;
   }
   return {
-    sessionId: input.displayedSessionId,
-    barrierCursor: sessionPressure.lastCursor
+    sessionId: input.displayedSessionId
   };
 };
 

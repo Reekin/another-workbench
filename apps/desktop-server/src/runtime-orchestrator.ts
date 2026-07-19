@@ -1,3 +1,4 @@
+import type { AdapterCommandResult } from "@another-workbench/adapters";
 import type {
   ProviderSessionHandle,
   Command,
@@ -28,6 +29,9 @@ import { LifecycleGate } from "./runtime/lifecycle-gate.js";
 type Clock = () => string;
 type IdFactory = () => string;
 type SessionRelationSyncInput = Parameters<SessionIndexSyncService["syncRelation"]>[0];
+type PendingSendStart = {
+  bufferedEvents: EventEnvelope[];
+};
 
 export type RuntimeOrchestratorOptions = {
   domainService: DomainService;
@@ -82,6 +86,7 @@ export class RuntimeOrchestrator {
   private readonly adapterEventQueue: EventEnvelope[] = [];
   private readonly pendingSessionIndexSyncIds = new Set<string>();
   private readonly pendingRelationSyncs = new Map<string, SessionRelationSyncInput>();
+  private readonly pendingSendStartBySessionId = new Map<string, PendingSendStart>();
   private adapterEventQueueReadIndex = 0;
   private isDrainingAdapterEvents = false;
   private indexSyncPump: Promise<void> | undefined;
@@ -197,20 +202,63 @@ export class RuntimeOrchestrator {
         return this.accept(envelope, true);
       case "sendUserMessage": {
         const session = this.domainService.requireSession(envelope.command.sessionId);
+        if (this.pendingSendStartBySessionId.has(session.sessionId)) {
+          return this.accept(envelope, false);
+        }
         const shouldGenerateTitle = this.shouldGenerateTitleFromFirstUserMessage(
           envelope.command
         );
-        this.domainService.commitLocalUserMessage(envelope.command);
-        const receipt = await this.forwardSessionCommand(envelope.command.sessionId, envelope, {
-          before: () => {
-            this.domainService.commitRuntimeEvent({
-              type: "session.updated",
-              conversationId: session.conversationId,
-              sessionId: session.sessionId,
-              status: "running"
+        const pendingStart: PendingSendStart = { bufferedEvents: [] };
+        this.pendingSendStartBySessionId.set(session.sessionId, pendingStart);
+        let receipt: CommandReceipt;
+        try {
+          const result = await this.forwardSessionCommandResult(
+            envelope.command.sessionId,
+            envelope,
+            {
+              before: () => {
+                this.domainService.commitRuntimeEvent({
+                  type: "session.updated",
+                  conversationId: session.conversationId,
+                  sessionId: session.sessionId,
+                  status: "running"
+                });
+              }
+            }
+          );
+          const outcome = result.outcome;
+          if (
+            !result.accepted ||
+            outcome?.type !== "turn_started" ||
+            outcome.sessionId !== session.sessionId ||
+            !this.pendingSendEventsMatchCanonicalTurn(pendingStart, outcome.turnId)
+          ) {
+            this.rejectPendingSendStart(session, pendingStart, result);
+            receipt = this.accept(envelope, false);
+          } else {
+            this.domainService.commitAcceptedUserMessage(
+              envelope.command,
+              outcome.turnId
+            );
+            this.drainPendingSendEvents(pendingStart);
+            receipt = this.accept(envelope, true, {
+              sessionId: outcome.sessionId,
+              turnId: outcome.turnId,
+              providerSessionId: outcome.providerSessionId
             });
           }
-        });
+        } catch (error) {
+          this.rejectPendingSendStart(session, pendingStart, undefined, error);
+          this.domainService.commitRuntimeEvent({
+            type: "session.updated",
+            conversationId: session.conversationId,
+            sessionId: session.sessionId,
+            status: "idle"
+          });
+          throw error;
+        } finally {
+          this.pendingSendStartBySessionId.delete(session.sessionId);
+        }
         if (!receipt.accepted) {
           this.domainService.commitRuntimeEvent({
             type: "session.updated",
@@ -494,11 +542,20 @@ export class RuntimeOrchestrator {
     }
   }
 
-  private accept(envelope: CommandEnvelope, accepted: boolean): CommandReceipt {
+  private accept(
+    envelope: CommandEnvelope,
+    accepted: boolean,
+    canonicalTurn: {
+      sessionId?: string;
+      turnId?: string;
+      providerSessionId?: string;
+    } = {}
+  ): CommandReceipt {
     return {
       commandId: envelope.commandId,
       commandType: envelope.command.type,
-      accepted
+      accepted,
+      ...canonicalTurn
     };
   }
 
@@ -507,19 +564,31 @@ export class RuntimeOrchestrator {
     envelope: CommandEnvelope,
     hooks: { before?: () => void } = {}
   ): Promise<CommandReceipt> {
+    const result = await this.forwardSessionCommandResult(sessionId, envelope, hooks);
+    return this.accept(envelope, result.accepted);
+  }
+
+  private async forwardSessionCommandResult(
+    sessionId: string,
+    envelope: CommandEnvelope,
+    hooks: { before?: () => void } = {}
+  ): Promise<AdapterCommandResult> {
     const session = this.domainService.requireSession(sessionId);
     const engineId = this.resolveSessionEngineId(session);
     const binding = this.requireBinding(engineId);
     if (!binding.adapter) {
-      return this.accept(envelope, false);
+      return {
+        commandId: envelope.commandId,
+        commandType: envelope.command.type,
+        accepted: false
+      };
     }
 
     await this.ensureAdapterReady(engineId);
     hooks.before?.();
-    const result = await binding.adapter.executeCommand(
+    return binding.adapter.executeCommand(
       this.withSessionWorkingDirectory(envelope, session)
     );
-    return this.accept(envelope, result.accepted);
   }
 
   private withSessionWorkingDirectory(
@@ -639,9 +708,76 @@ export class RuntimeOrchestrator {
   }
 
   private ingestAdapterEvent(envelope: EventEnvelope): void {
+    const sessionId = this.eventSessionId(envelope);
+    const pendingStart = sessionId
+      ? this.pendingSendStartBySessionId.get(sessionId)
+      : undefined;
+    if (pendingStart) {
+      pendingStart.bufferedEvents.push(envelope);
+      return;
+    }
+    this.commitAdapterEvent(envelope);
+  }
+
+  private commitAdapterEvent(envelope: EventEnvelope): void {
     this.domainService.ingestRuntimeEvent(envelope.event, envelope.occurredAt);
     this.publishRuntimeEvent(envelope.event);
     this.queueSessionIndexSync(envelope);
+  }
+
+  private eventSessionId(envelope: EventEnvelope): string | undefined {
+    return "sessionId" in envelope.event && typeof envelope.event.sessionId === "string"
+      ? envelope.event.sessionId
+      : undefined;
+  }
+
+  private pendingSendEventsMatchCanonicalTurn(
+    pendingStart: PendingSendStart,
+    turnId: string
+  ): boolean {
+    return pendingStart.bufferedEvents.every(({ event }) =>
+      !("turnId" in event) ||
+      typeof event.turnId !== "string" ||
+      event.turnId === turnId
+    );
+  }
+
+  private drainPendingSendEvents(pendingStart: PendingSendStart): void {
+    for (const envelope of pendingStart.bufferedEvents) {
+      try {
+        this.commitAdapterEvent(envelope);
+      } catch (error) {
+        console.warn("[another-workbench] Failed to ingest adapter event", error);
+      }
+    }
+    pendingStart.bufferedEvents.length = 0;
+  }
+
+  private rejectPendingSendStart(
+    session: ReturnType<DomainService["requireSession"]>,
+    pendingStart: PendingSendStart,
+    result?: AdapterCommandResult,
+    error?: unknown
+  ): void {
+    if (pendingStart.bufferedEvents.length === 0) {
+      return;
+    }
+    const bufferedEventTypes = pendingStart.bufferedEvents.map(
+      (envelope) => envelope.event.type
+    );
+    pendingStart.bufferedEvents.length = 0;
+    this.domainService.commitRuntimeEvent({
+      type: "runtime.error",
+      sessionId: session.sessionId,
+      code: "send_start_protocol_contradiction",
+      message: "Runtime emitted session events before rejecting the canonical turn start.",
+      recoverable: true,
+      details: {
+        bufferedEventTypes,
+        adapterAccepted: result?.accepted,
+        error: error instanceof Error ? error.message : undefined
+      }
+    });
   }
 
   private queueSessionIndexSync(envelope: EventEnvelope): void {

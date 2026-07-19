@@ -593,7 +593,12 @@ describe("RuntimeOrchestrator", () => {
     const executeCommand = vi.fn().mockResolvedValue({
       commandId: "send-1",
       commandType: "sendUserMessage",
-      accepted: true
+      accepted: true,
+      outcome: {
+        type: "turn_started",
+        sessionId: "session-title",
+        turnId: "turn-title"
+      }
     });
     let lifecycleState: ReturnType<AgentAdapter["getLifecycleState"]> = "idle";
     const initialize = vi.fn().mockImplementation(async () => {
@@ -683,7 +688,12 @@ describe("RuntimeOrchestrator", () => {
     const executeCommand = vi.fn().mockResolvedValue({
       commandId: "send-1",
       commandType: "sendUserMessage",
-      accepted: true
+      accepted: true,
+      outcome: {
+        type: "turn_started",
+        sessionId: "session-title",
+        turnId: "turn-title"
+      }
     });
     let lifecycleState: ReturnType<AgentAdapter["getLifecycleState"]> = "idle";
     const initialize = vi.fn().mockImplementation(async () => {
@@ -789,7 +799,12 @@ describe("RuntimeOrchestrator", () => {
     const executeCommand = vi.fn().mockResolvedValue({
       commandId: "send-1",
       commandType: "sendUserMessage",
-      accepted: true
+      accepted: true,
+      outcome: {
+        type: "turn_started",
+        sessionId: "session-title-drain",
+        turnId: "turn-title-drain"
+      }
     });
     const dispose = vi.fn().mockResolvedValue(undefined);
     let lifecycleState: ReturnType<AgentAdapter["getLifecycleState"]> = "idle";
@@ -1175,4 +1190,260 @@ describe("RuntimeOrchestrator", () => {
     expect(syncSession).toHaveBeenCalledTimes(1);
     expect(syncSession).toHaveBeenCalledWith("session-output");
   });
+
+  it("commits one canonical turn across response ordering and isolates buffered publish failures", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const snapshots = [];
+    for (const ordering of ["event-first", "response-first"] as const) {
+      const startGate = createDeferred<void>();
+      let listener: Parameters<AgentAdapter["subscribe"]>[0] | undefined;
+      let lifecycleState: ReturnType<AgentAdapter["getLifecycleState"]> = "idle";
+      const adapter: AgentAdapter = {
+        id: `adapter-${ordering}`,
+        kind: "codex",
+        getLifecycleState: () => lifecycleState,
+        initialize: async () => {
+          lifecycleState = "ready";
+        },
+        executeCommand: async (envelope) => {
+          if (envelope.command.type === "sendUserMessage" && ordering === "event-first") {
+            listener?.({
+              eventId: `event-${ordering}`,
+              occurredAt: "2026-07-18T00:00:01Z",
+              event: {
+                type: "turn.started",
+                sessionId: envelope.command.sessionId,
+                turnId: "turn-canonical"
+              }
+            });
+            await startGate.promise;
+          }
+          return {
+            commandId: envelope.commandId,
+            commandType: envelope.command.type,
+            accepted: true,
+            outcome:
+              envelope.command.type === "sendUserMessage"
+                ? {
+                    type: "turn_started" as const,
+                    sessionId: envelope.command.sessionId,
+                    turnId: "turn-canonical"
+                  }
+                : { type: "command_accepted" as const }
+          };
+        },
+        subscribe: (next) => {
+          listener = next;
+          return () => {
+            listener = undefined;
+          };
+        },
+        dispose: async () => {}
+      };
+      let orchestrator: RuntimeOrchestrator | undefined;
+      const domainService = new DomainService({
+        now: () => "2026-07-18T00:00:00Z",
+        createSessionId: () => "session-canonical",
+        assertEngineRegistered: (engineId) =>
+          orchestrator?.assertEngineRegistered(engineId),
+        resolveEngineCapabilities: (engineId) =>
+          orchestrator?.getEngineCapabilities(engineId) ?? [],
+        publishRuntimeEvent: () => {}
+      });
+      orchestrator = new RuntimeOrchestrator({
+        domainService,
+        sessionIndexSyncService: {
+          syncSession: vi.fn().mockResolvedValue(undefined),
+          syncRelation: vi.fn().mockResolvedValue(undefined),
+          markSessionUnreadCompleted: vi.fn().mockResolvedValue(undefined)
+        } as never,
+        workspaceSelectionService: {
+          activateSelection: vi.fn().mockResolvedValue(undefined),
+          selectWorkspace: vi.fn().mockResolvedValue({ workspaceId: "workspace-1" })
+        } as never,
+        publishRuntimeEvent: () => {
+          if (ordering === "event-first") {
+            throw new Error("subscriber failed after canonical start");
+          }
+        },
+        createConversationId: () => "conversation-canonical",
+        agentBindings: [{
+          descriptor: {
+            engineId: "codex",
+            displayName: "Codex",
+            capabilities: ["chat"]
+          },
+          adapter
+        }]
+      });
+      await orchestrator.createSession({ engineId: "codex", workspaceId: "workspace-1" });
+      const sendEnvelope = {
+        commandId: `send-${ordering}`,
+        command: {
+          type: "sendUserMessage",
+          sessionId: "session-canonical",
+          messageId: "message-canonical",
+          content: "hello",
+          attachments: []
+        }
+      } as const;
+      const receipt =
+        ordering === "event-first"
+          ? await (async () => {
+              const firstSend = orchestrator.executeCommand(sendEnvelope);
+              await flushAsyncWork();
+              await expect(orchestrator.executeCommand({
+                ...sendEnvelope,
+                commandId: "send-conflict"
+              })).resolves.toMatchObject({ accepted: false });
+              startGate.resolve();
+              return firstSend;
+            })()
+          : await orchestrator.executeCommand(sendEnvelope);
+      if (ordering === "response-first") {
+        listener?.({
+          eventId: `event-${ordering}`,
+          occurredAt: "2026-07-18T00:00:01Z",
+          event: {
+            type: "turn.started",
+            sessionId: "session-canonical",
+            turnId: "turn-canonical"
+          }
+        });
+      }
+      expect(receipt).toMatchObject({
+        accepted: true,
+        sessionId: "session-canonical",
+        turnId: "turn-canonical"
+      });
+      const snapshot = domainService.getSnapshot();
+      expect(snapshot.turns).toHaveLength(1);
+      expect(snapshot.turns[0]).toMatchObject({
+        turnId: "turn-canonical",
+        messageIds: ["message-canonical"]
+      });
+      expect(snapshot.turns.some((turn) => turn.turnId.startsWith("user-turn-"))).toBe(false);
+      snapshots.push(snapshot.turns[0]);
+    }
+    expect(snapshots[0]).toEqual(snapshots[1]);
+    expect(warn).toHaveBeenCalledWith(
+      "[another-workbench] Failed to ingest adapter event",
+      expect.any(Error)
+    );
+    warn.mockRestore();
+  });
+
+  it("rejects mismatched canonical events and restores idle after adapter failure", async () => {
+    const createHarness = (executeCommand: AgentAdapter["executeCommand"]) => {
+      let listener: Parameters<AgentAdapter["subscribe"]>[0] | undefined;
+      let lifecycleState: ReturnType<AgentAdapter["getLifecycleState"]> = "idle";
+      const adapter: AgentAdapter = {
+        id: "adapter-send-protocol",
+        kind: "codex",
+        getLifecycleState: () => lifecycleState,
+        initialize: async () => {
+          lifecycleState = "ready";
+        },
+        executeCommand,
+        subscribe: (next) => {
+          listener = next;
+          return () => {
+            listener = undefined;
+          };
+        },
+        dispose: async () => {}
+      };
+      let orchestrator: RuntimeOrchestrator | undefined;
+      const domainService = new DomainService({
+        now: () => "2026-07-18T00:00:00Z",
+        createSessionId: () => "session-send-protocol",
+        assertEngineRegistered: (engineId) =>
+          orchestrator?.assertEngineRegistered(engineId),
+        resolveEngineCapabilities: (engineId) =>
+          orchestrator?.getEngineCapabilities(engineId) ?? [],
+        publishRuntimeEvent: () => {}
+      });
+      orchestrator = new RuntimeOrchestrator({
+        domainService,
+        sessionIndexSyncService: {
+          syncSession: vi.fn().mockResolvedValue(undefined),
+          syncRelation: vi.fn().mockResolvedValue(undefined),
+          markSessionUnreadCompleted: vi.fn().mockResolvedValue(undefined)
+        } as never,
+        workspaceSelectionService: {
+          activateSelection: vi.fn().mockResolvedValue(undefined),
+          selectWorkspace: vi.fn().mockResolvedValue({ workspaceId: "workspace-1" })
+        } as never,
+        publishRuntimeEvent: () => {},
+        createConversationId: () => "conversation-send-protocol",
+        agentBindings: [{
+          descriptor: {
+            engineId: "codex",
+            displayName: "Codex",
+            capabilities: ["chat"]
+          },
+          adapter
+        }]
+      });
+      return { domainService, getListener: () => listener, orchestrator };
+    };
+
+    const mismatchHarness = createHarness(async (envelope) => {
+      mismatchHarness.getListener()?.({
+        eventId: "event-mismatched-turn",
+        occurredAt: "2026-07-18T00:00:01Z",
+        event: {
+          type: "turn.started",
+          sessionId: "session-send-protocol",
+          turnId: "turn-event"
+        }
+      });
+      return {
+        commandId: envelope.commandId,
+        commandType: envelope.command.type,
+        accepted: true,
+        outcome: {
+          type: "turn_started" as const,
+          sessionId: "session-send-protocol",
+          turnId: "turn-receipt"
+        }
+      };
+    });
+    await mismatchHarness.orchestrator.createSession({
+      engineId: "codex",
+      workspaceId: "workspace-1"
+    });
+    await expect(mismatchHarness.orchestrator.executeCommand({
+      commandId: "send-mismatched-turn",
+      command: {
+        type: "sendUserMessage",
+        sessionId: "session-send-protocol",
+        messageId: "message-mismatched-turn",
+        content: "hello",
+        attachments: []
+      }
+    })).resolves.toMatchObject({ accepted: false });
+    expect(mismatchHarness.domainService.getSnapshot().turns).toEqual([]);
+    expect(mismatchHarness.domainService.getSession("session-send-protocol")?.status).toBe("idle");
+
+    const failureHarness = createHarness(async () => {
+      throw new Error("adapter failed");
+    });
+    await failureHarness.orchestrator.createSession({
+      engineId: "codex",
+      workspaceId: "workspace-1"
+    });
+    await expect(failureHarness.orchestrator.executeCommand({
+      commandId: "send-adapter-failure",
+      command: {
+        type: "sendUserMessage",
+        sessionId: "session-send-protocol",
+        messageId: "message-adapter-failure",
+        content: "hello",
+        attachments: []
+      }
+    })).rejects.toThrow("adapter failed");
+    expect(failureHarness.domainService.getSession("session-send-protocol")?.status).toBe("idle");
+  });
+
 });

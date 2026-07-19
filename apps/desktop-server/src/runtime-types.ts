@@ -11,6 +11,7 @@ import type {
   EngineSharedCapabilityRpc,
   EngineExtensionDescriptorRpc
 } from "@another-workbench/shared";
+import type { RuntimeCommandReceiptRpc } from "@another-workbench/shared";
 
 export type WorkbenchEngineDescriptor = {
   engineId: string;
@@ -28,11 +29,7 @@ export type EngineSelectionInput = {
   config?: Record<string, unknown>;
 };
 
-export type CommandReceipt = {
-  commandId: string;
-  commandType: Command["type"];
-  accepted: boolean;
-};
+export type CommandReceipt = RuntimeCommandReceiptRpc;
 
 export type SnapshotResult = {
   snapshot: DomainSnapshot;

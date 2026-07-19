@@ -2355,7 +2355,6 @@ export const ChatShellApp = ({
       void current
         .refreshDisplayedSessionWindow(decision.sessionId, {
           forceProviderHydration: true,
-          barrierCursor: decision.barrierCursor,
           preserveViewport: true
         })
         .catch(() => undefined)

@@ -75,7 +75,14 @@ class FakeCodexRuntimePort
       id: payload.id,
       ok: true,
       result: {
-        accepted: true
+        accepted: true,
+        ...(payload.method === "turn/start"
+          ? {
+              sessionId: String(payload.params.sessionId),
+              turnId: "turn-canonical",
+              providerSessionId: "thread-canonical"
+            }
+          : {})
       }
     };
   }
@@ -110,6 +117,42 @@ class FakeCodexRuntimePort
 }
 
 describe("CodexAdapter", () => {
+  it("subscribes to runtime events when the shared runtime was started externally", async () => {
+    const runtimePort = new FakeCodexRuntimePort();
+    await runtimePort.start();
+    const adapter = new CodexAdapter({
+      runtimePort,
+      fallbackAgentId: "codex-agent"
+    });
+    const received: string[] = [];
+    adapter.subscribe((envelope) => {
+      received.push(envelope.event.type);
+    });
+
+    await expect(
+      adapter.executeCommand({
+        commandId: "cmd-before-adapter-initialize",
+        command: {
+          type: "initialize"
+        }
+      })
+    ).rejects.toThrow("is not ready");
+    await adapter.initialize();
+    runtimePort.emit({
+      method: "turn.completed",
+      params: {
+        sessionId: "session-1",
+        turnId: "turn-1",
+        finishReason: "completed"
+      },
+      eventId: "evt-turn-completed"
+    });
+
+    expect(runtimePort.startCalls).toBe(1);
+    expect(runtimePort.subscribeCalls).toBe(1);
+    expect(received).toEqual(["turn.completed"]);
+  });
+
   it("single-flights concurrent runtime initialization", async () => {
     const runtimePort = new FakeCodexRuntimePort();
     const startGate = createDeferred();
@@ -124,7 +167,7 @@ describe("CodexAdapter", () => {
     await Promise.resolve();
 
     expect(runtimePort.startCalls).toBe(1);
-    expect(runtimePort.subscribeCalls).toBe(0);
+    expect(runtimePort.subscribeCalls).toBe(1);
 
     startGate.resolve();
     await Promise.all([first, second]);
@@ -209,7 +252,7 @@ describe("CodexAdapter", () => {
     });
 
     await adapter.initialize();
-    await adapter.executeCommand({
+    const result = await adapter.executeCommand({
       commandId: "cmd-1",
       command: {
         type: "sendUserMessage",
@@ -223,6 +266,12 @@ describe("CodexAdapter", () => {
     expect(runtimePort.requests).toHaveLength(1);
     expect(runtimePort.requests[0].method).toBe("turn/start");
     expect(runtimePort.requests[0].params.type).toBe("sendUserMessage");
+    expect(result.outcome).toEqual({
+      type: "turn_started",
+      sessionId: "session-1",
+      turnId: "turn-canonical",
+      providerSessionId: "thread-canonical"
+    });
   });
 
   it("maps steerTurn commands to the dedicated codex steer method", async () => {

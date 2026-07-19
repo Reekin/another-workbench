@@ -4,7 +4,8 @@ import type { TurnTranscriptRow } from "../src/ui/chat-shell/transcript-view-mod
 
 const row = (
   turnId: string,
-  messageRole: TurnTranscriptRow["messageRole"] = "assistant"
+  messageRole: TurnTranscriptRow["messageRole"] = "assistant",
+  status: TurnTranscriptRow["turn"]["status"] = "completed"
 ): TurnTranscriptRow =>
   ({
     rowId: `${turnId}:${messageRole}`,
@@ -13,7 +14,7 @@ const row = (
     turn: {
       turnId,
       sessionId: "session-1",
-      status: "completed",
+      status,
       startedAt: "2026-04-18T00:00:00Z",
       messageIds: [],
       toolCallIds: [],
@@ -110,6 +111,22 @@ describe("filterTranscriptRowsForChatTree", () => {
     });
 
     expect(filtered).toEqual([]);
+  });
+
+  it("keeps a live canonical turn visible until the chat tree acknowledges it", () => {
+    const liveRow = row("turn-live", "assistant", "streaming");
+
+    expect(
+      filterTranscriptRowsForChatTree([row("turn-stale"), liveRow], {
+        sessionId: "session-1",
+        engineId: "codex",
+        supportsJump: true,
+        currentNodeId: "node-current",
+        visibleTurnIds: ["turn-current"],
+        nodes: [],
+        fetchedAt: "2026-04-18T00:00:00Z"
+      })
+    ).toEqual([liveRow]);
   });
 
   it("keeps the user prompt immediately before a visible assistant branch turn", () => {

@@ -36,6 +36,51 @@ const toEnvelopeAt = (
   event
 });
 
+it("preserves canonical turn collections across duplicate turn.started events", () => {
+  let state = createInitialRendererStoreState();
+  for (const envelope of [
+    toEnvelope("session", "1", {
+      type: "session.created",
+      conversationId: "conversation-1",
+      sessionId: "session-1",
+      engineId: "codex",
+      status: "idle"
+    }),
+    toEnvelope("turn", "2", {
+      type: "turn.started",
+      sessionId: "session-1",
+      turnId: "turn-1"
+    }),
+    toEnvelope("message", "3", {
+      type: "message.started",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      messageId: "message-1",
+      role: "user",
+      engineId: "codex"
+    }),
+    toEnvelope("turn-completed", "4", {
+      type: "turn.completed",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      finishReason: "completed"
+    }),
+    toEnvelope("turn-duplicate", "5", {
+      type: "turn.started",
+      sessionId: "session-1",
+      turnId: "turn-1"
+    })
+  ]) {
+    state = rendererStoreReducer(state, parseIngestEnvelopeAction(envelope));
+  }
+
+  expect(state.entities.turns["turn-1"]).toMatchObject({
+    status: "completed",
+    messageIds: ["message-1"]
+  });
+  expect(state.entities.sessions["session-1"]?.status).toBe("idle");
+});
+
 type ConformanceEvent = {
   occurredAt: string;
   event: RuntimeEvent;

@@ -172,7 +172,13 @@ describe("Pi ACP runtime port", () => {
       content: "crash during prompt"
     });
 
-    expect(failedResponse.ok).toBe(false);
+    expect(failedResponse).toMatchObject({
+      ok: true,
+      result: {
+        type: "turn_started",
+        sessionId: "session-crash"
+      }
+    });
     await waitFor(() => port.getState() === "failed");
     expect(events.some((event) =>
       event.event === "runtime.error" &&
@@ -202,7 +208,7 @@ describe("Pi ACP runtime port", () => {
       }
     });
 
-    const promptPromise = sendTurn(port, {
+    const promptResponse = await sendTurn(port, {
       requestId: "send-approval",
       sessionId: "session-approval",
       content: "needs permission"
@@ -221,22 +227,26 @@ describe("Pi ACP runtime port", () => {
     });
     expect(cancelResponse.ok).toBe(true);
 
-    const promptResponse = await promptPromise;
     expect(promptResponse.ok).toBe(true);
     expect(promptResponse.result).toMatchObject({
-      stopReason: "cancelled"
+      type: "turn_started",
+      sessionId: "session-approval"
     });
     expect(events.some((event) =>
       event.event === "approval.resolved" &&
       event.payload.action === "defer"
     )).toBe(true);
+    await waitFor(() => events.some((event) =>
+      event.event === "turn.completed" &&
+      event.payload.finishReason === "interrupted"
+    ));
     expect(events.some((event) =>
       event.event === "turn.completed" &&
       event.payload.finishReason === "interrupted"
     )).toBe(true);
   });
 
-  it("times out a hung prompt without waiting for the ACP provider", async () => {
+  it("returns the canonical turn before a hung prompt completes", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "awb-pi-acp-timeout-"));
     tempDirs.push(tempDir);
     const requestLogPath = join(tempDir, "requests.jsonl");
@@ -267,18 +277,15 @@ describe("Pi ACP runtime port", () => {
     );
 
     expect(response).toMatchObject({
-      ok: false,
-      error: {
-        code: "runtime_request_timeout"
+      ok: true,
+      result: {
+        type: "turn_started",
+        sessionId: "session-timeout"
       }
     });
-    expect(readRequestLog(requestLogPath).some((request) =>
+    await waitFor(() => readRequestLog(requestLogPath).some((request) =>
       request.method === "prompt"
-    )).toBe(true);
-    expect(events.some((event) =>
-      event.event === "turn.completed" &&
-      event.payload.finishReason === "failed"
-    )).toBe(true);
+    ));
 
     await port.stop({
       timeoutMs: 250
@@ -303,7 +310,7 @@ describe("Pi ACP runtime port", () => {
       }
     });
 
-    const commandPromise = adapter.executeCommand({
+    const commandResult = await adapter.executeCommand({
       commandId: "send-dispose-hung-acp",
       command: {
         type: "sendUserMessage",
@@ -323,10 +330,11 @@ describe("Pi ACP runtime port", () => {
     });
     await waitFor(() => disposeSettled);
 
-    await expect(commandPromise).resolves.toMatchObject({
-      accepted: false,
-      error: {
-        code: "runtime_request_aborted"
+    expect(commandResult).toMatchObject({
+      accepted: true,
+      outcome: {
+        type: "turn_started",
+        sessionId: "session-dispose"
       }
     });
     await disposePromise;

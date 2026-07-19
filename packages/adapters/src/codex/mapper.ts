@@ -106,8 +106,28 @@ export class CodexMapper
       });
     }
 
+    const result = response.result as Record<string, unknown> | undefined;
+    const turnId = typeof result?.turnId === "string" ? result.turnId : undefined;
+    const sessionId =
+      typeof result?.sessionId === "string"
+        ? result.sessionId
+        : "sessionId" in envelope.command
+          ? envelope.command.sessionId
+          : undefined;
+
     return defaultCommandResultFromResponse(envelope, response, {
-      accepted: response.ok ?? true
+      accepted: response.ok ?? true,
+      outcome:
+        envelope.command.type === "sendUserMessage" && turnId && sessionId
+          ? {
+              type: "turn_started",
+              sessionId,
+              turnId,
+              ...(typeof result?.providerSessionId === "string"
+                ? { providerSessionId: result.providerSessionId }
+                : {})
+            }
+          : { type: "command_accepted" }
     });
   }
 

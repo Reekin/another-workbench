@@ -43,6 +43,7 @@ import type {
   WorkspaceRecordRpc,
   WorkbenchRpcResponse
 } from "@another-workbench/shared";
+import type { RuntimeCommandReceiptRpc } from "@another-workbench/shared";
 import { safeParseWorkbenchRpcResponse } from "@another-workbench/shared";
 import { createTransportRpcHelper } from "./transport-rpc-helper.js";
 
@@ -54,11 +55,7 @@ type IdFactory = () => string;
 type CancelScheduledWork = () => void;
 type EventDrainScheduler = (callback: () => void) => CancelScheduledWork;
 
-export type CommandReceipt = {
-  commandId: string;
-  commandType: Command["type"];
-  accepted: boolean;
-};
+export type CommandReceipt = RuntimeCommandReceiptRpc;
 
 export type EngineSelectInput = {
   engineId: string;

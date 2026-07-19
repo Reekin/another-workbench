@@ -62,6 +62,12 @@ type TurnState = {
   toolsById: Map<string, ToolState>;
 };
 
+type PromptTask = {
+  turnId: string;
+  acpSessionId: string;
+  promise: Promise<void>;
+};
+
 type PendingApproval = {
   requestId: string;
   sessionId: string;
@@ -334,6 +340,7 @@ class PiAcpRuntimePort
   private readonly backingSessionByWorkbenchId = new Map<string, BackingSession>();
   private readonly workbenchSessionIdByAcpId = new Map<string, string>();
   private readonly turnStateBySessionId = new Map<string, TurnState>();
+  private readonly promptTaskBySessionId = new Map<string, PromptTask>();
   private readonly pendingApprovalByRequestId = new Map<string, PendingApproval>();
   private connection: ClientSideConnection | undefined;
   private startConfig: AgentAdapterRuntimeConfig = {};
@@ -478,9 +485,12 @@ class PiAcpRuntimePort
   private async stopProcess(_options: RuntimeStopOptions = {}): Promise<void> {
     this.lifecycle.setState("stopping");
     this.cancelPendingApprovalsForSession();
+    const promptTasks = [...this.promptTaskBySessionId.entries()];
+    for (const [sessionId, task] of promptTasks) {
+      this.cancelActiveAcpTurn(sessionId, task.acpSessionId);
+    }
     this.backingSessionByWorkbenchId.clear();
     this.workbenchSessionIdByAcpId.clear();
-    this.turnStateBySessionId.clear();
     this.pendingApprovalByRequestId.clear();
 
     this.connection = undefined;
@@ -488,6 +498,9 @@ class PiAcpRuntimePort
       reason: _options.reason,
       timeoutMs: _options.timeoutMs
     });
+    await Promise.allSettled(promptTasks.map(([, task]) => task.promise));
+    this.promptTaskBySessionId.clear();
+    this.turnStateBySessionId.clear();
     this.lifecycle.setState("stopped");
   }
 
@@ -573,6 +586,17 @@ class PiAcpRuntimePort
       };
     }
 
+    if (this.promptTaskBySessionId.has(sessionId)) {
+      return {
+        id: payload.id,
+        ok: false,
+        error: {
+          code: "ACP_TURN_ACTIVE",
+          message: `Session ${sessionId} already has an active ACP turn.`
+        }
+      };
+    }
+
     try {
       const backingSession = await this.ensureBackingSession(
         sessionId,
@@ -590,51 +614,43 @@ class PiAcpRuntimePort
         sessionId,
         turnId: turnState.turnId
       });
-
-      const response = await this.withOperationControls(
-        this.requireConnection().prompt({
-          sessionId: backingSession.acpSessionId,
-          prompt: buildAcpPromptContent(normalizePromptText(content), attachments)
-        }),
-        options,
-        {
-          method: payload.method,
-          onCancel: () => {
-            this.cancelActiveAcpTurn(sessionId, backingSession.acpSessionId);
-          }
+      const taskPromise = this.runPromptTask({
+        turnState,
+        acpSessionId: backingSession.acpSessionId,
+        content,
+        attachments
+      });
+      this.promptTaskBySessionId.set(sessionId, {
+        turnId: turnState.turnId,
+        acpSessionId: backingSession.acpSessionId,
+        promise: taskPromise
+      });
+      void taskPromise.finally(() => {
+        const current = this.promptTaskBySessionId.get(sessionId);
+        if (current?.turnId === turnState.turnId) {
+          this.promptTaskBySessionId.delete(sessionId);
         }
-      );
-
-      this.completeTurn(turnState, response.stopReason);
+      });
       return {
         id: payload.id,
         ok: true,
         result: {
           accepted: true,
-          stopReason: response.stopReason
+          type: "turn_started",
+          sessionId,
+          turnId: turnState.turnId,
+          providerSessionId: backingSession.acpSessionId
         }
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const responseCode = this.responseErrorCode(error, "ACP_PROMPT_FAILED");
-      const turnState = this.turnStateBySessionId.get(sessionId);
-      if (turnState) {
-        this.emitEvent("runtime.error", {
-          sessionId,
-          turnId: turnState.turnId,
-          code: responseCode,
-          message,
-          recoverable: isRuntimePortError(error) ? error.retryable : false
-        });
-        this.completeTurn(turnState, "refusal");
-      } else {
-        this.emitEvent("runtime.error", {
-          sessionId,
-          code: responseCode,
-          message,
-          recoverable: isRuntimePortError(error) ? error.retryable : false
-        });
-      }
+      this.emitEvent("runtime.error", {
+        sessionId,
+        code: responseCode,
+        message,
+        recoverable: isRuntimePortError(error) ? error.retryable : false
+      });
       this.emitSessionUpdated(sessionId, "error");
       return {
         id: payload.id,
@@ -644,6 +660,38 @@ class PiAcpRuntimePort
           message
         }
       };
+    }
+  }
+
+  private async runPromptTask(input: {
+    turnState: TurnState;
+    acpSessionId: string;
+    content: string;
+    attachments: Attachment[];
+  }): Promise<void> {
+    try {
+      const response = await this.requireConnection().prompt({
+        sessionId: input.acpSessionId,
+        prompt: buildAcpPromptContent(
+          normalizePromptText(input.content),
+          input.attachments
+        )
+      });
+      this.completeTurn(input.turnState, response.stopReason);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const responseCode = this.responseErrorCode(error, "ACP_PROMPT_FAILED");
+      this.emitEvent("runtime.error", {
+        sessionId: input.turnState.sessionId,
+        turnId: input.turnState.turnId,
+        code: responseCode,
+        message,
+        recoverable: isRuntimePortError(error) ? error.retryable : false
+      });
+      this.completeTurn(
+        input.turnState,
+        this.lifecycle.getState() === "stopping" ? "cancelled" : "refusal"
+      );
     }
   }
 

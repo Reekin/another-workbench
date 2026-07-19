@@ -1574,7 +1574,10 @@ const zRuntimeCommandResponseSchema = z.object({
   result: z.object({
     commandId: zRequestId,
     commandType: zWorkbenchCommandType,
-    accepted: z.boolean().default(true)
+    accepted: z.boolean().default(true),
+    sessionId: zSessionId.optional(),
+    turnId: zTurnId.optional(),
+    providerSessionId: z.string().min(1).optional()
   })
 });
 
@@ -1704,6 +1707,9 @@ export type WorkbenchEventSubscriptionFilter = z.infer<
 >;
 export type WorkbenchRpcRequest = z.infer<typeof zWorkbenchRpcRequestSchema>;
 export type WorkbenchRpcResponse = z.infer<typeof zWorkbenchRpcResponseSchema>;
+export type RuntimeCommandReceiptRpc = z.infer<
+  typeof zRuntimeCommandResponseSchema
+>["result"];
 export type WorkbenchEventPush = z.infer<typeof zWorkbenchEventPushSchema>;
 export type WorkbenchEventPushBatch = z.infer<typeof zWorkbenchEventPushBatchSchema>;
 export type WorkspaceRecordRpc = z.infer<typeof zWorkspaceRecordSchema>;

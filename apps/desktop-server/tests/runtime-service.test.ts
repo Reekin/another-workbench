@@ -174,7 +174,17 @@ describe("WorkbenchRuntimeService", () => {
         return {
           commandId: envelope.commandId,
           commandType: envelope.command.type,
-          accepted: true
+          accepted: true,
+          ...(envelope.command.type === "sendUserMessage"
+            ? {
+                outcome: {
+                  type: "turn_started" as const,
+                  sessionId: envelope.command.sessionId,
+                  turnId: "turn-provider-link",
+                  providerSessionId: "thread-123"
+                }
+              }
+            : {})
         };
       },
       subscribe: (next) => {
@@ -392,7 +402,16 @@ describe("WorkbenchRuntimeService", () => {
       executeCommand: async (envelope) => ({
         commandId: envelope.commandId,
         commandType: envelope.command.type,
-        accepted: true
+        accepted: true,
+        ...(envelope.command.type === "sendUserMessage"
+          ? {
+              outcome: {
+                type: "turn_started" as const,
+                sessionId: envelope.command.sessionId,
+                turnId: "turn-attachments"
+              }
+            }
+          : {})
       }),
       subscribe: () => () => {},
       dispose: async () => {}
@@ -462,7 +481,16 @@ describe("WorkbenchRuntimeService", () => {
       executeCommand: async (envelope) => ({
         commandId: envelope.commandId,
         commandType: envelope.command.type,
-        accepted: true
+        accepted: true,
+        ...(envelope.command.type === "sendUserMessage"
+          ? {
+              outcome: {
+                type: "turn_started" as const,
+                sessionId: envelope.command.sessionId,
+                turnId: "turn-running"
+              }
+            }
+          : {})
       }),
       subscribe: (next) => {
         listener = next;

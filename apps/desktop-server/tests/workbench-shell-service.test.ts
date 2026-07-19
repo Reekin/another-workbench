@@ -859,6 +859,67 @@ describe("WorkbenchShellService", () => {
     expect(markSessionRead).toHaveBeenCalledWith("session-1");
   });
 
+  it("hydrates a loaded provider session that has no projected turns", async () => {
+    const snapshot = buildSessionSnapshot();
+    const emptyProviderSession = {
+      ...snapshot.sessions[0],
+      lastTurnId: undefined,
+      metadata: {
+        providerKind: "codex-thread",
+        providerSessionId: "sub-thread-1"
+      }
+    };
+    const hydrateSessionWindow = vi.fn().mockResolvedValue({
+      workspaceId: "workspace-1",
+      conversation: snapshot.conversations[0],
+      session: emptyProviderSession,
+      turns: [snapshot.turns[0]],
+      messageBlocks: [],
+      toolCalls: [],
+      terminalStreams: [],
+      sessionRelations: [],
+      hasOlder: false,
+      hasNewer: false
+    });
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        listSessions: () => [emptyProviderSession],
+        getSnapshot: () => ({
+          ...snapshot,
+          sessions: [emptyProviderSession],
+          turns: []
+        }),
+        getWorkspaceRegistry: () => ({
+          setLastActiveSelection: vi.fn().mockResolvedValue(undefined)
+        }),
+        getSessionIndexStore: () => ({
+          getEntry: () => ({
+            sessionId: "session-1",
+            workspaceId: "workspace-1"
+          })
+        })
+      } as never,
+      sessionCatalog: {
+        markSessionRead: vi.fn().mockResolvedValue(undefined)
+      } as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {
+        get: vi.fn().mockResolvedValue(undefined)
+      } as never,
+      sessionReconciliation: {
+        hydrateSessionWindow
+      } as never
+    });
+
+    await expect(service.openSession("session-1")).resolves.toEqual({
+      page: expect.objectContaining({
+        sessionId: "session-1",
+        windowStartTurnId: "turn-1"
+      })
+    });
+    expect(hydrateSessionWindow).toHaveBeenCalledTimes(1);
+  });
+
   it("applies capability operation guards before jumping a lightweight chat tree", async () => {
     const setLastActiveSelection = vi.fn().mockResolvedValue(undefined);
     const markSessionRead = vi.fn().mockResolvedValue(undefined);

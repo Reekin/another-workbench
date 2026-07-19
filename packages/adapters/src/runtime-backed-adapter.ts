@@ -2,6 +2,7 @@ import { parseEventEnvelope, type CommandEnvelope } from "@another-workbench/sha
 import { LifecycleGate } from "./lifecycle-gate.js";
 import type { AdapterMapper } from "./mapper.js";
 import type { AdapterRuntimePort } from "./runtime-port.js";
+import type { RuntimeLifecycleState } from "./runtime-lifecycle.js";
 import type {
   AdapterCommandResult,
   AdapterEventFilter,
@@ -112,8 +113,10 @@ export class RuntimeBackedAdapter<
   private readonly inFlightCommands = new Set<InFlightCommand>();
   private readonly lifecycleGate = new LifecycleGate();
   private teardownRuntimeSubscription: (() => void) | undefined;
+  private teardownRuntimeStateSubscription: (() => void) | undefined;
   private nextSubscriptionId = 1;
-  private acceptingCommands = true;
+  private lifecycleState: AdapterLifecycleState = "idle";
+  private acceptingCommands = false;
   private commandGeneration = 0;
 
   public constructor(options: RuntimeBackedAdapterOptions<TRequest, TResponse, TEvent>) {
@@ -128,41 +131,41 @@ export class RuntimeBackedAdapter<
   }
 
   public getLifecycleState(): AdapterLifecycleState {
-    switch (this.runtimePort.getState()) {
-      case "starting":
-        return "starting";
-      case "ready":
-        return "ready";
-      case "failed":
-        return "error";
-      case "stopping":
-      case "stopped":
-        return "stopped";
-    }
+    return this.lifecycleState;
   }
 
   public async initialize(config: AgentAdapterRuntimeConfig = {}): Promise<void> {
-    if (this.getLifecycleState() === "ready") {
+    if (this.lifecycleState === "ready") {
       return;
     }
 
     await this.lifecycleGate.start(async () => {
-      if (this.getLifecycleState() === "ready") {
+      if (this.lifecycleState === "ready") {
         return;
       }
 
       const commandGeneration = this.commandGeneration;
-      await this.runtimePort.start({
-        cwd: config.cwd,
-        env: config.env,
-        auth: config.auth,
-        metadata: config.metadata
-      });
-      this.teardownRuntimeSubscription ??= this.runtimePort.subscribe((event) => {
-        this.publishRuntimeEvent(event);
-      });
-      if (this.commandGeneration === commandGeneration) {
-        this.acceptingCommands = true;
+      this.lifecycleState = "starting";
+      this.ensureRuntimeSubscriptions();
+      try {
+        if (this.runtimePort.getState() !== "ready") {
+          await this.runtimePort.start({
+            cwd: config.cwd,
+            env: config.env,
+            auth: config.auth,
+            metadata: config.metadata
+          });
+        }
+        if (this.commandGeneration === commandGeneration) {
+          this.acceptingCommands = true;
+          this.lifecycleState = "ready";
+        }
+      } catch (error) {
+        if (this.commandGeneration === commandGeneration) {
+          this.acceptingCommands = false;
+          this.lifecycleState = "error";
+        }
+        throw error;
       }
     });
   }
@@ -170,15 +173,21 @@ export class RuntimeBackedAdapter<
   public async executeCommand(
     envelope: CommandEnvelope
   ): Promise<AdapterCommandResult> {
-    if (!this.acceptingCommands) {
+    if (
+      !this.acceptingCommands &&
+      this.lifecycleGate.getPendingState().stopping
+    ) {
       throw new Error(`Adapter ${this.id} is not accepting commands.`);
     }
 
-    const state = this.getLifecycleState();
+    const state = this.lifecycleState;
     if (state !== "ready") {
       throw new Error(
         `Adapter ${this.id} is not ready. Current state: ${state}`
       );
+    }
+    if (!this.acceptingCommands) {
+      throw new Error(`Adapter ${this.id} is not accepting commands.`);
     }
 
     const context = this.createMapperContext();
@@ -231,12 +240,28 @@ export class RuntimeBackedAdapter<
         this.teardownRuntimeSubscription();
         this.teardownRuntimeSubscription = undefined;
       }
+      if (this.teardownRuntimeStateSubscription) {
+        this.teardownRuntimeStateSubscription();
+        this.teardownRuntimeStateSubscription = undefined;
+      }
       this.subscriptions.clear();
       try {
         await this.runtimePort.stop();
       } finally {
         await inFlightSettled;
+        this.lifecycleState = "stopped";
       }
+    });
+  }
+
+  private ensureRuntimeSubscriptions(): void {
+    this.teardownRuntimeStateSubscription ??= this.runtimePort.subscribeState(
+      (state) => {
+        this.applyRuntimeLifecycleState(state);
+      }
+    );
+    this.teardownRuntimeSubscription ??= this.runtimePort.subscribe((event) => {
+      this.publishRuntimeEvent(event);
     });
   }
 
@@ -265,5 +290,25 @@ export class RuntimeBackedAdapter<
       now: this.now,
       createId: this.createId
     };
+  }
+
+  private applyRuntimeLifecycleState(state: RuntimeLifecycleState): void {
+    switch (state) {
+      case "starting":
+        this.acceptingCommands = false;
+        this.lifecycleState = "starting";
+        break;
+      case "ready":
+        break;
+      case "stopping":
+      case "stopped":
+        this.acceptingCommands = false;
+        this.lifecycleState = "stopped";
+        break;
+      case "failed":
+        this.acceptingCommands = false;
+        this.lifecycleState = "error";
+        break;
+    }
   }
 }

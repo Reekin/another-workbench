@@ -7,6 +7,7 @@ import {
 } from "@another-workbench/shared";
 import type { AdapterMapperContext } from "./mapper.js";
 import type { AdapterCommandResult } from "./types.js";
+import type { AdapterCommandOutcome } from "./types.js";
 
 type AdapterError = {
   code: string;
@@ -66,12 +67,14 @@ export const defaultCommandResultFromResponse = (
   response: unknown,
   resolved: {
     accepted?: boolean;
+    outcome?: AdapterCommandOutcome;
     error?: AdapterError;
   } = {}
 ): AdapterCommandResult => ({
   commandId: envelope.commandId,
   commandType: envelope.command.type,
   accepted: resolved.accepted ?? !resolved.error,
+  outcome: resolved.outcome,
   raw: response,
   error: resolved.error
 });

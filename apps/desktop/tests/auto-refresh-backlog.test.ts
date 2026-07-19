@@ -25,10 +25,9 @@ const baseInput = (): AutoRefreshBacklogDecisionInput => ({
 });
 
 describe("auto refresh backlog decision", () => {
-  it("refreshes the displayed session with the session backlog cursor", () => {
+  it("uses backlog pressure only to trigger a displayed-session refresh", () => {
     expect(resolveAutoRefreshBacklogDecision(baseInput())).toEqual({
-      sessionId: "session-a",
-      barrierCursor: "cursor-800"
+      sessionId: "session-a"
     });
   });
 
@@ -86,8 +85,7 @@ describe("auto refresh backlog decision", () => {
 
     expect(visibleAttempt).toEqual({
       decision: {
-        sessionId: "session-a",
-        barrierCursor: "cursor-800"
+        sessionId: "session-a"
       }
     });
   });

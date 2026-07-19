@@ -338,13 +338,25 @@ export class DomainProjector {
         return;
       }
       case "turn.started": {
+        const existing = this.store.getTurn(event.turnId);
         this.upsertTurnRecord({
           turnId: event.turnId,
           sessionId: event.sessionId,
-          status: "started",
-          startedAt: timestamp
+          status: existing?.status ?? "started",
+          finishReason: existing?.finishReason,
+          startedAt: existing?.startedAt ?? timestamp,
+          completedAt: existing?.completedAt,
+          actor: existing?.actor,
+          finalMessageId: existing?.finalMessageId,
+          messageIds: existing?.messageIds,
+          toolCallIds: existing?.toolCallIds,
+          terminalIds: existing?.terminalIds,
+          approvalRequestIds: existing?.approvalRequestIds,
+          interactionRequestIds: existing?.interactionRequestIds
         });
-        this.setSessionStatus(event.sessionId, "running", timestamp, event.turnId);
+        if (existing?.status !== "completed") {
+          this.setSessionStatus(event.sessionId, "running", timestamp, event.turnId);
+        }
         return;
       }
       case "turn.completed": {

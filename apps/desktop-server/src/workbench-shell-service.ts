@@ -668,11 +668,19 @@ export class WorkbenchShellService {
   ): Promise<{ page: SessionWindowSnapshot }> {
     const generation = ++this.openSessionGeneration;
     const isCancelled = () => generation !== this.openSessionGeneration;
-    const alreadyLoaded = this.runtimeService
+    const loadedSession = this.runtimeService
       .listSessions({ includeArchived: true })
-      .some((session) => session.sessionId === sessionId);
+      .find((session) => session.sessionId === sessionId);
+    const alreadyLoaded = Boolean(loadedSession);
+    const isEmptyProviderSession = Boolean(
+      loadedSession?.metadata?.providerKind &&
+        loadedSession.metadata.providerSessionId &&
+        !loadedSession.lastTurnId
+    );
     const alreadyFullyLoaded =
-      alreadyLoaded && !this.partiallyHydratedSessionIds.has(sessionId);
+      alreadyLoaded &&
+      !isEmptyProviderSession &&
+      !this.partiallyHydratedSessionIds.has(sessionId);
     const anchorTurnId = await this.resolveProviderAnchorTurnId(sessionId);
     if (isCancelled()) {
       throw new Error("Open session cancelled.");

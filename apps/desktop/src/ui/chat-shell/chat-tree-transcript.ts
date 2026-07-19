@@ -45,7 +45,10 @@ export const filterTranscriptRowsForChatTree = (
 
   const visibleIndexes = new Set<number>();
   rows.forEach((row, index) => {
-    if (!visibleTurnIds.has(row.turn.turnId)) {
+    if (
+      row.turn.status === "completed" &&
+      !visibleTurnIds.has(row.turn.turnId)
+    ) {
       return;
     }
     visibleIndexes.add(index);

@@ -4,6 +4,48 @@ import { DomainProjector } from "../src/domain-projector.js";
 import { DomainStore } from "../src/domain-store.js";
 
 describe("DomainProjector", () => {
+  it("keeps canonical turn contents when turn.started is repeated", () => {
+    const projector = new DomainProjector();
+    projector.apply({
+      type: "session.created",
+      conversationId: "conversation-a",
+      sessionId: "session-1",
+      engineId: "codex",
+      status: "idle"
+    }, "2026-07-18T00:00:00.000Z");
+    projector.apply({
+      type: "turn.started",
+      sessionId: "session-1",
+      turnId: "turn-1"
+    }, "2026-07-18T00:00:01.000Z");
+    projector.apply({
+      type: "message.started",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      messageId: "message-1",
+      role: "user",
+      engineId: "codex"
+    }, "2026-07-18T00:00:02.000Z");
+    projector.apply({
+      type: "turn.completed",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      finishReason: "completed"
+    }, "2026-07-18T00:00:03.000Z");
+    projector.apply({
+      type: "turn.started",
+      sessionId: "session-1",
+      turnId: "turn-1"
+    }, "2026-07-18T00:00:04.000Z");
+
+    expect(projector.store.getTurn("turn-1")).toMatchObject({
+      status: "completed",
+      startedAt: "2026-07-18T00:00:01.000Z",
+      messageIds: ["message-1"]
+    });
+    expect(projector.store.getSession("session-1")?.status).toBe("idle");
+  });
+
   it("projects session context usage", () => {
     const projector = new DomainProjector();
 

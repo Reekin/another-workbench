@@ -524,12 +524,22 @@ describe("Codex app-server runtime port", () => {
     });
 
     await port.start();
-    await port.request({
+    const startResponse = await port.request({
       id: "turn-1",
       method: "turn/start",
       params: {
         sessionId: "session-1",
         content: "hello from test"
+      }
+    });
+
+    expect(startResponse).toMatchObject({
+      ok: true,
+      result: {
+        type: "turn_started",
+        sessionId: "session-1",
+        turnId: expect.any(String),
+        providerSessionId: expect.any(String)
       }
     });
 
@@ -571,6 +581,44 @@ describe("Codex app-server runtime port", () => {
         })
       })
     ]);
+  });
+
+  it("routes live turn events to the session that started the turn when thread aliases exist", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: (sessionId) => `conversation-${sessionId}`
+    });
+    disposers.push(() => port.stop());
+
+    const routedSessions: string[] = [];
+    port.subscribe((event) => {
+      if (
+        event.method === "message.delta" ||
+        event.method === "message.completed" ||
+        event.method === "turn.completed"
+      ) {
+        routedSessions.push(String(event.params.sessionId));
+      }
+    });
+
+    await port.start();
+    port.attachThreadToSession("session-sender", "thread-shared");
+    port.attachThreadToSession("session-hydrated-alias", "thread-shared");
+    await port.request({
+      id: "turn-shared-thread",
+      method: "turn/start",
+      params: {
+        sessionId: "session-sender",
+        content: "route this turn to its sender"
+      }
+    });
+
+    await waitFor(() => routedSessions.length > 0);
+    expect(routedSessions).not.toContain("session-hydrated-alias");
+    expect(routedSessions.every((sessionId) => sessionId === "session-sender")).toBe(
+      true
+    );
   });
 
   it("marks message.completed as final for the turn when upstream phase is final_answer", async () => {
@@ -1883,6 +1931,24 @@ describe("Codex app-server runtime port", () => {
             metadata: expect.objectContaining({
               providerSessionId: "sub-thread-1"
             })
+          })
+        }),
+        expect.objectContaining({
+          method: "message.completed",
+          params: expect.objectContaining({
+            sessionId: "codex-thread:sub-thread-1",
+            turnId: "child-turn-1",
+            role: "user",
+            finalText: "Review this file"
+          })
+        }),
+        expect.objectContaining({
+          method: "message.completed",
+          params: expect.objectContaining({
+            sessionId: "codex-thread:sub-thread-1",
+            turnId: "child-turn-1",
+            role: "assistant",
+            finalText: "Reviewed successfully"
           })
         }),
         expect.objectContaining({

@@ -40,7 +40,7 @@ type DemoRuntimePortOptions<TRequest, TResponse, TEvent> = {
   engineId: string;
   kind: "codex" | "acp";
   responseFlavor: string;
-  okResponse: (id: string) => TResponse;
+  okResponse: (id: string, result?: Record<string, unknown>) => TResponse;
   createEvent: (
     name: DemoRuntimeEventType,
     payload: Record<string, unknown>,
@@ -67,7 +67,10 @@ class DemoRuntimePort<TRequest, TResponse, TEvent>
   private readonly engineId: string;
   private readonly kind: "codex" | "acp";
   private readonly responseFlavor: string;
-  private readonly okResponseFactory: (id: string) => TResponse;
+  private readonly okResponseFactory: (
+    id: string,
+    result?: Record<string, unknown>
+  ) => TResponse;
   private readonly createEventFactory: (
     name: DemoRuntimeEventType,
     payload: Record<string, unknown>,
@@ -118,8 +121,15 @@ class DemoRuntimePort<TRequest, TResponse, TEvent>
       request.method === "turn/start" ||
       request.method === "turn.send"
     ) {
-      this.dispatchAsync(this.buildTurnStory(request.params));
-      return this.okResponseFactory(request.id);
+      const sessionId = String(request.params.sessionId ?? "");
+      const turnId = String(request.params.turnId ?? `turn-${++this.turnCounter}`);
+      this.dispatchAsync(this.buildTurnStory({ ...request.params, turnId }));
+      return this.okResponseFactory(request.id, {
+        accepted: true,
+        type: "turn_started",
+        sessionId,
+        turnId
+      });
     }
 
     if (
@@ -418,12 +428,10 @@ export const createCodexDemoRuntimePort = (
     kind: "codex",
     responseFlavor: "Codex",
     parseRequest: (request) => request,
-    okResponse: (id) => ({
+    okResponse: (id, result) => ({
       id,
       ok: true,
-      result: {
-        accepted: true
-      }
+      result: result ?? { accepted: true }
     }),
     createEvent: (method, params, cursor): CodexRuntimeEvent => ({
       method,
@@ -449,12 +457,10 @@ export const createAcpDemoRuntimePort = (
       method: request.method,
       params: request.params
     }),
-    okResponse: (id) => ({
+    okResponse: (id, result) => ({
       id,
       ok: true,
-      result: {
-        accepted: true
-      }
+      result: result ?? { accepted: true }
     }),
     createEvent: (event, payload, cursor): AcpRuntimeEvent => ({
       event,

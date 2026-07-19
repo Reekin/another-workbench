@@ -794,7 +794,7 @@ describe("Session discovery and reconciliation", () => {
     });
 
     const attachThreadToSession = vi.fn();
-    const resumeThread = vi.fn().mockResolvedValue({
+    const rootHydratedThread = {
       ...rootThread,
       turns: [
         {
@@ -867,7 +867,40 @@ describe("Session discovery and reconciliation", () => {
           items: []
         }
       ]
-    });
+    };
+    const childHydratedThread = {
+      ...childThread,
+      turns: [
+        {
+          id: "child-turn-1",
+          status: "completed",
+          error: null,
+          items: [
+            {
+              type: "userMessage",
+              id: "child-user-1",
+              content: [
+                {
+                  type: "text",
+                  text: "Review this change",
+                  text_elements: []
+                }
+              ]
+            },
+            {
+              type: "agentMessage",
+              id: "child-agent-1",
+              text: "Reviewed successfully",
+              phase: "final_answer",
+              memoryCitation: null
+            }
+          ]
+        }
+      ]
+    };
+    const resumeThread = vi.fn().mockImplementation((threadId: string) =>
+      Promise.resolve(threadId === "thread-child" ? childHydratedThread : rootHydratedThread)
+    );
     const listThreads = vi.fn().mockResolvedValue({
       data: [rootThread, childThread],
       nextCursor: null
@@ -905,6 +938,15 @@ describe("Session discovery and reconciliation", () => {
       sessions: 2,
       relations: 1
     });
+    expect(listThreads).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceKinds: expect.arrayContaining([
+          "appServer",
+          "subAgent",
+          "subAgentThreadSpawn"
+        ])
+      })
+    );
 
     expect(sessionIndexStore.getEntry("codex-thread:thread-root")).toMatchObject({
       providerKind: "codex-thread",
@@ -1009,6 +1051,24 @@ describe("Session discovery and reconciliation", () => {
         })
       ]
     });
+
+    await expect(
+      reconciliation.ensureSessionLoaded("codex-thread:thread-child")
+    ).resolves.toBe(true);
+    expect(runtimeService.getSnapshot().messageBlocks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: "codex-thread:thread-child",
+          role: "user",
+          text: "Review this change"
+        }),
+        expect.objectContaining({
+          sessionId: "codex-thread:thread-child",
+          role: "assistant",
+          text: "Reviewed successfully"
+        })
+      ])
+    );
   });
 
   it("aliases discovered subagent relations onto an existing local parent session by provider session id", async () => {

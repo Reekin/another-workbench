@@ -168,8 +168,7 @@ describe("useSessionOpenController background refresh", () => {
 
     const manualOpen = controller.onOpenSession("session-b");
     await controller.refreshDisplayedSessionWindow("session-a", {
-      forceProviderHydration: true,
-      barrierCursor: "cursor-a"
+      forceProviderHydration: true
     });
     await flushMicrotasks();
 
@@ -197,8 +196,7 @@ describe("useSessionOpenController background refresh", () => {
     } = renderController("session-a");
 
     const backgroundRefresh = controller.refreshDisplayedSessionWindow("session-a", {
-      forceProviderHydration: true,
-      barrierCursor: "cursor-a"
+      forceProviderHydration: true
     });
     expect(open).toHaveBeenCalledWith("session-a", {
       forceProviderHydration: true
@@ -231,8 +229,7 @@ describe("useSessionOpenController background refresh", () => {
     } = renderController("session-a");
 
     const backgroundRefresh = controller.refreshDisplayedSessionWindow("session-a", {
-      forceProviderHydration: true,
-      barrierCursor: "cursor-a-background"
+      forceProviderHydration: true
     });
     expect(open).toHaveBeenCalledWith("session-a", {
       forceProviderHydration: true

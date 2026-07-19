@@ -214,6 +214,8 @@ const emitHappyPath = ({ threadId, turnId, prompt, messagePhase = null }) => {
 
 const emitCollabPath = ({ threadId, turnId }) => {
   const collabId = `collab-${turnId}`;
+  const childThreadId = "sub-thread-1";
+  const childTurnId = `child-${turnId}`;
   send({
     method: "thread/status/changed",
     params: {
@@ -226,6 +228,104 @@ const emitCollabPath = ({ threadId, turnId }) => {
     params: {
       threadId,
       turn: { id: turnId }
+    }
+  });
+  send({
+    method: "thread/started",
+    params: {
+      thread: {
+        id: childThreadId,
+        source: {
+          subAgent: {
+            thread_spawn: {
+              parent_thread_id: threadId
+            }
+          }
+        },
+        status: { type: "active" },
+        agentNickname: "Reviewer"
+      }
+    }
+  });
+  send({
+    method: "turn/started",
+    params: {
+      threadId: childThreadId,
+      turn: { id: childTurnId }
+    }
+  });
+  const childUserMessage = {
+    type: "userMessage",
+    id: `user-${childTurnId}`,
+    content: [
+      {
+        type: "text",
+        text: "Review this file",
+        text_elements: []
+      }
+    ]
+  };
+  send({
+    method: "item/started",
+    params: {
+      threadId: childThreadId,
+      turnId: childTurnId,
+      item: childUserMessage
+    }
+  });
+  send({
+    method: "item/completed",
+    params: {
+      threadId: childThreadId,
+      turnId: childTurnId,
+      item: childUserMessage
+    }
+  });
+  send({
+    method: "item/started",
+    params: {
+      threadId: childThreadId,
+      turnId: childTurnId,
+      item: {
+        type: "agentMessage",
+        id: `agent-${childTurnId}`,
+        text: "",
+        phase: "final_answer",
+        memoryCitation: null
+      }
+    }
+  });
+  send({
+    method: "item/agentMessage/delta",
+    params: {
+      threadId: childThreadId,
+      turnId: childTurnId,
+      itemId: `agent-${childTurnId}`,
+      delta: "Reviewed successfully"
+    }
+  });
+  send({
+    method: "item/completed",
+    params: {
+      threadId: childThreadId,
+      turnId: childTurnId,
+      item: {
+        type: "agentMessage",
+        id: `agent-${childTurnId}`,
+        text: "Reviewed successfully",
+        phase: "final_answer",
+        memoryCitation: null
+      }
+    }
+  });
+  send({
+    method: "turn/completed",
+    params: {
+      threadId: childThreadId,
+      turn: {
+        id: childTurnId,
+        status: "completed"
+      }
     }
   });
   send({

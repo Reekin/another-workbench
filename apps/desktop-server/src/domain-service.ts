@@ -377,14 +377,14 @@ export class DomainService {
     return true;
   }
 
-  public commitLocalUserMessage(
-    command: Extract<Command, { type: "sendUserMessage" }>
+  public commitAcceptedUserMessage(
+    command: Extract<Command, { type: "sendUserMessage" }>,
+    turnId: string
   ): void {
     const renderedContent = buildLocalEchoMessageText(
       command.content,
       command.attachments
     );
-    const turnId = `user-turn-${command.messageId}`;
     this.commitRuntimeEvent({
       type: "turn.started",
       sessionId: command.sessionId,
@@ -412,12 +412,6 @@ export class DomainService {
       turnId,
       messageId: command.messageId,
       finalText: renderedContent
-    });
-    this.commitRuntimeEvent({
-      type: "turn.completed",
-      sessionId: command.sessionId,
-      turnId,
-      finishReason: "completed"
     });
   }
 

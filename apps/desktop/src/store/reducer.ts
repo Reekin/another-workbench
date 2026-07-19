@@ -671,22 +671,28 @@ const applyRuntimeEvent = (
       return withEventType(disposeSessionState(state, event.sessionId), event);
     }
     case "turn.started": {
+      const existing = state.entities.turns[event.turnId];
       const withTurn = upsertTurn(
         withEventType(state, event),
         {
           turnId: event.turnId,
           sessionId: event.sessionId,
-          status: "started",
-          startedAt: timestamp,
-          finalMessageId: undefined,
-          messageIds: [],
-          toolCallIds: [],
-          terminalIds: [],
-          approvalRequestIds: [],
-          interactionRequestIds: []
+          status: existing?.status ?? "started",
+          finishReason: existing?.finishReason,
+          startedAt: existing?.startedAt ?? timestamp,
+          completedAt: existing?.completedAt,
+          actor: existing?.actor,
+          finalMessageId: existing?.finalMessageId,
+          messageIds: existing?.messageIds ?? [],
+          toolCallIds: existing?.toolCallIds ?? [],
+          terminalIds: existing?.terminalIds ?? [],
+          approvalRequestIds: existing?.approvalRequestIds ?? [],
+          interactionRequestIds: existing?.interactionRequestIds ?? []
         }
       );
-      return setSessionStatus(withTurn, event.sessionId, "running", timestamp, event.turnId);
+      return existing?.status === "completed"
+        ? withTurn
+        : setSessionStatus(withTurn, event.sessionId, "running", timestamp, event.turnId);
     }
     case "turn.completed": {
       const existing = state.entities.turns[event.turnId];

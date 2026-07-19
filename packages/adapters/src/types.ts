@@ -22,10 +22,22 @@ export type AdapterEventFilter = {
 
 export type AdapterEventListener = (envelope: EventEnvelope) => void;
 
+export type AdapterCommandOutcome =
+  | {
+      type: "turn_started";
+      sessionId: string;
+      turnId: string;
+      providerSessionId?: string;
+    }
+  | {
+      type: "command_accepted";
+    };
+
 export type AdapterCommandResult = {
   commandId: CommandEnvelope["commandId"];
   commandType: CommandType;
   accepted: boolean;
+  outcome?: AdapterCommandOutcome;
   raw?: unknown;
   error?: {
     code: string;

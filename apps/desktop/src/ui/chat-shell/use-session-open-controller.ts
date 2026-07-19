@@ -20,7 +20,6 @@ type StatusNoticeSetter = Dispatch<
 
 type SessionWindowHydrationOptions = {
   forceProviderHydration?: boolean;
-  barrierCursor?: string;
   preserveViewport?: boolean;
 };
 
@@ -111,7 +110,6 @@ export const useSessionOpenController = (input: {
     mode: "replace" | "prepend" = "replace",
     options: {
       activate?: boolean;
-      barrierCursor?: string;
       preserveViewport?: boolean;
     } = {}
   ): void => {
@@ -119,7 +117,7 @@ export const useSessionOpenController = (input: {
       page.sessionId,
       page.snapshot,
       mode,
-      options.barrierCursor ?? page.cursor
+      page.cursor
     );
     input.setSessionWindows((current) => {
       const existing = current[page.sessionId];
@@ -169,7 +167,6 @@ export const useSessionOpenController = (input: {
       return;
     }
     applySessionWindow(result.page, "replace", {
-      barrierCursor: options.barrierCursor,
       preserveViewport: options.preserveViewport
     });
   };
@@ -232,7 +229,6 @@ export const useSessionOpenController = (input: {
       }
       applySessionWindow(result.page, "replace", {
         activate: false,
-        barrierCursor: options.barrierCursor,
         preserveViewport: options.preserveViewport ?? true
       });
     },

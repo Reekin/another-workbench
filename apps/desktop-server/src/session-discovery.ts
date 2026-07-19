@@ -1076,7 +1076,19 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
     do {
       const response = await this.codexRuntimePort.listThreads({
         cursor,
-        archived: false
+        archived: false,
+        sourceKinds: [
+          "cli",
+          "vscode",
+          "exec",
+          "appServer",
+          "subAgent",
+          "subAgentReview",
+          "subAgentCompact",
+          "subAgentThreadSpawn",
+          "subAgentOther",
+          "unknown"
+        ]
       });
       threads.push(...response.data);
       cursor = response.nextCursor;

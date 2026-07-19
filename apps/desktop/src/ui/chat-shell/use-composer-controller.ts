@@ -215,6 +215,7 @@ type UseComposerControllerInput = {
   activeWorkspaceId?: string;
   activeWorkspaceRootPath?: string;
   turns: Turn[];
+  allowSessionLastTurnFallback?: boolean;
   approvals: ApprovalRequest[];
   isTakeoverManaged?: boolean;
   isOpeningSelectedSession: boolean;
@@ -293,8 +294,13 @@ export const useComposerController = (
     const latestTurn = [...input.turns]
       .reverse()
       .find((turn) => turn.status !== "completed");
-    return latestTurn?.turnId ?? input.activeSession?.lastTurnId;
-  }, [input.turns, input.activeSession?.lastTurnId]);
+    return latestTurn?.turnId ??
+      (input.allowSessionLastTurnFallback ? input.activeSession?.lastTurnId : undefined);
+  }, [
+    input.turns,
+    input.allowSessionLastTurnFallback,
+    input.activeSession?.lastTurnId
+  ]);
 
   const draft = input.activeSessionId
     ? (draftBySessionId[input.activeSessionId] ?? "")

@@ -474,11 +474,26 @@ const buildRunningTurnRows = (
     ...entry,
     index
   }));
+  const initialPromptMessageId = turn.messageIds.find((messageId) =>
+    messageEntries.some(
+      (entry) =>
+        entry.group.role === "user" &&
+        entry.group.blocks[0]?.messageId === messageId
+    )
+  );
   const entries = [...messageEntries, ...processEntries].sort((left, right) => {
     const leftPhase =
-      left.kind === "message" && left.group.role === "user" ? 0 : 1;
+      left.kind === "message" &&
+      left.group.role === "user" &&
+      left.group.blocks[0]?.messageId === initialPromptMessageId
+        ? 0
+        : 1;
     const rightPhase =
-      right.kind === "message" && right.group.role === "user" ? 0 : 1;
+      right.kind === "message" &&
+      right.group.role === "user" &&
+      right.group.blocks[0]?.messageId === initialPromptMessageId
+        ? 0
+        : 1;
     if (leftPhase !== rightPhase) {
       return leftPhase - rightPhase;
     }

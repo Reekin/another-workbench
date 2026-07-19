@@ -1,4 +1,4 @@
-import type { ChatTreeSnapshotRpc } from "@another-workbench/shared";
+import type { ChatTreeSnapshotRpc, Turn } from "@another-workbench/shared";
 import type { TurnTranscriptRow } from "./transcript-view-model.js";
 
 const resolveVisibleTurnIds = (
@@ -34,6 +34,25 @@ const resolveVisibleTurnIds = (
   return visibleTurnIds.size > 0 ? visibleTurnIds : undefined;
 };
 
+const isTurnVisibleForChatTree = (
+  turn: Pick<Turn, "turnId" | "status">,
+  visibleTurnIds: Set<string>,
+  knownTurnIds: Set<string>
+): boolean =>
+  visibleTurnIds.has(turn.turnId) ||
+  (turn.status !== "completed" && !knownTurnIds.has(turn.turnId));
+
+export const filterComposerTurnsForChatTree = (
+  turns: Turn[],
+  chatTree: ChatTreeSnapshotRpc | undefined
+): Turn[] => {
+  const visibleTurnIds = resolveVisibleTurnIds(chatTree);
+  if (!visibleTurnIds) {
+    return turns;
+  }
+  return turns.filter((turn) => visibleTurnIds.has(turn.turnId));
+};
+
 export const filterTranscriptRowsForChatTree = (
   rows: TurnTranscriptRow[],
   chatTree: ChatTreeSnapshotRpc | undefined
@@ -43,20 +62,11 @@ export const filterTranscriptRowsForChatTree = (
     return rows;
   }
 
-  const visibleIndexes = new Set<number>();
-  rows.forEach((row, index) => {
-    if (
-      row.turn.status === "completed" &&
-      !visibleTurnIds.has(row.turn.turnId)
-    ) {
-      return;
-    }
-    visibleIndexes.add(index);
-    const previousRow = rows[index - 1];
-    if (previousRow?.messageRole === "user") {
-      visibleIndexes.add(index - 1);
-    }
-  });
+  const knownTurnIds = new Set(
+    chatTree?.nodes.flatMap((node) => (node.turnId ? [node.turnId] : [])) ?? []
+  );
 
-  return rows.filter((_row, index) => visibleIndexes.has(index));
+  return rows.filter((row) =>
+    isTurnVisibleForChatTree(row.turn, visibleTurnIds, knownTurnIds)
+  );
 };

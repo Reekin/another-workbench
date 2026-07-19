@@ -566,6 +566,129 @@ describe("transcript view model", () => {
     ]);
   });
 
+  it("orders user input sent during a running turn by its own timestamp", () => {
+    const store = createRendererStore();
+    store.hydrateSnapshot(
+      parseDomainSnapshot({
+        conversations: [
+          {
+            conversationId: "conv-1",
+            participantEngineIds: ["agent-1"],
+            activeSessionId: "session-1",
+            sessionIds: ["session-1"],
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        sessions: [
+          {
+            sessionId: "session-1",
+            conversationId: "conv-1",
+            engineId: "agent-1",
+            status: "running",
+            createdAt: "2026-04-17T00:00:00.000Z",
+            updatedAt: "2026-04-17T00:00:00.000Z"
+          }
+        ],
+        turns: [
+          {
+            turnId: "turn-1",
+            sessionId: "session-1",
+            status: "streaming",
+            startedAt: "2026-04-17T00:00:00.000Z",
+            messageIds: [
+              "message-initial-user",
+              "message-commentary",
+              "message-later-user",
+              "message-response"
+            ],
+            toolCallIds: ["tool-between"],
+            terminalIds: [],
+            approvalRequestIds: []
+          }
+        ],
+        messageBlocks: [
+          {
+            blockId: "message-initial-user:md",
+            messageId: "message-initial-user",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "user",
+            kind: "markdown",
+            text: "Start the task.",
+            startedAt: "2026-04-17T00:00:02.000Z"
+          },
+          {
+            blockId: "message-commentary:md",
+            messageId: "message-commentary",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "assistant",
+            kind: "markdown",
+            text: "Working on it.",
+            startedAt: "2026-04-17T00:00:03.000Z"
+          },
+          {
+            blockId: "message-later-user:md",
+            messageId: "message-later-user",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "user",
+            kind: "markdown",
+            text: "Also check the logs.",
+            startedAt: "2026-04-17T00:00:05.000Z"
+          },
+          {
+            blockId: "message-response:md",
+            messageId: "message-response",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "assistant",
+            kind: "markdown",
+            text: "Checking those now.",
+            startedAt: "2026-04-17T00:00:06.000Z"
+          }
+        ],
+        toolCalls: [
+          {
+            toolCallId: "tool-between",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            toolName: "exec",
+            status: "completed",
+            startedAt: "2026-04-17T00:00:04.000Z",
+            completedAt: "2026-04-17T00:00:04.500Z"
+          }
+        ],
+        terminalStreams: [],
+        approvalRequests: [],
+        participants: [],
+        sessionRelations: []
+      })
+    );
+
+    const domain = store.getDomainReadModel();
+    const rows = buildTurnTranscriptRows(
+      domain,
+      domain.listTurns({ sessionId: "session-1" }),
+      buildParticipantDirectory([])
+    );
+
+    expect(
+      rows.map((item) =>
+        item.rowKind === "message"
+          ? item.blocks[0]?.messageId
+          : item.toolCalls[0]?.toolCallId
+      )
+    ).toEqual([
+      "message-initial-user",
+      "message-commentary",
+      "tool-between",
+      "message-later-user",
+      "message-response"
+    ]);
+  });
+
   it("respects turn message order over message block timestamps", () => {
     const store = createRendererStore();
     store.hydrateSnapshot(

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { filterTranscriptRowsForChatTree } from "../src/ui/chat-shell/chat-tree-transcript.js";
+import {
+  filterComposerTurnsForChatTree,
+  filterTranscriptRowsForChatTree
+} from "../src/ui/chat-shell/chat-tree-transcript.js";
 import type { TurnTranscriptRow } from "../src/ui/chat-shell/transcript-view-model.js";
 
 const row = (
@@ -129,7 +132,7 @@ describe("filterTranscriptRowsForChatTree", () => {
     ).toEqual([liveRow]);
   });
 
-  it("keeps the user prompt immediately before a visible assistant branch turn", () => {
+  it("hides user rows from known sibling turns after a chat-tree jump", () => {
     const rows = [
       row("turn-user", "user"),
       row("turn-assistant"),
@@ -162,8 +165,83 @@ describe("filterTranscriptRowsForChatTree", () => {
     });
 
     expect(filtered.map((item) => item.turn.turnId)).toEqual([
-      "turn-user",
       "turn-assistant"
     ]);
+  });
+
+  it("hides a known running sibling while retaining an unacknowledged live turn", () => {
+    const filtered = filterTranscriptRowsForChatTree(
+      [
+        row("turn-current"),
+        row("turn-known-sibling", "user", "streaming"),
+        row("turn-live-unacknowledged", "user", "streaming")
+      ],
+      {
+        sessionId: "session-1",
+        engineId: "codex",
+        supportsJump: true,
+        currentNodeId: "node-current",
+        visibleTurnIds: ["turn-current"],
+        nodes: [
+          {
+            nodeId: "node-current",
+            label: "current",
+            turnId: "turn-current",
+            order: 1,
+            isCurrent: true
+          },
+          {
+            nodeId: "node-known-sibling",
+            label: "known sibling",
+            turnId: "turn-known-sibling",
+            order: 2,
+            isCurrent: false
+          }
+        ],
+        fetchedAt: "2026-04-18T00:00:00Z"
+      }
+    );
+
+    expect(filtered.map((item) => item.turn.turnId)).toEqual([
+      "turn-current",
+      "turn-live-unacknowledged"
+    ]);
+  });
+
+  it("restricts composer turn selection to acknowledged branch members", () => {
+    const rows = [
+      row("turn-current"),
+      row("turn-sibling-live", "assistant", "streaming"),
+      row("turn-pending", "assistant", "streaming")
+    ];
+    const turns = rows.map((item) => item.turn);
+    const chatTree = {
+      sessionId: "session-1",
+      engineId: "codex",
+      supportsJump: true,
+      currentNodeId: "node-current",
+      visibleTurnIds: ["turn-current"],
+      nodes: [
+        {
+          nodeId: "node-current",
+          label: "current",
+          turnId: "turn-current",
+          order: 1,
+          isCurrent: true
+        },
+        {
+          nodeId: "node-sibling-live",
+          label: "sibling",
+          turnId: "turn-sibling-live",
+          order: 2,
+          isCurrent: false
+        }
+      ],
+      fetchedAt: "2026-04-18T00:00:00Z"
+    };
+
+    expect(
+      filterComposerTurnsForChatTree(turns, chatTree).map((turn) => turn.turnId)
+    ).toEqual(["turn-current"]);
   });
 });

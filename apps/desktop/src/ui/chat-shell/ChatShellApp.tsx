@@ -49,7 +49,10 @@ import {
   statusNoticeErrorDetails,
   type ComposerStatusNotice
 } from "./composer-status.js";
-import { filterTranscriptRowsForChatTree } from "./chat-tree-transcript.js";
+import {
+  filterComposerTurnsForChatTree,
+  filterTranscriptRowsForChatTree
+} from "./chat-tree-transcript.js";
 import { buildTurnTranscriptRows } from "./transcript-view-model.js";
 import { useFileBrowserController } from "./use-file-browser-controller.js";
 import {
@@ -2385,6 +2388,10 @@ export const ChatShellApp = ({
     () => filterTranscriptRowsForChatTree(transcriptRows, activeChatTree),
     [transcriptRows, activeChatTree]
   );
+  const composerTurns = useMemo(
+    () => filterComposerTurnsForChatTree(turns, activeChatTree),
+    [turns, activeChatTree]
+  );
   const renderedTranscriptRows = isOpeningSelectedSession ? [] : visibleTranscriptRows;
   const activeSessionApprovals = useMemo(
     () =>
@@ -3275,7 +3282,8 @@ export const ChatShellApp = ({
             selectedEngineId={selectedEngineId}
             activeWorkspaceId={activeWorkspace?.workspaceId}
             activeWorkspaceRootPath={activeWorkspace?.rootPath}
-            turns={turns}
+            turns={composerTurns}
+            allowSessionLastTurnFallback={!activeChatTree?.supportsJump}
             approvals={activeSessionApprovals}
             interactions={activeSessionInteractions}
             takeoverPresets={takeoverPresets}

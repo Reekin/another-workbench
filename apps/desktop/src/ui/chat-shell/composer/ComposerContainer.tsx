@@ -26,6 +26,7 @@ export type ComposerContainerProps = {
   activeWorkspaceId?: string;
   activeWorkspaceRootPath?: string;
   turns: Turn[];
+  allowSessionLastTurnFallback?: boolean;
   approvals: ApprovalRequest[];
   interactions: RuntimeInteraction[];
   takeoverPresets: TakeoverPresetSummaryRpc[];
@@ -55,6 +56,7 @@ export const ComposerContainer = ({
   activeWorkspaceId,
   activeWorkspaceRootPath,
   turns,
+  allowSessionLastTurnFallback,
   approvals,
   interactions,
   takeoverPresets,
@@ -83,6 +85,7 @@ export const ComposerContainer = ({
     activeWorkspaceId,
     activeWorkspaceRootPath,
     turns,
+    allowSessionLastTurnFallback,
     approvals,
     isTakeoverManaged: takeoverState?.role === "managed",
     isOpeningSelectedSession,

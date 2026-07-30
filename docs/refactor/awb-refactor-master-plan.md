@@ -146,7 +146,7 @@ Optional remote relay
 
 ### 通过标准
 
-- 当前 `.trellis/tasks/06-24-awb-architecture-invariants` 的验收项全部真实通过。
+- 当前 architecture-invariants 阶段的验收项全部真实通过。
 - 该任务单独提交，不与 runtime supervisor 等结构性改动混在一起。
 - `registerAgentBinding()` 字段丢失被立即修复。
 - 记录当前生产代码量、关键文件大小和真实 smoke 结果。
@@ -163,12 +163,11 @@ Optional remote relay
 - subagent_context: inherit
 - tdd: not_needed
 - 主要位置：
-  - `.trellis/tasks/06-24-awb-architecture-invariants/`
   - 当前所有 modified/untracked 文件
 - 做法：
-  - 对照 PRD 验收项逐项勾选。
+  - 对照本节“通过标准”逐项验收。
   - 重新执行 shared/core/desktop-server/desktop tests、typecheck、lint、architecture guard、Codex smoke。
-  - 将任务状态从 `in_progress` 改为完成后单独提交。
+  - 验收通过后形成独立提交。
 - done_when：
   - 工作树中现有架构修复形成一个可独立 revert 的 commit。
 - 预期生产 LOC：以当前工作树为基线，**0**。
@@ -1343,7 +1342,7 @@ task_7_5: task_7_3
 1. 运行 `node scripts/count-production-loc.mjs`，记录当前 LOC 口径。
 2. 复核本 Phase 直接涉及的 owner 和调用方，优先用 `rg` 查生产代码读取/写入路径。
 3. 对照本计划中的主要文件位置，若行号或所有权已变化，先更新该 Phase 的实施说明再动代码。
-4. 记录审计结果到对应 Trellis task 或阶段日志；该记录只描述当前事实，不替代真实验收。
+4. 记录审计结果到对应阶段日志；该记录只描述当前事实，不替代真实验收。
 
 ---
 

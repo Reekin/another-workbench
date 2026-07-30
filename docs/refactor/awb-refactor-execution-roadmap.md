@@ -38,14 +38,14 @@
 - goal: 建立后续所有重构共同依赖的稳定基线
 - executor: subagent
 - subagent_context: inherit
-- subagent_context_reason: 需要继承当前审查结论、未提交工作树范围和既有 Trellis task 验收口径
+- subagent_context_reason: 需要继承当前审查结论、未提交工作树范围和既有任务验收口径
 - tdd: not_needed
 - test_design:
   - unit: 不新增；本任务是对既有修复做完整回归
   - integration: 运行四个 TS package 全量测试、typecheck、architecture checks
   - user_acceptance: 运行真实 Codex smoke，确认 host 默认入口而非 demo
 - done_when:
-  - `.trellis/tasks/06-24-awb-architecture-invariants` 验收项与实际命令结果一致
+  - architecture-invariants 阶段验收项与实际命令结果一致
   - 当前修复形成单独 commit，工作树不混入下一阶段代码
 - verify:
   - `pnpm --filter @another-workbench/shared test`

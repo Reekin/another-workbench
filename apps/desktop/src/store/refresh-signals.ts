@@ -24,7 +24,13 @@ const invalidatesSessionBrowser = (event: RuntimeEvent): boolean => {
     case "session.updated":
     case "session.archived":
     case "session.disposed":
+    case "turn.started":
+    case "turn.completed":
+    case "approval.requested":
+    case "interaction.requested":
       return true;
+    case "runtime.error":
+      return !event.recoverable && Boolean(event.sessionId);
     default:
       return false;
   }

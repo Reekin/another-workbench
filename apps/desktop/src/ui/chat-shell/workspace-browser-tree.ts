@@ -9,6 +9,7 @@ export type SessionBrowserViewNode = SessionBrowserItemRpc & {
   workspaceId: string;
   isExpanded: boolean;
   isLoadingChildren: boolean;
+  childrenLoadingGeneration?: number;
   hasLoadedChildren: boolean;
   children: SessionBrowserViewNode[];
   childrenNextCursor?: string;
@@ -29,8 +30,31 @@ export type WorkspaceBrowserViewNode = {
   rootHasMore: boolean;
   rootTotalCount: number;
   isLoadingRoots: boolean;
+  rootLoadingGeneration?: number;
   isDirty: boolean;
 };
+
+const createWorkspaceBrowserViewNode = (
+  workspace: WorkspaceRecordRpc,
+  isActive: boolean,
+  previous?: WorkspaceBrowserViewNode
+): WorkspaceBrowserViewNode => ({
+  workspaceId: workspace.workspaceId,
+  label: workspace.label,
+  rootPath: workspace.absolutePath,
+  isExpanded: previous?.isExpanded ?? isActive,
+  isActive,
+  sessions: previous?.sessions ?? [],
+  rootCursorHistory: previous?.rootCursorHistory ?? [undefined],
+  rootPageIndex: previous?.rootPageIndex ?? 0,
+  rootRevision: previous?.rootRevision,
+  rootNextCursor: previous?.rootNextCursor,
+  rootHasMore: previous?.rootHasMore ?? false,
+  rootTotalCount: previous?.rootTotalCount ?? 0,
+  isLoadingRoots: previous?.isLoadingRoots ?? false,
+  rootLoadingGeneration: previous?.rootLoadingGeneration,
+  isDirty: previous?.isDirty ?? true
+});
 
 export const createSessionBrowserViewNode = (
   item: SessionBrowserItemRpc,
@@ -41,6 +65,7 @@ export const createSessionBrowserViewNode = (
   workspaceId,
   isExpanded: previous?.isExpanded ?? false,
   isLoadingChildren: previous?.isLoadingChildren ?? false,
+  childrenLoadingGeneration: previous?.childrenLoadingGeneration,
   hasLoadedChildren: previous?.hasLoadedChildren ?? false,
   children: previous?.children ?? [],
   childrenNextCursor: previous?.childrenNextCursor,
@@ -60,23 +85,25 @@ export const mergeWorkspaceBrowserState = (
   return workspaceState.workspaces.map((workspace) => {
     const previousNode = previousById.get(workspace.workspaceId);
     const isActive = workspaceState.lastActiveWorkspaceId === workspace.workspaceId;
-    return {
-      workspaceId: workspace.workspaceId,
-      label: workspace.label,
-      rootPath: workspace.absolutePath,
-      isExpanded: previousNode?.isExpanded ?? isActive,
-      isActive,
-      sessions: previousNode?.sessions ?? [],
-      rootCursorHistory: previousNode?.rootCursorHistory ?? [undefined],
-      rootPageIndex: previousNode?.rootPageIndex ?? 0,
-      rootRevision: previousNode?.rootRevision,
-      rootNextCursor: previousNode?.rootNextCursor,
-      rootHasMore: previousNode?.rootHasMore ?? false,
-      rootTotalCount: previousNode?.rootTotalCount ?? 0,
-      isLoadingRoots: previousNode?.isLoadingRoots ?? false,
-      isDirty: previousNode?.isDirty ?? true
-    };
+    return createWorkspaceBrowserViewNode(workspace, isActive, previousNode);
   });
+};
+
+export const upsertWorkspaceBrowserRecord = (
+  previous: WorkspaceBrowserViewNode[],
+  workspace: WorkspaceRecordRpc
+): WorkspaceBrowserViewNode[] => {
+  const existingIndex = previous.findIndex(
+    (candidate) => candidate.workspaceId === workspace.workspaceId
+  );
+  if (existingIndex < 0) {
+    return [...previous, createWorkspaceBrowserViewNode(workspace, false)];
+  }
+  return previous.map((candidate, index) =>
+    index === existingIndex
+      ? createWorkspaceBrowserViewNode(workspace, candidate.isActive, candidate)
+      : candidate
+  );
 };
 
 export const applyRootPage = (
@@ -100,6 +127,7 @@ export const applyRootPage = (
     rootHasMore: page.hasMore,
     rootTotalCount: page.totalCount,
     isLoadingRoots: false,
+    rootLoadingGeneration: undefined,
     isDirty: false
   };
 };
@@ -114,8 +142,30 @@ export const resetRootPagination = (
   rootNextCursor: undefined,
   rootHasMore: false,
   isLoadingRoots: false,
+  rootLoadingGeneration: undefined,
   isDirty: true
 });
+
+export const beginRootLoading = (
+  workspace: WorkspaceBrowserViewNode,
+  generation: number
+): WorkspaceBrowserViewNode => ({
+  ...workspace,
+  isLoadingRoots: true,
+  rootLoadingGeneration: generation
+});
+
+export const clearRootLoading = (
+  workspace: WorkspaceBrowserViewNode,
+  generation: number
+): WorkspaceBrowserViewNode =>
+  workspace.rootLoadingGeneration === generation
+    ? {
+        ...workspace,
+        isLoadingRoots: false,
+        rootLoadingGeneration: undefined
+      }
+    : workspace;
 
 const updateSessionNodes = (
   sessions: SessionBrowserViewNode[],
@@ -147,6 +197,32 @@ export const updateSessionNode = (
   return sessions === workspace.sessions ? workspace : { ...workspace, sessions };
 };
 
+export const beginSessionChildrenLoading = (
+  workspace: WorkspaceBrowserViewNode,
+  sessionId: string,
+  generation: number
+): WorkspaceBrowserViewNode =>
+  updateSessionNode(workspace, sessionId, (session) => ({
+    ...session,
+    isLoadingChildren: true,
+    childrenLoadingGeneration: generation
+  }));
+
+export const clearSessionChildrenLoading = (
+  workspace: WorkspaceBrowserViewNode,
+  sessionId: string,
+  generation: number
+): WorkspaceBrowserViewNode =>
+  updateSessionNode(workspace, sessionId, (session) =>
+    session.childrenLoadingGeneration === generation
+      ? {
+          ...session,
+          isLoadingChildren: false,
+          childrenLoadingGeneration: undefined
+        }
+      : session
+  );
+
 export const applyChildrenPage = (
   workspace: WorkspaceBrowserViewNode,
   parentSessionId: string,
@@ -174,7 +250,8 @@ export const applyChildrenPage = (
       hasLoadedChildren: true,
       childrenNextCursor: page.nextCursor,
       childrenHasMore: page.hasMore,
-      isLoadingChildren: false
+      isLoadingChildren: false,
+      childrenLoadingGeneration: undefined
     };
   });
 

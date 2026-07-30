@@ -330,11 +330,8 @@ export class SessionCatalogService {
   }
 
   private getSourceRevision(): string {
-    const runtimeRevision = (
-      this.runtimeService as WorkbenchRuntimeService & { getRevision?: () => string }
-    ).getRevision?.() ?? "snapshot";
     return [
-      runtimeRevision,
+      this.runtimeService.getSessionBrowserRevision(),
       this.sessionIndexStore.getRevision(),
       this.workspaceRegistry.getSessionBrowserRevision(),
       this.catalogRevision

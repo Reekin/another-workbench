@@ -521,12 +521,10 @@ export class WorkbenchShellService {
     label?: string;
   }): Promise<WorkspaceRecord> {
     const registry = this.requireWorkspaceRegistry();
-    const workspace = await registry.registerWorkspace({
+    return registry.registerWorkspace({
       absolutePath: input.rootPath,
       label: input.label
     });
-    await this.sessionReconciliation?.reconcileWorkspace(workspace.workspaceId);
-    return workspace;
   }
 
   public async removeWorkspace(workspaceId: string): Promise<{

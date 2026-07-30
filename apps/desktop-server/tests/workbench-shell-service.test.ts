@@ -450,6 +450,36 @@ describe("WorkbenchShellService", () => {
     expect(pickWorkspaceDirectory).toHaveBeenCalledTimes(1);
   });
 
+  it("commits workspace registration without waiting for session reconciliation", async () => {
+    const workspace = {
+      workspaceId: "workspace-new",
+      absolutePath: "I:\\repo-new",
+      label: "repo-new",
+      createdAt: "2026-07-20T00:00:00.000Z",
+      updatedAt: "2026-07-20T00:00:00.000Z"
+    };
+    const registerWorkspace = vi.fn().mockResolvedValue(workspace);
+    const reconcileWorkspace = vi.fn().mockRejectedValue(new Error("scan failed"));
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        getWorkspaceRegistry: () => ({ registerWorkspace })
+      } as never,
+      sessionCatalog: {} as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never,
+      sessionReconciliation: { reconcileWorkspace } as never
+    });
+
+    await expect(service.addWorkspace({ rootPath: "I:\\repo-new" })).resolves.toEqual(
+      workspace
+    );
+    expect(registerWorkspace).toHaveBeenCalledWith({
+      absolutePath: "I:\\repo-new",
+      label: undefined
+    });
+    expect(reconcileWorkspace).not.toHaveBeenCalled();
+  });
+
   it("removes workspaces from both registry and persisted session index", async () => {
     const removeWorkspace = vi.fn().mockResolvedValue(true);
     const removeIndexedWorkspace = vi.fn().mockResolvedValue(undefined);

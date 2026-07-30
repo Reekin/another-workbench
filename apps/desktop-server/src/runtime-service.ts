@@ -33,6 +33,48 @@ import type { WorkspaceRegistryService } from "./workspace-registry.js";
 type Clock = () => string;
 type IdFactory = () => string;
 
+const isSessionBrowserRelevantEvent = (
+  event: EventEnvelope["event"]
+): boolean => {
+  switch (event.type) {
+    case "conversation.updated":
+      return event.workspaceId !== undefined;
+    case "session.created":
+    case "session.updated":
+    case "session.archived":
+    case "session.disposed":
+    case "turn.started":
+    case "turn.completed":
+    case "approval.requested":
+    case "interaction.requested":
+      return true;
+    case "runtime.error":
+      return !event.recoverable && Boolean(event.sessionId);
+    case "session.context.updated":
+    case "message.started":
+    case "message.delta":
+    case "message.completed":
+    case "tool.started":
+    case "tool.delta":
+    case "tool.completed":
+    case "terminal.started":
+    case "terminal.output":
+    case "terminal.completed":
+    case "approval.resolved":
+    case "interaction.resolved":
+    case "thread.goal.updated":
+    case "thread.goal.cleared":
+    case "engineExtension.updated":
+    case "conversationGraph.updated":
+    case "participant.updated":
+      return false;
+    default: {
+      const exhaustiveEvent: never = event;
+      return exhaustiveEvent;
+    }
+  }
+};
+
 export type {
   EngineSelectionInput,
   EventReplayResult,
@@ -62,6 +104,7 @@ export class WorkbenchRuntimeService {
   private readonly eventBus: RuntimeEventBus;
   private readonly domainService: DomainService;
   private readonly runtimeOrchestrator: RuntimeOrchestrator;
+  private sessionBrowserRevision = 0;
 
   public constructor(options: WorkbenchRuntimeServiceOptions = {}) {
     this.workspaceRegistry = options.workspaceRegistry;
@@ -75,7 +118,7 @@ export class WorkbenchRuntimeService {
       resolveEngineCapabilities: (engineId) =>
         this.runtimeOrchestrator?.getEngineCapabilities(engineId) ?? [],
       publishRuntimeEvent: (event) => {
-        this.eventBus.publish(event);
+        this.publishRuntimeEvent(event);
       },
       markSessionUnreadCompleted: (sessionId) => {
         void this.markSessionUnreadCompleted(sessionId);
@@ -100,7 +143,7 @@ export class WorkbenchRuntimeService {
       sessionIndexSyncService,
       workspaceSelectionService,
       publishRuntimeEvent: (event) => {
-        this.eventBus.publish(event);
+        this.publishRuntimeEvent(event);
       },
       engines: options.engines,
       agentBindings: options.agentBindings,
@@ -208,6 +251,7 @@ export class WorkbenchRuntimeService {
     occurredAt?: string
   ): void {
     this.domainService.ingestRuntimeEvent(event, occurredAt);
+    this.advanceSessionBrowserRevision(event);
   }
 
   public getSnapshotResult(): SnapshotResult {
@@ -219,6 +263,10 @@ export class WorkbenchRuntimeService {
 
   public getRevision(): string {
     return this.eventBus.getLatestCursor() ?? "initial";
+  }
+
+  public getSessionBrowserRevision(): number {
+    return this.sessionBrowserRevision;
   }
 
   public subscribe(
@@ -262,5 +310,16 @@ export class WorkbenchRuntimeService {
       occurredAt: envelope.occurredAt,
       event: envelope.event
     };
+  }
+
+  private publishRuntimeEvent(event: EventEnvelope["event"]): void {
+    this.advanceSessionBrowserRevision(event);
+    this.eventBus.publish(event);
+  }
+
+  private advanceSessionBrowserRevision(event: EventEnvelope["event"]): void {
+    if (isSessionBrowserRelevantEvent(event)) {
+      this.sessionBrowserRevision += 1;
+    }
   }
 }

@@ -570,10 +570,13 @@ describe("SessionCatalogService", () => {
       createdAt: "2026-07-19T01:00:00Z"
     });
     const getSnapshot = vi.fn(() => emptySnapshot());
+    let runtimeRevision = "runtime-1";
+    let runtimeBrowserRevision = 1;
     const service = new SessionCatalogService({
       runtimeService: {
         getSnapshot,
-        getRevision: () => "runtime-1"
+        getRevision: () => runtimeRevision,
+        getSessionBrowserRevision: () => runtimeBrowserRevision
       } as unknown as WorkbenchRuntimeService,
       workspaceRegistry,
       sessionIndexStore: indexStore
@@ -590,12 +593,20 @@ describe("SessionCatalogService", () => {
     ]);
     expect(getSnapshot).toHaveBeenCalledTimes(1);
 
+    runtimeRevision = "runtime-2";
+    await service.listRoots({ workspaceId: "workspace-1" });
+    expect(getSnapshot).toHaveBeenCalledTimes(1);
+
     await workspaceRegistry.setSessionExpanded("session-23", true);
     await service.listRoots({ workspaceId: "workspace-1" });
     expect(getSnapshot).toHaveBeenCalledTimes(1);
 
-    await indexStore.markSessionUnreadCompleted("session-00");
+    runtimeBrowserRevision += 1;
     await service.listRoots({ workspaceId: "workspace-1" });
     expect(getSnapshot).toHaveBeenCalledTimes(2);
+
+    await indexStore.markSessionUnreadCompleted("session-00");
+    await service.listRoots({ workspaceId: "workspace-1" });
+    expect(getSnapshot).toHaveBeenCalledTimes(3);
   });
 });

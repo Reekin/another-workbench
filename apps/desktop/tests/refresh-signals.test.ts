@@ -15,6 +15,75 @@ const advance = (events: RuntimeEvent[]) =>
   );
 
 describe("renderer refresh signals", () => {
+  it("refreshes the session browser for turn lifecycle status changes", () => {
+    const signals = advance([
+      {
+        type: "turn.started",
+        sessionId: "session-1",
+        turnId: "turn-1"
+      },
+      {
+        type: "turn.completed",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        finishReason: "completed"
+      }
+    ]);
+
+    expect(signals.sessionBrowser).toBe(2);
+  });
+
+  it("refreshes the session browser only for terminal session errors", () => {
+    const signals = advance([
+      {
+        type: "runtime.error",
+        sessionId: "session-1",
+        code: "RETRYING",
+        message: "retrying",
+        recoverable: true
+      },
+      {
+        type: "runtime.error",
+        code: "GLOBAL",
+        message: "global failure",
+        recoverable: false
+      },
+      {
+        type: "runtime.error",
+        sessionId: "session-1",
+        code: "FAILED",
+        message: "failed",
+        recoverable: false
+      }
+    ]);
+
+    expect(signals.sessionBrowser).toBe(1);
+  });
+
+  it("refreshes the session browser when a session begins waiting for input", () => {
+    const signals = advance([
+      {
+        type: "approval.requested",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        requestId: "approval-1",
+        approvalKind: "command_execution",
+        title: "Approve command"
+      },
+      {
+        type: "interaction.requested",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        requestId: "interaction-1",
+        interactionKind: "tool_user_input",
+        title: "Choose target",
+        payload: { questions: [] }
+      }
+    ]);
+
+    expect(signals.sessionBrowser).toBe(2);
+  });
+
   it("ignores high-volume streaming events that are already reflected in local state", () => {
     const signals = advance([
       {

@@ -20,6 +20,34 @@ export type SessionBrowserPageQuery =
       expectedRevision?: string;
     };
 
+export type SessionBrowserQueryScope =
+  | {
+      kind: "roots";
+      workspaceId: string;
+    }
+  | {
+      kind: "children";
+      workspaceId: string;
+      parentSessionId: string;
+    };
+
+export type SessionBrowserQueryOwner = {
+  scope: SessionBrowserQueryScope;
+  generation: number;
+};
+
+export type SessionBrowserQueryResult =
+  | ({ status: "committed"; page: SessionBrowserPageRpc } & SessionBrowserQueryOwner)
+  | ({
+      status: "superseded";
+      reason: "replaced" | "invalidated" | "revision_changed";
+    } & SessionBrowserQueryOwner)
+  | ({ status: "cancelled" } & SessionBrowserQueryOwner);
+
+export type SessionBrowserQueryRequest = SessionBrowserQueryOwner & {
+  result: Promise<SessionBrowserQueryResult>;
+};
+
 export type SessionBrowserQueryTransport = {
   listRoots: (input: {
     workspaceId: string;
@@ -46,9 +74,31 @@ export const isSessionBrowserCursorStaleError = (error: unknown): boolean =>
 type QueryState = {
   data?: SessionBrowserPageRpc;
   dirty: boolean;
-  generation: number;
-  inFlight?: Promise<SessionBrowserPageRpc>;
 };
+
+type ActiveRequest = SessionBrowserQueryOwner & {
+  key: string;
+  terminalResult?:
+    | { status: "superseded"; reason: "replaced" | "invalidated" }
+    | { status: "cancelled" };
+  request: SessionBrowserQueryRequest;
+};
+
+const queryScope = (query: SessionBrowserPageQuery): SessionBrowserQueryScope =>
+  query.kind === "roots"
+    ? { kind: "roots", workspaceId: query.workspaceId }
+    : {
+        kind: "children",
+        workspaceId: query.workspaceId,
+        parentSessionId: query.parentSessionId
+      };
+
+const scopeKey = (scope: SessionBrowserQueryScope): string =>
+  JSON.stringify([
+    scope.kind,
+    scope.workspaceId,
+    scope.kind === "children" ? scope.parentSessionId : null
+  ]);
 
 const queryKey = (query: SessionBrowserPageQuery): string =>
   JSON.stringify([
@@ -63,43 +113,107 @@ const queryKey = (query: SessionBrowserPageQuery): string =>
 export class SessionBrowserQueryCoordinator {
   private readonly states = new Map<string, QueryState>();
   private readonly acceptedRevisionByWorkspace = new Map<string, string>();
-  private readonly workspaceGeneration = new Map<string, number>();
+  private readonly generationByScope = new Map<string, number>();
+  private readonly activeByScope = new Map<string, ActiveRequest>();
+  private readonly scopeByKey = new Map<string, SessionBrowserQueryScope>();
   private readonly pathRequests = new Map<string, Promise<SessionBrowserPathRpc>>();
 
   public constructor(private readonly transport: SessionBrowserQueryTransport) {}
 
-  public load(query: SessionBrowserPageQuery): Promise<SessionBrowserPageRpc> {
+  public load(query: SessionBrowserPageQuery): SessionBrowserQueryRequest {
     const key = queryKey(query);
-    const state = this.states.get(key) ?? { dirty: true, generation: 0 };
-    this.states.set(key, state);
-    if (state.inFlight) {
-      return state.inFlight;
+    const scope = queryScope(query);
+    const collectionKey = scopeKey(scope);
+    this.scopeByKey.set(collectionKey, scope);
+    const existing = this.activeByScope.get(collectionKey);
+    if (existing?.key === key) {
+      return existing.request;
     }
+    if (existing) {
+      existing.terminalResult = {
+        status: "superseded",
+        reason: "replaced"
+      };
+      this.activeByScope.delete(collectionKey);
+    }
+
+    const state = this.states.get(key) ?? { dirty: true };
+    this.states.set(key, state);
+    const generation = this.nextGeneration(collectionKey);
     if (!state.dirty && state.data) {
-      return Promise.resolve(state.data);
+      let active!: ActiveRequest;
+      const result = Promise.resolve()
+        .then((): SessionBrowserQueryResult => {
+          if (active.terminalResult) {
+            return { ...active.terminalResult, scope, generation };
+          }
+          if (this.generationByScope.get(collectionKey) !== generation) {
+            return {
+              status: "superseded",
+              reason: "invalidated",
+              scope,
+              generation
+            };
+          }
+          return {
+            status: "committed",
+            scope,
+            generation,
+            page: state.data!
+          };
+        })
+        .finally(() => {
+          if (this.activeByScope.get(collectionKey) === active) {
+            this.activeByScope.delete(collectionKey);
+          }
+        });
+      const request: SessionBrowserQueryRequest = { scope, generation, result };
+      active = { scope, generation, key, request };
+      this.activeByScope.set(collectionKey, active);
+      return request;
     }
 
     state.dirty = false;
-    const requestGeneration = ++state.generation;
-    const workspaceGeneration = this.workspaceGeneration.get(query.workspaceId) ?? 0;
-    const request = this.requestPage(query).then((page) => {
-      const latestWorkspaceGeneration = this.workspaceGeneration.get(query.workspaceId) ?? 0;
-      if (
-        state.generation === requestGeneration &&
-        workspaceGeneration === latestWorkspaceGeneration
-      ) {
-        this.acceptPage(query, state, page);
-      }
-      return page;
-    }).finally(() => {
-      if (state.inFlight === request) {
-        state.inFlight = undefined;
-      }
-      if (state.dirty) {
-        void this.load(query);
-      }
-    });
-    state.inFlight = request;
+    let active!: ActiveRequest;
+    const result = this.requestPage(query)
+      .then((page): SessionBrowserQueryResult => {
+        if (active.terminalResult) {
+          return { ...active.terminalResult, scope, generation };
+        }
+        if (this.generationByScope.get(collectionKey) !== generation) {
+          return {
+            status: "superseded",
+            reason: "invalidated",
+            scope,
+            generation
+          };
+        }
+        if (!this.acceptPage(query, state, page)) {
+          state.dirty = true;
+          return {
+            status: "superseded",
+            reason: "revision_changed",
+            scope,
+            generation
+          };
+        }
+        return { status: "committed", scope, generation, page };
+      })
+      .catch((error: unknown): SessionBrowserQueryResult => {
+        if (active.terminalResult) {
+          return { ...active.terminalResult, scope, generation };
+        }
+        state.dirty = true;
+        throw error;
+      })
+      .finally(() => {
+        if (this.activeByScope.get(collectionKey) === active) {
+          this.activeByScope.delete(collectionKey);
+        }
+      });
+    const request: SessionBrowserQueryRequest = { scope, generation, result };
+    active = { scope, generation, key, request };
+    this.activeByScope.set(collectionKey, active);
     return request;
   }
 
@@ -120,43 +234,68 @@ export class SessionBrowserQueryCoordinator {
   public invalidateCollection(input: {
     workspaceId: string;
     parentSessionId?: string;
-  }): void {
-    this.bumpWorkspaceGeneration(input.workspaceId);
-    for (const [key, state] of this.states) {
-      const parsed = JSON.parse(key) as [string, string, string | null];
-      if (
-        parsed[1] === input.workspaceId &&
-        parsed[2] === (input.parentSessionId ?? null)
-      ) {
-        state.dirty = true;
-      }
-    }
+  }): SessionBrowserQueryOwner[] {
+    const scope: SessionBrowserQueryScope = input.parentSessionId
+      ? {
+          kind: "children",
+          workspaceId: input.workspaceId,
+          parentSessionId: input.parentSessionId
+        }
+      : { kind: "roots", workspaceId: input.workspaceId };
+    this.markScopeDirty(scope);
+    const owner = this.terminateScope(scope, {
+      status: "superseded",
+      reason: "invalidated"
+    });
+    return owner ? [owner] : [];
   }
 
-  public invalidateWorkspace(workspaceId: string): void {
-    this.bumpWorkspaceGeneration(workspaceId);
+  public cancelCollection(input: {
+    workspaceId: string;
+    parentSessionId?: string;
+  }): SessionBrowserQueryOwner[] {
+    const scope: SessionBrowserQueryScope = input.parentSessionId
+      ? {
+          kind: "children",
+          workspaceId: input.workspaceId,
+          parentSessionId: input.parentSessionId
+        }
+      : { kind: "roots", workspaceId: input.workspaceId };
+    this.markScopeDirty(scope);
+    const owner = this.terminateScope(scope, { status: "cancelled" });
+    return owner ? [owner] : [];
+  }
+
+  public invalidateWorkspace(workspaceId: string): SessionBrowserQueryOwner[] {
     this.acceptedRevisionByWorkspace.delete(workspaceId);
-    for (const [key, state] of this.states) {
-      const parsed = JSON.parse(key) as [string, string];
-      if (parsed[1] === workspaceId) {
-        state.dirty = true;
+    const scopes = this.workspaceScopes(workspaceId);
+    const owners: SessionBrowserQueryOwner[] = [];
+    for (const scope of scopes) {
+      this.markScopeDirty(scope);
+      const owner = this.terminateScope(scope, {
+        status: "superseded",
+        reason: "invalidated"
+      });
+      if (owner) {
+        owners.push(owner);
       }
     }
+    return owners;
   }
 
   public getCached(query: SessionBrowserPageQuery): SessionBrowserPageRpc | undefined {
     return this.states.get(queryKey(query))?.data;
   }
 
-  public clearWorkspace(workspaceId: string): void {
-    this.acceptedRevisionByWorkspace.delete(workspaceId);
-    this.workspaceGeneration.delete(workspaceId);
+  public clearWorkspace(workspaceId: string): SessionBrowserQueryOwner[] {
+    const owners = this.invalidateWorkspace(workspaceId);
     for (const key of this.states.keys()) {
       const parsed = JSON.parse(key) as [string, string];
       if (parsed[1] === workspaceId) {
         this.states.delete(key);
       }
     }
+    return owners;
   }
 
   private requestPage(query: SessionBrowserPageQuery): Promise<SessionBrowserPageRpc> {
@@ -186,28 +325,80 @@ export class SessionBrowserQueryCoordinator {
     query: SessionBrowserPageQuery,
     state: QueryState,
     page: SessionBrowserPageRpc
-  ): void {
+  ): boolean {
     const acceptedRevision = this.acceptedRevisionByWorkspace.get(query.workspaceId);
-    if (query.cursor && acceptedRevision && page.revision !== acceptedRevision) {
-      state.dirty = true;
-      return;
+    if (acceptedRevision && page.revision !== acceptedRevision) {
+      if (query.cursor || query.kind === "children") {
+        return false;
+      }
     }
     if (!query.cursor && acceptedRevision !== page.revision) {
       this.acceptedRevisionByWorkspace.set(query.workspaceId, page.revision);
-      for (const otherState of this.states.values()) {
-        if (otherState.data?.workspaceId === query.workspaceId && otherState.data.revision !== page.revision) {
+      for (const [key, otherState] of this.states) {
+        if (key === queryKey(query)) {
+          continue;
+        }
+        const parsed = JSON.parse(key) as [string, string];
+        if (
+          parsed[1] === query.workspaceId &&
+          otherState.data?.revision !== page.revision
+        ) {
           otherState.dirty = true;
           otherState.data = undefined;
         }
       }
     }
     state.data = page;
+    return true;
   }
 
-  private bumpWorkspaceGeneration(workspaceId: string): void {
-    this.workspaceGeneration.set(
-      workspaceId,
-      (this.workspaceGeneration.get(workspaceId) ?? 0) + 1
-    );
+  private markScopeDirty(scope: SessionBrowserQueryScope): void {
+    for (const [key, state] of this.states) {
+      const parsed = JSON.parse(key) as [string, string, string | null];
+      if (
+        parsed[1] === scope.workspaceId &&
+        parsed[2] === (scope.kind === "children" ? scope.parentSessionId : null)
+      ) {
+        state.dirty = true;
+      }
+    }
+  }
+
+  private terminateScope(
+    scope: SessionBrowserQueryScope,
+    result:
+      | { status: "superseded"; reason: "invalidated" }
+      | { status: "cancelled" }
+  ): SessionBrowserQueryOwner | undefined {
+    const key = scopeKey(scope);
+    const active = this.activeByScope.get(key);
+    const generation = active?.generation ?? this.generationByScope.get(key);
+    if (active) {
+      active.terminalResult = result;
+      this.activeByScope.delete(key);
+    }
+    this.nextGeneration(key);
+    return generation === undefined ? undefined : { scope, generation };
+  }
+
+  private workspaceScopes(workspaceId: string): SessionBrowserQueryScope[] {
+    const scopes = new Map<string, SessionBrowserQueryScope>();
+    for (const [key, scope] of this.scopeByKey) {
+      if (scope.workspaceId === workspaceId) {
+        scopes.set(key, scope);
+      }
+    }
+    for (const active of this.activeByScope.values()) {
+      if (active.scope.workspaceId === workspaceId) {
+        scopes.set(scopeKey(active.scope), active.scope);
+      }
+    }
+    return [...scopes.values()];
+  }
+
+  private nextGeneration(key: string): number {
+    const generation = (this.generationByScope.get(key) ?? 0) + 1;
+    this.generationByScope.set(key, generation);
+    return generation;
   }
 }

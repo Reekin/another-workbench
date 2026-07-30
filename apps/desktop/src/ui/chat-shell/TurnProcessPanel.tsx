@@ -1,4 +1,9 @@
-import type { ExtractedFileReference } from "@another-workbench/shared";
+import type {
+  ApprovalRequest,
+  ExtractedFileReference,
+  MessageBlock,
+  RuntimeInteraction
+} from "@another-workbench/shared";
 import { Fragment, type ReactElement } from "react";
 import type { ImageLightboxState } from "./ImageLightbox.js";
 import { MessageMarkdownView } from "./MessageMarkdownView.js";
@@ -55,31 +60,82 @@ type TurnHistoryItem =
       kind: "message";
       id: string;
       startedAt?: string;
-      row: TurnTranscriptRow;
+      blocks: MessageBlock[];
     }
   | {
       kind: "activity";
       id: string;
       startedAt?: string;
       entry: ProcessActivityEntry;
+    }
+  | {
+      kind: "approval";
+      id: string;
+      startedAt: string;
+      approval: ApprovalRequest;
+    }
+  | {
+      kind: "interaction";
+      id: string;
+      startedAt: string;
+      interaction: RuntimeInteraction;
     };
+
+const buildHiddenMessageItems = (
+  hiddenRows: TurnTranscriptRow[]
+): TurnHistoryItem[] => {
+  const messageGroups = new Map<
+    string,
+    { blocks: MessageBlock[]; fallbackStartedAt?: string }
+  >();
+
+  for (const hiddenRow of hiddenRows) {
+    for (const block of hiddenRow.blocks) {
+      const current = messageGroups.get(block.messageId);
+      if (current) {
+        current.blocks.push(block);
+        continue;
+      }
+      messageGroups.set(block.messageId, {
+        blocks: [block],
+        fallbackStartedAt: hiddenRow.startedAt
+      });
+    }
+  }
+
+  return [...messageGroups.entries()].map(([messageId, group]) => ({
+    kind: "message" as const,
+    id: `message:${messageId}`,
+    startedAt:
+      group.blocks.find((block) => block.startedAt)?.startedAt ??
+      group.fallbackStartedAt,
+    blocks: group.blocks
+  }));
+};
 
 const buildTurnHistoryItems = (
   row: TurnTranscriptRow,
   hiddenRows: TurnTranscriptRow[]
 ): TurnHistoryItem[] =>
   [
-    ...hiddenRows.map((hiddenRow) => ({
-      kind: "message" as const,
-      id: `message:${hiddenRow.rowId}`,
-      startedAt: hiddenRow.startedAt,
-      row: hiddenRow
-    })),
+    ...buildHiddenMessageItems(hiddenRows),
     ...buildProcessActivityEntries(row.toolCalls, row.terminalStreams).map((entry) => ({
       kind: "activity" as const,
       id: `activity:${entry.id}`,
       startedAt: entry.startedAt,
       entry
+    })),
+    ...row.approvals.map((approval) => ({
+      kind: "approval" as const,
+      id: `approval:${approval.requestId}`,
+      startedAt: approval.requestedAt,
+      approval
+    })),
+    ...(row.interactions ?? []).map((interaction) => ({
+      kind: "interaction" as const,
+      id: `interaction:${interaction.requestId}`,
+      startedAt: interaction.requestedAt,
+      interaction
     }))
   ].sort((left, right) => {
     const byDate = compareIsoDateAsc(left.startedAt, right.startedAt);
@@ -112,16 +168,39 @@ export const TurnProcessPanel = ({
             <span>{historyItems.length}</span>
           </header>
           <div className="awb-turn-process__history">
-            {historyItems.map((item) =>
-              item.kind === "activity" ? (
-                <ProcessActivityItemView
-                  key={item.id}
-                  entry={item.entry}
-                  onPreviewImage={onPreviewImage}
-                />
-              ) : (
-                <Fragment key={item.row.rowId}>
-                  {item.row.blocks.map((block) => (
+            {historyItems.map((item) => {
+              if (item.kind === "activity") {
+                return (
+                  <ProcessActivityItemView
+                    key={item.id}
+                    entry={item.entry}
+                    onPreviewImage={onPreviewImage}
+                  />
+                );
+              }
+              if (item.kind === "approval") {
+                return (
+                  <ApprovalFlowView
+                    key={item.id}
+                    approvals={[item.approval]}
+                    participantDirectory={participantDirectory}
+                    onRespond={onRespondApproval}
+                  />
+                );
+              }
+              if (item.kind === "interaction") {
+                return (
+                  <InteractionFlowView
+                    key={item.id}
+                    interactions={[item.interaction]}
+                    participantDirectory={participantDirectory}
+                    onRespond={onRespondInteraction}
+                  />
+                );
+              }
+              return (
+                <Fragment key={item.id}>
+                  {item.blocks.map((block) => (
                     <MessageMarkdownView
                       key={block.blockId}
                       block={block}
@@ -130,8 +209,8 @@ export const TurnProcessPanel = ({
                     />
                   ))}
                 </Fragment>
-              )
-            )}
+              );
+            })}
           </div>
         </section>
       )}
@@ -145,7 +224,7 @@ export const TurnProcessPanel = ({
           />
         )}
 
-      {row.approvals.length > 0 && (
+      {renderStandaloneActivity && row.approvals.length > 0 && (
         <section className="awb-turn-process__section">
           <header className="awb-turn-process__section-header">
             <h4>Approval requests</h4>
@@ -159,7 +238,7 @@ export const TurnProcessPanel = ({
         </section>
       )}
 
-      {interactions.length > 0 && (
+      {renderStandaloneActivity && interactions.length > 0 && (
         <section className="awb-turn-process__section">
           <header className="awb-turn-process__section-header">
             <h4>Interaction requests</h4>

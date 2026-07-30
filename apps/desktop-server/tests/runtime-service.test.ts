@@ -680,6 +680,147 @@ describe("WorkbenchRuntimeService", () => {
     });
   });
 
+  it("advances the session browser revision only for browser-visible runtime changes", async () => {
+    const service = createService();
+    await service.executeCommand({
+      commandId: "cmd-create",
+      command: {
+        type: "createSession",
+        engineId: "codex",
+        conversationId: "conversation-main"
+      }
+    });
+
+    const afterCreate = service.getSessionBrowserRevision();
+    service.applyRuntimeEvent({
+      type: "conversation.updated",
+      conversationId: "conversation-main",
+      participantIds: []
+    });
+    expect(service.getSessionBrowserRevision()).toBe(afterCreate);
+
+    service.applyRuntimeEvent({
+      type: "conversation.updated",
+      conversationId: "conversation-main",
+      workspaceId: "workspace-1",
+      participantIds: []
+    });
+    expect(service.getSessionBrowserRevision()).toBe(afterCreate + 1);
+
+    service.applyRuntimeEvent({
+      type: "turn.started",
+      sessionId: "session-1",
+      turnId: "turn-1"
+    });
+    expect(service.getSessionBrowserRevision()).toBe(afterCreate + 2);
+
+    const streamingRevision = service.getSessionBrowserRevision();
+    service.applyRuntimeEvent({
+      type: "message.started",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      messageId: "message-1",
+      role: "assistant",
+      engineId: "codex"
+    });
+    service.applyRuntimeEvent({
+      type: "message.delta",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      messageId: "message-1",
+      delta: "streaming",
+      engineId: "codex"
+    });
+    service.applyRuntimeEvent({
+      type: "tool.started",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      toolCallId: "tool-1",
+      toolName: "shell",
+      engineId: "codex"
+    });
+    service.applyRuntimeEvent({
+      type: "tool.delta",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      toolCallId: "tool-1",
+      delta: "output",
+      engineId: "codex"
+    });
+    service.applyRuntimeEvent({
+      type: "terminal.started",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      terminalId: "terminal-1",
+      engineId: "codex"
+    });
+    service.applyRuntimeEvent({
+      type: "terminal.output",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      terminalId: "terminal-1",
+      chunk: "output",
+      engineId: "codex"
+    });
+    service.applyRuntimeEvent({
+      type: "approval.requested",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      requestId: "approval-1",
+      approvalKind: "tool",
+      title: "Approve",
+      engineId: "codex"
+    });
+    expect(service.getSessionBrowserRevision()).toBe(streamingRevision + 1);
+
+    service.applyRuntimeEvent({
+      type: "interaction.requested",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      requestId: "interaction-1",
+      interactionKind: "tool_user_input",
+      title: "Choose target",
+      payload: { questions: [] },
+      engineId: "codex"
+    });
+    expect(service.getSessionBrowserRevision()).toBe(streamingRevision + 2);
+
+    service.applyRuntimeEvent({
+      type: "session.updated",
+      conversationId: "conversation-main",
+      sessionId: "session-1",
+      status: "running",
+      title: "Updated title"
+    });
+    expect(service.getSessionBrowserRevision()).toBe(streamingRevision + 3);
+
+    service.applyRuntimeEvent({
+      type: "turn.completed",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      finishReason: "completed"
+    });
+    expect(service.getSessionBrowserRevision()).toBe(streamingRevision + 4);
+
+    service.applyRuntimeEvent({
+      type: "runtime.error",
+      sessionId: "session-1",
+      code: "RECOVERABLE",
+      message: "retry",
+      recoverable: true
+    });
+    expect(service.getSessionBrowserRevision()).toBe(streamingRevision + 4);
+
+    service.applyRuntimeEvent({
+      type: "runtime.error",
+      sessionId: "session-1",
+      code: "FAILED",
+      message: "failed",
+      recoverable: false
+    });
+    expect(service.getSessionBrowserRevision()).toBe(streamingRevision + 5);
+  });
+
   it("continues runtime-service delivery when a subscriber throws", async () => {
     const service = createService();
     const received: string[] = [];

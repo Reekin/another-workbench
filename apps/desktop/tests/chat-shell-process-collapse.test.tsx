@@ -179,7 +179,7 @@ describe("ChatShellApp inline process output", () => {
     );
   });
 
-  it("interleaves hidden messages and activity by time inside previous turn details", () => {
+  it("interleaves message-level history and process records by time", () => {
     const row = {
       rowId: "turn-1:assistant:final",
       rowKind: "message" as const,
@@ -229,13 +229,14 @@ describe("ChatShellApp inline process output", () => {
         }
       ],
       approvals: [],
+      interactions: [],
       hasProcessDetails: true,
       defaultProcessExpanded: false
     };
     const hiddenRows = [
       {
         ...row,
-        rowId: "turn-1:assistant:draft",
+        rowId: "turn-1:assistant:history",
         startedAt: "2026-04-18T00:01:01.000Z",
         isFinalResponseRow: false,
         canDisplayAsFinalResponse: false,
@@ -249,18 +250,7 @@ describe("ChatShellApp inline process output", () => {
             kind: "markdown" as const,
             text: "internal draft",
             startedAt: "2026-04-18T00:01:01.000Z"
-          }
-        ],
-        toolCalls: [],
-        terminalStreams: []
-      },
-      {
-        ...row,
-        rowId: "turn-1:assistant:note",
-        startedAt: "2026-04-18T00:01:04.000Z",
-        isFinalResponseRow: false,
-        canDisplayAsFinalResponse: false,
-        blocks: [
+          },
           {
             blockId: "note:md",
             messageId: "note",
@@ -270,6 +260,16 @@ describe("ChatShellApp inline process output", () => {
             kind: "markdown" as const,
             text: "after tool note",
             startedAt: "2026-04-18T00:01:04.000Z"
+          },
+          {
+            blockId: "note:continuation",
+            messageId: "note",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            role: "assistant" as const,
+            kind: "markdown" as const,
+            text: "same message continuation",
+            startedAt: "2026-04-18T00:01:04.500Z"
           }
         ],
         toolCalls: [],
@@ -291,5 +291,121 @@ describe("ChatShellApp inline process output", () => {
     expect(html).not.toContain("awb-turn-process__history-entry");
     expect(html.indexOf("internal draft")).toBeLessThan(html.indexOf("Shell pwd"));
     expect(html.indexOf("Shell pwd")).toBeLessThan(html.indexOf("after tool note"));
+    expect(html.indexOf("after tool note")).toBeLessThan(
+      html.indexOf("same message continuation")
+    );
+  });
+
+  it("interleaves approvals and interactions without duplicating them", () => {
+    const row = {
+      rowId: "turn-2:assistant:final",
+      rowKind: "message" as const,
+      startedAt: "2026-04-18T00:02:08.000Z",
+      turn: {
+        turnId: "turn-2",
+        sessionId: "session-1",
+        status: "completed" as const,
+        startedAt: "2026-04-18T00:02:00.000Z",
+        completedAt: "2026-04-18T00:02:10.000Z",
+        messageIds: [],
+        toolCallIds: [],
+        terminalIds: [],
+        approvalRequestIds: ["approval-1"]
+      },
+      turnIdentity: { label: "assistant", kind: "turn" as const },
+      messageRole: "assistant" as const,
+      isFinalResponseRow: true,
+      canDisplayAsFinalResponse: true,
+      blocks: [],
+      toolCalls: [],
+      terminalStreams: [],
+      approvals: [
+        {
+          requestId: "approval-1",
+          sessionId: "session-1",
+          turnId: "turn-2",
+          approvalKind: "command_execution" as const,
+          status: "approved" as const,
+          title: "Approve command",
+          availableActions: [],
+          requestedAt: "2026-04-18T00:02:02.000Z"
+        }
+      ],
+      interactions: [
+        {
+          requestId: "interaction-1",
+          sessionId: "session-1",
+          turnId: "turn-2",
+          interactionKind: "tool_user_input" as const,
+          status: "completed" as const,
+          title: "Choose target",
+          payload: { questions: [] },
+          requestedAt: "2026-04-18T00:02:04.000Z"
+        }
+      ],
+      hasProcessDetails: true,
+      defaultProcessExpanded: false
+    };
+    const hiddenRows = [
+      {
+        ...row,
+        rowId: "turn-2:assistant:history",
+        startedAt: "2026-04-18T00:02:01.000Z",
+        isFinalResponseRow: false,
+        canDisplayAsFinalResponse: false,
+        blocks: [
+          {
+            blockId: "before:md",
+            messageId: "before",
+            sessionId: "session-1",
+            turnId: "turn-2",
+            role: "assistant" as const,
+            kind: "markdown" as const,
+            text: "before approval",
+            startedAt: "2026-04-18T00:02:01.000Z"
+          },
+          {
+            blockId: "between:md",
+            messageId: "between",
+            sessionId: "session-1",
+            turnId: "turn-2",
+            role: "assistant" as const,
+            kind: "markdown" as const,
+            text: "between requests",
+            startedAt: "2026-04-18T00:02:03.000Z"
+          },
+          {
+            blockId: "after:md",
+            messageId: "after",
+            sessionId: "session-1",
+            turnId: "turn-2",
+            role: "assistant" as const,
+            kind: "markdown" as const,
+            text: "after interaction",
+            startedAt: "2026-04-18T00:02:05.000Z"
+          }
+        ],
+        toolCalls: [],
+        terminalStreams: [],
+        approvals: [],
+        interactions: []
+      }
+    ];
+
+    const html = renderToStaticMarkup(
+      <TurnProcessPanel
+        row={row}
+        hiddenRows={hiddenRows}
+        participantDirectory={buildParticipantDirectory([])}
+        onActivateResourceLink={() => undefined}
+      />
+    );
+
+    expect(html.indexOf("before approval")).toBeLessThan(html.indexOf("Approve command"));
+    expect(html.indexOf("Approve command")).toBeLessThan(html.indexOf("between requests"));
+    expect(html.indexOf("between requests")).toBeLessThan(html.indexOf("Choose target"));
+    expect(html.indexOf("Choose target")).toBeLessThan(html.indexOf("after interaction"));
+    expect((html.match(/Approve command/g) ?? []).length).toBe(1);
+    expect((html.match(/Choose target/g) ?? []).length).toBe(1);
   });
 });

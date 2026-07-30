@@ -2,9 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   applyChildrenPage,
   applyRootPage,
+  beginRootLoading,
+  beginSessionChildrenLoading,
+  clearRootLoading,
+  clearSessionChildrenLoading,
   mergeSessionPath,
   mergeWorkspaceBrowserState,
-  resetRootPagination
+  resetRootPagination,
+  upsertWorkspaceBrowserRecord
 } from "../src/ui/chat-shell/workspace-browser-tree.js";
 
 const workspaceState = {
@@ -127,5 +132,102 @@ describe("workspace browser tree", () => {
     expect(reset.rootRevision).toBeUndefined();
     expect(reset.rootNextCursor).toBeUndefined();
     expect(reset.isDirty).toBe(true);
+  });
+
+  it("clears root loading only for the generation that owns it", () => {
+    const workspace = mergeWorkspaceBrowserState([], workspaceState)[0]!;
+    const first = beginRootLoading(workspace, 1);
+    const second = beginRootLoading(first, 2);
+
+    expect(clearRootLoading(second, 1)).toBe(second);
+    expect(clearRootLoading(second, 2)).toMatchObject({
+      isLoadingRoots: false,
+      rootLoadingGeneration: undefined
+    });
+  });
+
+  it("does not let an older child request clear a newer loading owner", () => {
+    const workspace = applyRootPage(
+      mergeWorkspaceBrowserState([], workspaceState)[0]!,
+      {
+        workspaceId: "workspace-1",
+        revision: "revision-1",
+        items: [{
+          sessionId: "root-1",
+          engineId: "codex",
+          title: "Root",
+          statusDot: "none",
+          isActive: false,
+          childCount: 1
+        }],
+        hasMore: false,
+        totalCount: 1
+      },
+      0,
+      [undefined]
+    );
+    const first = beginSessionChildrenLoading(workspace, "root-1", 1);
+    const second = beginSessionChildrenLoading(first, "root-1", 2);
+    const staleClear = clearSessionChildrenLoading(second, "root-1", 1);
+
+    expect(staleClear).toEqual(second);
+    expect(staleClear.sessions[0]).toMatchObject({
+      isLoadingChildren: true,
+      childrenLoadingGeneration: 2
+    });
+    expect(
+      clearSessionChildrenLoading(second, "root-1", 2).sessions[0]
+    ).toMatchObject({
+      isLoadingChildren: false,
+      childrenLoadingGeneration: undefined
+    });
+  });
+
+  it("commits an added workspace record without waiting for session discovery", () => {
+    const current = mergeWorkspaceBrowserState([], workspaceState);
+    const added = upsertWorkspaceBrowserRecord(current, {
+      workspaceId: "workspace-2",
+      absolutePath: "I:\\repo-new",
+      label: "Repo New",
+      createdAt: "2026-07-20T00:01:00.000Z",
+      updatedAt: "2026-07-20T00:01:00.000Z"
+    });
+
+    expect(added.map((workspace) => workspace.workspaceId)).toEqual([
+      "workspace-1",
+      "workspace-2"
+    ]);
+    expect(added[1]).toMatchObject({
+      label: "Repo New",
+      rootPath: "I:\\repo-new",
+      sessions: [],
+      isExpanded: false,
+      isDirty: true
+    });
+  });
+
+  it("updates a duplicate workspace record without losing loaded UI state", () => {
+    const current = applyRootPage(
+      mergeWorkspaceBrowserState([], workspaceState)[0]!,
+      {
+        workspaceId: "workspace-1",
+        revision: "revision-1",
+        items: [],
+        hasMore: false,
+        totalCount: 0
+      },
+      0,
+      [undefined]
+    );
+    const updated = upsertWorkspaceBrowserRecord([current], {
+      ...workspaceState.workspaces[0]!,
+      label: "Renamed Repo",
+      updatedAt: "2026-07-20T00:02:00.000Z"
+    });
+
+    expect(updated).toHaveLength(1);
+    expect(updated[0]?.label).toBe("Renamed Repo");
+    expect(updated[0]?.rootRevision).toBe("revision-1");
+    expect(updated[0]?.isActive).toBe(true);
   });
 });

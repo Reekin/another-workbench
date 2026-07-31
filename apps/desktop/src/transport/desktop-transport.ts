@@ -301,8 +301,9 @@ export type DesktopTransport = {
       workspaceId: string;
       removed: boolean;
     }>;
-    toggleExpanded: (
-      workspaceId: string
+    setExpanded: (
+      workspaceId: string,
+      expanded: boolean
     ) => Promise<{ workspaceId: string; expanded: boolean }>;
     select: (
       workspaceId: string
@@ -917,9 +918,10 @@ export const createDesktopTransport = (
       pickDirectory: requestWorkspacePickDirectory,
       add: requestWorkspaceAdd,
       remove: requestWorkspaceRemove,
-      toggleExpanded: (workspaceId: string) =>
-        rpc.request("workspace.toggleExpanded", {
-          workspaceId
+      setExpanded: (workspaceId: string, expanded: boolean) =>
+        rpc.request("workspace.setExpanded", {
+          workspaceId,
+          expanded
         }),
       select: (workspaceId: string) =>
         rpc.request("workspace.select", {

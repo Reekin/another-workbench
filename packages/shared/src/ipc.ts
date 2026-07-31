@@ -49,7 +49,7 @@ export const workbenchRpcMethods = [
   "workspace.pickDirectory",
   "workspace.add",
   "workspace.remove",
-  "workspace.toggleExpanded",
+  "workspace.setExpanded",
   "workspace.select",
   "sessionBrowser.listTree",
   "sessionBrowser.listRoots",
@@ -809,11 +809,12 @@ const zWorkspaceRemoveRequestSchema = z.object({
   })
 });
 
-const zWorkspaceToggleExpandedRequestSchema = z.object({
+const zWorkspaceSetExpandedRequestSchema = z.object({
   id: zRequestId,
-  method: z.literal("workspace.toggleExpanded"),
+  method: z.literal("workspace.setExpanded"),
   params: z.object({
-    workspaceId: z.string().min(1)
+    workspaceId: z.string().min(1),
+    expanded: z.boolean()
   })
 });
 
@@ -1164,7 +1165,7 @@ export const zWorkbenchRpcRequestSchema = z.discriminatedUnion("method", [
   zWorkspacePickDirectoryRequestSchema,
   zWorkspaceAddRequestSchema,
   zWorkspaceRemoveRequestSchema,
-  zWorkspaceToggleExpandedRequestSchema,
+  zWorkspaceSetExpandedRequestSchema,
   zWorkspaceSelectRequestSchema,
   zSessionBrowserListTreeRequestSchema,
   zSessionBrowserListRootsRequestSchema,
@@ -1386,9 +1387,9 @@ const zWorkspaceRemoveResponseSchema = z.object({
   })
 });
 
-const zWorkspaceToggleExpandedResponseSchema = z.object({
+const zWorkspaceSetExpandedResponseSchema = z.object({
   id: zRequestId,
-  method: z.literal("workspace.toggleExpanded"),
+  method: z.literal("workspace.setExpanded"),
   ok: z.literal(true),
   result: z.object({
     workspaceId: z.string().min(1),
@@ -1758,7 +1759,7 @@ export const zWorkbenchRpcResponseSchema = z.union([
   zWorkspacePickDirectoryResponseSchema,
   zWorkspaceAddResponseSchema,
   zWorkspaceRemoveResponseSchema,
-  zWorkspaceToggleExpandedResponseSchema,
+  zWorkspaceSetExpandedResponseSchema,
   zWorkspaceSelectResponseSchema,
   zSessionBrowserListTreeResponseSchema,
   zSessionBrowserListRootsResponseSchema,

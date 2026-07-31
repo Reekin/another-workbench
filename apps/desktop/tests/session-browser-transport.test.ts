@@ -51,14 +51,14 @@ describe("session browser transport contracts", () => {
               activeSessionId: "session-root"
             }
           } as const;
-        case "workspace.toggleExpanded":
+        case "workspace.setExpanded":
           return {
             id: request.id,
-            method: "workspace.toggleExpanded",
+            method: "workspace.setExpanded",
             ok: true,
             result: {
               workspaceId: request.params.workspaceId,
-              expanded: true
+              expanded: request.params.expanded
             }
           } as const;
         case "workspace.remove":
@@ -229,7 +229,10 @@ describe("session browser transport contracts", () => {
 
     const pickedWorkspace = await transport.workspace.pickDirectory();
     const workspaceSelection = await transport.workspace.select("workspace-1");
-    const workspaceToggle = await transport.workspace.toggleExpanded("workspace-1");
+    const workspaceToggle = await transport.workspace.setExpanded(
+      "workspace-1",
+      true
+    );
     const workspaceRemoval = await transport.workspace.remove({
       workspaceId: "workspace-1"
     });
@@ -325,7 +328,7 @@ describe("session browser transport contracts", () => {
     expect(methods).toEqual([
       "workspace.pickDirectory",
       "workspace.select",
-      "workspace.toggleExpanded",
+      "workspace.setExpanded",
       "workspace.remove",
       "sessionBrowser.listRoots",
       "sessionBrowser.listChildren",

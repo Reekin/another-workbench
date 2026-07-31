@@ -827,7 +827,7 @@ describe("createRemoteRpcHandler", () => {
         workspaceId: "workspace-1",
         removed: true
       }),
-      toggleWorkspaceExpanded: vi.fn().mockResolvedValue({
+      setWorkspaceExpanded: vi.fn().mockResolvedValue({
         workspaceId: "workspace-1",
         expanded: true
       }),

@@ -128,6 +128,25 @@ export const runSessionExpansionEffects = async (input: {
   await input.loadChildren?.();
 };
 
+export const shouldMergeFocusedSessionPath = (input: {
+  loadedWorkspaceId: string;
+  pathWorkspaceId: string;
+}): boolean => input.loadedWorkspaceId === input.pathWorkspaceId;
+
+export const runWorkspaceExpansionEffects = async (input: {
+  expanded: boolean;
+  persistExpansion: () => Promise<unknown>;
+  selectWorkspace: () => Promise<unknown>;
+  loadRoots: () => Promise<void>;
+}): Promise<void> => {
+  await input.persistExpansion();
+  if (!input.expanded) {
+    return;
+  }
+  await input.selectWorkspace();
+  await input.loadRoots();
+};
+
 const findSessionNode = (
   sessions: WorkspaceBrowserViewNode["sessions"],
   sessionId: string
@@ -304,7 +323,21 @@ export const useWorkspaceBrowserController = (input: {
           return applyRootPage(current, result.page, targetPageIndex, cursorHistory);
         });
         if (committed && input.focusSessionId) {
-          await ensureSessionVisible(input.focusSessionId).catch(() => undefined);
+          const path = await coordinator.getPath(input.focusSessionId).catch(
+            () => undefined
+          );
+          if (
+            path &&
+            mountedRef.current &&
+            shouldMergeFocusedSessionPath({
+              loadedWorkspaceId: workspaceId,
+              pathWorkspaceId: path.workspaceId
+            })
+          ) {
+            updateWorkspace(path.workspaceId, (current) =>
+              mergeSessionPath(current, path)
+            );
+          }
         }
         return result;
       } finally {
@@ -642,11 +675,13 @@ export const useWorkspaceBrowserController = (input: {
       );
       const expanded = !(workspace?.isExpanded ?? false);
       updateWorkspace(workspaceId, (current) => ({ ...current, isExpanded: expanded }));
-      await input.transport.workspace.select(workspaceId);
-      await input.transport.workspace.toggleExpanded(workspaceId);
-      if (expanded) {
-        await loadRootPage(workspaceId);
-      }
+      await runWorkspaceExpansionEffects({
+        expanded,
+        persistExpansion: () =>
+          input.transport!.workspace.setExpanded(workspaceId, expanded),
+        selectWorkspace: () => input.transport!.workspace.select(workspaceId),
+        loadRoots: () => loadRootPage(workspaceId)
+      });
     },
     onToggleSessionTree: async (sessionId: string, workspaceId?: string) => {
       if (!input.transport || !workspaceId) {

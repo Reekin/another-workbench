@@ -341,7 +341,7 @@ export const createRemoteRpcHandler = (
               result: await shellService.removeWorkspace(request.params.workspaceId)
             });
           }
-          case "workspace.toggleExpanded":
+          case "workspace.setExpanded":
             if (!shellService) {
               return toErrorResponse(
                 request,
@@ -353,7 +353,10 @@ export const createRemoteRpcHandler = (
               id: request.id,
               method: request.method,
               ok: true,
-              result: await shellService.toggleWorkspaceExpanded(request.params.workspaceId)
+              result: await shellService.setWorkspaceExpanded(
+                request.params.workspaceId,
+                request.params.expanded
+              )
             });
           case "workspace.select":
             if (!shellService) {

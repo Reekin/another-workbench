@@ -398,11 +398,11 @@ export const createDemoWorkbenchShellService = (
       workspaceId,
       removed: false
     }),
-    toggleWorkspaceExpanded: async (workspaceId: string) => {
-      if (expandedWorkspaceIds.has(workspaceId)) {
-        expandedWorkspaceIds.delete(workspaceId);
-      } else {
+    setWorkspaceExpanded: async (workspaceId: string, expanded: boolean) => {
+      if (expanded) {
         expandedWorkspaceIds.add(workspaceId);
+      } else {
+        expandedWorkspaceIds.delete(workspaceId);
       }
       return {
         workspaceId,

@@ -542,10 +542,11 @@ export class WorkbenchShellService {
     };
   }
 
-  public async toggleWorkspaceExpanded(workspaceId: string): Promise<{ workspaceId: string; expanded: boolean }> {
+  public async setWorkspaceExpanded(
+    workspaceId: string,
+    expanded: boolean
+  ): Promise<{ workspaceId: string; expanded: boolean }> {
     const registry = this.requireWorkspaceRegistry();
-    await registry.ready();
-    const expanded = !registry.getState().expandedWorkspaceIds.includes(workspaceId);
     await registry.setWorkspaceExpanded(workspaceId, expanded);
     return {
       workspaceId,

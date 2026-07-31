@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   collectExpandedLoadedSessionIds,
   runSessionExpansionEffects,
-  runWithSessionBrowserStaleRetry
+  runWithSessionBrowserStaleRetry,
+  runWorkspaceExpansionEffects,
+  shouldMergeFocusedSessionPath
 } from "../src/ui/chat-shell/use-workspace-browser-controller.js";
 
 describe("workspace browser controller operations", () => {
@@ -179,5 +181,56 @@ describe("workspace browser controller operations", () => {
 
     expect(onPersistenceError).toHaveBeenCalledWith(error);
     expect(loadChildren).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not merge a stale focused session path from another workspace", () => {
+    expect(
+      shouldMergeFocusedSessionPath({
+        loadedWorkspaceId: "workspace-a",
+        pathWorkspaceId: "workspace-b"
+      })
+    ).toBe(false);
+    expect(
+      shouldMergeFocusedSessionPath({
+        loadedWorkspaceId: "workspace-a",
+        pathWorkspaceId: "workspace-a"
+      })
+    ).toBe(true);
+  });
+
+  it("persists collapse without selecting the collapsed workspace", async () => {
+    const persistExpansion = vi.fn(async () => undefined);
+    const selectWorkspace = vi.fn(async () => undefined);
+    const loadRoots = vi.fn(async () => undefined);
+
+    await runWorkspaceExpansionEffects({
+      expanded: false,
+      persistExpansion,
+      selectWorkspace,
+      loadRoots
+    });
+
+    expect(persistExpansion).toHaveBeenCalledTimes(1);
+    expect(selectWorkspace).not.toHaveBeenCalled();
+    expect(loadRoots).not.toHaveBeenCalled();
+  });
+
+  it("selects and loads only after explicit expansion is persisted", async () => {
+    const calls: string[] = [];
+
+    await runWorkspaceExpansionEffects({
+      expanded: true,
+      persistExpansion: async () => {
+        calls.push("persist");
+      },
+      selectWorkspace: async () => {
+        calls.push("select");
+      },
+      loadRoots: async () => {
+        calls.push("load");
+      }
+    });
+
+    expect(calls).toEqual(["persist", "select", "load"]);
   });
 });

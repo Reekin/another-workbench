@@ -3,7 +3,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { DomainSnapshot, SessionWindowRpc } from "@another-workbench/shared";
 import { createRendererStore } from "../src/store/store.js";
-import { useSessionOpenController } from "../src/ui/chat-shell/use-session-open-controller.js";
+import {
+  canActivateCachedSessionWindow,
+  useSessionOpenController
+} from "../src/ui/chat-shell/use-session-open-controller.js";
 import type { TranscriptViewportController } from "../src/ui/chat-shell/use-transcript-viewport-controller.js";
 
 type SessionOpenController = ReturnType<typeof useSessionOpenController>;
@@ -257,5 +260,54 @@ describe("useSessionOpenController background refresh", () => {
     await backgroundRefresh;
 
     expect(sessionWindows()["session-a"]?.cursor).toBe("cursor-a-manual");
+  });
+});
+
+describe("canActivateCachedSessionWindow", () => {
+  it("rejects an empty cached provider window without projected turns", () => {
+    expect(
+      canActivateCachedSessionWindow({
+        window: sessionWindowFor("session-child"),
+        session: {
+          ...snapshotForSession("session-child").sessions[0]!,
+          lastTurnId: "turn-index-only",
+          metadata: {
+            providerKind: "codex-thread",
+            providerSessionId: "thread-child"
+          }
+        },
+        projectedTurnCount: 0
+      })
+    ).toBe(false);
+  });
+
+  it("keeps valid provider and local cached windows on the fast path", () => {
+    const providerWindow = {
+      ...sessionWindowFor("session-child"),
+      windowStartTurnId: "turn-1",
+      windowEndTurnId: "turn-1"
+    };
+    const providerSession = {
+      ...snapshotForSession("session-child").sessions[0]!,
+      metadata: {
+        providerKind: "codex-thread",
+        providerSessionId: "thread-child"
+      }
+    };
+
+    expect(
+      canActivateCachedSessionWindow({
+        window: providerWindow,
+        session: providerSession,
+        projectedTurnCount: 1
+      })
+    ).toBe(true);
+    expect(
+      canActivateCachedSessionWindow({
+        window: sessionWindowFor("session-local"),
+        session: snapshotForSession("session-local").sessions[0],
+        projectedTurnCount: 0
+      })
+    ).toBe(true);
   });
 });

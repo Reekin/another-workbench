@@ -695,14 +695,19 @@ export class WorkbenchShellService {
       .listSessions({ includeArchived: true })
       .find((session) => session.sessionId === sessionId);
     const alreadyLoaded = Boolean(loadedSession);
-    const isEmptyProviderSession = Boolean(
+    const isProviderSession = Boolean(
       loadedSession?.metadata?.providerKind &&
-        loadedSession.metadata.providerSessionId &&
-        !loadedSession.lastTurnId
+        loadedSession.metadata.providerSessionId
     );
+    const hasProjectedTurns = alreadyLoaded
+      ? this.runtimeService
+          .getSnapshot()
+          .turns.some((turn) => turn.sessionId === sessionId)
+      : false;
+    const isUncoveredProviderSession = isProviderSession && !hasProjectedTurns;
     const alreadyFullyLoaded =
       alreadyLoaded &&
-      !isEmptyProviderSession &&
+      !isUncoveredProviderSession &&
       !this.partiallyHydratedSessionIds.has(sessionId);
     const anchorTurnId = await this.resolveProviderAnchorTurnId(sessionId);
     if (isCancelled()) {

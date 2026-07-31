@@ -4,7 +4,7 @@ import {
   type Dispatch,
   type SetStateAction
 } from "react";
-import type { SessionWindowRpc } from "@another-workbench/shared";
+import type { ChatSession, SessionWindowRpc } from "@another-workbench/shared";
 import type { RendererStore } from "../../store/store.js";
 import type { DesktopTransport } from "../../transport/desktop-transport.js";
 import {
@@ -27,6 +27,25 @@ type SessionWindowHydrationOptions = {
 };
 
 export type SessionWindowCoverage = Omit<SessionWindowRpc, "snapshot">;
+
+export const canActivateCachedSessionWindow = (input: {
+  window: SessionWindowCoverage | undefined;
+  session: ChatSession | undefined;
+  projectedTurnCount: number;
+}): boolean => {
+  if (!input.window) {
+    return false;
+  }
+  const isProviderSession = Boolean(
+    input.session?.metadata?.providerKind &&
+      input.session.metadata.providerSessionId
+  );
+  return (
+    !isProviderSession ||
+    input.projectedTurnCount > 0 ||
+    Boolean(input.window.windowStartTurnId || input.window.windowEndTurnId)
+  );
+};
 
 const toSessionWindowCoverage = (
   page: SessionWindowRpc
@@ -367,7 +386,13 @@ export const useSessionOpenController = (input: {
         input.setBrowserSelectedSessionId(sessionId);
         input.setOpeningSessionId(sessionId);
         const cachedWindow = input.sessionWindows[sessionId];
-        if (cachedWindow && activateLoadedSession(sessionId)) {
+        const domain = input.store.getDomainReadModel();
+        const canActivateCachedWindow = canActivateCachedSessionWindow({
+          window: cachedWindow,
+          session: domain.getSession(sessionId),
+          projectedTurnCount: domain.listTurns({ sessionId }).length
+        });
+        if (canActivateCachedWindow && activateLoadedSession(sessionId)) {
           input.viewport.scrollToBottom(sessionId, {
             allowPendingForInactive: true
           });

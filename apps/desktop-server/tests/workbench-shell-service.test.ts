@@ -889,11 +889,11 @@ describe("WorkbenchShellService", () => {
     expect(markSessionRead).toHaveBeenCalledWith("session-1");
   });
 
-  it("hydrates a loaded provider session that has no projected turns", async () => {
+  it("hydrates a loaded provider session whose indexed last turn is not projected", async () => {
     const snapshot = buildSessionSnapshot();
     const emptyProviderSession = {
       ...snapshot.sessions[0],
-      lastTurnId: undefined,
+      lastTurnId: "turn-index-only",
       metadata: {
         providerKind: "codex-thread",
         providerSessionId: "sub-thread-1"

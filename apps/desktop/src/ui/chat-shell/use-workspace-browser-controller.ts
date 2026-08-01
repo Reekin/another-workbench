@@ -179,6 +179,27 @@ export const collectExpandedLoadedSessionIds = (
   return sessionIds;
 };
 
+export const resolveWorkspaceRefreshTargetIds = (input: {
+  mode: "all" | "visible" | "workspace";
+  workspaceId?: string;
+  lastActiveWorkspaceId?: string;
+  workspaces: Array<{ workspaceId: string; isExpanded: boolean }>;
+}): string[] => {
+  if (input.mode === "workspace") {
+    return input.workspaceId ? [input.workspaceId] : [];
+  }
+  if (input.mode === "all") {
+    return input.workspaces.map((workspace) => workspace.workspaceId);
+  }
+  const expandedWorkspaceIds = input.workspaces
+    .filter((workspace) => workspace.isExpanded)
+    .map((workspace) => workspace.workspaceId);
+  if (expandedWorkspaceIds.length > 0) {
+    return expandedWorkspaceIds;
+  }
+  return input.lastActiveWorkspaceId ? [input.lastActiveWorkspaceId] : [];
+};
+
 export type WorkspaceBrowserController = {
   workspaceTree: WorkspaceBrowserViewNode[];
   refreshSessionBrowser: (input?: {
@@ -404,11 +425,12 @@ export const useWorkspaceBrowserController = (input: {
     workspaceTreeRef.current = current;
     setWorkspaceTreeState(current);
     const mode = refreshInput?.mode ?? "visible";
-    const targetWorkspaceId =
-      mode === "workspace"
-        ? refreshInput?.workspaceId
-        : workspaceState.lastActiveWorkspaceId;
-    const targetWorkspaceIds = targetWorkspaceId ? [targetWorkspaceId] : [];
+    const targetWorkspaceIds = resolveWorkspaceRefreshTargetIds({
+      mode,
+      workspaceId: refreshInput?.workspaceId,
+      lastActiveWorkspaceId: workspaceState.lastActiveWorkspaceId,
+      workspaces: current
+    });
     const expandedCollectionsByWorkspace = new Map(
       current.map((workspace) => [
         workspace.workspaceId,

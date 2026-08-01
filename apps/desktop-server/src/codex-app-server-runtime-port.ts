@@ -876,6 +876,7 @@ export class CodexAppServerRuntimePort
   });
   private readonly threadIdBySessionId = new Map<string, string>();
   private readonly sessionIdByThreadId = new Map<string, string>();
+  private readonly sessionIdsByThreadId = new Map<string, Set<string>>();
   private readonly pendingTurnSessionIdByThreadId = new Map<string, string>();
   private readonly sessionIdByThreadAndTurnId = new Map<string, string>();
   private readonly activeTurnByThreadId = new Map<
@@ -1062,6 +1063,7 @@ export class CodexAppServerRuntimePort
     this.pendingApprovalResolutionsById.clear();
     this.threadIdBySessionId.clear();
     this.sessionIdByThreadId.clear();
+    this.sessionIdsByThreadId.clear();
     this.pendingTurnSessionIdByThreadId.clear();
     this.sessionIdByThreadAndTurnId.clear();
     this.activeTurnByThreadId.clear();
@@ -1191,9 +1193,22 @@ export class CodexAppServerRuntimePort
   public attachThreadToSession(sessionId: string, threadId: string): void {
     const previousThreadId = this.threadIdBySessionId.get(sessionId);
     if (previousThreadId && previousThreadId !== threadId) {
-      this.sessionIdByThreadId.delete(previousThreadId);
+      const previousSessionIds = this.sessionIdsByThreadId.get(previousThreadId);
+      previousSessionIds?.delete(sessionId);
+      if (!previousSessionIds || previousSessionIds.size === 0) {
+        this.sessionIdsByThreadId.delete(previousThreadId);
+        this.sessionIdByThreadId.delete(previousThreadId);
+      } else if (this.sessionIdByThreadId.get(previousThreadId) === sessionId) {
+        this.sessionIdByThreadId.set(
+          previousThreadId,
+          Array.from(previousSessionIds).at(-1)!
+        );
+      }
     }
     this.threadIdBySessionId.set(sessionId, threadId);
+    const sessionIds = this.sessionIdsByThreadId.get(threadId) ?? new Set<string>();
+    sessionIds.add(sessionId);
+    this.sessionIdsByThreadId.set(threadId, sessionIds);
     this.sessionIdByThreadId.set(threadId, sessionId);
   }
 
@@ -1840,8 +1855,7 @@ export class CodexAppServerRuntimePort
     )) as ThreadStartResponse;
 
     const threadId = result.thread.id;
-    this.threadIdBySessionId.set(sessionId, threadId);
-    this.sessionIdByThreadId.set(threadId, sessionId);
+    this.attachThreadToSession(sessionId, threadId);
     return threadId;
   }
 
@@ -2217,18 +2231,21 @@ export class CodexAppServerRuntimePort
       }
       case "thread/status/changed": {
         const threadId = String(params.threadId ?? "");
-        const sessionId = this.sessionIdByThreadId.get(threadId);
-        if (!sessionId) {
+        const sessionIds = this.sessionIdsByThreadId.get(threadId);
+        if (!sessionIds || sessionIds.size === 0) {
           return;
         }
-        this.emitEvent("session.updated", {
-          conversationId:
-            this.resolveConversationIdBySessionId?.(sessionId) ?? sessionId,
-          sessionId,
-          status: mapSessionStatus(
-            isRecord(params.status) ? params.status : undefined
-          )
-        });
+        const status = mapSessionStatus(
+          isRecord(params.status) ? params.status : undefined
+        );
+        for (const sessionId of sessionIds) {
+          this.emitEvent("session.updated", {
+            conversationId:
+              this.resolveConversationIdBySessionId?.(sessionId) ?? sessionId,
+            sessionId,
+            status
+          });
+        }
         return;
       }
       case "thread/tokenUsage/updated": {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   collectExpandedLoadedSessionIds,
+  resolveWorkspaceRefreshTargetIds,
   runSessionExpansionEffects,
   runWithSessionBrowserStaleRetry,
   runWorkspaceExpansionEffects,
@@ -8,6 +9,29 @@ import {
 } from "../src/ui/chat-shell/use-workspace-browser-controller.js";
 
 describe("workspace browser controller operations", () => {
+  it("refreshes every expanded workspace after live status changes", () => {
+    const workspaces = [
+      { workspaceId: "workspace-a", isExpanded: true },
+      { workspaceId: "workspace-b", isExpanded: true },
+      { workspaceId: "workspace-c", isExpanded: false }
+    ];
+
+    expect(
+      resolveWorkspaceRefreshTargetIds({
+        mode: "visible",
+        lastActiveWorkspaceId: "workspace-c",
+        workspaces
+      })
+    ).toEqual(["workspace-a", "workspace-b"]);
+    expect(
+      resolveWorkspaceRefreshTargetIds({
+        mode: "all",
+        lastActiveWorkspaceId: "workspace-c",
+        workspaces
+      })
+    ).toEqual(["workspace-a", "workspace-b", "workspace-c"]);
+  });
+
   it("collects every visible loaded child collection for status refresh", () => {
     expect(
       collectExpandedLoadedSessionIds([

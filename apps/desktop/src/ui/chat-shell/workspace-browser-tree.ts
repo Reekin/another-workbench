@@ -9,7 +9,6 @@ export type SessionBrowserViewNode = SessionBrowserItemRpc & {
   workspaceId: string;
   isExpanded: boolean;
   isLoadingChildren: boolean;
-  childrenLoadingGeneration?: number;
   hasLoadedChildren: boolean;
   children: SessionBrowserViewNode[];
   childrenNextCursor?: string;
@@ -30,7 +29,6 @@ export type WorkspaceBrowserViewNode = {
   rootHasMore: boolean;
   rootTotalCount: number;
   isLoadingRoots: boolean;
-  rootLoadingGeneration?: number;
   isDirty: boolean;
 };
 
@@ -52,7 +50,6 @@ const createWorkspaceBrowserViewNode = (
   rootHasMore: previous?.rootHasMore ?? false,
   rootTotalCount: previous?.rootTotalCount ?? 0,
   isLoadingRoots: previous?.isLoadingRoots ?? false,
-  rootLoadingGeneration: previous?.rootLoadingGeneration,
   isDirty: previous?.isDirty ?? true
 });
 
@@ -65,7 +62,6 @@ export const createSessionBrowserViewNode = (
   workspaceId,
   isExpanded: previous?.isExpanded ?? false,
   isLoadingChildren: previous?.isLoadingChildren ?? false,
-  childrenLoadingGeneration: previous?.childrenLoadingGeneration,
   hasLoadedChildren: previous?.hasLoadedChildren ?? false,
   children: previous?.children ?? [],
   childrenNextCursor: previous?.childrenNextCursor,
@@ -127,7 +123,6 @@ export const applyRootPage = (
     rootHasMore: page.hasMore,
     rootTotalCount: page.totalCount,
     isLoadingRoots: false,
-    rootLoadingGeneration: undefined,
     isDirty: false
   };
 };
@@ -142,30 +137,16 @@ export const resetRootPagination = (
   rootNextCursor: undefined,
   rootHasMore: false,
   isLoadingRoots: false,
-  rootLoadingGeneration: undefined,
   isDirty: true
 });
 
-export const beginRootLoading = (
+export const setRootLoading = (
   workspace: WorkspaceBrowserViewNode,
-  generation: number
+  isLoadingRoots: boolean
 ): WorkspaceBrowserViewNode => ({
   ...workspace,
-  isLoadingRoots: true,
-  rootLoadingGeneration: generation
+  isLoadingRoots
 });
-
-export const clearRootLoading = (
-  workspace: WorkspaceBrowserViewNode,
-  generation: number
-): WorkspaceBrowserViewNode =>
-  workspace.rootLoadingGeneration === generation
-    ? {
-        ...workspace,
-        isLoadingRoots: false,
-        rootLoadingGeneration: undefined
-      }
-    : workspace;
 
 const updateSessionNodes = (
   sessions: SessionBrowserViewNode[],
@@ -197,31 +178,15 @@ export const updateSessionNode = (
   return sessions === workspace.sessions ? workspace : { ...workspace, sessions };
 };
 
-export const beginSessionChildrenLoading = (
+export const setSessionChildrenLoading = (
   workspace: WorkspaceBrowserViewNode,
   sessionId: string,
-  generation: number
+  isLoadingChildren: boolean
 ): WorkspaceBrowserViewNode =>
   updateSessionNode(workspace, sessionId, (session) => ({
     ...session,
-    isLoadingChildren: true,
-    childrenLoadingGeneration: generation
+    isLoadingChildren
   }));
-
-export const clearSessionChildrenLoading = (
-  workspace: WorkspaceBrowserViewNode,
-  sessionId: string,
-  generation: number
-): WorkspaceBrowserViewNode =>
-  updateSessionNode(workspace, sessionId, (session) =>
-    session.childrenLoadingGeneration === generation
-      ? {
-          ...session,
-          isLoadingChildren: false,
-          childrenLoadingGeneration: undefined
-        }
-      : session
-  );
 
 export const applyChildrenPage = (
   workspace: WorkspaceBrowserViewNode,
@@ -250,8 +215,7 @@ export const applyChildrenPage = (
       hasLoadedChildren: true,
       childrenNextCursor: page.nextCursor,
       childrenHasMore: page.hasMore,
-      isLoadingChildren: false,
-      childrenLoadingGeneration: undefined
+      isLoadingChildren: false
     };
   });
 

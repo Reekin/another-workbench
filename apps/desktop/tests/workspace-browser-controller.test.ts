@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
+import type { SessionBrowserPageRpc } from "@another-workbench/shared";
 import {
   collectExpandedLoadedSessionIds,
+  projectSessionBrowserLoading,
   resolveWorkspaceRefreshTargetIds,
   runSessionExpansionEffects,
-  runWithSessionBrowserStaleRetry,
   runWorkspaceExpansionEffects,
   shouldMergeFocusedSessionPath
 } from "../src/ui/chat-shell/use-workspace-browser-controller.js";
+import { SessionBrowserQueryCoordinator } from "../src/ui/chat-shell/session-browser-query-coordinator.js";
+import { mergeWorkspaceBrowserState } from "../src/ui/chat-shell/workspace-browser-tree.js";
 
 describe("workspace browser controller operations", () => {
   it("refreshes every expanded workspace after live status changes", () => {
@@ -93,67 +96,74 @@ describe("workspace browser controller operations", () => {
     ).toEqual(["root", "child"]);
   });
 
-  it("recovers one stale collection load and retries the original operation once", async () => {
-    const load = vi
-      .fn<() => Promise<string>>()
-      .mockRejectedValueOnce({ code: "CURSOR_STALE" })
-      .mockResolvedValueOnce("committed");
-    const recover = vi.fn(async () => true);
+  it("does not project settled loading from a replaced coordinator", async () => {
+    const resolvers: Array<(page: SessionBrowserPageRpc) => void> = [];
+    const createCoordinator = () =>
+      new SessionBrowserQueryCoordinator({
+        listRoots: vi.fn(
+          () =>
+            new Promise<SessionBrowserPageRpc>((resolve) => {
+              resolvers.push(resolve);
+            })
+        ),
+        listChildren: vi.fn(),
+        getPath: vi.fn()
+      });
+    const previous = createCoordinator();
+    const current = createCoordinator();
+    const scope = { kind: "roots" as const, workspaceId: "workspace-1" };
+    let workspace = mergeWorkspaceBrowserState([], {
+      workspaces: [{
+        workspaceId: "workspace-1",
+        absolutePath: "I:\\repo",
+        label: "Repo",
+        createdAt: "2026-08-02T00:00:00.000Z",
+        updatedAt: "2026-08-02T00:00:00.000Z"
+      }],
+      lastActiveWorkspaceId: "workspace-1"
+    })[0]!;
+    const previousResult = previous.load(scope);
+    await vi.waitFor(() => expect(resolvers).toHaveLength(1));
+    workspace = projectSessionBrowserLoading(
+      workspace,
+      previous,
+      previous,
+      scope
+    );
+    expect(workspace.isLoadingRoots).toBe(true);
 
-    await expect(
-      runWithSessionBrowserStaleRetry({ load, recover })
-    ).resolves.toBe("committed");
-    expect(load).toHaveBeenCalledTimes(2);
-    expect(recover).toHaveBeenCalledTimes(1);
-  });
+    const currentResult = current.load(scope);
+    await vi.waitFor(() => expect(resolvers).toHaveLength(2));
+    workspace = projectSessionBrowserLoading(workspace, current, current, scope);
+    expect(workspace.isLoadingRoots).toBe(true);
 
-  it("terminates without an unhandled failure when the retry is stale again", async () => {
-    const stale = { code: "CURSOR_STALE" };
-    const load = vi.fn<() => Promise<string>>().mockRejectedValue(stale);
-    const recover = vi.fn(async () => true);
+    resolvers[0]?.({
+      workspaceId: "workspace-1",
+      revision: "revision-old",
+      items: [],
+      hasMore: false,
+      totalCount: 0
+    });
+    await previousResult;
+    const afterPrevious = projectSessionBrowserLoading(
+      workspace,
+      current,
+      previous,
+      scope
+    );
+    expect(afterPrevious).toBe(workspace);
+    expect(afterPrevious.isLoadingRoots).toBe(true);
 
-    await expect(
-      runWithSessionBrowserStaleRetry({ load, recover })
-    ).resolves.toBeUndefined();
-    expect(load).toHaveBeenCalledTimes(2);
-    expect(recover).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not recover invalidated or replaced owners", async () => {
-    const invalidated = {
-      status: "superseded" as const,
-      reason: "invalidated" as const
-    };
-    const replaced = {
-      status: "superseded" as const,
-      reason: "replaced" as const
-    };
-    const recoverInvalidated = vi.fn(async () => true);
-    const invalidatedLoad = vi.fn().mockResolvedValue(invalidated);
-
-    await expect(
-      runWithSessionBrowserStaleRetry({
-        load: invalidatedLoad,
-        recover: recoverInvalidated,
-        shouldRecoverResult: (result) =>
-          result.status === "superseded" &&
-          result.reason === "revision_changed"
-      })
-    ).resolves.toBe(invalidated);
-    expect(invalidatedLoad).toHaveBeenCalledTimes(1);
-    expect(recoverInvalidated).not.toHaveBeenCalled();
-
-    const recoverReplaced = vi.fn(async () => true);
-    await expect(
-      runWithSessionBrowserStaleRetry({
-        load: async () => replaced,
-        recover: recoverReplaced,
-        shouldRecoverResult: (result) =>
-          result.status === "superseded" &&
-          result.reason === "invalidated"
-      })
-    ).resolves.toBe(replaced);
-    expect(recoverReplaced).not.toHaveBeenCalled();
+    resolvers[1]?.({
+      workspaceId: "workspace-1",
+      revision: "revision-new",
+      items: [],
+      hasMore: false,
+      totalCount: 0
+    });
+    await currentResult;
+    workspace = projectSessionBrowserLoading(workspace, current, current, scope);
+    expect(workspace.isLoadingRoots).toBe(false);
   });
 
   it("starts child loading without waiting for expansion persistence", async () => {
@@ -223,17 +233,25 @@ describe("workspace browser controller operations", () => {
   });
 
   it("persists collapse without selecting the collapsed workspace", async () => {
+    const calls: string[] = [];
+    const cancelLoads = vi.fn(() => calls.push("cancel"));
     const persistExpansion = vi.fn(async () => undefined);
     const selectWorkspace = vi.fn(async () => undefined);
     const loadRoots = vi.fn(async () => undefined);
 
     await runWorkspaceExpansionEffects({
       expanded: false,
-      persistExpansion,
+      cancelLoads,
+      persistExpansion: async () => {
+        calls.push("persist");
+        await persistExpansion();
+      },
       selectWorkspace,
       loadRoots
     });
 
+    expect(calls).toEqual(["cancel", "persist"]);
+    expect(cancelLoads).toHaveBeenCalledTimes(1);
     expect(persistExpansion).toHaveBeenCalledTimes(1);
     expect(selectWorkspace).not.toHaveBeenCalled();
     expect(loadRoots).not.toHaveBeenCalled();
@@ -244,6 +262,7 @@ describe("workspace browser controller operations", () => {
 
     await runWorkspaceExpansionEffects({
       expanded: true,
+      cancelLoads: vi.fn(() => calls.push("cancel")),
       persistExpansion: async () => {
         calls.push("persist");
       },

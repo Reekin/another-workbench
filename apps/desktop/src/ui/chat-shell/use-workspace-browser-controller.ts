@@ -2,23 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import type { DesktopTransport } from "../../transport/desktop-transport.js";
 import { prioritizeWorkspaceIdsForReconciliation } from "./workspace-reconciliation.js";
 import {
-  isSessionBrowserCursorStaleError,
-  SessionBrowserQueryCoordinator
-} from "./session-browser-query-coordinator.js";
-import type {
-  SessionBrowserQueryOwner,
-  SessionBrowserQueryResult
+  SessionBrowserQueryCoordinator,
+  type SessionBrowserQueryScope
 } from "./session-browser-query-coordinator.js";
 import {
   applyChildrenPage,
   applyRootPage,
-  beginRootLoading,
-  beginSessionChildrenLoading,
-  clearRootLoading,
-  clearSessionChildrenLoading,
   mergeSessionPath,
   mergeWorkspaceBrowserState,
   resetRootPagination,
+  setRootLoading,
+  setSessionChildrenLoading,
   upsertWorkspaceBrowserRecord,
   updateSessionNode,
   type WorkspaceBrowserViewNode
@@ -78,43 +72,6 @@ export const runAddWorkspaceFlow = async (input: {
 const rootPageSize = 10;
 const childPageSize = 20;
 
-export const runWithSessionBrowserStaleRetry = async <Result>(input: {
-  load: () => Promise<Result>;
-  recover: () => Promise<boolean>;
-  shouldRecoverResult?: (result: Result) => boolean;
-}): Promise<Result | undefined> => {
-  let shouldRecover = false;
-  try {
-    const result = await input.load();
-    if (!input.shouldRecoverResult?.(result)) {
-      return result;
-    }
-    shouldRecover = true;
-  } catch (error) {
-    if (!isSessionBrowserCursorStaleError(error)) {
-      throw error;
-    }
-    shouldRecover = true;
-  }
-  if (!shouldRecover || !(await input.recover())) {
-    return undefined;
-  }
-  try {
-    return await input.load();
-  } catch (error) {
-    if (isSessionBrowserCursorStaleError(error)) {
-      return undefined;
-    }
-    throw error;
-  }
-};
-
-const shouldRecoverSessionBrowserResult = (
-  result: SessionBrowserQueryResult | undefined
-): boolean =>
-  result?.status === "superseded" &&
-  result.reason === "revision_changed";
-
 export const runSessionExpansionEffects = async (input: {
   persistExpansion: () => Promise<unknown>;
   loadChildren?: () => Promise<void>;
@@ -135,10 +92,14 @@ export const shouldMergeFocusedSessionPath = (input: {
 
 export const runWorkspaceExpansionEffects = async (input: {
   expanded: boolean;
+  cancelLoads?: () => void;
   persistExpansion: () => Promise<unknown>;
   selectWorkspace: () => Promise<unknown>;
   loadRoots: () => Promise<void>;
 }): Promise<void> => {
+  if (!input.expanded) {
+    input.cancelLoads?.();
+  }
   await input.persistExpansion();
   if (!input.expanded) {
     return;
@@ -200,6 +161,21 @@ export const resolveWorkspaceRefreshTargetIds = (input: {
   return input.lastActiveWorkspaceId ? [input.lastActiveWorkspaceId] : [];
 };
 
+export const projectSessionBrowserLoading = (
+  workspace: WorkspaceBrowserViewNode,
+  currentCoordinator: SessionBrowserQueryCoordinator | undefined,
+  requestCoordinator: SessionBrowserQueryCoordinator,
+  scope: SessionBrowserQueryScope
+): WorkspaceBrowserViewNode => {
+  if (currentCoordinator !== requestCoordinator) {
+    return workspace;
+  }
+  const isLoading = requestCoordinator.isLoading(scope);
+  return scope.kind === "roots"
+    ? setRootLoading(workspace, isLoading)
+    : setSessionChildrenLoading(workspace, scope.parentSessionId, isLoading);
+};
+
 export type WorkspaceBrowserController = {
   workspaceTree: WorkspaceBrowserViewNode[];
   refreshSessionBrowser: (input?: {
@@ -252,30 +228,30 @@ export const useWorkspaceBrowserController = (input: {
     );
   };
 
-  const clearQueryOwner = (owner: SessionBrowserQueryOwner): void => {
-    if (!mountedRef.current) {
-      return;
-    }
-    if (owner.scope.kind === "roots") {
-      updateWorkspace(owner.scope.workspaceId, (workspace) =>
-        clearRootLoading(workspace, owner.generation)
+  const clearCollectionLoading = (
+    scopes: SessionBrowserQueryScope[]
+  ): void => {
+    for (const scope of scopes) {
+      updateWorkspace(scope.workspaceId, (workspace) =>
+        scope.kind === "roots"
+          ? setRootLoading(workspace, false)
+          : setSessionChildrenLoading(workspace, scope.parentSessionId, false)
       );
-      return;
     }
-    const parentSessionId = owner.scope.parentSessionId;
-    updateWorkspace(owner.scope.workspaceId, (workspace) =>
-      clearSessionChildrenLoading(
-        workspace,
-        parentSessionId,
-        owner.generation
-      )
-    );
   };
 
-  const clearQueryOwners = (owners: SessionBrowserQueryOwner[]): void => {
-    for (const owner of owners) {
-      clearQueryOwner(owner);
-    }
+  const projectCollectionLoading = (
+    coordinator: SessionBrowserQueryCoordinator,
+    scope: SessionBrowserQueryScope
+  ): void => {
+    updateWorkspace(scope.workspaceId, (workspace) =>
+      projectSessionBrowserLoading(
+        workspace,
+        coordinatorRef.current,
+        coordinator,
+        scope
+      )
+    );
   };
 
   const enqueueWorkspaceReconciliation = (
@@ -299,96 +275,74 @@ export const useWorkspaceBrowserController = (input: {
   const loadRootPage = async (
     workspaceId: string,
     pageIndex?: number,
-    cursorHistoryOverride?: Array<string | undefined>,
-    allowCursorReset = true
+    cursorHistoryOverride?: Array<string | undefined>
   ): Promise<void> => {
-    let retrying = false;
-    const load = async (): Promise<SessionBrowserQueryResult | undefined> => {
-      const coordinator = coordinatorRef.current;
-      const workspace = workspaceTreeRef.current.find(
-        (candidate) => candidate.workspaceId === workspaceId
-      );
-      if (!coordinator || !workspace?.isExpanded) {
-        return undefined;
-      }
-      const targetPageIndex = retrying ? 0 : (pageIndex ?? workspace.rootPageIndex);
-      const cursorHistory = retrying
-        ? [undefined]
-        : (cursorHistoryOverride ??
-          (workspace.rootCursorHistory.length > 0
-            ? workspace.rootCursorHistory
-            : [undefined]));
-      const request = coordinator.load({
-        kind: "roots",
-        workspaceId,
-        cursor: cursorHistory[targetPageIndex],
-        limit: rootPageSize
-      });
-      updateWorkspace(workspaceId, (current) =>
-        beginRootLoading(current, request.generation)
-      );
-      try {
-        const result = await request.result;
-        if (result.status !== "committed" || !mountedRef.current) {
-          return result;
-        }
-        let committed = false;
-        updateWorkspace(workspaceId, (current) => {
-          if (
-            current.rootLoadingGeneration !== request.generation ||
-            !current.isExpanded
-          ) {
-            return current;
-          }
-          committed = true;
-          return applyRootPage(current, result.page, targetPageIndex, cursorHistory);
-        });
-        if (committed && input.focusSessionId) {
-          const path = await coordinator.getPath(input.focusSessionId).catch(
-            () => undefined
-          );
-          if (
-            path &&
-            mountedRef.current &&
-            shouldMergeFocusedSessionPath({
-              loadedWorkspaceId: workspaceId,
-              pathWorkspaceId: path.workspaceId
-            })
-          ) {
-            updateWorkspace(path.workspaceId, (current) =>
-              mergeSessionPath(current, path)
-            );
-          }
-        }
-        return result;
-      } finally {
-        clearQueryOwner(request);
-      }
-    };
-
-    if (!allowCursorReset) {
-      await load();
+    const coordinator = coordinatorRef.current;
+    const workspace = workspaceTreeRef.current.find(
+      (candidate) => candidate.workspaceId === workspaceId
+    );
+    if (!coordinator || !workspace?.isExpanded) {
       return;
     }
-    await runWithSessionBrowserStaleRetry({
-      load,
-      shouldRecoverResult: shouldRecoverSessionBrowserResult,
-      recover: async () => {
-        const coordinator = coordinatorRef.current;
-        if (!coordinator || !mountedRef.current) {
-          return false;
-        }
-        clearQueryOwners(coordinator.clearWorkspace(workspaceId));
-        updateWorkspace(workspaceId, resetRootPagination);
-        retrying = true;
-        return Boolean(
-          workspaceTreeRef.current.find(
-            (candidate) =>
-              candidate.workspaceId === workspaceId && candidate.isExpanded
-          )
-        );
-      }
+    const targetPageIndex = pageIndex ?? workspace.rootPageIndex;
+    const cursorHistory =
+      cursorHistoryOverride ??
+      (workspace.rootCursorHistory.length > 0
+        ? workspace.rootCursorHistory
+        : [undefined]);
+    const scope = { kind: "roots" as const, workspaceId };
+    const resultPromise = coordinator.load({
+      ...scope,
+      cursor: cursorHistory[targetPageIndex],
+      limit: rootPageSize
     });
+    projectCollectionLoading(coordinator, scope);
+    try {
+      const result = await resultPromise;
+      if (
+        result.status !== "committed" ||
+        !mountedRef.current ||
+        coordinatorRef.current !== coordinator
+      ) {
+        return;
+      }
+      const recovered = Boolean(result.recoveredRootPage);
+      let committed = false;
+      updateWorkspace(workspaceId, (current) => {
+        if (!current.isExpanded) {
+          return current;
+        }
+        committed = true;
+        return applyRootPage(
+          current,
+          result.page,
+          recovered ? 0 : targetPageIndex,
+          recovered ? [undefined] : cursorHistory
+        );
+      });
+      if (committed && input.focusSessionId) {
+        const path = await coordinator.getPath(input.focusSessionId).catch(
+          () => undefined
+        );
+        if (
+          path &&
+          mountedRef.current &&
+          coordinatorRef.current === coordinator &&
+          shouldMergeFocusedSessionPath({
+            loadedWorkspaceId: workspaceId,
+            pathWorkspaceId: path.workspaceId
+          })
+        ) {
+          updateWorkspace(path.workspaceId, (current) =>
+            mergeSessionPath(current, path)
+          );
+        }
+      }
+    } finally {
+      if (mountedRef.current) {
+        projectCollectionLoading(coordinator, scope);
+      }
+    }
   };
 
   const ensureSessionVisible = async (
@@ -440,7 +394,7 @@ export const useWorkspaceBrowserController = (input: {
 
     if (mode === "all" || mode === "visible") {
       for (const workspace of current) {
-        clearQueryOwners(
+        clearCollectionLoading(
           coordinatorRef.current.invalidateWorkspace(workspace.workspaceId)
         );
       }
@@ -448,7 +402,7 @@ export const useWorkspaceBrowserController = (input: {
         workspaces.map(resetRootPagination)
       );
     } else if (targetWorkspaceIds[0]) {
-      clearQueryOwners(
+      clearCollectionLoading(
         coordinatorRef.current.invalidateWorkspace(targetWorkspaceIds[0])
       );
       updateWorkspace(targetWorkspaceIds[0], resetRootPagination);
@@ -473,83 +427,61 @@ export const useWorkspaceBrowserController = (input: {
   const loadChildren = async (
     workspaceId: string,
     sessionId: string,
-    append: boolean,
-    allowCursorReset = true
+    append: boolean
   ): Promise<void> => {
-    let retrying = false;
-    const load = async (): Promise<SessionBrowserQueryResult | undefined> => {
-      const coordinator = coordinatorRef.current;
-      const workspace = workspaceTreeRef.current.find(
-        (candidate) => candidate.workspaceId === workspaceId
-      );
-      const session = workspace
-        ? findSessionNode(workspace.sessions, sessionId)
-        : undefined;
-      if (!coordinator || !workspace || !session?.isExpanded) {
-        return undefined;
-      }
-      const request = coordinator.load({
-        kind: "children",
-        workspaceId,
-        parentSessionId: sessionId,
-        cursor: append && !retrying ? session.childrenNextCursor : undefined,
-        limit: childPageSize
-      });
-      updateWorkspace(workspaceId, (current) =>
-        beginSessionChildrenLoading(current, sessionId, request.generation)
-      );
-      try {
-        const result = await request.result;
-        if (result.status !== "committed" || !mountedRef.current) {
-          return result;
-        }
-        updateWorkspace(workspaceId, (current) => {
-          const currentSession = findSessionNode(current.sessions, sessionId);
-          if (
-            currentSession?.childrenLoadingGeneration !== request.generation ||
-            !currentSession.isExpanded
-          ) {
-            return current;
-          }
-          return applyChildrenPage(
-            current,
-            sessionId,
-            result.page,
-            append && !retrying
-          );
-        });
-        return result;
-      } finally {
-        clearQueryOwner(request);
-      }
-    };
-
-    if (!allowCursorReset) {
-      await load();
+    const coordinator = coordinatorRef.current;
+    const workspace = workspaceTreeRef.current.find(
+      (candidate) => candidate.workspaceId === workspaceId
+    );
+    const session = workspace
+      ? findSessionNode(workspace.sessions, sessionId)
+      : undefined;
+    if (!coordinator || !workspace || !session?.isExpanded) {
       return;
     }
-    await runWithSessionBrowserStaleRetry({
-      load,
-      shouldRecoverResult: shouldRecoverSessionBrowserResult,
-      recover: async () => {
-        const coordinator = coordinatorRef.current;
-        if (!coordinator || !mountedRef.current) {
-          return false;
-        }
-        clearQueryOwners(coordinator.clearWorkspace(workspaceId));
-        updateWorkspace(workspaceId, resetRootPagination);
-        await loadRootPage(workspaceId, 0, [undefined], false);
-        retrying = true;
-        const workspace = workspaceTreeRef.current.find(
-          (candidate) => candidate.workspaceId === workspaceId
-        );
-        return Boolean(
-          mountedRef.current &&
-          workspace &&
-          findSessionNode(workspace.sessions, sessionId)?.isExpanded
-        );
-      }
+    const scope = {
+      kind: "children" as const,
+      workspaceId,
+      parentSessionId: sessionId
+    };
+    const resultPromise = coordinator.load({
+      ...scope,
+      cursor: append ? session.childrenNextCursor : undefined,
+      limit: childPageSize
     });
+    projectCollectionLoading(coordinator, scope);
+    try {
+      const result = await resultPromise;
+      if (
+        result.status !== "committed" ||
+        !mountedRef.current ||
+        coordinatorRef.current !== coordinator
+      ) {
+        return;
+      }
+      updateWorkspace(workspaceId, (current) => {
+        const withRecoveredRoots = result.recoveredRootPage
+          ? setRootLoading(
+              applyRootPage(current, result.recoveredRootPage, 0, [undefined]),
+              coordinator.isLoading({ kind: "roots", workspaceId })
+            )
+          : current;
+        const currentSession = findSessionNode(withRecoveredRoots.sessions, sessionId);
+        if (!currentSession?.isExpanded) {
+          return withRecoveredRoots;
+        }
+        return applyChildrenPage(
+          withRecoveredRoots,
+          sessionId,
+          result.page,
+          append && !result.recoveredRootPage
+        );
+      });
+    } finally {
+      if (mountedRef.current) {
+        projectCollectionLoading(coordinator, scope);
+      }
+    }
   };
 
   const runBackgroundReconciliation = async (): Promise<void> => {
@@ -572,7 +504,7 @@ export const useWorkspaceBrowserController = (input: {
           await input.transport.sessionBrowser.reconcile(workspaceId);
           const coordinator = coordinatorRef.current;
           if (coordinator) {
-            clearQueryOwners(coordinator.invalidateWorkspace(workspaceId));
+            clearCollectionLoading(coordinator.invalidateWorkspace(workspaceId));
           }
           updateWorkspace(workspaceId, (workspace) => ({ ...workspace, isDirty: true }));
           const workspace = workspaceTreeRef.current.find(
@@ -626,7 +558,9 @@ export const useWorkspaceBrowserController = (input: {
     const previousCoordinator = coordinatorRef.current;
     if (previousCoordinator) {
       for (const workspace of workspaceTreeRef.current) {
-        clearQueryOwners(previousCoordinator.clearWorkspace(workspace.workspaceId));
+        clearCollectionLoading(
+          previousCoordinator.clearWorkspace(workspace.workspaceId)
+        );
       }
     }
     coordinatorRef.current = input.transport
@@ -699,6 +633,12 @@ export const useWorkspaceBrowserController = (input: {
       updateWorkspace(workspaceId, (current) => ({ ...current, isExpanded: expanded }));
       await runWorkspaceExpansionEffects({
         expanded,
+        cancelLoads: () => {
+          const coordinator = coordinatorRef.current;
+          if (coordinator) {
+            clearCollectionLoading(coordinator.cancelWorkspace(workspaceId));
+          }
+        },
         persistExpansion: () =>
           input.transport!.workspace.setExpanded(workspaceId, expanded),
         selectWorkspace: () => input.transport!.workspace.select(workspaceId),
@@ -719,7 +659,7 @@ export const useWorkspaceBrowserController = (input: {
         })
       );
       if (!expanded) {
-        clearQueryOwners(
+        clearCollectionLoading(
           coordinatorRef.current?.cancelCollection({
             workspaceId,
             parentSessionId: sessionId

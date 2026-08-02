@@ -2,13 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   applyChildrenPage,
   applyRootPage,
-  beginRootLoading,
-  beginSessionChildrenLoading,
-  clearRootLoading,
-  clearSessionChildrenLoading,
   mergeSessionPath,
   mergeWorkspaceBrowserState,
   resetRootPagination,
+  setRootLoading,
+  setSessionChildrenLoading,
   upsertWorkspaceBrowserRecord
 } from "../src/ui/chat-shell/workspace-browser-tree.js";
 
@@ -134,19 +132,16 @@ describe("workspace browser tree", () => {
     expect(reset.isDirty).toBe(true);
   });
 
-  it("clears root loading only for the generation that owns it", () => {
+  it("projects root loading without request ownership state", () => {
     const workspace = mergeWorkspaceBrowserState([], workspaceState)[0]!;
-    const first = beginRootLoading(workspace, 1);
-    const second = beginRootLoading(first, 2);
+    const loading = setRootLoading(workspace, true);
+    const settled = setRootLoading(loading, false);
 
-    expect(clearRootLoading(second, 1)).toBe(second);
-    expect(clearRootLoading(second, 2)).toMatchObject({
-      isLoadingRoots: false,
-      rootLoadingGeneration: undefined
-    });
+    expect(loading.isLoadingRoots).toBe(true);
+    expect(settled.isLoadingRoots).toBe(false);
   });
 
-  it("does not let an older child request clear a newer loading owner", () => {
+  it("projects child loading without request ownership state", () => {
     const workspace = applyRootPage(
       mergeWorkspaceBrowserState([], workspaceState)[0]!,
       {
@@ -166,21 +161,11 @@ describe("workspace browser tree", () => {
       0,
       [undefined]
     );
-    const first = beginSessionChildrenLoading(workspace, "root-1", 1);
-    const second = beginSessionChildrenLoading(first, "root-1", 2);
-    const staleClear = clearSessionChildrenLoading(second, "root-1", 1);
+    const loading = setSessionChildrenLoading(workspace, "root-1", true);
+    const settled = setSessionChildrenLoading(loading, "root-1", false);
 
-    expect(staleClear).toEqual(second);
-    expect(staleClear.sessions[0]).toMatchObject({
-      isLoadingChildren: true,
-      childrenLoadingGeneration: 2
-    });
-    expect(
-      clearSessionChildrenLoading(second, "root-1", 2).sessions[0]
-    ).toMatchObject({
-      isLoadingChildren: false,
-      childrenLoadingGeneration: undefined
-    });
+    expect(loading.sessions[0]?.isLoadingChildren).toBe(true);
+    expect(settled.sessions[0]?.isLoadingChildren).toBe(false);
   });
 
   it("commits an added workspace record without waiting for session discovery", () => {

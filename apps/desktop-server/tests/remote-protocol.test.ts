@@ -34,6 +34,30 @@ const createService = () =>
   });
 
 describe("createRemoteRpcHandler", () => {
+  it("rejects legacy and empty session reconciliation requests before dispatch", async () => {
+    const reconcileSessionBrowser = vi.fn();
+    const handler = createRemoteRpcHandler({
+      listWorkspaces: vi.fn(),
+      reconcileSessionBrowser
+    } as never);
+
+    await expect(
+      handler.handleRequest({
+        id: "req-reconcile-legacy",
+        method: "sessionBrowser.reconcile",
+        params: { workspaceId: "workspace-1" }
+      } as never)
+    ).rejects.toThrow();
+    await expect(
+      handler.handleRequest({
+        id: "req-reconcile-empty",
+        method: "sessionBrowser.reconcile",
+        params: { workspaceIds: [] }
+      } as never)
+    ).rejects.toThrow();
+    expect(reconcileSessionBrowser).not.toHaveBeenCalled();
+  });
+
   it("serves desktop-ipc-compatible engine and session requests", async () => {
     const runtimeService = createService();
     const shellService = {
@@ -803,7 +827,7 @@ describe("createRemoteRpcHandler", () => {
       id: "req-reconcile",
       method: "sessionBrowser.reconcile",
       params: {
-        workspaceId: "workspace-1"
+        workspaceIds: ["workspace-1", "workspace-2"]
       }
     });
     const openSessionResponse = await handler.handleRequest({
@@ -1016,7 +1040,7 @@ describe("createRemoteRpcHandler", () => {
     expect((shellService as any).listSessionTree).toHaveBeenCalledWith("workspace-1");
     expect((shellService as any).pickWorkspaceDirectory).toHaveBeenCalledTimes(1);
     expect((shellService as any).reconcileSessionBrowser).toHaveBeenCalledWith(
-      "workspace-1"
+      ["workspace-1", "workspace-2"]
     );
     expect((shellService as any).openSession).toHaveBeenCalledWith("session-1");
     expect((shellService as any).openSession).toHaveBeenCalledWith("session-1", {

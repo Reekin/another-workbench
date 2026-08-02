@@ -157,6 +157,7 @@ export type SessionBrowserItemRpc = {
   title: string;
   statusDot: z.infer<typeof zSessionStatusDotSchema>;
   isActive: boolean;
+  isExpanded: boolean;
   childCount: number;
   lastCompletedTurnAt?: string;
 };
@@ -184,6 +185,7 @@ const zSessionBrowserItemSchema = z.object({
   title: z.string().min(1),
   statusDot: zSessionStatusDotSchema,
   isActive: z.boolean(),
+  isExpanded: z.boolean(),
   childCount: z.number().int().nonnegative(),
   lastCompletedTurnAt: z.string().min(1).optional()
 });
@@ -787,7 +789,7 @@ const zSessionBrowserReconcileRequestSchema = z.object({
   id: zRequestId,
   method: z.literal("sessionBrowser.reconcile"),
   params: z.object({
-    workspaceId: z.string().min(1).optional()
+    workspaceIds: z.array(z.string().min(1)).min(1)
   })
 });
 
@@ -1194,7 +1196,8 @@ const zWorkspaceListResponseSchema = z.object({
   result: z.object({
     workspaces: z.array(zWorkspaceRecordSchema),
     lastActiveWorkspaceId: z.string().min(1).optional(),
-    lastActiveSessionId: z.string().min(1).optional()
+    lastActiveSessionId: z.string().min(1).optional(),
+    expandedWorkspaceIds: z.array(z.string().min(1))
   })
 });
 

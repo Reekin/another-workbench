@@ -1558,7 +1558,6 @@ export const ChatShellApp = ({
     transport,
     refreshSignal: state.refreshSignals.sessionBrowser,
     focusSessionId: openingSessionId ?? browserSelectedSessionId ?? state.activeSessionId,
-    openingSessionId,
     onStatusNotice: setStatusNotice
   });
 

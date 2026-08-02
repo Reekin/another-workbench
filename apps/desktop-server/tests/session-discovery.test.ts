@@ -14,6 +14,17 @@ import {
 import { SessionIndexStore } from "../src/session-index.js";
 import { WorkbenchRuntimeService } from "../src/runtime-service.js";
 import { WorkspaceRegistryService } from "../src/workspace-registry.js";
+import { readCodexRolloutTimestampGroups } from "../src/engine-extensions/codex/rollout-timestamps.js";
+
+vi.mock("../src/engine-extensions/codex/rollout-timestamps.js", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("../src/engine-extensions/codex/rollout-timestamps.js")
+  >();
+  return {
+    ...actual,
+    readCodexRolloutTimestampGroups: vi.fn(actual.readCodexRolloutTimestampGroups)
+  };
+});
 
 const tempDirs: string[] = [];
 
@@ -135,13 +146,12 @@ describe("Session discovery and reconciliation", () => {
       } as never
     });
 
-    await expect(
-      provider.discoverWorkspace({
+    const discovered = await provider.discoverWorkspaces([{
         workspaceId: "workspace-1",
         absolutePath: "I:/workspace-alpha",
         label: "Alpha"
-      })
-    ).resolves.toEqual({
+      }]);
+    expect(discovered.get("workspace-1")).toEqual({
       sessions: [
         expect.objectContaining({ sessionId: "codex-thread:thread-root" }),
         expect.objectContaining({ sessionId: "codex-thread:thread-child" })
@@ -168,13 +178,12 @@ describe("Session discovery and reconciliation", () => {
       } as never
     });
 
-    await expect(
-      provider.discoverWorkspace({
+    const discovered = await provider.discoverWorkspaces([{
         workspaceId: "workspace-1",
         absolutePath: "I:/workspace-alpha",
         label: "Alpha"
-      })
-    ).resolves.toEqual({
+      }]);
+    expect(discovered.get("workspace-1")).toEqual({
       sessions: [
         expect.objectContaining({ sessionId: "codex-thread:thread-root" }),
         expect.objectContaining({ sessionId: "codex-thread:thread-fork" })
@@ -263,17 +272,110 @@ describe("Session discovery and reconciliation", () => {
       } as never
     });
 
-    const discovered = await provider.discoverWorkspace({
+    const discoveredByWorkspaceId = await provider.discoverWorkspaces([{
       workspaceId: "workspace-1",
       absolutePath: "I:/workspace-alpha",
       label: "Alpha"
-    });
+    }]);
+    const discovered = discoveredByWorkspaceId.get("workspace-1")!;
 
     expect(readThread).toHaveBeenCalledWith("thread-recent", true);
     expect(discovered.sessions[0]).toMatchObject({
       sessionId: "codex-thread:thread-recent",
       lastCompletedTurnAt: "2026-05-08T10:06:00.000Z"
     });
+  });
+
+  it("shares one paged thread scan and deduplicates targeted deep reads", async () => {
+    const sharedThread = { ...createThread({ id: "thread-shared", cwd: "I:/workspace/root/nested" }), path: null };
+    const rootThread = { ...createThread({ id: "thread-root", cwd: "I:/workspace/root" }), path: null };
+    const otherThread = { ...createThread({ id: "thread-other", cwd: "I:/workspace/other" }), path: null };
+    const listThreads = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [sharedThread, rootThread], nextCursor: "page-2" })
+      .mockResolvedValueOnce({ data: [sharedThread, otherThread], nextCursor: null });
+    const readThread = vi.fn((threadId: string) =>
+      Promise.resolve(
+        threadId === sharedThread.id ? sharedThread : rootThread
+      )
+    );
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: { listThreads, readThread } as never
+    });
+
+    const discovered = await provider.discoverWorkspaces([
+      { workspaceId: "root", absolutePath: "I:/workspace/root", label: "Root" },
+      { workspaceId: "nested", absolutePath: "I:/workspace/root/nested", label: "Nested" }
+    ]);
+
+    expect(listThreads).toHaveBeenCalledTimes(2);
+    expect(listThreads.mock.calls[0]?.[0]).toMatchObject({ cursor: undefined });
+    expect(listThreads.mock.calls[1]?.[0]).toMatchObject({ cursor: "page-2" });
+    expect(readThread).toHaveBeenCalledTimes(2);
+    expect(readThread).toHaveBeenCalledWith("thread-shared", true);
+    expect(readThread).toHaveBeenCalledWith("thread-root", true);
+    expect(readThread).not.toHaveBeenCalledWith("thread-other", true);
+    expect(discovered.get("root")?.sessions.map((session) => session.providerSessionId)).toEqual([
+      "thread-shared",
+      "thread-root"
+    ]);
+    expect(discovered.get("nested")?.sessions.map((session) => session.providerSessionId)).toEqual([
+      "thread-shared"
+    ]);
+  });
+
+  it("limits targeted thread reads to eight concurrent requests", async () => {
+    const threads = Array.from({ length: 20 }, (_, index) => ({
+      ...createThread({ id: `thread-${index}`, cwd: "I:/workspace-alpha" }),
+      path: null
+    }));
+    let activeReads = 0;
+    let maximumActiveReads = 0;
+    const readThread = vi.fn(async (threadId: string) => {
+      activeReads += 1;
+      maximumActiveReads = Math.max(maximumActiveReads, activeReads);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      activeReads -= 1;
+      return threads.find((thread) => thread.id === threadId)!;
+    });
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        listThreads: vi.fn().mockResolvedValue({ data: threads, nextCursor: null }),
+        readThread
+      } as never
+    });
+
+    await provider.discoverWorkspaces([
+      { workspaceId: "workspace-1", absolutePath: "I:/workspace-alpha", label: "Alpha" }
+    ]);
+
+    expect(readThread).toHaveBeenCalledTimes(20);
+    expect(maximumActiveReads).toBe(8);
+  });
+
+  it("reads a shared rollout path once per discovery request", async () => {
+    const baseDir = await createTempDir();
+    const rolloutPath = join(baseDir, "shared-rollout.jsonl");
+    await writeFile(rolloutPath, "", "utf8");
+    const readRollout = vi.mocked(readCodexRolloutTimestampGroups);
+    readRollout.mockClear();
+    const threads = ["one", "two"].map((id) => ({
+      ...createThread({ id }),
+      path: rolloutPath,
+      turns: [{ id: `turn-${id}`, status: "completed", error: null, items: [] }]
+    } as Thread));
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        listThreads: vi.fn().mockResolvedValue({ data: threads, nextCursor: null })
+      } as never
+    });
+
+    await provider.discoverWorkspaces([
+      { workspaceId: "workspace-1", absolutePath: "I:/workspace-alpha", label: "Alpha" }
+    ]);
+
+    expect(readRollout).toHaveBeenCalledTimes(1);
+    expect(readRollout).toHaveBeenCalledWith(rolloutPath);
   });
 
   it("hydrates cold session windows from paged codex turns without resuming", async () => {
@@ -720,7 +822,7 @@ describe("Session discovery and reconciliation", () => {
       providers: [
         {
           engineId: "codex",
-          discoverWorkspace: vi.fn(),
+          discoverWorkspaces: vi.fn(),
           hydrateSession: vi.fn(),
           hydrateSessionWindow
         }
@@ -933,7 +1035,7 @@ describe("Session discovery and reconciliation", () => {
       providers: [provider]
     });
 
-    await expect(reconciliation.reconcileWorkspace("workspace-1")).resolves.toEqual({
+    await expect(reconciliation.reconcileWorkspaces(["workspace-1"])).resolves.toEqual({
       workspaces: 1,
       sessions: 2,
       relations: 1
@@ -1143,7 +1245,7 @@ describe("Session discovery and reconciliation", () => {
       providers: [provider]
     });
 
-    await reconciliation.reconcileWorkspace("workspace-1");
+    await reconciliation.reconcileWorkspaces(["workspace-1"]);
 
     expect(sessionIndexStore.listRelations("workspace-1")).toEqual([
       expect.objectContaining({
@@ -1239,7 +1341,7 @@ describe("Session discovery and reconciliation", () => {
       providers: [
         {
           engineId: "codex",
-          discoverWorkspace: vi.fn(),
+          discoverWorkspaces: vi.fn(),
           hydrateSession: vi.fn(),
           hydrateSessionWindow
         }
@@ -2113,6 +2215,81 @@ describe("Session discovery and reconciliation", () => {
     );
   });
 
+  it("deduplicates requested workspaces and leaves non-target entries untouched", async () => {
+    const baseDir = await createTempDir();
+    const workspaceRegistry = new WorkspaceRegistryService({ baseDir });
+    const sessionIndexStore = new SessionIndexStore({ baseDir });
+    const workspaces = [
+      { workspaceId: "workspace-a", absolutePath: "I:/workspace/a", label: "A" },
+      { workspaceId: "workspace-b", absolutePath: "I:/workspace/b", label: "B" },
+      { workspaceId: "workspace-c", absolutePath: "I:/workspace/c", label: "C" }
+    ];
+    for (const workspace of workspaces) {
+      await workspaceRegistry.registerWorkspace(workspace);
+    }
+    for (const workspace of [workspaces[0]!, workspaces[2]!]) {
+      await sessionIndexStore.upsertSession({
+        workspaceId: workspace.workspaceId,
+        session: {
+          sessionId: `stale-${workspace.workspaceId}`,
+          conversationId: `conversation-${workspace.workspaceId}`,
+          engineId: "codex",
+          createdAt: "2026-04-18T00:00:01Z",
+          updatedAt: "2026-04-18T00:00:01Z"
+        },
+        providerKind: "codex-thread",
+        providerSessionId: `thread-stale-${workspace.workspaceId}`,
+        source: "reconciled"
+      });
+    }
+    const discoverWorkspaces = vi.fn(
+      async (targets: readonly (typeof workspaces)[number][]) =>
+        new Map(
+          targets.map((workspace) => [
+            workspace.workspaceId,
+            {
+              sessions: [{
+                sessionId: `codex-thread:thread-${workspace.workspaceId}`,
+                engineId: "codex",
+                providerKind: "codex-thread",
+                providerSessionId: `thread-${workspace.workspaceId}`,
+                createdAt: "2026-04-19T00:00:00.000Z",
+                updatedAt: "2026-04-19T00:01:00.000Z"
+              }],
+              relations: []
+            }
+          ])
+        )
+    );
+    const reconciliation = new SessionReconciliationService({
+      workspaceRegistry,
+      sessionIndexStore,
+      runtimeService: new WorkbenchRuntimeService({
+        engines: [{ engineId: "codex", displayName: "Codex", capabilities: ["chat"] }]
+      }),
+      providers: [{ engineId: "codex", discoverWorkspaces }] as never
+    });
+
+    await expect(
+      reconciliation.reconcileWorkspaces([
+        "workspace-a",
+        "workspace-a",
+        "missing-workspace",
+        "workspace-b"
+      ])
+    ).resolves.toEqual({ workspaces: 2, sessions: 2, relations: 0 });
+
+    expect(discoverWorkspaces).toHaveBeenCalledTimes(1);
+    expect(discoverWorkspaces.mock.calls[0]?.[0].map((workspace) => workspace.workspaceId)).toEqual([
+      "workspace-a",
+      "workspace-b"
+    ]);
+    expect(sessionIndexStore.getEntry("codex-thread:thread-workspace-a")).toBeDefined();
+    expect(sessionIndexStore.getEntry("codex-thread:thread-workspace-b")).toBeDefined();
+    expect(sessionIndexStore.getEntry("stale-workspace-a")?.archivedAt).toBeDefined();
+    expect(sessionIndexStore.getEntry("stale-workspace-c")?.archivedAt).toBeUndefined();
+  });
+
   it("archives stale reconciled Codex entries that disappear from discovery", async () => {
     const baseDir = await createTempDir();
     const workspaceRegistry = new WorkspaceRegistryService({
@@ -2165,7 +2342,7 @@ describe("Session discovery and reconciliation", () => {
       providers: [provider]
     });
 
-    await reconciliation.reconcileWorkspace("workspace-1");
+    await reconciliation.reconcileWorkspaces(["workspace-1"]);
 
     expect(sessionIndexStore.getEntry("codex-thread:thread-stale")?.archivedAt).toBeDefined();
     expect(sessionIndexStore.getEntry("codex-thread:thread-fresh")).toMatchObject({

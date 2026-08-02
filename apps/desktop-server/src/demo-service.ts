@@ -279,6 +279,7 @@ export const createDemoWorkbenchShellService = (
           title: session.title ?? `${session.engineId.toUpperCase()} Demo Session`,
           statusDot: session.status === "running" ? "running" : "none",
           isActive: lastActiveSessionId === session.sessionId,
+          isExpanded: expandedSessionIds.has(session.sessionId),
           childCount: childCountByParentId.get(session.sessionId) ?? 0,
           lastCompletedTurnAt,
           sortAt: lastCompletedTurnAt ?? session.updatedAt ?? session.createdAt

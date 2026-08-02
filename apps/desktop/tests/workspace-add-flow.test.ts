@@ -26,7 +26,7 @@ const buildTransport = (input?: {
 describe("workspace add flow", () => {
   it("commits the durable workspace result before refreshing derived sessions", async () => {
     let resolveRefresh: (() => void) | undefined;
-    const refreshSessionBrowser = vi.fn(
+    const syncWorkspace = vi.fn(
       () => new Promise<void>((resolve) => {
         resolveRefresh = resolve;
       })
@@ -37,10 +37,10 @@ describe("workspace add flow", () => {
     const pending = runAddWorkspaceFlow({
       transport: buildTransport(),
       onWorkspaceCommitted,
-      refreshSessionBrowser,
+      syncWorkspace,
       onStatusNotice
     });
-    await vi.waitFor(() => expect(refreshSessionBrowser).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(syncWorkspace).toHaveBeenCalledWith("workspace-new"));
 
     expect(onWorkspaceCommitted).toHaveBeenCalledWith(workspace);
     expect(onStatusNotice).toHaveBeenCalledWith({
@@ -59,7 +59,7 @@ describe("workspace add flow", () => {
     await runAddWorkspaceFlow({
       transport: buildTransport(),
       onWorkspaceCommitted,
-      refreshSessionBrowser: vi.fn().mockRejectedValue(new Error("refresh failed")),
+      syncWorkspace: vi.fn().mockRejectedValue(new Error("refresh failed")),
       onStatusNotice
     });
 
@@ -76,7 +76,7 @@ describe("workspace add flow", () => {
 
   it("does not commit or refresh when registration fails", async () => {
     const onWorkspaceCommitted = vi.fn();
-    const refreshSessionBrowser = vi.fn();
+    const syncWorkspace = vi.fn();
     const onStatusNotice = vi.fn();
 
     await runAddWorkspaceFlow({
@@ -84,12 +84,12 @@ describe("workspace add flow", () => {
         add: () => Promise.reject(new Error("registration failed"))
       }),
       onWorkspaceCommitted,
-      refreshSessionBrowser,
+      syncWorkspace,
       onStatusNotice
     });
 
     expect(onWorkspaceCommitted).not.toHaveBeenCalled();
-    expect(refreshSessionBrowser).not.toHaveBeenCalled();
+    expect(syncWorkspace).not.toHaveBeenCalled();
     expect(onStatusNotice).toHaveBeenCalledWith(
       expect.objectContaining({ message: expect.stringContaining("Add workspace failed") })
     );

@@ -348,7 +348,7 @@ export const createRemoteRpcHandler = (
               id: request.id,
               method: request.method,
               ok: true,
-              result: await shellService.reconcileSessionBrowser(request.params.workspaceId)
+              result: await shellService.reconcileSessionBrowser(request.params.workspaceIds)
             });
           case "sessionBrowser.toggleExpanded":
             if (!shellService) {

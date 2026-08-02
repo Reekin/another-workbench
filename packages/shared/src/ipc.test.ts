@@ -107,6 +107,7 @@ describe("IPC schemas", () => {
           title: "Session",
           statusDot: "none",
           isActive: true,
+          isExpanded: false,
           childCount: 2
         }],
         hasMore: false,
@@ -114,5 +115,52 @@ describe("IPC schemas", () => {
       }
     });
     expect(parsed.success).toBe(true);
+  });
+
+  it("parses persisted workspace expansion state", () => {
+    const parsed = safeParseWorkbenchRpcResponse({
+      id: "req-workspaces",
+      method: "workspace.list",
+      ok: true,
+      result: {
+        workspaces: [],
+        lastActiveWorkspaceId: "workspace-1",
+        expandedWorkspaceIds: ["workspace-1", "workspace-2"]
+      }
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it("requires an explicit non-empty workspace batch for reconciliation", () => {
+    expect(
+      parseWorkbenchRpcRequest({
+        id: "req-reconcile",
+        method: "sessionBrowser.reconcile",
+        params: { workspaceIds: ["workspace-1", "workspace-2"] }
+      }).params
+    ).toEqual({ workspaceIds: ["workspace-1", "workspace-2"] });
+
+    expect(() =>
+      parseWorkbenchRpcRequest({
+        id: "req-reconcile-missing",
+        method: "sessionBrowser.reconcile",
+        params: {}
+      })
+    ).toThrow();
+    expect(() =>
+      parseWorkbenchRpcRequest({
+        id: "req-reconcile-empty",
+        method: "sessionBrowser.reconcile",
+        params: { workspaceIds: [] }
+      })
+    ).toThrow();
+    expect(() =>
+      parseWorkbenchRpcRequest({
+        id: "req-reconcile-legacy",
+        method: "sessionBrowser.reconcile",
+        params: { workspaceId: "workspace-1" }
+      })
+    ).toThrow();
   });
 });

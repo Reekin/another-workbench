@@ -35,12 +35,16 @@ export type WorkspaceBrowserViewNode = {
 const createWorkspaceBrowserViewNode = (
   workspace: WorkspaceRecordRpc,
   isActive: boolean,
+  isPersistedExpanded: boolean,
+  useActiveFallback: boolean,
   previous?: WorkspaceBrowserViewNode
 ): WorkspaceBrowserViewNode => ({
   workspaceId: workspace.workspaceId,
   label: workspace.label,
   rootPath: workspace.absolutePath,
-  isExpanded: previous?.isExpanded ?? isActive,
+  isExpanded:
+    previous?.isExpanded ??
+    (isPersistedExpanded || (useActiveFallback && isActive)),
   isActive,
   sessions: previous?.sessions ?? [],
   rootCursorHistory: previous?.rootCursorHistory ?? [undefined],
@@ -60,7 +64,10 @@ export const createSessionBrowserViewNode = (
 ): SessionBrowserViewNode => ({
   ...item,
   workspaceId,
-  isExpanded: previous?.isExpanded ?? false,
+  isExpanded:
+    previous?.isExpanded ??
+    (item as SessionBrowserItemRpc & { isExpanded?: boolean }).isExpanded ??
+    false,
   isLoadingChildren: previous?.isLoadingChildren ?? false,
   hasLoadedChildren: previous?.hasLoadedChildren ?? false,
   children: previous?.children ?? [],
@@ -73,15 +80,24 @@ export const mergeWorkspaceBrowserState = (
   workspaceState: {
     workspaces: WorkspaceRecordRpc[];
     lastActiveWorkspaceId?: string;
+    expandedWorkspaceIds?: string[];
   }
 ): WorkspaceBrowserViewNode[] => {
   const previousById = new Map(
     previous.map((workspace) => [workspace.workspaceId, workspace] as const)
   );
+  const expandedWorkspaceIds = new Set(workspaceState.expandedWorkspaceIds ?? []);
+  const useActiveFallback = expandedWorkspaceIds.size === 0;
   return workspaceState.workspaces.map((workspace) => {
     const previousNode = previousById.get(workspace.workspaceId);
     const isActive = workspaceState.lastActiveWorkspaceId === workspace.workspaceId;
-    return createWorkspaceBrowserViewNode(workspace, isActive, previousNode);
+    return createWorkspaceBrowserViewNode(
+      workspace,
+      isActive,
+      expandedWorkspaceIds.has(workspace.workspaceId),
+      useActiveFallback,
+      previousNode
+    );
   });
 };
 
@@ -93,11 +109,17 @@ export const upsertWorkspaceBrowserRecord = (
     (candidate) => candidate.workspaceId === workspace.workspaceId
   );
   if (existingIndex < 0) {
-    return [...previous, createWorkspaceBrowserViewNode(workspace, false)];
+    return [...previous, createWorkspaceBrowserViewNode(workspace, false, false, false)];
   }
   return previous.map((candidate, index) =>
     index === existingIndex
-      ? createWorkspaceBrowserViewNode(workspace, candidate.isActive, candidate)
+      ? createWorkspaceBrowserViewNode(
+          workspace,
+          candidate.isActive,
+          candidate.isExpanded,
+          false,
+          candidate
+        )
       : candidate
   );
 };

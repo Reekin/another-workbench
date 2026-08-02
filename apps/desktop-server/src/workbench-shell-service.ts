@@ -428,6 +428,7 @@ export class WorkbenchShellService {
     workspaces: WorkspaceRecord[];
     lastActiveWorkspaceId?: string;
     lastActiveSessionId?: string;
+    expandedWorkspaceIds: string[];
   }> {
     const registry = this.requireWorkspaceRegistry();
     await registry.ready();
@@ -435,7 +436,8 @@ export class WorkbenchShellService {
     return {
       workspaces: state.workspaces,
       lastActiveWorkspaceId: state.lastActiveWorkspaceId,
-      lastActiveSessionId: state.lastActiveSessionId
+      lastActiveSessionId: state.lastActiveSessionId,
+      expandedWorkspaceIds: state.expandedWorkspaceIds
     };
   }
 
@@ -525,13 +527,13 @@ export class WorkbenchShellService {
     return this.sessionCatalog.getPath(sessionId);
   }
 
-  public async reconcileSessionBrowser(workspaceId?: string): Promise<{
+  public async reconcileSessionBrowser(workspaceIds: string[]): Promise<{
     workspaces: number;
     sessions: number;
     relations: number;
   }> {
     return (
-      (await this.sessionReconciliation?.reconcileWorkspace(workspaceId)) ?? {
+      (await this.sessionReconciliation?.reconcileWorkspaces(workspaceIds)) ?? {
         workspaces: 0,
         sessions: 0,
         relations: 0

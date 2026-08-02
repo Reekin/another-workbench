@@ -264,6 +264,7 @@ export type DesktopTransport = {
       workspaces: WorkspaceRecordRpc[];
       lastActiveWorkspaceId?: string;
       lastActiveSessionId?: string;
+      expandedWorkspaceIds?: string[];
     }>;
     pickDirectory: () => Promise<{
       canceled: boolean;
@@ -298,7 +299,7 @@ export type DesktopTransport = {
       expectedRevision?: string;
     }) => Promise<SessionBrowserPageRpc>;
     getPath: (sessionId: string) => Promise<SessionBrowserPathRpc>;
-    reconcile: (workspaceId?: string) => Promise<{
+    reconcile: (workspaceIds: string[]) => Promise<{
       workspaces: number;
       sessions: number;
       relations: number;
@@ -863,9 +864,9 @@ export const createDesktopTransport = (
         rpc.request("sessionBrowser.getPath", {
           sessionId
         }),
-      reconcile: (workspaceId?: string) =>
+      reconcile: (workspaceIds: string[]) =>
         rpc.request("sessionBrowser.reconcile", {
-          workspaceId
+          workspaceIds
         }),
       toggleExpanded: (sessionId: string) =>
         rpc.request("sessionBrowser.toggleExpanded", {

@@ -73,6 +73,28 @@ export {
 } from "./codex-session-identity.js";
 
 const codexAgentId = "codex";
+const discoveryReadConcurrency = 8;
+
+const mapWithConcurrency = async <T, R>(
+  values: readonly T[],
+  concurrency: number,
+  mapValue: (value: T) => Promise<R>
+): Promise<R[]> => {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, values.length) },
+    async () => {
+      while (nextIndex < values.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await mapValue(values[index]!);
+      }
+    }
+  );
+  await Promise.all(workers);
+  return results;
+};
 
 const isoFromUnixSeconds = (value: number): string =>
   new Date(value * 1_000).toISOString();
@@ -421,7 +443,9 @@ export type HydratedSessionWindowSnapshot = HydratedSessionSnapshot & {
 
 export type SessionDiscoveryProvider = {
   readonly engineId: string;
-  discoverWorkspace: (workspace: WorkspaceRecord) => Promise<DiscoveredWorkspaceResult>;
+  discoverWorkspaces: (
+    workspaces: readonly WorkspaceRecord[]
+  ) => Promise<ReadonlyMap<string, DiscoveredWorkspaceResult>>;
   hydrateSession: (
     entry: SessionIndexEntry,
     input?: {
@@ -843,50 +867,90 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
     this.turnChangesStore = options.turnChangesStore;
   }
 
-  public async discoverWorkspace(
-    workspace: WorkspaceRecord
-  ): Promise<DiscoveredWorkspaceResult> {
-    const threads = (await this.listAllThreads()).filter((thread) =>
-      isPathInsideWorkspace(thread.cwd, workspace.absolutePath)
-    );
-    const sessions: DiscoveredSessionRecord[] = [];
-    for (const thread of threads) {
-      sessions.push(
-        await this.toDiscoveredSessionRecord(
-          await this.readThreadWithTurnsForDiscovery(thread)
-        )
-      );
+  public async discoverWorkspaces(
+    workspaces: readonly WorkspaceRecord[]
+  ): Promise<ReadonlyMap<string, DiscoveredWorkspaceResult>> {
+    if (workspaces.length === 0) {
+      return new Map();
     }
-    const relations = threads
-      .flatMap((thread) => {
-        const relations: DiscoveredSessionRelation[] = [];
-        const subagentParentThreadId = toSubagentParentThreadId(thread.source);
-        if (subagentParentThreadId) {
-          relations.push({
-            parentSessionId: discoveredCodexSessionId(subagentParentThreadId),
-            childSessionId: discoveredCodexSessionId(thread.id),
-            relationType: "subagent",
-            createdAt: isoFromUnixSeconds(thread.createdAt)
-          });
-        }
-        if (thread.forkedFromId) {
-          relations.push({
-            parentSessionId: discoveredCodexSessionId(thread.forkedFromId),
-            childSessionId: discoveredCodexSessionId(thread.id),
-            relationType: "fork",
-            createdAt: isoFromUnixSeconds(thread.createdAt)
-          });
-        }
-        return relations;
-      })
-      .filter((relation) =>
-        sessions.some((session) => session.sessionId === relation.parentSessionId)
-      );
+    const listedThreads = await this.listAllThreads();
+    const threadsByWorkspaceId = new Map(
+      workspaces.map((workspace) => [workspace.workspaceId, new Map<string, Thread>()] as const)
+    );
+    const candidateThreadsById = new Map<string, Thread>();
 
-    return {
-      sessions,
-      relations
-    };
+    for (const thread of listedThreads) {
+      for (const workspace of workspaces) {
+        if (!isPathInsideWorkspace(thread.cwd, workspace.absolutePath)) {
+          continue;
+        }
+        threadsByWorkspaceId.get(workspace.workspaceId)?.set(thread.id, thread);
+        candidateThreadsById.set(thread.id, thread);
+      }
+    }
+
+    const hydratedThreads = await mapWithConcurrency(
+      [...candidateThreadsById.values()],
+      discoveryReadConcurrency,
+      (thread) => this.readThreadWithTurnsForDiscovery(thread)
+    );
+    const hydratedThreadsById = new Map(hydratedThreads.map((thread) => [thread.id, thread]));
+    const rolloutPaths = [
+      ...new Set(
+        hydratedThreads
+          .map((thread) => thread.path)
+          .filter((path): path is string => Boolean(path))
+      )
+    ];
+    const rolloutTimestampGroups = await mapWithConcurrency(
+      rolloutPaths,
+      discoveryReadConcurrency,
+      async (path) => [path, await readCodexRolloutTimestampGroups(path)] as const
+    );
+    const rolloutTimestampGroupsByPath = new Map(rolloutTimestampGroups);
+    const discoveredSessionsByThreadId = new Map(
+      hydratedThreads.map((thread) => [
+        thread.id,
+        this.toDiscoveredSessionRecord(
+          thread,
+          thread.path ? rolloutTimestampGroupsByPath.get(thread.path) : undefined
+        )
+      ])
+    );
+
+    return new Map(
+      workspaces.map((workspace) => {
+        const threads = [...(threadsByWorkspaceId.get(workspace.workspaceId)?.values() ?? [])];
+        const sessions = threads.map((thread) => discoveredSessionsByThreadId.get(thread.id)!);
+        const sessionIds = new Set(sessions.map((session) => session.sessionId));
+        const relations = threads
+          .flatMap((listedThread) => {
+            const thread = hydratedThreadsById.get(listedThread.id) ?? listedThread;
+            const relations: DiscoveredSessionRelation[] = [];
+            const subagentParentThreadId = toSubagentParentThreadId(thread.source);
+            if (subagentParentThreadId) {
+              relations.push({
+                parentSessionId: discoveredCodexSessionId(subagentParentThreadId),
+                childSessionId: discoveredCodexSessionId(thread.id),
+                relationType: "subagent",
+                createdAt: isoFromUnixSeconds(thread.createdAt)
+              });
+            }
+            if (thread.forkedFromId) {
+              relations.push({
+                parentSessionId: discoveredCodexSessionId(thread.forkedFromId),
+                childSessionId: discoveredCodexSessionId(thread.id),
+                relationType: "fork",
+                createdAt: isoFromUnixSeconds(thread.createdAt)
+              });
+            }
+            return relations;
+          })
+          .filter((relation) => sessionIds.has(relation.parentSessionId));
+
+        return [workspace.workspaceId, { sessions, relations }] as const;
+      })
+    );
   }
 
   public async hydrateSession(
@@ -1107,8 +1171,10 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
     }
   }
 
-  private async toDiscoveredSessionRecord(thread: Thread): Promise<DiscoveredSessionRecord> {
-    const rolloutTimestampGroups = await readCodexRolloutTimestampGroups(thread.path);
+  private toDiscoveredSessionRecord(
+    thread: Thread,
+    rolloutTimestampGroups: readonly CodexRolloutTimestampGroup[] = []
+  ): DiscoveredSessionRecord {
     return {
       sessionId: discoveredCodexSessionId(thread.id),
       engineId: codexAgentId,
@@ -1199,23 +1265,37 @@ export class SessionReconciliationService {
     );
   }
 
-  public async reconcileWorkspace(workspaceId?: string): Promise<{
+  public async reconcileWorkspaces(workspaceIds: readonly string[]): Promise<{
     workspaces: number;
     sessions: number;
     relations: number;
   }> {
     await this.workspaceRegistry.ready();
     await this.sessionIndexStore.ready();
-    const workspaces = this.workspaceRegistry
-      .listWorkspaces()
-      .filter((workspace) => !workspaceId || workspace.workspaceId === workspaceId);
+    const workspaces = [...new Set(workspaceIds)]
+      .map((workspaceId) => this.workspaceRegistry.getWorkspace(workspaceId))
+      .filter((workspace): workspace is WorkspaceRecord => Boolean(workspace));
+
+    if (workspaces.length === 0) {
+      return {
+        workspaces: 0,
+        sessions: 0,
+        relations: 0
+      };
+    }
 
     let sessionCount = 0;
     let relationCount = 0;
 
-    for (const workspace of workspaces) {
-      for (const provider of this.providersByEngineId.values()) {
-        const discovered = await provider.discoverWorkspace(workspace);
+    for (const provider of this.providersByEngineId.values()) {
+      const discoveredByWorkspaceId = await provider.discoverWorkspaces(workspaces);
+      for (const workspace of workspaces) {
+        const discovered = discoveredByWorkspaceId.get(workspace.workspaceId);
+        if (!discovered) {
+          throw new Error(
+            `Session discovery provider ${provider.engineId} omitted workspace ${workspace.workspaceId}.`
+          );
+        }
         const sessionIdAliases = this.buildSessionIdAliases(
           workspace.workspaceId,
           discovered.sessions

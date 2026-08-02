@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { SessionBrowserItemRpc } from "@another-workbench/shared";
 import {
   applyChildrenPage,
   applyRootPage,
@@ -22,6 +23,51 @@ const workspaceState = {
 };
 
 describe("workspace browser tree", () => {
+  it("restores persisted workspace expansion independently from active workspace", () => {
+    const workspaces = mergeWorkspaceBrowserState([], {
+      workspaces: [
+        workspaceState.workspaces[0]!,
+        {
+          workspaceId: "workspace-2",
+          absolutePath: "I:\\repo-2",
+          label: "Repo 2",
+          createdAt: "2026-07-19T00:00:00.000Z",
+          updatedAt: "2026-07-19T00:00:00.000Z"
+        }
+      ],
+      lastActiveWorkspaceId: "workspace-2",
+      expandedWorkspaceIds: ["workspace-1"]
+    });
+
+    expect(workspaces.map((workspace) => [workspace.workspaceId, workspace.isExpanded]))
+      .toEqual([
+        ["workspace-1", true],
+        ["workspace-2", false]
+      ]);
+  });
+
+  it("uses the active workspace only when no expansion preference exists", () => {
+    const workspaces = mergeWorkspaceBrowserState([], {
+      ...workspaceState,
+      expandedWorkspaceIds: []
+    });
+
+    expect(workspaces[0]?.isExpanded).toBe(true);
+  });
+
+  it("preserves each existing workspace expansion during registry refresh", () => {
+    const previous = mergeWorkspaceBrowserState([], {
+      ...workspaceState,
+      expandedWorkspaceIds: ["workspace-1"]
+    });
+    const refreshed = mergeWorkspaceBrowserState(previous, {
+      ...workspaceState,
+      expandedWorkspaceIds: []
+    });
+
+    expect(refreshed[0]?.isExpanded).toBe(true);
+  });
+
   it("keeps root cursor page metadata without materializing the whole tree", () => {
     const workspace = mergeWorkspaceBrowserState([], workspaceState)[0]!;
     const next = applyRootPage(workspace, {
@@ -44,6 +90,29 @@ describe("workspace browser tree", () => {
     expect(next.rootNextCursor).toBe("cursor-2");
     expect(next.rootTotalCount).toBe(21);
     expect(next.sessions[0]?.children).toEqual([]);
+  });
+
+  it("projects persisted session expansion on the first root page", () => {
+    const workspace = mergeWorkspaceBrowserState([], workspaceState)[0]!;
+    const persistedExpandedItem = {
+      sessionId: "root-expanded",
+      engineId: "codex",
+      title: "Expanded root",
+      statusDot: "none",
+      isActive: false,
+      isExpanded: true,
+      childCount: 1
+    } satisfies SessionBrowserItemRpc & { isExpanded: boolean };
+    const next = applyRootPage(workspace, {
+      workspaceId: "workspace-1",
+      revision: "revision-1",
+      items: [persistedExpandedItem],
+      hasMore: false,
+      totalCount: 1
+    }, 0, [undefined]);
+
+    expect(next.sessions[0]?.isExpanded).toBe(true);
+    expect(next.sessions[0]?.hasLoadedChildren).toBe(false);
   });
 
   it("loads children incrementally and anchors an active path outside the root page", () => {

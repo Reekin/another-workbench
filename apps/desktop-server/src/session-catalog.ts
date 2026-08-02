@@ -412,6 +412,7 @@ export class SessionCatalogService {
                 ? "unread_completed"
                 : "none",
         isActive: registryState.lastActiveSessionId === seed.sessionId,
+        isExpanded: registryState.expandedSessionIds.includes(seed.sessionId),
         childCount: childCountByParentId.get(seed.sessionId) ?? 0,
         lastCompletedTurnAt: seed.lastCompletedTurnAt,
         sortAt: seed.lastCompletedTurnAt ?? seed.updatedAt ?? seed.createdAt

@@ -51,43 +51,6 @@ describe("parseGoalSlashCommand", () => {
     ).toBeUndefined();
   });
 
-  it("only allows goal clear while takeover is enabled", () => {
-    expect(
-      goalCommandBlockedReason(
-        parseGoalSlashCommand("/goal ship the protocol bridge"),
-        undefined,
-        true
-      )
-    ).toBe(
-      "Goal commands are unavailable while takeover is enabled. Use /goal clear to stop the current goal."
-    );
-    expect(
-      goalCommandBlockedReason(
-        parseGoalSlashCommand("/goal pause"),
-        existingGoal,
-        true
-      )
-    ).toBe(
-      "Goal commands are unavailable while takeover is enabled. Use /goal clear to stop the current goal."
-    );
-    expect(
-      goalCommandBlockedReason(
-        parseGoalSlashCommand("/goal resume"),
-        existingGoal,
-        true
-      )
-    ).toBe(
-      "Goal commands are unavailable while takeover is enabled. Use /goal clear to stop the current goal."
-    );
-    expect(
-      goalCommandBlockedReason(
-        parseGoalSlashCommand("/goal clear"),
-        existingGoal,
-        true
-      )
-    ).toBeUndefined();
-  });
-
   it("keeps edit as a non-mutating command until an editor exists", () => {
     expect(goalCommandBlockedReason(parseGoalSlashCommand("/goal edit"))).toBe(
       "Goal editing is not available here yet. Use /goal clear before setting a new goal."

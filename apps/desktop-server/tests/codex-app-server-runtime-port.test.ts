@@ -15,10 +15,6 @@ import {
 } from "../src/engine-extensions/codex/hook-activity-store.js";
 import { HostToolRegistry } from "../src/host-tools.js";
 import { createReadSessionHostTool } from "../src/read-session-host-tool.js";
-import {
-  createSmartTakeoverHostTool,
-  type SmartTakeoverRequest
-} from "../src/smart-takeover-tool.js";
 
 const fixturePath = fileURLToPath(
   new URL("./fixtures/fake-codex-app-server.mjs", import.meta.url)
@@ -2025,107 +2021,6 @@ describe("Codex app-server runtime port", () => {
 
     expect(finalText).toContain('"sandbox":"danger-full-access"');
     expect(finalText).toContain('"approvalPolicy":"never"');
-  });
-
-  it("registers SmartTakeover as a Codex dynamic tool and resolves the calling session", async () => {
-    const observedRequests: SmartTakeoverRequest[] = [];
-    const hostTools = new HostToolRegistry([
-      createSmartTakeoverHostTool({
-        onRequest: (request) => {
-          observedRequests.push(request);
-        }
-      })
-    ]);
-    const port = createCodexAppServerRuntimePort({
-      commandPath: process.execPath,
-      commandArgs: [fixturePath],
-      resolveConversationIdBySessionId: () => "conversation-1",
-      hostTools
-    });
-    disposers.push(() => port.stop());
-
-    const completedMessages: Array<Record<string, unknown>> = [];
-    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
-    port.subscribe((event) => {
-      events.push({
-        method: event.method,
-        params: event.params
-      });
-      if (event.method === "message.completed") {
-        completedMessages.push(event.params);
-      }
-    });
-
-    await port.start();
-    await port.request({
-      id: "turn-thread-start-host-tools",
-      method: "turn/start",
-      params: {
-        sessionId: "session-registry",
-        content: "__THREAD_START_PARAMS__"
-      }
-    });
-
-    await waitFor(() =>
-      completedMessages.some((params) => typeof params.finalText === "string")
-    );
-
-    const finalText = String(
-      completedMessages.find((params) => typeof params.finalText === "string")
-        ?.finalText
-    );
-    expect(finalText).toContain('"dynamicTools"');
-    expect(finalText).toContain('"namespace":"another_workbench"');
-    expect(finalText).toContain('"name":"SmartTakeover"');
-
-    await port.request({
-      id: "turn-smart-takeover",
-      method: "turn/start",
-      params: {
-        sessionId: "session-smart",
-        content: "please trigger smart-takeover"
-      }
-    });
-
-    await waitFor(() =>
-      events.some(
-        (event) =>
-          event.method === "turn.completed" &&
-          event.params.sessionId === "session-smart"
-      )
-    );
-
-    expect(observedRequests).toEqual([
-      expect.objectContaining({
-        parentSessionId: "session-smart",
-        sourceToolCallId: expect.stringMatching(/^smart-takeover-/),
-        requestedBy: expect.objectContaining({
-          engineId: "codex",
-          providerSessionId: port.getThreadIdForSession("session-smart")
-        }),
-        arguments: {
-          objective: "Confirm caller identity"
-        }
-      })
-    ]);
-    expect(events).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          method: "tool.started",
-          params: expect.objectContaining({
-            sessionId: "session-smart",
-            toolName: "another_workbench.SmartTakeover"
-          })
-        }),
-        expect.objectContaining({
-          method: "tool.completed",
-          params: expect.objectContaining({
-            sessionId: "session-smart",
-            outputSummary: expect.stringContaining("session session-smart")
-          })
-        })
-      ])
-    );
   });
 
   it("invokes read_session through the Codex dynamic tool path", async () => {

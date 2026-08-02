@@ -154,12 +154,8 @@ export const parseGoalSlashCommand = (
 
 export const goalCommandBlockedReason = (
   command: ReturnType<typeof parseGoalSlashCommand>,
-  threadGoal?: ThreadGoal,
-  isTakeoverManaged = false
+  threadGoal?: ThreadGoal
 ): string | undefined => {
-  if (isTakeoverManaged && command && command.kind !== "clear") {
-    return "Goal commands are unavailable while takeover is enabled. Use /goal clear to stop the current goal.";
-  }
   if (command?.kind === "set" && threadGoal) {
     return "A goal is already set. Use /goal clear before setting a new goal.";
   }
@@ -217,7 +213,6 @@ type UseComposerControllerInput = {
   turns: Turn[];
   allowSessionLastTurnFallback?: boolean;
   approvals: ApprovalRequest[];
-  isTakeoverManaged?: boolean;
   isOpeningSelectedSession: boolean;
   statusNotice?: ComposerStatusNotice;
   onStatusNotice: (notice: ComposerStatusNotice | undefined) => void;
@@ -328,17 +323,13 @@ export const useComposerController = (
     draft.trim().length > 0 ||
     selectedSkills.length > 0 ||
     attachments.length > 0;
-  const isTakeoverBlockingPrimarySend =
-    Boolean(input.isTakeoverManaged) && intent !== "steer";
   const canSubmit =
     hasComposedInput &&
     Boolean(input.transport && input.activeSessionId) &&
-    !isTakeoverBlockingPrimarySend &&
     !input.isOpeningSelectedSession &&
     !isDispatching;
   const canQueue =
     Boolean(input.activeSessionId) &&
-    !input.isTakeoverManaged &&
     !input.isOpeningSelectedSession &&
     !isDispatching &&
     (draft.trim().length > 0 ||
@@ -799,11 +790,7 @@ export const useComposerController = (
       });
       return;
     }
-    const goalBlockReason = goalCommandBlockedReason(
-      goalCommand,
-      input.threadGoal,
-      input.isTakeoverManaged
-    );
+    const goalBlockReason = goalCommandBlockedReason(goalCommand, input.threadGoal);
     if (goalBlockReason) {
       input.onStatusNotice({
         message: goalBlockReason,

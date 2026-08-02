@@ -121,8 +121,7 @@ describe("renderer refresh signals", () => {
     expect(signals).toEqual({
       sessionBrowser: 0,
       chatTree: 0,
-      engineExtensions: 0,
-      takeover: 0
+      engineExtensions: 0
     });
   });
 
@@ -162,48 +161,7 @@ describe("renderer refresh signals", () => {
     expect(signals).toEqual({
       sessionBrowser: 3,
       chatTree: 2,
-      engineExtensions: 0,
-      takeover: 2
-    });
-  });
-
-  it("does not refresh takeover state for unrelated tool completions", () => {
-    const signals = advance([
-      {
-        type: "tool.completed",
-        sessionId: "session-1",
-        turnId: "turn-1",
-        toolCallId: "tool-shell",
-        status: "completed",
-        outputSummary: "command completed"
-      }
-    ]);
-
-    expect(signals).toEqual({
-      sessionBrowser: 0,
-      chatTree: 0,
-      engineExtensions: 0,
-      takeover: 0
-    });
-  });
-
-  it("refreshes takeover state when a SmartTakeover tool call completes", () => {
-    const signals = advance([
-      {
-        type: "tool.completed",
-        sessionId: "session-1",
-        turnId: "turn-1",
-        toolCallId: "tool-smart-takeover",
-        status: "completed",
-        outputSummary: "SmartTakeover enabled for session session-1."
-      }
-    ]);
-
-    expect(signals).toEqual({
-      sessionBrowser: 0,
-      chatTree: 0,
-      engineExtensions: 0,
-      takeover: 1
+      engineExtensions: 0
     });
   });
 
@@ -221,8 +179,7 @@ describe("renderer refresh signals", () => {
     expect(signals).toEqual({
       sessionBrowser: 0,
       chatTree: 0,
-      engineExtensions: 1,
-      takeover: 0
+      engineExtensions: 1
     });
   });
 
@@ -264,7 +221,6 @@ describe("renderer refresh signals", () => {
     expect(state.lastEventType).toBe("terminal.output");
     expect(state.eventStream.lastCursor).toBe("2");
     expect(state.refreshSignals.sessionBrowser).toBe(1);
-    expect(state.refreshSignals.takeover).toBe(1);
     expect(state.refreshSignals.chatTree).toBe(0);
     expect(state.refreshSignals.engineExtensions).toBe(0);
   });

@@ -21,8 +21,7 @@ export type ComposerStatusNotice = {
     | "delegation"
     | "files"
     | "settings"
-    | "scheduler"
-    | "takeover";
+    | "scheduler";
 };
 
 export const statusNoticeErrorDetails = (

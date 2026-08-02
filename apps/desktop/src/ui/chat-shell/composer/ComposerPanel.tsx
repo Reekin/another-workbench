@@ -11,8 +11,6 @@ import type {
   ApprovalRequest,
   ContextUsage,
   RuntimeInteraction,
-  TakeoverPresetSummaryRpc,
-  TakeoverSessionStateRpc,
   ThreadGoal
 } from "@another-workbench/shared";
 import type { ComposerAttachment } from "../composer-attachments.js";
@@ -112,9 +110,6 @@ export const ComposerPanel = ({
   pendingInteractions = [],
   contextUsage,
   threadGoal,
-  takeoverPresets = [],
-  takeoverState,
-  isTakeoverMenuOpen = false,
   intent,
   supportsSteer,
   supportsAttachments,
@@ -135,9 +130,6 @@ export const ComposerPanel = ({
   onRemoveAttachment,
   onPreviewAttachment,
   onPickAttachments,
-  onToggleTakeoverMenu = () => undefined,
-  onSelectTakeoverPreset = async () => undefined,
-  onOpenTakeoverContextEditor = () => undefined,
   onPrimaryAction,
   onQueueCurrent,
   onStop,
@@ -164,9 +156,6 @@ export const ComposerPanel = ({
   pendingInteractions?: RuntimeInteraction[];
   contextUsage?: ContextUsage;
   threadGoal?: ThreadGoal;
-  takeoverPresets?: TakeoverPresetSummaryRpc[];
-  takeoverState?: TakeoverSessionStateRpc;
-  isTakeoverMenuOpen?: boolean;
   intent: ComposerIntent;
   supportsSteer: boolean;
   supportsAttachments: boolean;
@@ -189,9 +178,6 @@ export const ComposerPanel = ({
   onRemoveAttachment: (attachmentId: string) => void;
   onPreviewAttachment?: (input: ImageLightboxState) => void;
   onPickAttachments: () => void;
-  onToggleTakeoverMenu?: () => void;
-  onSelectTakeoverPreset?: (presetId?: string) => Promise<void>;
-  onOpenTakeoverContextEditor?: () => void;
   onPrimaryAction: () => Promise<void>;
   onQueueCurrent: () => void;
   onStop: () => Promise<void>;
@@ -204,22 +190,6 @@ export const ComposerPanel = ({
   onRespondApproval?: (input: ApprovalResponseInput) => Promise<void>;
   onRespondInteraction?: (input: InteractionResponseInput) => Promise<void>;
 }): ReactElement => {
-  const activeTakeoverPresetId =
-    takeoverState?.presetId ?? takeoverState?.manualPresetId;
-  const isTakeoverManaged = takeoverState?.role === "managed";
-  const isTakeoverResponding = isTakeoverManaged && takeoverState.active;
-  const canShowTakeoverControls = !threadGoal;
-  const selectedTakeoverLabel =
-    takeoverPresets.find((preset) => preset.presetId === activeTakeoverPresetId)
-      ?.displayName ?? activeTakeoverPresetId ?? "No takeover";
-  const takeoverTooltip =
-    isTakeoverManaged
-      ? `Current session is in takeover mode${takeoverState.presetId ? ` (${takeoverState.presetId})` : ""}.`
-      : "Select a takeover preset for this session.";
-  const submitTitle =
-    isTakeoverManaged
-      ? `Current session is in takeover mode${takeoverState.presetId ? ` (${takeoverState.presetId})` : ""}.`
-      : undefined;
   return (
   <footer
     className={`awb-composer awb-composer-panel${
@@ -325,15 +295,10 @@ export const ComposerPanel = ({
         />
       </section>
     ) : null}
-    <div
-      className={`awb-composer-panel__editor${
-        isTakeoverResponding ? " is-takeover-responding" : ""
-      }`}
-    >
+    <div className="awb-composer-panel__editor">
       <textarea
         ref={textareaRef}
         value={draft}
-        disabled={isTakeoverResponding}
         onChange={(event) =>
           onTextareaChange(
             event.target.value,
@@ -346,16 +311,6 @@ export const ComposerPanel = ({
         onKeyDown={(event) => void onInputKeyDown(event)}
         onPaste={onPaste}
       />
-      {isTakeoverResponding ? (
-        <div className="awb-composer-takeover-responding" aria-live="polite">
-          <span>Takeover responding</span>
-          <span className="awb-composer-takeover-responding__dots" aria-hidden="true">
-            <i />
-            <i />
-            <i />
-          </span>
-        </div>
-      ) : null}
       <ComposerSuggestions
         suggestions={suggestions}
         onHover={onSuggestionHover}
@@ -407,79 +362,6 @@ export const ComposerPanel = ({
         ) : null}
       </div>
       <div className="awb-composer__buttons">
-        {canShowTakeoverControls ? (
-          <div className="awb-composer-takeover">
-            {isTakeoverManaged ? (
-              <button
-                type="button"
-                className="awb-ghost-button awb-composer-takeover__edit"
-                onClick={onOpenTakeoverContextEditor}
-                title="Edit takeover context"
-                aria-label="Edit takeover context"
-              >
-                Edit
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className={`awb-ghost-button awb-composer-takeover__button${
-                activeTakeoverPresetId ? " is-active" : ""
-              }`}
-              onClick={onToggleTakeoverMenu}
-              title={takeoverTooltip}
-              aria-haspopup="menu"
-              aria-expanded={isTakeoverMenuOpen}
-            >
-              <span className="awb-composer-takeover__button-label">Takeover</span>
-              <strong>{selectedTakeoverLabel}</strong>
-            </button>
-            {isTakeoverMenuOpen ? (
-              <div
-                className="awb-composer-takeover__menu"
-                role="menu"
-                aria-label="Takeover presets"
-              >
-                <div className="awb-composer-takeover__menu-header">
-                  <strong>Takeover preset</strong>
-                  <span>Manual supervision for this session</span>
-                </div>
-                <button
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={!activeTakeoverPresetId}
-                  className={!activeTakeoverPresetId ? "is-active" : undefined}
-                  onClick={() => void onSelectTakeoverPreset(undefined)}
-                >
-                  <span className="awb-composer-takeover__radio" aria-hidden="true" />
-                  <span className="awb-composer-takeover__menu-copy">
-                    <strong>No takeover</strong>
-                    <span>Keep direct control</span>
-                  </span>
-                </button>
-                {takeoverPresets.map((preset) => (
-                  <button
-                    type="button"
-                    key={preset.presetId}
-                    role="menuitemradio"
-                    aria-checked={activeTakeoverPresetId === preset.presetId}
-                    className={
-                      activeTakeoverPresetId === preset.presetId
-                        ? "is-active"
-                        : undefined
-                    }
-                    onClick={() => void onSelectTakeoverPreset(preset.presetId)}
-                  >
-                    <span className="awb-composer-takeover__radio" aria-hidden="true" />
-                    <span className="awb-composer-takeover__menu-copy">
-                      <strong>{preset.displayName}</strong>
-                      <span>{preset.presetId}</span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
         {canQueue ? (
           <button
             type="button"
@@ -500,7 +382,7 @@ export const ComposerPanel = ({
             Stop
           </button>
         ) : null}
-        <span title={submitTitle}>
+        <span>
           <button
             type="button"
             onClick={() => void onPrimaryAction()}

@@ -14,7 +14,6 @@ import type {
   EngineDefinitionRpc,
   EngineSurfaceRpc,
   EventEnvelope,
-  TakeoverSessionStateRpc,
   WorkbenchSettingsRpc,
   WorkspaceBrowserNodeRpc,
   WorkspaceRecordRpc,
@@ -310,11 +309,6 @@ export const createDemoWorkbenchShellService = (
     };
   };
 
-  const takeoverState = (sessionId: string): TakeoverSessionStateRpc => ({
-    sessionId,
-    role: "none",
-    active: false
-  });
 
   return {
     executeCommand: async (input: CommandEnvelope) => {
@@ -368,23 +362,6 @@ export const createDemoWorkbenchShellService = (
       taskId,
       deleted: false
     }),
-    listTakeoverPresets: async () => ({
-      rootPath: "demo://takeover-presets",
-      presets: []
-    }),
-    readTakeoverPreset: async () => {
-      throw new Error("Demo takeover presets are unavailable.");
-    },
-    upsertTakeoverPreset: async () => {
-      throw new Error("Demo takeover presets are read-only.");
-    },
-    deleteTakeoverPreset: async (presetId: string) => ({
-      presetId,
-      deleted: false
-    }),
-    getTakeoverState: (input: { sessionId: string }) => takeoverState(input.sessionId),
-    setManualTakeover: async (input: { sessionId: string }) =>
-      takeoverState(input.sessionId),
     listWorkspaces: async () => ({
       workspaces: [demoWorkspace],
       lastActiveWorkspaceId,

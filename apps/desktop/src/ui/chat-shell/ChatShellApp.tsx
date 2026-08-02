@@ -22,9 +22,7 @@ import type {
   SchedulerTaskDocumentRpc,
   SchedulerTaskScheduleRpc,
   Turn,
-  SessionWindowRpc,
-  TakeoverSessionStateRpc,
-  TakeoverPresetSummaryRpc
+  SessionWindowRpc
 } from "@another-workbench/shared";
 import "xterm/css/xterm.css";
 import type { RendererStore } from "../../store/store.js";
@@ -84,18 +82,7 @@ import { useRendererDiagnostics } from "./use-renderer-diagnostics.js";
 import { buildEngineInspectorViewModel } from "./engine-summary.js";
 import { resolveAutoRefreshBacklogAttempt } from "./auto-refresh-backlog.js";
 import { ComposerContainer } from "./composer/ComposerContainer.js";
-import {
-  beginTakeoverStateRequest,
-  canCommitTakeoverStateRequest,
-  createTakeoverStateRequestState,
-  finishTakeoverStateRequest,
-  invalidateTakeoverStateRequestsForSession,
-  resetTakeoverStateRequests,
-  resolveCurrentTakeoverState
-} from "./takeover-state-controller.js";
 import "./chat-shell.css";
-
-export { resolveCurrentTakeoverState } from "./takeover-state-controller.js";
 
 type SettingsLauncherProps = {
   engines: EngineDefinitionRpc[];
@@ -103,20 +90,12 @@ type SettingsLauncherProps = {
   currentEngineId: string;
   transport?: DesktopTransport;
   onEngineSaved: (engineId: string) => void;
-  onTakeoverPresetsChanged: (presets: TakeoverPresetSummaryRpc[]) => void;
   onStatusNotice: (notice: ComposerStatusNotice) => void;
 };
 
-type SettingsTab = "general" | "takeover";
 
-const takeoverPresetNamePattern = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const autoRefreshBacklogCooldownMs = 30_000;
 const autoRefreshBacklogStreamThreshold = 500;
-
-const createDefaultTakeoverPresetPrompt = (presetId: string): string => `# ${presetId}
-
-Use this takeover preset to describe the role, inspection scope, and verdict standard.
-`;
 
 type TranscriptPaneProps = {
   transcriptRef: RefObject<HTMLElement | null>;
@@ -729,26 +708,11 @@ const SettingsLauncher = ({
   currentEngineId,
   transport,
   onEngineSaved,
-  onTakeoverPresetsChanged,
   onStatusNotice
 }: SettingsLauncherProps): ReactElement => {
   const [isOpen, setIsOpen] = useState(false);
-  const [activeSettingsTab, setActiveSettingsTab] =
-    useState<SettingsTab>("general");
   const [draftEngineId, setDraftEngineId] = useState(currentEngineId);
   const [isSaving, setIsSaving] = useState(false);
-  const [takeoverRootPath, setTakeoverRootPath] = useState("");
-  const [takeoverPresets, setTakeoverPresets] = useState<
-    TakeoverPresetSummaryRpc[]
-  >([]);
-  const [selectedTakeoverPresetId, setSelectedTakeoverPresetId] =
-    useState<string>("");
-  const [draftTakeoverPresetId, setDraftTakeoverPresetId] = useState("");
-  const [draftTakeoverPrompt, setDraftTakeoverPrompt] = useState("");
-  const [isLoadingTakeoverPresets, setIsLoadingTakeoverPresets] =
-    useState(false);
-  const [isSavingTakeoverPreset, setIsSavingTakeoverPreset] = useState(false);
-  const takeoverPresetReadRequestId = useRef(0);
   const engineInspector = useMemo(
     () =>
       buildEngineInspectorViewModel({
@@ -772,81 +736,12 @@ const SettingsLauncher = ({
     }
   }, [currentEngineId, isOpen]);
 
-  const readTakeoverPreset = useCallback(
-    async (presetId: string): Promise<void> => {
-      if (!transport || !presetId) {
-        return;
-      }
-      const requestId = ++takeoverPresetReadRequestId.current;
-      const preset = await transport.takeoverPresets.read(presetId);
-      if (requestId !== takeoverPresetReadRequestId.current) {
-        return;
-      }
-      setSelectedTakeoverPresetId(preset.presetId);
-      setDraftTakeoverPresetId(preset.presetId);
-      setDraftTakeoverPrompt(preset.prompt);
-    },
-    [transport]
-  );
-
-  const loadTakeoverPresets = useCallback(
-    async (selectPresetId?: string): Promise<void> => {
-      if (!transport) {
-        return;
-      }
-      setIsLoadingTakeoverPresets(true);
-      try {
-        const result = await transport.takeoverPresets.list();
-        setTakeoverRootPath(result.rootPath);
-        setTakeoverPresets(result.presets);
-        onTakeoverPresetsChanged(result.presets);
-        const requestedPresetId =
-          selectPresetId !== undefined ? selectPresetId : selectedTakeoverPresetId;
-        const nextPresetId =
-          result.presets.find((preset) => preset.presetId === requestedPresetId)
-            ?.presetId ||
-          result.presets[0]?.presetId ||
-          "";
-        if (nextPresetId) {
-          await readTakeoverPreset(nextPresetId);
-        } else {
-          setSelectedTakeoverPresetId("");
-          setDraftTakeoverPresetId("");
-          setDraftTakeoverPrompt("");
-        }
-      } catch (error) {
-        onStatusNotice({
-          message: `Takeover presets load failed: ${(error as Error).message}`,
-          persistent: true,
-          source: "settings",
-          ...statusNoticeErrorDetails(error)
-        });
-      } finally {
-        setIsLoadingTakeoverPresets(false);
-      }
-    },
-    [
-      onStatusNotice,
-      onTakeoverPresetsChanged,
-      readTakeoverPreset,
-      selectedTakeoverPresetId,
-      transport
-    ]
-  );
-
-  useEffect(() => {
-    if (isOpen && activeSettingsTab === "takeover" && transport) {
-      void loadTakeoverPresets();
-    }
-  }, [activeSettingsTab, isOpen, loadTakeoverPresets, transport]);
-
   const close = (): void => {
     setIsOpen(false);
   };
 
   const open = (): void => {
     setDraftEngineId(currentEngineId);
-    setActiveSettingsTab("general");
     setIsOpen(true);
   };
 
@@ -880,121 +775,6 @@ const SettingsLauncher = ({
     }
   };
 
-  const onSelectTakeoverPreset = async (presetId: string): Promise<void> => {
-    try {
-      await readTakeoverPreset(presetId);
-    } catch (error) {
-      onStatusNotice({
-        message: `Preset load failed: ${(error as Error).message}`,
-        persistent: true,
-        source: "settings",
-        ...statusNoticeErrorDetails(error)
-      });
-    }
-  };
-
-  const onNewTakeoverPreset = async (): Promise<void> => {
-    if (!transport) {
-      return;
-    }
-    const existingPresetIds = new Set(
-      takeoverPresets.map((preset) => preset.presetId)
-    );
-    const basePresetId = "custom-preset";
-    let presetId = basePresetId;
-    let index = 2;
-    while (existingPresetIds.has(presetId)) {
-      presetId = `${basePresetId}-${index}`;
-      index += 1;
-    }
-    setIsSavingTakeoverPreset(true);
-    try {
-      const preset = await transport.takeoverPresets.upsert({
-        presetId,
-        prompt: createDefaultTakeoverPresetPrompt(presetId)
-      });
-      await loadTakeoverPresets(preset.presetId);
-      onStatusNotice({
-        message: `Takeover preset created: ${preset.presetId}`,
-        source: "settings"
-      });
-    } catch (error) {
-      onStatusNotice({
-        message: `Preset create failed: ${(error as Error).message}`,
-        persistent: true,
-        source: "settings",
-        ...statusNoticeErrorDetails(error)
-      });
-    } finally {
-      setIsSavingTakeoverPreset(false);
-    }
-  };
-
-  const onSaveTakeoverPreset = async (): Promise<void> => {
-    if (!transport) {
-      return;
-    }
-    const presetId = draftTakeoverPresetId.trim();
-    if (!takeoverPresetNamePattern.test(presetId)) {
-      onStatusNotice({
-        message:
-          "Preset names must start with a letter or number and may only contain letters, numbers, underscores, and hyphens.",
-        persistent: true,
-        source: "settings"
-      });
-      return;
-    }
-    setIsSavingTakeoverPreset(true);
-    try {
-      const preset = await transport.takeoverPresets.upsert({
-        presetId,
-        prompt: draftTakeoverPrompt
-      });
-      await loadTakeoverPresets(preset.presetId);
-      onStatusNotice({
-        message: `Takeover preset saved: ${preset.presetId}`,
-        source: "settings"
-      });
-    } catch (error) {
-      onStatusNotice({
-        message: `Preset save failed: ${(error as Error).message}`,
-        persistent: true,
-        source: "settings",
-        ...statusNoticeErrorDetails(error)
-      });
-    } finally {
-      setIsSavingTakeoverPreset(false);
-    }
-  };
-
-  const onDeleteTakeoverPreset = async (): Promise<void> => {
-    if (!transport || !selectedTakeoverPresetId) {
-      return;
-    }
-    setIsSavingTakeoverPreset(true);
-    try {
-      const result = await transport.takeoverPresets.delete(
-        selectedTakeoverPresetId
-      );
-      await loadTakeoverPresets("");
-      onStatusNotice({
-        message: result.deleted
-          ? `Takeover preset deleted: ${result.presetId}`
-          : `Takeover preset not found: ${result.presetId}`,
-        source: "settings"
-      });
-    } catch (error) {
-      onStatusNotice({
-        message: `Preset delete failed: ${(error as Error).message}`,
-        persistent: true,
-        source: "settings",
-        ...statusNoticeErrorDetails(error)
-      });
-    } finally {
-      setIsSavingTakeoverPreset(false);
-    }
-  };
-
   const modalMarkup = isOpen ? (
     <div className="awb-modal-scrim" role="presentation" onClick={close}>
       <section
@@ -1014,156 +794,44 @@ const SettingsLauncher = ({
           </button>
         </header>
         <div className="awb-modal__body awb-settings">
-          <div className="awb-settings__tabs" role="tablist" aria-label="Settings">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeSettingsTab === "general"}
-              className={activeSettingsTab === "general" ? "is-active" : undefined}
-              onClick={() => setActiveSettingsTab("general")}
-            >
-              General
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeSettingsTab === "takeover"}
-              className={activeSettingsTab === "takeover" ? "is-active" : undefined}
-              onClick={() => setActiveSettingsTab("takeover")}
-            >
-              Takeover
-            </button>
+          <div className="awb-settings__panel">
+            <label className="awb-field">
+              <span>New session engine</span>
+              <select
+                value={draftEngineId}
+                onChange={(event) => setDraftEngineId(event.target.value)}
+              >
+                <option value="">Follow first available engine</option>
+                {engines.map((engine) => (
+                  <option key={engine.engineId} value={engine.engineId}>
+                    {tierByEngineId[engine.engineId]
+                      ? `${engine.displayName} (${tierByEngineId[engine.engineId]})`
+                      : engine.displayName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="awb-field" aria-live="polite">
+              <span>Selected engine</span>
+              <strong>{engineInspector.engineLabel}</strong>
+              <span>{engineInspector.integrationLabel}</span>
+              <span>{engineInspector.capabilitiesLabel}</span>
+              <span>{engineInspector.extensionsLabel}</span>
+            </div>
           </div>
-          {activeSettingsTab === "general" ? (
-            <div className="awb-settings__panel" role="tabpanel">
-              <label className="awb-field">
-                <span>New session engine</span>
-                <select
-                  value={draftEngineId}
-                  onChange={(event) => setDraftEngineId(event.target.value)}
-                >
-                  <option value="">Follow first available engine</option>
-                  {engines.map((engine) => (
-                    <option key={engine.engineId} value={engine.engineId}>
-                      {tierByEngineId[engine.engineId]
-                        ? `${engine.displayName} (${tierByEngineId[engine.engineId]})`
-                        : engine.displayName}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="awb-field" aria-live="polite">
-                <span>Selected engine</span>
-                <strong>{engineInspector.engineLabel}</strong>
-                <span>{engineInspector.integrationLabel}</span>
-                <span>{engineInspector.capabilitiesLabel}</span>
-                <span>{engineInspector.extensionsLabel}</span>
-              </div>
-            </div>
-          ) : (
-            <div className="awb-settings__panel" role="tabpanel">
-              <div className="awb-takeover-presets">
-                <div className="awb-takeover-presets__header">
-                  <span>Preset directory</span>
-                  <code title={takeoverRootPath || "Takeover presets"}>
-                    {takeoverRootPath || "Takeover presets"}
-                  </code>
-                </div>
-                <div className="awb-takeover-presets__content">
-                  <div className="awb-takeover-presets__list">
-                    <div className="awb-takeover-presets__bar">
-                      <span>Presets</span>
-                      <button
-                        type="button"
-                        className="awb-secondary-button awb-secondary-button--small"
-                        onClick={() => void onNewTakeoverPreset()}
-                        disabled={isLoadingTakeoverPresets || isSavingTakeoverPreset}
-                      >
-                        New
-                      </button>
-                    </div>
-                    <div className="awb-takeover-presets__items">
-                      {takeoverPresets.map((preset) => (
-                        <button
-                          type="button"
-                          key={preset.presetId}
-                          className={
-                            preset.presetId === selectedTakeoverPresetId
-                              ? "is-active"
-                              : undefined
-                          }
-                          onClick={() => void onSelectTakeoverPreset(preset.presetId)}
-                        >
-                          <strong>{preset.displayName}</strong>
-                          <span>{preset.presetId}</span>
-                        </button>
-                      ))}
-                      {takeoverPresets.length === 0 && (
-                        <span className="awb-takeover-presets__empty">
-                          {isLoadingTakeoverPresets ? "Loading..." : "No presets"}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="awb-takeover-presets__editor">
-                    <label className="awb-field">
-                      <span>Preset name</span>
-                      <input
-                        value={draftTakeoverPresetId}
-                        onChange={(event) =>
-                          setDraftTakeoverPresetId(event.target.value)
-                        }
-                        spellCheck={false}
-                      />
-                    </label>
-                    <label className="awb-field awb-field--takeover-prompt">
-                      <span>Prompt</span>
-                      <textarea
-                        value={draftTakeoverPrompt}
-                        onChange={(event) =>
-                          setDraftTakeoverPrompt(event.target.value)
-                        }
-                        spellCheck={false}
-                      />
-                    </label>
-                    <div className="awb-takeover-presets__actions">
-                      <button
-                        type="button"
-                        className="awb-ghost-button"
-                        onClick={() => void onDeleteTakeoverPreset()}
-                        disabled={!selectedTakeoverPresetId || isSavingTakeoverPreset}
-                      >
-                        Delete
-                      </button>
-                      <button
-                        type="button"
-                        className="awb-secondary-button"
-                        onClick={() => void onSaveTakeoverPreset()}
-                        disabled={isSavingTakeoverPreset}
-                      >
-                        Save preset
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
         <footer className="awb-modal__footer">
           <button type="button" className="awb-ghost-button" onClick={close}>
-            {activeSettingsTab === "general" ? "Cancel" : "Close"}
+            Cancel
           </button>
-          {activeSettingsTab === "general" && (
-            <button
-              type="button"
-              className="awb-secondary-button"
-              onClick={() => void onSave()}
-              disabled={isSaving}
-            >
-              Save
-            </button>
-          )}
+          <button
+            type="button"
+            className="awb-secondary-button"
+            onClick={() => void onSave()}
+            disabled={isSaving}
+          >
+            Save
+          </button>
         </footer>
       </section>
     </div>
@@ -1831,21 +1499,6 @@ export const ChatShellApp = ({
   const [workspaceMenu, setWorkspaceMenu] = useState<WorkspaceMenuState | undefined>();
   const [scheduleWorkspace, setScheduleWorkspace] =
     useState<ScheduleWorkspaceTarget | undefined>();
-  const [takeoverPresets, setTakeoverPresets] = useState<
-    TakeoverPresetSummaryRpc[]
-  >([]);
-  const [takeoverState, setTakeoverState] = useState<
-    TakeoverSessionStateRpc | undefined
-  >();
-  const takeoverStateRequestRef = useRef(createTakeoverStateRequestState());
-  const goalTakeoverDisableRef = useRef<string | undefined>(undefined);
-  const [takeoverContextCacheBySessionId, setTakeoverContextCacheBySessionId] =
-    useState<Record<string, Record<string, string>>>({});
-  const [isTakeoverMenuOpen, setIsTakeoverMenuOpen] = useState(false);
-  const [isTakeoverContextEditorOpen, setIsTakeoverContextEditorOpen] =
-    useState(false);
-  const [draftTakeoverContext, setDraftTakeoverContext] = useState("");
-  const [isSavingTakeoverContext, setIsSavingTakeoverContext] = useState(false);
 
   const writeStatusNoticeLog = useCallback(
     (notice: ComposerStatusNotice): void => {
@@ -1891,71 +1544,6 @@ export const ChatShellApp = ({
     [writeStatusNoticeLog]
   );
 
-  const requestTakeoverState = useCallback(
-    (sessionId: string): void => {
-      if (!transport) {
-        return;
-      }
-
-      const run = (): void => {
-        const generation = beginTakeoverStateRequest(
-          takeoverStateRequestRef.current,
-          sessionId
-        );
-        if (generation === undefined) {
-          return;
-        }
-        void transport.takeover
-          .getState(sessionId)
-          .then((stateResult) => {
-            if (
-              canCommitTakeoverStateRequest(
-                takeoverStateRequestRef.current,
-                sessionId,
-                generation
-              )
-            ) {
-              setTakeoverState(resolveCurrentTakeoverState(stateResult, sessionId));
-            }
-          })
-          .catch((error) => {
-            if (
-              canCommitTakeoverStateRequest(
-                takeoverStateRequestRef.current,
-                sessionId,
-                generation
-              )
-            ) {
-              setStatusNotice({
-                message: `Takeover state load failed: ${(error as Error).message}`,
-                source: "takeover",
-                ...statusNoticeErrorDetails(error)
-              });
-            }
-          })
-          .finally(() => {
-            if (
-              finishTakeoverStateRequest(
-                takeoverStateRequestRef.current,
-                sessionId,
-                generation
-              )
-            ) {
-              run();
-            }
-          });
-      };
-
-      run();
-    },
-    [setStatusNotice, transport]
-  );
-
-  useEffect(() => {
-    resetTakeoverStateRequests(takeoverStateRequestRef.current);
-    setTakeoverState(undefined);
-  }, [transport]);
-
   const {
     workspaceTree,
     refreshSessionBrowser,
@@ -1996,14 +1584,6 @@ export const ChatShellApp = ({
       ? findSessionNode(workspaceTree, state.activeSessionId)
       : undefined);
   const activeSessionId = state.activeSessionId ?? activeSessionNode?.sessionId;
-  const activeSessionIdRef = useRef(activeSessionId);
-  useEffect(() => {
-    activeSessionIdRef.current = activeSessionId;
-  }, [activeSessionId]);
-  const currentTakeoverState = resolveCurrentTakeoverState(
-    takeoverState,
-    activeSessionId
-  );
   const displayedSessionId =
     openingSessionId ?? browserSelectedSessionId ?? activeSessionId;
   const displayedSessionRevision = useRendererSessionRevision(
@@ -2032,161 +1612,6 @@ export const ChatShellApp = ({
   const activeThreadGoal = activeSessionId
     ? domain.getThreadGoal(activeSessionId)
     : undefined;
-  const cacheTakeoverContext = useCallback(
-    (sessionId?: string, presetId?: string, context?: string): void => {
-      if (!sessionId || !presetId) {
-        return;
-      }
-      const trimmedContext = context?.trim();
-      setTakeoverContextCacheBySessionId((current) => {
-        const currentSessionCache = current[sessionId] ?? {};
-        if (!trimmedContext) {
-          if (!(presetId in currentSessionCache)) {
-            return current;
-          }
-          const nextSessionCache = { ...currentSessionCache };
-          delete nextSessionCache[presetId];
-          return {
-            ...current,
-            [sessionId]: nextSessionCache
-          };
-        }
-        if (currentSessionCache[presetId] === trimmedContext) {
-          return current;
-        }
-        return {
-          ...current,
-          [sessionId]: {
-            ...currentSessionCache,
-            [presetId]: trimmedContext
-          }
-        };
-      });
-    },
-    []
-  );
-
-  useEffect(() => {
-    setIsTakeoverMenuOpen(false);
-    setIsTakeoverContextEditorOpen(false);
-  }, [activeSessionId]);
-
-  useEffect(() => {
-    if (!activeThreadGoal) {
-      goalTakeoverDisableRef.current = undefined;
-      return;
-    }
-    setIsTakeoverMenuOpen(false);
-    setIsTakeoverContextEditorOpen(false);
-    if (
-      !transport ||
-      !activeSessionId ||
-      currentTakeoverState?.role !== "managed"
-    ) {
-      return;
-    }
-    const takeoverPresetId =
-      currentTakeoverState.presetId ?? currentTakeoverState.manualPresetId ?? "";
-    const disableKey = [
-      activeSessionId,
-      activeThreadGoal.updatedAt,
-      takeoverPresetId,
-      currentTakeoverState.active ? "active" : "idle"
-    ].join(":");
-    if (goalTakeoverDisableRef.current === disableKey) {
-      return;
-    }
-    goalTakeoverDisableRef.current = disableKey;
-    void transport.takeover
-      .setManual({ sessionId: activeSessionId })
-      .then((nextState) => {
-        if (activeSessionIdRef.current !== activeSessionId) {
-          return;
-        }
-        invalidateTakeoverStateRequestsForSession(
-          takeoverStateRequestRef.current,
-          activeSessionId
-        );
-        setTakeoverState(resolveCurrentTakeoverState(nextState, activeSessionId));
-        void refreshSessionBrowser({ mode: "visible" });
-        setStatusNotice({
-          message: "Takeover disabled while a goal is active.",
-          source: "takeover"
-        });
-      })
-      .catch((error) => {
-        setStatusNotice({
-          message: `Takeover disable failed: ${(error as Error).message}`,
-          persistent: true,
-          source: "takeover",
-          ...statusNoticeErrorDetails(error)
-        });
-      });
-  }, [
-    activeSessionId,
-    activeThreadGoal,
-    currentTakeoverState?.active,
-    currentTakeoverState?.manualPresetId,
-    currentTakeoverState?.presetId,
-    currentTakeoverState?.role,
-    refreshSessionBrowser,
-    setStatusNotice,
-    transport
-  ]);
-
-  useEffect(() => {
-    if (!transport) {
-      setTakeoverPresets([]);
-      return;
-    }
-    let disposed = false;
-    void transport.takeoverPresets
-      .list()
-      .then((result) => {
-        if (!disposed) {
-          setTakeoverPresets(result.presets);
-        }
-      })
-      .catch((error) => {
-        if (!disposed) {
-          setStatusNotice({
-            message: `Takeover presets load failed: ${(error as Error).message}`,
-            persistent: true,
-            source: "takeover",
-            ...statusNoticeErrorDetails(error)
-          });
-        }
-      });
-    return () => {
-      disposed = true;
-    };
-  }, [setStatusNotice, transport]);
-
-  useEffect(() => {
-    if (!transport || !activeSessionId) {
-      resetTakeoverStateRequests(takeoverStateRequestRef.current);
-      setTakeoverState(undefined);
-      return;
-    }
-    setTakeoverState((current) =>
-      resolveCurrentTakeoverState(current, activeSessionId)
-    );
-    requestTakeoverState(activeSessionId);
-  }, [activeSessionId, requestTakeoverState, state.refreshSignals.takeover, transport]);
-
-  useEffect(() => {
-    const presetId =
-      currentTakeoverState?.presetId ?? currentTakeoverState?.manualPresetId;
-    if (typeof currentTakeoverState?.context === "string") {
-      cacheTakeoverContext(activeSessionId, presetId, currentTakeoverState.context);
-    }
-  }, [
-    activeSessionId,
-    cacheTakeoverContext,
-    currentTakeoverState?.context,
-    currentTakeoverState?.manualPresetId,
-    currentTakeoverState?.presetId
-  ]);
 
   useRendererDiagnostics({
     transport,
@@ -2735,179 +2160,6 @@ export const ChatShellApp = ({
     [refreshSessionBrowser, transport, setStatusNotice]
   );
 
-  const onSelectTakeoverPreset = useCallback(
-    async (presetId?: string): Promise<void> => {
-      if (!transport || !activeSessionId) {
-        return;
-      }
-      if (presetId && activeThreadGoal) {
-        setIsTakeoverMenuOpen(false);
-        setStatusNotice({
-          message: "Takeover is unavailable while a goal is active.",
-          source: "takeover"
-        });
-        return;
-      }
-      try {
-        const currentPresetId =
-          currentTakeoverState?.presetId ?? currentTakeoverState?.manualPresetId;
-        cacheTakeoverContext(
-          activeSessionId,
-          currentPresetId,
-          currentTakeoverState?.context
-        );
-        const cachedContext = presetId
-          ? takeoverContextCacheBySessionId[activeSessionId]?.[presetId]
-          : undefined;
-        const nextState = await transport.takeover.setManual({
-          sessionId: activeSessionId,
-          presetId,
-          context: cachedContext
-        });
-        if (activeSessionIdRef.current !== activeSessionId) {
-          return;
-        }
-        invalidateTakeoverStateRequestsForSession(
-          takeoverStateRequestRef.current,
-          activeSessionId
-        );
-        setTakeoverState(resolveCurrentTakeoverState(nextState, activeSessionId));
-        setIsTakeoverMenuOpen(false);
-        await refreshSessionBrowser({ mode: "visible" });
-        setStatusNotice({
-          message: presetId
-            ? `Takeover enabled: ${presetId}`
-            : "Takeover disabled.",
-          source: "takeover"
-        });
-      } catch (error) {
-        setStatusNotice({
-          message: `Takeover update failed: ${(error as Error).message}`,
-          persistent: true,
-          source: "takeover",
-          ...statusNoticeErrorDetails(error)
-        });
-      }
-    },
-    [
-      activeSessionId,
-      activeThreadGoal,
-      cacheTakeoverContext,
-      currentTakeoverState?.context,
-      currentTakeoverState?.manualPresetId,
-      currentTakeoverState?.presetId,
-      refreshSessionBrowser,
-      setStatusNotice,
-      takeoverContextCacheBySessionId,
-      transport
-    ]
-  );
-
-  const onOpenTakeoverContextEditor = useCallback((): void => {
-    setDraftTakeoverContext(currentTakeoverState?.context ?? "");
-    setIsTakeoverContextEditorOpen(true);
-  }, [currentTakeoverState?.context]);
-
-  const onCloseTakeoverContextEditor = useCallback((): void => {
-    if (isSavingTakeoverContext) {
-      return;
-    }
-    setIsTakeoverContextEditorOpen(false);
-  }, [isSavingTakeoverContext]);
-
-  const onSaveTakeoverContext = useCallback(async (): Promise<void> => {
-    const presetId =
-      currentTakeoverState?.presetId ?? currentTakeoverState?.manualPresetId;
-    if (!transport || !activeSessionId || !presetId) {
-      setIsTakeoverContextEditorOpen(false);
-      return;
-    }
-    if (activeThreadGoal) {
-      setIsTakeoverContextEditorOpen(false);
-      setStatusNotice({
-        message: "Takeover is unavailable while a goal is active.",
-        source: "takeover"
-      });
-      return;
-    }
-    const willRestartReview = currentTakeoverState?.active === true;
-    if (
-      willRestartReview &&
-      typeof window !== "undefined" &&
-      !window.confirm(
-        "Takeover is responding now. Saving this context will interrupt the current review and start a new one."
-      )
-    ) {
-      return;
-    }
-    setIsSavingTakeoverContext(true);
-    try {
-      const nextState = await transport.takeover.setManual({
-        sessionId: activeSessionId,
-        presetId,
-        context: draftTakeoverContext.trim()
-          ? draftTakeoverContext.trim()
-          : undefined
-      });
-      if (activeSessionIdRef.current !== activeSessionId) {
-        return;
-      }
-      invalidateTakeoverStateRequestsForSession(
-        takeoverStateRequestRef.current,
-        activeSessionId
-      );
-      cacheTakeoverContext(activeSessionId, presetId, draftTakeoverContext);
-      setTakeoverState(resolveCurrentTakeoverState(nextState, activeSessionId));
-      setIsTakeoverContextEditorOpen(false);
-      await refreshSessionBrowser({ mode: "visible" });
-      setStatusNotice({
-        message: willRestartReview
-          ? "Takeover review restarted with updated context."
-          : "Takeover context updated.",
-        source: "takeover"
-      });
-    } catch (error) {
-      setStatusNotice({
-        message: `Takeover context update failed: ${(error as Error).message}`,
-        persistent: true,
-        source: "takeover",
-        ...statusNoticeErrorDetails(error)
-      });
-    } finally {
-      setIsSavingTakeoverContext(false);
-    }
-  }, [
-    activeSessionId,
-    activeThreadGoal,
-    cacheTakeoverContext,
-    currentTakeoverState?.active,
-    currentTakeoverState?.manualPresetId,
-    currentTakeoverState?.presetId,
-    draftTakeoverContext,
-    refreshSessionBrowser,
-    setStatusNotice,
-    transport
-  ]);
-
-  const onToggleTakeoverMenu = useCallback((): void => {
-    const shouldOpen = !isTakeoverMenuOpen;
-    setIsTakeoverMenuOpen(shouldOpen);
-    if (!shouldOpen || !transport) {
-      return;
-    }
-    void transport.takeoverPresets
-      .list()
-      .then((result) => setTakeoverPresets(result.presets))
-      .catch((error) =>
-        setStatusNotice({
-          message: `Takeover presets load failed: ${(error as Error).message}`,
-          persistent: true,
-          source: "takeover",
-          ...statusNoticeErrorDetails(error)
-        })
-      );
-  }, [isTakeoverMenuOpen, setStatusNotice, transport]);
-
   const renderSessionNode = (
     session: SessionBrowserViewNode,
     depth = 0
@@ -2915,12 +2167,6 @@ export const ChatShellApp = ({
     const statusDot = resolveStatusDotLabel(session.statusDot);
     const lastCompletedTurnAt = session.lastCompletedTurnAt;
     const completedAge = formatRelativeCompletedTurnAge(lastCompletedTurnAt);
-    const takeoverBadge =
-      session.takeoverStatus === "managed"
-        ? "Managed"
-        : session.takeoverStatus === "agent"
-          ? "Takeover"
-          : undefined;
     return (
       <li key={session.sessionId} className="awb-tree__item">
         <div
@@ -2957,18 +2203,6 @@ export const ChatShellApp = ({
             )}
             <div className="awb-tree__labels">
               <strong>
-                {takeoverBadge ? (
-                  <span
-                    className={`awb-tree__takeover-badge is-${session.takeoverStatus}`}
-                    title={
-                      session.takeoverStatus === "managed"
-                        ? "This session is currently managed by takeover."
-                        : "This session is a takeover agent."
-                    }
-                  >
-                    [{takeoverBadge}]
-                  </span>
-                ) : null}
                 {session.title}
               </strong>
               <span className="awb-tree__session-meta">
@@ -3047,72 +2281,6 @@ export const ChatShellApp = ({
           {workspaceMenuActionLabel(action)}
         </button>
       ))}
-    </div>
-  ) : null;
-
-  const takeoverContextEditorMarkup = isTakeoverContextEditorOpen ? (
-    <div
-      className="awb-modal-scrim"
-      role="presentation"
-      onClick={onCloseTakeoverContextEditor}
-    >
-      <section
-        className="awb-modal awb-takeover-context-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="awb-takeover-context-title"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <header className="awb-modal__header">
-          <div>
-            <span className="awb-main__eyebrow">Takeover</span>
-            <h2 id="awb-takeover-context-title">Context</h2>
-          </div>
-          <button
-            type="button"
-            className="awb-ghost-button"
-            onClick={onCloseTakeoverContextEditor}
-            disabled={isSavingTakeoverContext}
-          >
-            Close
-          </button>
-        </header>
-        <div className="awb-modal__body awb-takeover-context">
-          {currentTakeoverState?.active ? (
-            <p className="awb-takeover-context__notice">
-              Takeover is responding. Saving context will interrupt this review
-              and start a new one.
-            </p>
-          ) : null}
-          <label className="awb-field awb-field--takeover-context">
-            <span>Task context</span>
-            <textarea
-              value={draftTakeoverContext}
-              onChange={(event) => setDraftTakeoverContext(event.target.value)}
-              placeholder="Goals, focus files, risks, acceptance notes..."
-              spellCheck={false}
-            />
-          </label>
-        </div>
-        <footer className="awb-modal__footer">
-          <button
-            type="button"
-            className="awb-ghost-button"
-            onClick={onCloseTakeoverContextEditor}
-            disabled={isSavingTakeoverContext}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="awb-secondary-button"
-            onClick={() => void onSaveTakeoverContext()}
-            disabled={isSavingTakeoverContext}
-          >
-            {currentTakeoverState?.active ? "Restart review" : "Save context"}
-          </button>
-        </footer>
-      </section>
     </div>
   ) : null;
 
@@ -3236,7 +2404,6 @@ export const ChatShellApp = ({
               currentEngineId={selectedEngineId}
               transport={transport}
               onEngineSaved={setSelectedEngineId}
-              onTakeoverPresetsChanged={setTakeoverPresets}
               onStatusNotice={setStatusNotice}
             />
           </footer>
@@ -3286,9 +2453,6 @@ export const ChatShellApp = ({
             allowSessionLastTurnFallback={!activeChatTree?.supportsJump}
             approvals={activeSessionApprovals}
             interactions={activeSessionInteractions}
-            takeoverPresets={takeoverPresets}
-            takeoverState={currentTakeoverState}
-            isTakeoverMenuOpen={isTakeoverMenuOpen}
             isOpeningSelectedSession={isOpeningSelectedSession}
             statusNotice={statusNotice}
             onStatusNotice={setStatusNotice}
@@ -3296,9 +2460,6 @@ export const ChatShellApp = ({
             onCreateSession={onCreateSession}
             onOpenSession={onOpenSession}
             onRequestTranscriptBottom={viewport.scrollToBottom}
-            onToggleTakeoverMenu={onToggleTakeoverMenu}
-            onSelectTakeoverPreset={onSelectTakeoverPreset}
-            onOpenTakeoverContextEditor={onOpenTakeoverContextEditor}
             onRespondApproval={transport ? onRespondApproval : undefined}
             onRespondInteraction={transport ? onRespondInteraction : undefined}
           />
@@ -3364,10 +2525,6 @@ export const ChatShellApp = ({
         (typeof document === "undefined"
           ? workspaceMenuMarkup
           : createPortal(workspaceMenuMarkup, document.body))}
-      {takeoverContextEditorMarkup &&
-        (typeof document === "undefined"
-          ? takeoverContextEditorMarkup
-          : createPortal(takeoverContextEditorMarkup, document.body))}
       {scheduleWorkspace &&
         (typeof document === "undefined" ? (
           <ScheduleWorkspaceModal

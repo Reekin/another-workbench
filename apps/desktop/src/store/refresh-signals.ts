@@ -4,14 +4,12 @@ export type RendererRefreshSignals = {
   sessionBrowser: number;
   chatTree: number;
   engineExtensions: number;
-  takeover: number;
 };
 
 export const createInitialRendererRefreshSignals = (): RendererRefreshSignals => ({
   sessionBrowser: 0,
   chatTree: 0,
-  engineExtensions: 0,
-  takeover: 0
+  engineExtensions: 0
 });
 
 const increment = (value: number): number => value + 1;
@@ -48,20 +46,6 @@ const invalidatesChatTree = (event: RuntimeEvent): boolean => {
   }
 };
 
-const invalidatesTakeover = (event: RuntimeEvent): boolean => {
-  switch (event.type) {
-    case "session.created":
-    case "session.updated":
-    case "session.disposed":
-    case "runtime.error":
-      return true;
-    case "tool.completed":
-      return typeof event.outputSummary === "string" && /takeover/i.test(event.outputSummary);
-    default:
-      return false;
-  }
-};
-
 const invalidatesEngineExtensions = (event: RuntimeEvent): boolean =>
   event.type === "engineExtension.updated";
 
@@ -72,13 +56,11 @@ export const advanceRendererRefreshSignals = (
   const sessionBrowserChanged = invalidatesSessionBrowser(event);
   const chatTreeChanged = invalidatesChatTree(event);
   const engineExtensionsChanged = invalidatesEngineExtensions(event);
-  const takeoverChanged = invalidatesTakeover(event);
 
   if (
     !sessionBrowserChanged &&
     !chatTreeChanged &&
-    !engineExtensionsChanged &&
-    !takeoverChanged
+    !engineExtensionsChanged
   ) {
     return current;
   }
@@ -90,7 +72,6 @@ export const advanceRendererRefreshSignals = (
     chatTree: chatTreeChanged ? increment(current.chatTree) : current.chatTree,
     engineExtensions: engineExtensionsChanged
       ? increment(current.engineExtensions)
-      : current.engineExtensions,
-    takeover: takeoverChanged ? increment(current.takeover) : current.takeover
+      : current.engineExtensions
   };
 };

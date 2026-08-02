@@ -1031,7 +1031,7 @@ describe("desktop store reducer", () => {
     ]);
   });
 
-  it("coalesces adjacent stream deltas during batch ingestion while preserving cursor metadata", () => {
+  it("ingests server-aggregated streams and retains tool delta coalescing metadata", () => {
     const initial = createInitialRendererStoreState();
     const state = rendererStoreReducer(initial, {
       type: "store/ingestEnvelopes",
@@ -1075,21 +1075,38 @@ describe("desktop store reducer", () => {
           turnId: "turn-a",
           terminalId: "terminal-a",
           chunk: "put"
+        }),
+        toEnvelope("evt-tool-1", "7", {
+          type: "tool.delta",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          toolCallId: "tool-a",
+          delta: "to"
+        }),
+        toEnvelope("evt-tool-2", "8", {
+          type: "tool.delta",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          toolCallId: "tool-a",
+          delta: "ol"
         })
       ]
     });
 
     expect(state.entities.messageBlocks["message-a:md"]?.text).toBe("hello");
     expect(state.entities.terminalStreams["terminal-a"]?.outputText).toBe("output");
-    expect(state.eventStream.lastEventId).toBe("evt-terminal-2");
-    expect(state.eventStream.lastCursor).toBe("6");
+    expect(state.entities.toolCalls["tool-a"]?.outputSummary).toBe("tool");
+    expect(state.eventStream.lastEventId).toBe("evt-tool-2");
+    expect(state.eventStream.lastCursor).toBe("8");
     expect(state.eventStream.recentEventIds).toEqual([
       "evt-session",
       "evt-turn",
       "evt-message-1",
       "evt-message-2",
       "evt-terminal-1",
-      "evt-terminal-2"
+      "evt-terminal-2",
+      "evt-tool-1",
+      "evt-tool-2"
     ]);
     expect(state.eventStream.seenEventIds["evt-message-1"]).toBe(true);
     expect(state.eventStream.seenEventIds["evt-terminal-1"]).toBe(true);

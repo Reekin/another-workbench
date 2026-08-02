@@ -1198,6 +1198,41 @@ describe("RuntimeOrchestrator", () => {
       const startGate = createDeferred<void>();
       let listener: Parameters<AgentAdapter["subscribe"]>[0] | undefined;
       let lifecycleState: ReturnType<AgentAdapter["getLifecycleState"]> = "idle";
+      const emitCanonicalEvents = () => {
+        listener?.({
+          eventId: `event-${ordering}-turn`,
+          occurredAt: "2026-07-18T00:00:01Z",
+          event: {
+            type: "turn.started",
+            sessionId: "session-canonical",
+            turnId: "turn-canonical"
+          }
+        });
+        listener?.({
+          eventId: `event-${ordering}-message`,
+          occurredAt: "2026-07-18T00:00:02Z",
+          event: {
+            type: "message.started",
+            sessionId: "session-canonical",
+            turnId: "turn-canonical",
+            messageId: "assistant-canonical",
+            role: "assistant",
+            engineId: "codex"
+          }
+        });
+        listener?.({
+          eventId: `event-${ordering}-delta`,
+          occurredAt: "2026-07-18T00:00:03Z",
+          event: {
+            type: "message.delta",
+            sessionId: "session-canonical",
+            turnId: "turn-canonical",
+            messageId: "assistant-canonical",
+            delta: "accepted output",
+            engineId: "codex"
+          }
+        });
+      };
       const adapter: AgentAdapter = {
         id: `adapter-${ordering}`,
         kind: "codex",
@@ -1207,15 +1242,7 @@ describe("RuntimeOrchestrator", () => {
         },
         executeCommand: async (envelope) => {
           if (envelope.command.type === "sendUserMessage" && ordering === "event-first") {
-            listener?.({
-              eventId: `event-${ordering}`,
-              occurredAt: "2026-07-18T00:00:01Z",
-              event: {
-                type: "turn.started",
-                sessionId: envelope.command.sessionId,
-                turnId: "turn-canonical"
-              }
-            });
+            emitCanonicalEvents();
             await startGate.promise;
           }
           return {
@@ -1301,15 +1328,8 @@ describe("RuntimeOrchestrator", () => {
             })()
           : await orchestrator.executeCommand(sendEnvelope);
       if (ordering === "response-first") {
-        listener?.({
-          eventId: `event-${ordering}`,
-          occurredAt: "2026-07-18T00:00:01Z",
-          event: {
-            type: "turn.started",
-            sessionId: "session-canonical",
-            turnId: "turn-canonical"
-          }
-        });
+        emitCanonicalEvents();
+        await new Promise((resolve) => setTimeout(resolve, 20));
       }
       expect(receipt).toMatchObject({
         accepted: true,
@@ -1320,9 +1340,12 @@ describe("RuntimeOrchestrator", () => {
       expect(snapshot.turns).toHaveLength(1);
       expect(snapshot.turns[0]).toMatchObject({
         turnId: "turn-canonical",
-        messageIds: ["message-canonical"]
+        messageIds: ["message-canonical", "assistant-canonical"]
       });
       expect(snapshot.turns.some((turn) => turn.turnId.startsWith("user-turn-"))).toBe(false);
+      expect(snapshot.messageBlocks.find(
+        (block) => block.messageId === "assistant-canonical"
+      )).toMatchObject({ text: "accepted output" });
       snapshots.push(snapshot.turns[0]);
     }
     expect(snapshots[0]).toEqual(snapshots[1]);
@@ -1390,6 +1413,17 @@ describe("RuntimeOrchestrator", () => {
 
     const mismatchHarness = createHarness(async (envelope) => {
       mismatchHarness.getListener()?.({
+        eventId: "event-mismatched-delta",
+        occurredAt: "2026-07-18T00:00:02Z",
+        event: {
+          type: "message.delta",
+          sessionId: "session-send-protocol",
+          turnId: "turn-event",
+          messageId: "message-mismatched-output",
+          delta: "must not leak"
+        }
+      });
+      mismatchHarness.getListener()?.({
         eventId: "event-mismatched-turn",
         occurredAt: "2026-07-18T00:00:01Z",
         event: {
@@ -1424,9 +1458,56 @@ describe("RuntimeOrchestrator", () => {
       }
     })).resolves.toMatchObject({ accepted: false });
     expect(mismatchHarness.domainService.getSnapshot().turns).toEqual([]);
+    expect(mismatchHarness.domainService.getSnapshot().messages ?? []).toEqual([]);
     expect(mismatchHarness.domainService.getSession("session-send-protocol")?.status).toBe("idle");
 
+    const rejectedHarness = createHarness(async (envelope) => {
+      rejectedHarness.getListener()?.({
+        eventId: "event-rejected-delta",
+        occurredAt: "2026-07-18T00:00:02Z",
+        event: {
+          type: "message.delta",
+          sessionId: "session-send-protocol",
+          turnId: "turn-rejected",
+          messageId: "message-rejected-output",
+          delta: "must not leak",
+          engineId: "codex"
+        }
+      });
+      return {
+        commandId: envelope.commandId,
+        commandType: envelope.command.type,
+        accepted: false
+      };
+    });
+    await rejectedHarness.orchestrator.createSession({
+      engineId: "codex",
+      workspaceId: "workspace-1"
+    });
+    await expect(rejectedHarness.orchestrator.executeCommand({
+      commandId: "send-rejected-turn",
+      command: {
+        type: "sendUserMessage",
+        sessionId: "session-send-protocol",
+        messageId: "message-rejected-turn",
+        content: "hello",
+        attachments: []
+      }
+    })).resolves.toMatchObject({ accepted: false });
+    expect(rejectedHarness.domainService.getSnapshot().messageBlocks).toEqual([]);
+
     const failureHarness = createHarness(async () => {
+      failureHarness.getListener()?.({
+        eventId: "event-failed-delta",
+        occurredAt: "2026-07-18T00:00:02Z",
+        event: {
+          type: "message.delta",
+          sessionId: "session-send-protocol",
+          turnId: "turn-failed",
+          messageId: "message-failed-output",
+          delta: "must not leak"
+        }
+      });
       throw new Error("adapter failed");
     });
     await failureHarness.orchestrator.createSession({
@@ -1443,7 +1524,263 @@ describe("RuntimeOrchestrator", () => {
         attachments: []
       }
     })).rejects.toThrow("adapter failed");
+    expect(failureHarness.domainService.getSnapshot().messages ?? []).toEqual([]);
     expect(failureHarness.domainService.getSession("session-send-protocol")?.status).toBe("idle");
+  });
+
+  it("aggregates message and terminal streams by complete target key before barriers", async () => {
+    vi.useFakeTimers();
+    try {
+      let listener: Parameters<AgentAdapter["subscribe"]>[0] | undefined;
+      let lifecycleState: ReturnType<AgentAdapter["getLifecycleState"]> = "idle";
+      const adapter: AgentAdapter = {
+        id: "adapter-stream-aggregation",
+        kind: "codex",
+        getLifecycleState: () => lifecycleState,
+        initialize: async () => {
+          lifecycleState = "ready";
+        },
+        executeCommand: async (envelope) => ({
+          commandId: envelope.commandId,
+          commandType: envelope.command.type,
+          accepted: true
+        }),
+        subscribe: (next) => {
+          listener = next;
+          return () => {};
+        },
+        dispose: async () => {}
+      };
+      const published: RuntimeEvent[] = [];
+      let orchestrator: RuntimeOrchestrator | undefined;
+      const domainService = new DomainService({
+        createSessionId: () => "session-stream",
+        assertEngineRegistered: (engineId) => orchestrator?.assertEngineRegistered(engineId),
+        resolveEngineCapabilities: (engineId) => orchestrator?.getEngineCapabilities(engineId) ?? [],
+        publishRuntimeEvent: () => {}
+      });
+      orchestrator = new RuntimeOrchestrator({
+        domainService,
+        sessionIndexSyncService: {
+          syncSession: vi.fn().mockResolvedValue(undefined),
+          syncRelation: vi.fn().mockResolvedValue(undefined),
+          markSessionUnreadCompleted: vi.fn().mockResolvedValue(undefined)
+        } as never,
+        workspaceSelectionService: {
+          activateSelection: vi.fn().mockResolvedValue(undefined),
+          selectWorkspace: vi.fn().mockResolvedValue({ workspaceId: "workspace-1" })
+        } as never,
+        publishRuntimeEvent: (event) => published.push(event),
+        agentBindings: [{
+          descriptor: {
+            engineId: "codex",
+            displayName: "Codex",
+            capabilities: ["chat", "terminal"]
+          },
+          adapter
+        }]
+      });
+      await orchestrator.createSession({ engineId: "codex", workspaceId: "workspace-1" });
+      await orchestrator.executeCommand({
+        commandId: "initialize-stream-aggregation",
+        command: { type: "initialize" }
+      });
+
+      const emit = (eventId: string, event: RuntimeEvent) => listener?.({
+        eventId,
+        occurredAt: "2026-07-18T01:00:00Z",
+        event
+      });
+      emit("turn-started", {
+        type: "turn.started",
+        sessionId: "session-stream",
+        turnId: "turn-1"
+      });
+      emit("message-started", {
+        type: "message.started",
+        sessionId: "session-stream",
+        turnId: "turn-1",
+        messageId: "message-1",
+        role: "assistant",
+        engineId: "codex",
+        phase: "commentary"
+      });
+      published.length = 0;
+      emit("message-a-1", {
+        type: "message.delta",
+        sessionId: "session-stream",
+        turnId: "turn-1",
+        messageId: "message-1",
+        engineId: "codex",
+        participantId: "participant-1",
+        phase: "commentary",
+        delta: "hel"
+      });
+      emit("message-b-1", {
+        type: "message.delta",
+        sessionId: "session-stream",
+        turnId: "turn-1",
+        messageId: "message-1",
+        engineId: "codex",
+        participantId: "participant-1",
+        phase: "final_answer",
+        delta: "final"
+      });
+      emit("message-a-2", {
+        type: "message.delta",
+        sessionId: "session-stream",
+        turnId: "turn-1",
+        messageId: "message-1",
+        engineId: "codex",
+        participantId: "participant-1",
+        phase: "commentary",
+        delta: "lo"
+      });
+      emit("terminal-1", {
+        type: "terminal.output",
+        sessionId: "session-stream",
+        turnId: "turn-1",
+        terminalId: "terminal-1",
+        engineId: "codex",
+        participantId: "participant-1",
+        chunk: "out"
+      });
+      emit("terminal-2", {
+        type: "terminal.output",
+        sessionId: "session-stream",
+        turnId: "turn-1",
+        terminalId: "terminal-1",
+        engineId: "codex",
+        participantId: "participant-1",
+        chunk: "put"
+      });
+      expect(published).toEqual([]);
+
+      emit("barrier", {
+        type: "session.updated",
+        conversationId: domainService.getSession("session-stream")!.conversationId,
+        sessionId: "session-stream",
+        status: "running"
+      });
+
+      expect(published).toEqual([
+        expect.objectContaining({ type: "message.delta", phase: "commentary", delta: "hello" }),
+        expect.objectContaining({ type: "message.delta", phase: "final_answer", delta: "final" }),
+        expect.objectContaining({ type: "terminal.output", chunk: "output" }),
+        expect.objectContaining({ type: "session.updated", status: "running" })
+      ]);
+      published.length = 0;
+      emit("timer-delta", {
+        type: "message.delta",
+        sessionId: "session-stream",
+        turnId: "turn-1",
+        messageId: "message-1",
+        engineId: "codex",
+        phase: "commentary",
+        delta: "timer"
+      });
+      await vi.advanceTimersByTimeAsync(11);
+      expect(published).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(published).toEqual([
+        expect.objectContaining({ type: "message.delta", delta: "timer" })
+      ]);
+      await orchestrator.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("flushes accepted streams on dispose and rejects late adapter callbacks", async () => {
+    vi.useFakeTimers();
+    try {
+      let savedListener: Parameters<AgentAdapter["subscribe"]>[0] | undefined;
+      let lifecycleState: ReturnType<AgentAdapter["getLifecycleState"]> = "idle";
+      const adapter: AgentAdapter = {
+        id: "adapter-dispose-stream",
+        kind: "codex",
+        getLifecycleState: () => lifecycleState,
+        initialize: async () => {
+          lifecycleState = "ready";
+        },
+        executeCommand: async (envelope) => ({
+          commandId: envelope.commandId,
+          commandType: envelope.command.type,
+          accepted: true
+        }),
+        subscribe: (next) => {
+          savedListener = next;
+          return () => {};
+        },
+        dispose: async () => {}
+      };
+      const published: RuntimeEvent[] = [];
+      let orchestrator: RuntimeOrchestrator | undefined;
+      const domainService = new DomainService({
+        createSessionId: () => "session-dispose-stream",
+        assertEngineRegistered: (engineId) => orchestrator?.assertEngineRegistered(engineId),
+        resolveEngineCapabilities: (engineId) => orchestrator?.getEngineCapabilities(engineId) ?? [],
+        publishRuntimeEvent: () => {}
+      });
+      orchestrator = new RuntimeOrchestrator({
+        domainService,
+        sessionIndexSyncService: {
+          syncSession: vi.fn().mockResolvedValue(undefined),
+          syncRelation: vi.fn().mockResolvedValue(undefined),
+          markSessionUnreadCompleted: vi.fn().mockResolvedValue(undefined)
+        } as never,
+        workspaceSelectionService: {
+          activateSelection: vi.fn().mockResolvedValue(undefined),
+          selectWorkspace: vi.fn().mockResolvedValue({ workspaceId: "workspace-1" })
+        } as never,
+        publishRuntimeEvent: (event) => published.push(event),
+        agentBindings: [{
+          descriptor: {
+            engineId: "codex",
+            displayName: "Codex",
+            capabilities: ["chat"]
+          },
+          adapter
+        }]
+      });
+      await orchestrator.createSession({ engineId: "codex", workspaceId: "workspace-1" });
+      await orchestrator.executeCommand({
+        commandId: "initialize-dispose-stream",
+        command: { type: "initialize" }
+      });
+      savedListener?.({
+        eventId: "before-dispose",
+        occurredAt: "2026-07-18T02:00:00Z",
+        event: {
+          type: "message.delta",
+          sessionId: "session-dispose-stream",
+          turnId: "turn-1",
+          messageId: "message-1",
+          delta: "before"
+        }
+      });
+
+      await orchestrator.dispose();
+      expect(published).toEqual([
+        expect.objectContaining({ type: "message.delta", delta: "before" })
+      ]);
+
+      savedListener?.({
+        eventId: "after-dispose",
+        occurredAt: "2026-07-18T02:00:01Z",
+        event: {
+          type: "message.delta",
+          sessionId: "session-dispose-stream",
+          turnId: "turn-1",
+          messageId: "message-1",
+          delta: "after"
+        }
+      });
+      await vi.advanceTimersByTimeAsync(20);
+      expect(published).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
 });

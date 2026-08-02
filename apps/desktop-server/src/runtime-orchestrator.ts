@@ -25,6 +25,7 @@ import {
 import type { SessionTitleGenerator } from "./title-generation-service.js";
 import { WorkspaceSelectionService } from "./workspace-selection-service.js";
 import { LifecycleGate } from "./runtime/lifecycle-gate.js";
+import { StreamEventAggregator } from "./runtime/stream-event-aggregator.js";
 
 type Clock = () => string;
 type IdFactory = () => string;
@@ -84,11 +85,13 @@ export class RuntimeOrchestrator {
   private readonly now: Clock;
   private readonly createConversationId: IdFactory;
   private readonly adapterEventQueue: EventEnvelope[] = [];
+  private readonly streamEventAggregator: StreamEventAggregator;
   private readonly pendingSessionIndexSyncIds = new Set<string>();
   private readonly pendingRelationSyncs = new Map<string, SessionRelationSyncInput>();
   private readonly pendingSendStartBySessionId = new Map<string, PendingSendStart>();
   private adapterEventQueueReadIndex = 0;
   private isDrainingAdapterEvents = false;
+  private acceptingAdapterEvents = true;
   private indexSyncPump: Promise<void> | undefined;
   private selectedEngineId: string | undefined;
 
@@ -101,6 +104,13 @@ export class RuntimeOrchestrator {
     this.now = options.now ?? (() => new Date().toISOString());
     this.createConversationId =
       options.createConversationId ?? (() => createOpaqueId("conversation"));
+    this.streamEventAggregator = new StreamEventAggregator((envelope) => {
+      try {
+        this.commitAdapterEvent(envelope);
+      } catch (error) {
+        console.warn("[another-workbench] Failed to ingest adapter event", error);
+      }
+    });
 
     for (const engine of options.engines ?? []) {
       this.registerEngine(engine);
@@ -417,6 +427,9 @@ export class RuntimeOrchestrator {
   }
 
   public async dispose(): Promise<void> {
+    this.acceptingAdapterEvents = false;
+    this.drainAdapterEvents();
+    this.streamEventAggregator.dispose();
     await this.drainBackgroundWork();
     for (const [engineId, binding] of this.bindings.entries()) {
       await this.lifecycleGateForEngine(engineId).stop(async () => {
@@ -670,6 +683,9 @@ export class RuntimeOrchestrator {
   }
 
   private enqueueAdapterEvent(envelope: EventEnvelope): void {
+    if (!this.acceptingAdapterEvents) {
+      return;
+    }
     this.adapterEventQueue.push(envelope);
     this.drainAdapterEvents();
   }
@@ -716,7 +732,7 @@ export class RuntimeOrchestrator {
       pendingStart.bufferedEvents.push(envelope);
       return;
     }
-    this.commitAdapterEvent(envelope);
+    this.streamEventAggregator.push(envelope);
   }
 
   private commitAdapterEvent(envelope: EventEnvelope): void {
@@ -744,12 +760,9 @@ export class RuntimeOrchestrator {
 
   private drainPendingSendEvents(pendingStart: PendingSendStart): void {
     for (const envelope of pendingStart.bufferedEvents) {
-      try {
-        this.commitAdapterEvent(envelope);
-      } catch (error) {
-        console.warn("[another-workbench] Failed to ingest adapter event", error);
-      }
+      this.streamEventAggregator.push(envelope);
     }
+    this.streamEventAggregator.flush();
     pendingStart.bufferedEvents.length = 0;
   }
 

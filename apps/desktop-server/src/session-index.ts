@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import type { ChatSession, SessionRelationType } from "@another-workbench/shared";
 import { loadJsonFile, saveJsonFile } from "./persistence-store.js";
@@ -100,6 +101,43 @@ const sortEntries = (entries: SessionIndexEntry[]): SessionIndexEntry[] =>
     return left.sessionId.localeCompare(right.sessionId);
   });
 
+const isSameSessionEntry = (
+  left: SessionIndexEntry,
+  right: SessionIndexEntry
+): boolean =>
+  left.workspaceId === right.workspaceId &&
+  left.sessionId === right.sessionId &&
+  left.conversationId === right.conversationId &&
+  left.engineId === right.engineId &&
+  left.providerKind === right.providerKind &&
+  left.providerSessionId === right.providerSessionId &&
+  left.title === right.title &&
+  left.summaryText === right.summaryText &&
+  left.createdAt === right.createdAt &&
+  left.updatedAt === right.updatedAt &&
+  left.lastCompletedTurnAt === right.lastCompletedTurnAt &&
+  left.archivedAt === right.archivedAt &&
+  left.lastTurnId === right.lastTurnId &&
+  left.unreadState === right.unreadState &&
+  left.source === right.source &&
+  isDeepStrictEqual(left.metadata, right.metadata);
+
+const isSameSessionRelation = (
+  left: SessionRelationIndex,
+  right: SessionRelationIndex
+): boolean =>
+  left.workspaceId === right.workspaceId &&
+  left.parentSessionId === right.parentSessionId &&
+  left.childSessionId === right.childSessionId &&
+  left.relationType === right.relationType &&
+  left.sourceTurnId === right.sourceTurnId &&
+  left.createdAt === right.createdAt;
+
+type MutationResult<T> = {
+  value: T;
+  changed: boolean;
+};
+
 export class SessionIndexStore {
   private readonly filePath: string;
   private readonly now: Clock;
@@ -171,12 +209,14 @@ export class SessionIndexStore {
 
   public async upsertSession(input: UpsertSessionIndexInput): Promise<SessionIndexEntry> {
     await this.ready();
-    const normalized = this.upsertSessionInMemory(input);
-    await this.persist();
-    return normalized;
+    const mutation = this.upsertSessionInMemory(input);
+    await this.persistMutation(mutation.changed);
+    return mutation.value;
   }
 
-  private upsertSessionInMemory(input: UpsertSessionIndexInput): SessionIndexEntry {
+  private upsertSessionInMemory(
+    input: UpsertSessionIndexInput
+  ): MutationResult<SessionIndexEntry> {
     const existing = this.getEntry(input.session.sessionId);
     const normalized = sessionIndexEntrySchema.parse({
       workspaceId: input.workspaceId,
@@ -199,6 +239,13 @@ export class SessionIndexStore {
       metadata: input.session.metadata
     });
 
+    if (existing && isSameSessionEntry(existing, normalized)) {
+      return {
+        value: existing,
+        changed: false
+      };
+    }
+
     this.document = {
       ...this.document,
       entries: sortEntries(
@@ -209,7 +256,10 @@ export class SessionIndexStore {
           : [...this.document.entries, normalized]
       )
     };
-    return normalized;
+    return {
+      value: normalized,
+      changed: true
+    };
   }
 
   public async reconcileWorkspace(
@@ -221,13 +271,14 @@ export class SessionIndexStore {
   }> {
     await this.ready();
 
+    let changed = false;
     for (const entry of input.entries) {
-      this.upsertSessionInMemory(entry);
+      changed = this.upsertSessionInMemory(entry).changed || changed;
     }
     for (const relation of input.relations ?? []) {
-      this.upsertRelationInMemory(relation);
+      changed = this.upsertRelationInMemory(relation).changed || changed;
     }
-    await this.persist();
+    await this.persistMutation(changed);
 
     return {
       workspaceId: input.workspaceId,
@@ -357,28 +408,36 @@ export class SessionIndexStore {
     input: UpsertSessionRelationInput
   ): Promise<SessionRelationIndex> {
     await this.ready();
-    const normalized = this.upsertRelationInMemory(input);
-    await this.persist();
-    return normalized;
+    const mutation = this.upsertRelationInMemory(input);
+    await this.persistMutation(mutation.changed);
+    return mutation.value;
   }
 
   private upsertRelationInMemory(
     input: UpsertSessionRelationInput
-  ): SessionRelationIndex {
+  ): MutationResult<SessionRelationIndex> {
+    const existingIndex = this.document.relations.findIndex(
+      (relation) =>
+        relation.parentSessionId === input.parentSessionId &&
+        relation.childSessionId === input.childSessionId &&
+        relation.relationType === input.relationType
+    );
+    const existing =
+      existingIndex >= 0 ? this.document.relations[existingIndex] : undefined;
     const normalized = sessionRelationIndexSchema.parse({
       workspaceId: input.workspaceId,
       parentSessionId: input.parentSessionId,
       childSessionId: input.childSessionId,
       relationType: input.relationType,
       sourceTurnId: input.sourceTurnId,
-      createdAt: input.createdAt ?? this.now()
+      createdAt: input.createdAt ?? existing?.createdAt ?? this.now()
     });
-    const existingIndex = this.document.relations.findIndex(
-      (relation) =>
-        relation.parentSessionId === normalized.parentSessionId &&
-        relation.childSessionId === normalized.childSessionId &&
-        relation.relationType === normalized.relationType
-    );
+    if (existing && isSameSessionRelation(existing, normalized)) {
+      return {
+        value: existing,
+        changed: false
+      };
+    }
     this.document = {
       ...this.document,
       relations:
@@ -388,7 +447,10 @@ export class SessionIndexStore {
             )
           : [...this.document.relations, normalized]
     };
-    return normalized;
+    return {
+      value: normalized,
+      changed: true
+    };
   }
 
   private async load(): Promise<void> {
@@ -423,6 +485,16 @@ export class SessionIndexStore {
       });
     }
     await this.persistPromise;
+  }
+
+  private async persistMutation(changed: boolean): Promise<void> {
+    if (changed) {
+      await this.persist();
+      return;
+    }
+    if (this.persistPromise) {
+      await this.persistPromise;
+    }
   }
 
   private async flushPersistRequests(): Promise<void> {

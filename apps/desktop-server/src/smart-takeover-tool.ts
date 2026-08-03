@@ -26,6 +26,7 @@ export type SmartTakeoverToolOptions = {
     request: SmartTakeoverRequest
   ) => void | HostToolResult | Promise<void | HostToolResult>;
   isAvailable?: HostToolRegistration["isAvailable"];
+  description: HostToolRegistration["description"];
   presetIdDescription?: string | (() => string | Promise<string>);
 };
 
@@ -64,12 +65,6 @@ const createSmartTakeoverInputSchema = (presetIdDescription: string) => ({
       type: "string",
       description: presetIdDescription
     },
-    helpTopic: {
-      type: "string",
-      enum: ["overview", "presets", "loop", "result"],
-      description:
-        "Optional help section when action is help."
-    },
     context: {
       type: "string",
       description:
@@ -92,12 +87,11 @@ const createSmartTakeoverInputSchemaResolver = (
 };
 
 export const createSmartTakeoverHostTool = (
-  options: SmartTakeoverToolOptions = {}
+  options: SmartTakeoverToolOptions
 ): HostToolRegistration => ({
   namespace: smartTakeoverToolNamespace,
   name: smartTakeoverToolName,
-  description:
-    "Let another agent act as the user to supervise this session. Before starting takeover, call SmartTakeover with action=\"help\" to learn the required usage and context format. SmartTakeover is mutually exclusive with Codex goals: do not use goal while takeover is enabled, and do not start takeover while a goal is active.",
+  description: options.description,
   inputSchema: createSmartTakeoverInputSchemaResolver(options),
   deferLoading: false,
   isAvailable: options.isAvailable,

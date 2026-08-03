@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import type {
   CommandEnvelope,
   ChatSession,
@@ -29,7 +28,6 @@ type CurrentBranchResolver = (
 
 type TakeoverToolArgs = {
   action?: "help" | "start" | "stop";
-  helpTopic?: "overview" | "presets" | "loop" | "result";
   presetId?: string;
   context?: string;
   timeoutMs?: number;
@@ -124,13 +122,6 @@ const parseTakeoverArgs = (value: unknown): TakeoverToolArgs => {
       value.action === "stop"
         ? value.action
         : undefined,
-    helpTopic:
-      value.helpTopic === "overview" ||
-      value.helpTopic === "presets" ||
-      value.helpTopic === "loop" ||
-      value.helpTopic === "result"
-        ? value.helpTopic
-        : undefined,
     presetId: typeof value.presetId === "string" ? value.presetId : undefined,
     context: typeof value.context === "string" ? value.context : undefined,
     timeoutMs:
@@ -188,11 +179,6 @@ const isTextMessageBlock = (
 
 const compareIsoDesc = (left?: string, right?: string): number =>
   (right ?? "").localeCompare(left ?? "");
-
-const smartTakeoverHelpOverviewUrl = new URL(
-  "./resources/smart-takeover/help-overview.md",
-  import.meta.url
-);
 
 const renderMessageText = (blocks: MessageBlock[]): string | undefined => {
   const text = blocks
@@ -403,6 +389,7 @@ export class SmartTakeoverService {
           !this.isActiveTakeoverRun(context.sessionId) &&
           !this.isActiveParentRun(context.sessionId) &&
           !this.hasThreadGoal(context.sessionId),
+        description: () => this.presetStore.readToolDescription(),
         presetIdDescription: () => this.buildPresetIdInputDescription(),
         onRequest: (request) => this.handleSmartTakeover(request)
       }),
@@ -671,7 +658,7 @@ export class SmartTakeoverService {
   ): Promise<HostToolResult> {
     const args = parseTakeoverArgs(request.arguments);
     if (args.action === "help" || (!args.action && !args.presetId)) {
-      return textResult(await this.buildHelp(args.helpTopic));
+      return textResult(await this.buildHelp());
     }
     try {
       if (args.action === "stop") {
@@ -1306,33 +1293,12 @@ export class SmartTakeoverService {
     unsubscribe();
   }
 
-  private async buildHelp(
-    topic: TakeoverToolArgs["helpTopic"]
-  ): Promise<string> {
+  private async buildHelp(): Promise<string> {
     const { rootPath, presets } = await this.presetStore.list();
-    const overview = (await readFile(smartTakeoverHelpOverviewUrl, "utf8")).trim();
-    const presetLines = this.renderPresetLines(presets);
-    const sections: Record<NonNullable<TakeoverToolArgs["helpTopic"]>, string> = {
-      overview,
-      presets: `Preset prompts are read from ${rootPath}. Each preset can be a directory containing prompt.md or another .md file, or a direct .md file.
-
-Available presets:
-${presetLines}`,
-      loop: `For review loops, use presetId="review". If the verdict is incomplete, do the requested work from response; takeover mode will review again after the next completed response while it remains enabled.
-
-For roadmap/progress loops, use presetId="progress". Put scenario-specific review standards in the preset prompt.`,
-      result: `The takeover agent must call SubmitTakeoverVerdict once. verdict="complete" accepts the current state and ends takeover. verdict="incomplete" sends response back as the user's next reply so the agent continues. The managed agent may call SmartTakeover with action="stop" to disable takeover when further review loops are no longer useful.`
-    };
-    if (topic) {
-      return `${sections[topic]}\n\n${sections.result}`;
-    }
-    return `${sections.overview}
-
-${sections.presets}
-
-${sections.loop}
-
-${sections.result}`;
+    return (await this.presetStore.readHelp())
+      .replaceAll("{{presetRoot}}", rootPath)
+      .replaceAll("{{systemRoot}}", this.presetStore.getSystemResourcePath())
+      .replaceAll("{{presetList}}", this.renderPresetLines(presets));
   }
 
   private async buildPresetIdInputDescription(): Promise<string> {

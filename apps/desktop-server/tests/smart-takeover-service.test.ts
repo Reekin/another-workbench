@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -265,6 +265,7 @@ describe("SmartTakeoverService", () => {
     const contextDescription = schema.properties?.context?.description ?? "";
 
     expect(smartTakeover?.inputSchema).not.toHaveProperty("required");
+    expect(schema.properties).not.toHaveProperty("helpTopic");
     expect(smartTakeover?.description).toContain(
       "Before starting takeover"
     );
@@ -284,6 +285,68 @@ describe("SmartTakeoverService", () => {
     expect(presetIdDescription).toContain("- team_review: Team-specific reviewer");
     expect(contextDescription).toContain("Before starting takeover");
     expect(contextDescription).toContain("action=\"help\"");
+  });
+
+  it("reloads SmartTakeover description and complete help from the user directory", async () => {
+    const baseDir = await createTempDir();
+    const presetStore = new TakeoverPresetStore({ baseDir });
+    const service = new SmartTakeoverService({
+      runtimeService: {
+        getSession: () => undefined
+      } as never,
+      presetStore
+    });
+    const hostTools = new HostToolRegistry(service.createHostTools());
+
+    await hostTools.listDefinitions({
+      engineId: "codex",
+      sessionId: "session-parent"
+    });
+    await writeFile(
+      join(presetStore.getSystemResourcePath(), "description.md"),
+      "User-edited SmartTakeover description",
+      "utf8"
+    );
+    await writeFile(
+      join(presetStore.getSystemResourcePath(), "help.md"),
+      "User-edited complete help\n\nRoot: {{presetRoot}}\nSystem: {{systemRoot}}\n\n{{presetList}}",
+      "utf8"
+    );
+
+    const definitions = await hostTools.listDefinitions({
+      engineId: "codex",
+      sessionId: "session-parent"
+    });
+    expect(
+      definitions.find((tool) => tool.name === "SmartTakeover")?.description
+    ).toBe("User-edited SmartTakeover description");
+
+    const smartTakeoverTool = service
+      .createHostTools()
+      .find((tool) => tool.name === "SmartTakeover");
+    const result = await smartTakeoverTool?.handle({
+      definition: smartTakeoverTool,
+      arguments: {
+        action: "help"
+      },
+      context: {
+        engineId: "codex",
+        sessionId: "session-parent",
+        providerSessionId: "thread-session-parent"
+      }
+    } as never);
+    const text = result?.contentItems[0]?.type === "inputText"
+      ? result.contentItems[0].text
+      : "";
+    expect(text).toContain("User-edited complete help");
+    expect(text).toContain(`Root: ${join(baseDir, "takeover")}`);
+    expect(text).toContain(
+      `System: ${join(baseDir, "takeover", "_system")}`
+    );
+    expect(text).toContain("- review: Delegated reviewer");
+    expect(text).not.toContain("{{presetRoot}}");
+    expect(text).not.toContain("{{systemRoot}}");
+    expect(text).not.toContain("{{presetList}}");
   });
 
   it("includes SmartTakeover context examples in help", async () => {
@@ -331,6 +394,9 @@ describe("SmartTakeoverService", () => {
     expect(text).toContain("ROADMAP.md defines task order");
     expect(text).toContain("This is good because");
     expect(text).toContain("It does not include the current phase");
+    expect(text).toContain("Available presets:");
+    expect(text).toContain("For review loops");
+    expect(text).toContain("The takeover agent must call SubmitTakeoverVerdict once");
   });
 
   it("recognizes hydrated takeover sessions from session metadata", async () => {

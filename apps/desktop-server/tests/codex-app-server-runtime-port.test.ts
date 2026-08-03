@@ -2031,6 +2031,7 @@ describe("Codex app-server runtime port", () => {
     const observedRequests: SmartTakeoverRequest[] = [];
     const hostTools = new HostToolRegistry([
       createSmartTakeoverHostTool({
+        description: "SmartTakeover test tool",
         onRequest: (request) => {
           observedRequests.push(request);
         }

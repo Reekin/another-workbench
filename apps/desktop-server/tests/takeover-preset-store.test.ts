@@ -28,6 +28,18 @@ describe("TakeoverPresetStore", () => {
 
     const initial = await store.list();
     expect(initial.rootPath).toBe(join(baseDir, "takeover"));
+    expect(store.getSystemResourcePath()).toBe(
+      join(baseDir, "takeover", "_system")
+    );
+    await expect(store.readToolDescription()).resolves.toContain(
+      "Let another agent act as the user"
+    );
+    await expect(store.readHelp()).resolves.toContain(
+      "{{presetList}}"
+    );
+    await expect(store.readHelp()).resolves.toContain(
+      "{{systemRoot}}"
+    );
     expect(initial.presets).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -81,14 +93,22 @@ describe("TakeoverPresetStore", () => {
     const baseDir = await createTempDir();
     const progressDir = join(baseDir, "takeover", "progress");
     const reviewDir = join(baseDir, "takeover", "review");
+    const systemDir = join(baseDir, "takeover", "_system");
     await mkdir(progressDir, { recursive: true });
     await mkdir(reviewDir, { recursive: true });
+    await mkdir(systemDir, { recursive: true });
     await writeFile(join(progressDir, "prompt.md"), "custom progress prompt", "utf8");
     await writeFile(
       join(reviewDir, "prompt.md"),
       "custom review prompt",
       "utf8"
     );
+    await writeFile(
+      join(systemDir, "description.md"),
+      "custom tool description",
+      "utf8"
+    );
+    await writeFile(join(systemDir, "help.md"), "custom help", "utf8");
 
     const store = new TakeoverPresetStore({ baseDir });
     await store.list();
@@ -99,6 +119,10 @@ describe("TakeoverPresetStore", () => {
     await expect(readFile(join(reviewDir, "prompt.md"), "utf8")).resolves.toBe(
       "custom review prompt"
     );
+    await expect(store.readToolDescription()).resolves.toBe(
+      "custom tool description"
+    );
+    await expect(store.readHelp()).resolves.toBe("custom help");
   });
 
   it("copies a built-in prompt when the preset directory has no markdown prompt", async () => {
@@ -118,6 +142,25 @@ describe("TakeoverPresetStore", () => {
     );
     await expect(readFile(join(reviewDir, "notes.txt"), "utf8")).resolves.toBe(
       "not a prompt"
+    );
+  });
+
+  it("initializes system resources safely across concurrent stores", async () => {
+    const baseDir = await createTempDir();
+    const stores = [
+      new TakeoverPresetStore({ baseDir }),
+      new TakeoverPresetStore({ baseDir })
+    ];
+
+    await expect(Promise.all(stores.map((store) => store.ready()))).resolves.toEqual([
+      undefined,
+      undefined
+    ]);
+    await expect(stores[0]?.readToolDescription()).resolves.toContain(
+      "Let another agent act as the user"
+    );
+    await expect(stores[1]?.readHelp()).resolves.toContain(
+      "SmartTakeover enables takeover mode"
     );
   });
 });

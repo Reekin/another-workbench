@@ -7,6 +7,7 @@ import {
   stat,
   writeFile
 } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,6 +40,13 @@ const builtinPresetPromptPath = (presetId: BuiltinPresetId): string =>
     new URL(`./resources/takeover-presets/${presetId}/prompt.md`, import.meta.url)
   );
 
+const builtinSystemResourcePath = (
+  resourceName: "description.md" | "help.md"
+): string =>
+  fileURLToPath(
+    new URL(`./resources/smart-takeover/${resourceName}`, import.meta.url)
+  );
+
 const displayNameFor = (presetId: string): string =>
   presetId
     .split(/[-_.]+/g)
@@ -53,6 +61,19 @@ const readPresetDesc = async (promptPath: string): Promise<string | undefined> =
   return match?.[1]?.trim() || undefined;
 };
 
+const copyFileIfMissing = async (
+  sourcePath: string,
+  targetPath: string
+): Promise<void> => {
+  try {
+    await copyFile(sourcePath, targetPath, fsConstants.COPYFILE_EXCL);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+      throw error;
+    }
+  }
+};
+
 const validatePresetId = (presetId: string): void => {
   if (!presetIdPattern.test(presetId)) {
     throw new Error(
@@ -63,14 +84,20 @@ const validatePresetId = (presetId: string): void => {
 
 export class TakeoverPresetStore {
   private readonly rootPath: string;
+  private readonly systemResourcePath: string;
   private readyPromise: Promise<void> | undefined;
 
   public constructor(options: TakeoverPresetStoreOptions = {}) {
     this.rootPath = join(options.baseDir ?? defaultBaseDir(), "takeover");
+    this.systemResourcePath = join(this.rootPath, "_system");
   }
 
   public getRootPath(): string {
     return this.rootPath;
+  }
+
+  public getSystemResourcePath(): string {
+    return this.systemResourcePath;
   }
 
   public async ready(): Promise<void> {
@@ -115,6 +142,20 @@ export class TakeoverPresetStore {
         left.presetId.localeCompare(right.presetId)
       )
     };
+  }
+
+  public async readToolDescription(): Promise<string> {
+    await this.ready();
+    return (
+      await readFile(join(this.systemResourcePath, "description.md"), "utf8")
+    ).trim();
+  }
+
+  public async readHelp(): Promise<string> {
+    await this.ready();
+    return (
+      await readFile(join(this.systemResourcePath, "help.md"), "utf8")
+    ).trim();
   }
 
   public async read(presetId: string): Promise<TakeoverPresetDocumentRpc> {
@@ -173,6 +214,13 @@ export class TakeoverPresetStore {
 
   private async ensureDefaults(): Promise<void> {
     await mkdir(this.rootPath, { recursive: true });
+    await mkdir(this.systemResourcePath, { recursive: true });
+    for (const resourceName of ["description.md", "help.md"] as const) {
+      await copyFileIfMissing(
+        builtinSystemResourcePath(resourceName),
+        join(this.systemResourcePath, resourceName)
+      );
+    }
     for (const presetId of builtinPresetIds) {
       validatePresetId(presetId);
       if (await this.hasPresetPrompt(presetId)) {

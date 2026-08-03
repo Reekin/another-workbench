@@ -9,6 +9,13 @@ Actions:
 
 After the current assistant response finishes, Another Workbench starts a takeover agent in the same workspace. The takeover agent acts as the user's delegated reviewer or progress manager and reports back through SubmitTakeoverVerdict.
 
+Editable resources:
+
+* Tool description: {{systemRoot}}\description.md
+* Complete help: {{systemRoot}}\help.md
+
+Help changes apply to the next help call. Tool description changes apply when a new provider thread is created.
+
 Context purpose:
 The context is a stable baseline for the entire task lifecycle. It should help the takeover agent understand the long-term task scope, source-of-truth documents, project layout, and durable technical references. The context must remain valid even after phases are completed, roadmap state changes, implementation details change, or the current review target changes.
 
@@ -121,3 +128,14 @@ Tools\adn-smoke.sh is the project smoke wrapper for package-root based checks.
 ```
 
 This is good because it states stable project facts, the long-term objective, source-of-truth documents, key directories, and stable technical references. It does not include the current phase, latest progress, latest verification, current review target, completion claims, or instructions telling the takeover agent what to approve, reject, inspect, or change.
+
+Preset prompts are read from {{presetRoot}}. Each preset can be a directory containing prompt.md or another .md file, or a direct .md file.
+
+Available presets:
+{{presetList}}
+
+For review loops, use presetId="review". If the verdict is incomplete, do the requested work from response; takeover mode will review again after the next completed response while it remains enabled.
+
+For roadmap/progress loops, use presetId="progress". Put scenario-specific review standards in the preset prompt.
+
+The takeover agent must call SubmitTakeoverVerdict once. verdict="complete" accepts the current state and ends takeover. verdict="incomplete" sends response back as the user's next reply so the agent continues. The managed agent may call SmartTakeover with action="stop" to disable takeover when further review loops are no longer useful.

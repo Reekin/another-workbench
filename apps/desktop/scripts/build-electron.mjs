@@ -1,18 +1,15 @@
-import { cp, mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build, context } from "esbuild";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(currentDir, "..");
-const repoRoot = resolve(desktopRoot, "../..");
-const desktopServerRoot = resolve(repoRoot, "apps/desktop-server");
 const watchMode = process.argv.includes("--watch");
 
 const mainEntryPoint = resolve(desktopRoot, "src/electron/main.ts");
 const preloadEntryPoint = resolve(desktopRoot, "src/electron/preload.cts");
 const outputDir = resolve(desktopRoot, "dist-electron");
-const desktopServerResourcesDir = resolve(desktopServerRoot, "src/resources");
 
 const sharedOptions = {
   bundle: true,
@@ -37,12 +34,8 @@ const preloadBuildOptions = {
   outfile: resolve(outputDir, "preload.cjs")
 };
 
+await rm(outputDir, { recursive: true, force: true });
 await mkdir(outputDir, { recursive: true });
-await cp(desktopServerResourcesDir, resolve(outputDir, "resources"), {
-  recursive: true,
-  force: true
-});
-
 if (watchMode) {
   const mainContext = await context(mainBuildOptions);
   const preloadContext = await context(preloadBuildOptions);

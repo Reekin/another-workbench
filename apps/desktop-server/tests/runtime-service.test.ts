@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentAdapter } from "@another-workbench/adapters";
+import { MAX_STREAM_EVENT_CHUNK_LENGTH } from "@another-workbench/shared";
 import { SessionIndexStore } from "../src/session-index.js";
 import { WorkbenchRuntimeService } from "../src/runtime-service.js";
 import { WorkspaceRegistryService } from "../src/workspace-registry.js";
@@ -136,6 +137,118 @@ describe("WorkbenchRuntimeService", () => {
       lastActiveWorkspaceId: "workspace-1",
       lastActiveSessionId: "session-2"
     });
+  });
+
+  it("publishes complete surrogate-safe stream chunks through the real event bus", async () => {
+    let listener: Parameters<AgentAdapter["subscribe"]>[0] | undefined;
+    let lifecycleState: ReturnType<AgentAdapter["getLifecycleState"]> = "idle";
+    const adapter: AgentAdapter = {
+      id: "codex-stream-adapter",
+      kind: "codex",
+      getLifecycleState: () => lifecycleState,
+      initialize: async () => {
+        lifecycleState = "ready";
+      },
+      executeCommand: async (envelope) => ({
+        commandId: envelope.commandId,
+        commandType: envelope.command.type,
+        accepted: true
+      }),
+      subscribe: (next) => {
+        listener = next;
+        return () => {};
+      },
+      dispose: async () => {}
+    };
+    const service = createService({
+      agentBindings: [{
+        descriptor: {
+          engineId: "codex",
+          displayName: "Codex",
+          capabilities: ["chat", "terminal"]
+        },
+        adapter
+      }]
+    });
+    await service.createSession({ engineId: "codex", workspaceId: "workspace-1" });
+    await service.executeCommand({
+      commandId: "initialize-stream-service",
+      command: { type: "initialize" }
+    });
+    const received = [] as ReturnType<typeof service.replay>;
+    const unsubscribe = service.subscribe((envelope) => received.push(envelope));
+    let eventIndex = 0;
+    const emit = (event: Parameters<NonNullable<typeof listener>>[0]["event"]) => listener?.({
+      eventId: `adapter-event-${++eventIndex}`,
+      occurredAt: "2026-07-18T03:00:00Z",
+      event
+    });
+    const messageText = `${"m".repeat(MAX_STREAM_EVENT_CHUNK_LENGTH - 1)}😀message-tail`;
+    const terminalText = `${"t".repeat(MAX_STREAM_EVENT_CHUNK_LENGTH - 1)}😀terminal-tail`;
+
+    emit({
+      type: "turn.started",
+      sessionId: "session-1",
+      turnId: "turn-stream"
+    });
+    emit({
+      type: "message.started",
+      sessionId: "session-1",
+      turnId: "turn-stream",
+      messageId: "message-stream",
+      role: "assistant",
+      engineId: "codex"
+    });
+    emit({
+      type: "message.delta",
+      sessionId: "session-1",
+      turnId: "turn-stream",
+      messageId: "message-stream",
+      delta: messageText,
+      engineId: "codex"
+    });
+    emit({
+      type: "terminal.started",
+      sessionId: "session-1",
+      turnId: "turn-stream",
+      terminalId: "terminal-stream",
+      engineId: "codex"
+    });
+    emit({
+      type: "terminal.output",
+      sessionId: "session-1",
+      turnId: "turn-stream",
+      terminalId: "terminal-stream",
+      chunk: terminalText,
+      engineId: "codex"
+    });
+    emit({
+      type: "terminal.completed",
+      sessionId: "session-1",
+      turnId: "turn-stream",
+      terminalId: "terminal-stream",
+      status: "completed",
+      engineId: "codex"
+    });
+
+    const messageChunks = received
+      .filter((envelope) => envelope.event.type === "message.delta")
+      .map((envelope) => (envelope.event as Extract<typeof envelope.event, { type: "message.delta" }>).delta);
+    const terminalChunks = received
+      .filter((envelope) => envelope.event.type === "terminal.output")
+      .map((envelope) => (envelope.event as Extract<typeof envelope.event, { type: "terminal.output" }>).chunk);
+    expect(messageChunks.join("")).toBe(messageText);
+    expect(terminalChunks.join("")).toBe(terminalText);
+    expect([...messageChunks, ...terminalChunks].every(
+      (chunk) => chunk.length <= MAX_STREAM_EVENT_CHUNK_LENGTH
+    )).toBe(true);
+    expect([...messageChunks, ...terminalChunks].join("")).not.toContain("truncated");
+    expect([...messageChunks, ...terminalChunks].some(
+      (chunk) => /[\uD800-\uDBFF]$/.test(chunk) || /^[\uDC00-\uDFFF]/.test(chunk)
+    )).toBe(false);
+
+    unsubscribe();
+    await service.dispose();
   });
 
   it("persists provider session identity after adapter events for workspace-backed sessions", async () => {

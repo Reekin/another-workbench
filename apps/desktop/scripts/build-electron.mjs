@@ -1,4 +1,4 @@
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build, context } from "esbuild";
@@ -12,7 +12,6 @@ const watchMode = process.argv.includes("--watch");
 const mainEntryPoint = resolve(desktopRoot, "src/electron/main.ts");
 const preloadEntryPoint = resolve(desktopRoot, "src/electron/preload.cts");
 const outputDir = resolve(desktopRoot, "dist-electron");
-const outputResourcesDir = resolve(outputDir, "resources");
 const desktopServerResourcesDir = resolve(desktopServerRoot, "src/resources");
 
 const sharedOptions = {
@@ -39,8 +38,7 @@ const preloadBuildOptions = {
 };
 
 await mkdir(outputDir, { recursive: true });
-await rm(outputResourcesDir, { recursive: true, force: true });
-await cp(desktopServerResourcesDir, outputResourcesDir, {
+await cp(desktopServerResourcesDir, resolve(outputDir, "resources"), {
   recursive: true,
   force: true
 });

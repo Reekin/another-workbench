@@ -3,8 +3,6 @@ import type {
   ApprovalRequest,
   ChatSession,
   RuntimeInteraction,
-  TakeoverPresetSummaryRpc,
-  TakeoverSessionStateRpc,
   ThreadGoal,
   Turn
 } from "@another-workbench/shared";
@@ -29,9 +27,6 @@ export type ComposerContainerProps = {
   allowSessionLastTurnFallback?: boolean;
   approvals: ApprovalRequest[];
   interactions: RuntimeInteraction[];
-  takeoverPresets: TakeoverPresetSummaryRpc[];
-  takeoverState?: TakeoverSessionStateRpc;
-  isTakeoverMenuOpen: boolean;
   isOpeningSelectedSession: boolean;
   statusNotice?: ComposerStatusNotice;
   onStatusNotice: (notice: ComposerStatusNotice | undefined) => void;
@@ -39,9 +34,6 @@ export type ComposerContainerProps = {
   onCreateSession?: (workspaceId: string, engineId: string) => Promise<void>;
   onOpenSession?: (sessionId: string) => Promise<void>;
   onRequestTranscriptBottom?: (sessionId: string) => void;
-  onToggleTakeoverMenu: () => void;
-  onSelectTakeoverPreset: (presetId?: string) => Promise<void>;
-  onOpenTakeoverContextEditor: () => void;
   onRespondApproval?: (input: ApprovalResponseInput) => Promise<void>;
   onRespondInteraction?: (input: InteractionResponseInput) => Promise<void>;
 };
@@ -59,9 +51,6 @@ export const ComposerContainer = ({
   allowSessionLastTurnFallback,
   approvals,
   interactions,
-  takeoverPresets,
-  takeoverState,
-  isTakeoverMenuOpen,
   isOpeningSelectedSession,
   statusNotice,
   onStatusNotice,
@@ -69,9 +58,6 @@ export const ComposerContainer = ({
   onCreateSession,
   onOpenSession,
   onRequestTranscriptBottom,
-  onToggleTakeoverMenu,
-  onSelectTakeoverPreset,
-  onOpenTakeoverContextEditor,
   onRespondApproval,
   onRespondInteraction
 }: ComposerContainerProps): ReactElement => {
@@ -87,7 +73,6 @@ export const ComposerContainer = ({
     turns,
     allowSessionLastTurnFallback,
     approvals,
-    isTakeoverManaged: takeoverState?.role === "managed",
     isOpeningSelectedSession,
     statusNotice,
     onStatusNotice,
@@ -114,10 +99,6 @@ export const ComposerContainer = ({
       )}
       contextUsage={activeSession?.contextUsage}
       threadGoal={threadGoal}
-      takeoverPresets={takeoverPresets}
-      takeoverState={takeoverState}
-      isTakeoverMenuOpen={isTakeoverMenuOpen}
-      onOpenTakeoverContextEditor={onOpenTakeoverContextEditor}
       intent={composer.intent}
       supportsSteer={composer.capabilities.supportsSteer}
       supportsAttachments={composer.capabilities.supportsAttachments}
@@ -138,8 +119,6 @@ export const ComposerContainer = ({
       onRemoveAttachment={composer.onRemoveAttachment}
       onPreviewAttachment={onPreviewImage}
       onPickAttachments={composer.onPickAttachments}
-      onToggleTakeoverMenu={onToggleTakeoverMenu}
-      onSelectTakeoverPreset={onSelectTakeoverPreset}
       onPrimaryAction={composer.onPrimaryAction}
       onQueueCurrent={composer.onQueueCurrent}
       onStop={composer.onStop}

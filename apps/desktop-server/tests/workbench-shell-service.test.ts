@@ -459,7 +459,7 @@ describe("WorkbenchShellService", () => {
       updatedAt: "2026-07-20T00:00:00.000Z"
     };
     const registerWorkspace = vi.fn().mockResolvedValue(workspace);
-    const reconcileWorkspace = vi.fn().mockRejectedValue(new Error("scan failed"));
+    const reconcileWorkspaces = vi.fn().mockRejectedValue(new Error("scan failed"));
     const service = new WorkbenchShellService({
       runtimeService: {
         getWorkspaceRegistry: () => ({ registerWorkspace })
@@ -467,7 +467,7 @@ describe("WorkbenchShellService", () => {
       sessionCatalog: {} as never,
       sessionActions: {} as never,
       chatTreeProvider: {} as never,
-      sessionReconciliation: { reconcileWorkspace } as never
+      sessionReconciliation: { reconcileWorkspaces } as never
     });
 
     await expect(service.addWorkspace({ rootPath: "I:\\repo-new" })).resolves.toEqual(
@@ -477,7 +477,7 @@ describe("WorkbenchShellService", () => {
       absolutePath: "I:\\repo-new",
       label: undefined
     });
-    expect(reconcileWorkspace).not.toHaveBeenCalled();
+    expect(reconcileWorkspaces).not.toHaveBeenCalled();
   });
 
   it("removes workspaces from both registry and persisted session index", async () => {
@@ -503,6 +503,31 @@ describe("WorkbenchShellService", () => {
     });
     expect(removeWorkspace).toHaveBeenCalledWith("workspace-1");
     expect(removeIndexedWorkspace).toHaveBeenCalledWith("workspace-1");
+  });
+
+  it("returns persisted workspace expansion state", async () => {
+    const ready = vi.fn().mockResolvedValue(undefined);
+    const getState = vi.fn().mockReturnValue({
+      workspaces: [],
+      lastActiveWorkspaceId: "workspace-1",
+      lastActiveSessionId: "session-1",
+      expandedWorkspaceIds: ["workspace-1", "workspace-2"]
+    });
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        getWorkspaceRegistry: () => ({ ready, getState })
+      } as never,
+      sessionCatalog: {} as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {} as never
+    });
+
+    await expect(service.listWorkspaces()).resolves.toEqual({
+      workspaces: [],
+      lastActiveWorkspaceId: "workspace-1",
+      lastActiveSessionId: "session-1",
+      expandedWorkspaceIds: ["workspace-1", "workspace-2"]
+    });
   });
 
   it("preserves the active session when reselecting the current workspace", async () => {
@@ -1451,7 +1476,7 @@ describe("WorkbenchShellService", () => {
   });
 
   it("forwards explicit reconcile requests to the session reconciliation service", async () => {
-    const reconcileWorkspace = vi.fn().mockResolvedValue({
+    const reconcileWorkspaces = vi.fn().mockResolvedValue({
       workspaces: 1,
       sessions: 3,
       relations: 1
@@ -1462,16 +1487,18 @@ describe("WorkbenchShellService", () => {
       sessionActions: {} as never,
       chatTreeProvider: {} as never,
       sessionReconciliation: {
-        reconcileWorkspace
+        reconcileWorkspaces
       } as never
     });
 
-    await expect(service.reconcileSessionBrowser("workspace-1")).resolves.toEqual({
+    await expect(
+      service.reconcileSessionBrowser(["workspace-1", "workspace-2"])
+    ).resolves.toEqual({
       workspaces: 1,
       sessions: 3,
       relations: 1
     });
-    expect(reconcileWorkspace).toHaveBeenCalledWith("workspace-1");
+    expect(reconcileWorkspaces).toHaveBeenCalledWith(["workspace-1", "workspace-2"]);
   });
 
   it("routes file search, preview, and actions through the injected file services", async () => {

@@ -169,98 +169,6 @@ export const createRemoteRpcHandler = (
               ok: true,
               result: await shellService.deleteSchedulerTask(request.params)
             });
-          case "takeoverPresets.list":
-            if (!shellService) {
-              return toErrorResponse(
-                request,
-                "TAKEOVER_PRESETS_UNAVAILABLE",
-                "Takeover preset APIs are unavailable for this runtime service."
-              );
-            }
-            return parseWorkbenchRpcResponse({
-              id: request.id,
-              method: request.method,
-              ok: true,
-              result: await shellService.listTakeoverPresets()
-            });
-          case "takeoverPresets.read":
-            if (!shellService) {
-              return toErrorResponse(
-                request,
-                "TAKEOVER_PRESETS_UNAVAILABLE",
-                "Takeover preset APIs are unavailable for this runtime service."
-              );
-            }
-            return parseWorkbenchRpcResponse({
-              id: request.id,
-              method: request.method,
-              ok: true,
-              result: {
-                preset: await shellService.readTakeoverPreset(request.params)
-              }
-            });
-          case "takeoverPresets.upsert":
-            if (!shellService) {
-              return toErrorResponse(
-                request,
-                "TAKEOVER_PRESETS_UNAVAILABLE",
-                "Takeover preset APIs are unavailable for this runtime service."
-              );
-            }
-            return parseWorkbenchRpcResponse({
-              id: request.id,
-              method: request.method,
-              ok: true,
-              result: {
-                preset: await shellService.upsertTakeoverPreset(request.params)
-              }
-            });
-          case "takeoverPresets.delete":
-            if (!shellService) {
-              return toErrorResponse(
-                request,
-                "TAKEOVER_PRESETS_UNAVAILABLE",
-                "Takeover preset APIs are unavailable for this runtime service."
-              );
-            }
-            return parseWorkbenchRpcResponse({
-              id: request.id,
-              method: request.method,
-              ok: true,
-              result: await shellService.deleteTakeoverPreset(request.params)
-            });
-          case "takeover.getState":
-            if (!shellService) {
-              return toErrorResponse(
-                request,
-                "TAKEOVER_UNAVAILABLE",
-                "Takeover APIs are unavailable for this runtime service."
-              );
-            }
-            return parseWorkbenchRpcResponse({
-              id: request.id,
-              method: request.method,
-              ok: true,
-              result: {
-                state: shellService.getTakeoverState(request.params)
-              }
-            });
-          case "takeover.setManual":
-            if (!shellService) {
-              return toErrorResponse(
-                request,
-                "TAKEOVER_UNAVAILABLE",
-                "Takeover APIs are unavailable for this runtime service."
-              );
-            }
-            return parseWorkbenchRpcResponse({
-              id: request.id,
-              method: request.method,
-              ok: true,
-              result: {
-                state: await shellService.setManualTakeover(request.params)
-              }
-            });
           case "domain.snapshot":
             return parseWorkbenchRpcResponse({
               id: request.id,
@@ -440,7 +348,7 @@ export const createRemoteRpcHandler = (
               id: request.id,
               method: request.method,
               ok: true,
-              result: await shellService.reconcileSessionBrowser(request.params.workspaceId)
+              result: await shellService.reconcileSessionBrowser(request.params.workspaceIds)
             });
           case "sessionBrowser.toggleExpanded":
             if (!shellService) {

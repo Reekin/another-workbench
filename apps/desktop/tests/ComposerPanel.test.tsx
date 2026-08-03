@@ -197,7 +197,6 @@ describe("ComposerPanel", () => {
     expect(html).toContain("4.0k/12.0k");
     expect(html).toContain('class="awb-composer-goal awb-composer-goal--active"');
     expect(html).not.toContain("tabindex");
-    expect(html).not.toContain("awb-composer-takeover__button");
   });
 
   it("renders pending approval controls above the editor", () => {

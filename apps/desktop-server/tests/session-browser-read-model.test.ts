@@ -11,6 +11,7 @@ const seed = (input: Partial<SessionBrowserReadModelSeed> & Pick<SessionBrowserR
   title: input.sessionId,
   statusDot: "none",
   isActive: false,
+  isExpanded: false,
   childCount: 0,
   ...input
 });

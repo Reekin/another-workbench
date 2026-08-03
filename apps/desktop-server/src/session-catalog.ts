@@ -34,8 +34,6 @@ export type SessionBrowserNode = {
   title: string;
   summaryText?: string;
   statusDot: SessionStatusDot;
-  takeoverStatus?: "managed" | "agent";
-  takeoverPresetId?: string;
   isExpanded: boolean;
   isActive: boolean;
   isArchived: boolean;
@@ -58,9 +56,6 @@ type SessionCatalogServiceOptions = {
   runtimeService: WorkbenchRuntimeService;
   workspaceRegistry: WorkspaceRegistryService;
   sessionIndexStore: SessionIndexStore;
-  resolveTakeoverMarker?: (
-    sessionId: string
-  ) => { takeoverStatus?: "managed" | "agent"; takeoverPresetId?: string };
 };
 
 type SessionCatalogSeed = {
@@ -153,9 +148,6 @@ export class SessionCatalogService {
   private readonly runtimeService: WorkbenchRuntimeService;
   private readonly workspaceRegistry: WorkspaceRegistryService;
   private readonly sessionIndexStore: SessionIndexStore;
-  private readonly resolveTakeoverMarker:
-    | SessionCatalogServiceOptions["resolveTakeoverMarker"]
-    | undefined;
   private catalogRevision = 0;
   private materialized:
     | { sourceRevision: string; model: SessionBrowserReadModel }
@@ -168,7 +160,6 @@ export class SessionCatalogService {
     this.runtimeService = options.runtimeService;
     this.workspaceRegistry = options.workspaceRegistry;
     this.sessionIndexStore = options.sessionIndexStore;
-    this.resolveTakeoverMarker = options.resolveTakeoverMarker;
   }
 
   public async listWorkspaceTree(workspaceId?: string): Promise<WorkspaceBrowserNode[]> {
@@ -406,9 +397,6 @@ export class SessionCatalogService {
     }
 
     const seeds: SessionBrowserReadModelSeed[] = [...visible.values()].map((seed) => {
-      const marker =
-        this.resolveTakeoverMarker?.(seed.sessionId) ??
-        this.resolveMetadataTakeoverMarker(seed.metadata);
       return {
         sessionId: seed.sessionId,
         parentSessionId: parentByChildId.get(seed.sessionId),
@@ -423,9 +411,8 @@ export class SessionCatalogService {
               : seed.unreadState === "unread_completed"
                 ? "unread_completed"
                 : "none",
-        takeoverStatus: marker.takeoverStatus,
-        takeoverPresetId: marker.takeoverPresetId,
         isActive: registryState.lastActiveSessionId === seed.sessionId,
+        isExpanded: registryState.expandedSessionIds.includes(seed.sessionId),
         childCount: childCountByParentId.get(seed.sessionId) ?? 0,
         lastCompletedTurnAt: seed.lastCompletedTurnAt,
         sortAt: seed.lastCompletedTurnAt ?? seed.updatedAt ?? seed.createdAt
@@ -501,9 +488,6 @@ export class SessionCatalogService {
         })
       );
 
-    const marker =
-      this.resolveTakeoverMarker?.(input.seed.sessionId) ??
-      this.resolveMetadataTakeoverMarker(input.seed.metadata);
     return {
       sessionId: input.seed.sessionId,
       displaySessionId: input.seed.providerSessionId ?? input.seed.sessionId,
@@ -529,8 +513,6 @@ export class SessionCatalogService {
           : input.seed.unreadState === "unread_completed"
             ? "unread_completed"
             : "none",
-      takeoverStatus: marker.takeoverStatus,
-      takeoverPresetId: marker.takeoverPresetId,
       isExpanded: input.expandedSessionIds.includes(input.seed.sessionId),
       isActive: input.activeSessionId === input.seed.sessionId,
       isArchived: Boolean(input.seed.archivedAt),
@@ -541,21 +523,4 @@ export class SessionCatalogService {
     };
   }
 
-  private resolveMetadataTakeoverMarker(
-    metadata: Record<string, unknown> | undefined
-  ): { takeoverStatus?: "managed" | "agent"; takeoverPresetId?: string } {
-    const takeover = metadata?.takeover;
-    if (!takeover || typeof takeover !== "object" || Array.isArray(takeover)) {
-      return {};
-    }
-    const record = takeover as Record<string, unknown>;
-    if (record.role !== "takeover-agent") {
-      return {};
-    }
-    return {
-      takeoverStatus: "agent",
-      takeoverPresetId:
-        typeof record.presetId === "string" ? record.presetId : undefined
-    };
-  }
 }

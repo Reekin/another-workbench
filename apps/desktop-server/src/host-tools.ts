@@ -12,10 +12,6 @@ export type HostToolInputSchemaResolver = (
   context?: HostToolAvailabilityContext
 ) => JsonValue | Promise<JsonValue>;
 
-export type HostToolDescriptionResolver = (
-  context?: HostToolAvailabilityContext
-) => string | Promise<string>;
-
 export type HostToolInvocationContext = {
   engineId: string;
   sessionId: string;
@@ -54,11 +50,7 @@ export type HostToolHandler = (
   invocation: HostToolInvocation
 ) => HostToolResult | Promise<HostToolResult>;
 
-export type HostToolRegistration = Omit<
-  HostToolDefinition,
-  "description" | "inputSchema"
-> & {
-  description: string | HostToolDescriptionResolver;
+export type HostToolRegistration = Omit<HostToolDefinition, "inputSchema"> & {
   inputSchema: JsonValue | HostToolInputSchemaResolver;
   isAvailable?: (context: HostToolAvailabilityContext) => boolean;
   handle: HostToolHandler;
@@ -74,16 +66,11 @@ export const resolveHostToolDefinition = async (
   const {
     handle: _handle,
     isAvailable: _isAvailable,
-    description,
     inputSchema,
     ...definition
   } = tool;
   return {
     ...definition,
-    description:
-      typeof description === "function"
-        ? await description(context)
-        : description,
     inputSchema:
       typeof inputSchema === "function"
         ? await inputSchema(context)

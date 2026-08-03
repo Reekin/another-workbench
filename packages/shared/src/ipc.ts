@@ -37,12 +37,6 @@ export const workbenchRpcMethods = [
   "scheduler.list",
   "scheduler.upsert",
   "scheduler.delete",
-  "takeoverPresets.list",
-  "takeoverPresets.read",
-  "takeoverPresets.upsert",
-  "takeoverPresets.delete",
-  "takeover.getState",
-  "takeover.setManual",
   "domain.snapshot",
   "session.list",
   "workspace.list",
@@ -103,40 +97,6 @@ const zWorkbenchSettingsSchema = z.object({
   defaultNewSessionEngineId: z.string().min(1).optional()
 });
 
-const zTakeoverPresetIdSchema = z
-  .string()
-  .min(1)
-  .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/);
-
-const zTakeoverPresetSummarySchema = z.object({
-  presetId: zTakeoverPresetIdSchema,
-  displayName: z.string().min(1),
-  desc: z.string().min(1).optional(),
-  promptPath: z.string().min(1),
-  kind: z.enum(["directory", "file"]),
-  updatedAt: z.string().min(1).optional()
-});
-
-const zTakeoverPresetDocumentSchema = zTakeoverPresetSummarySchema.extend({
-  prompt: z.string()
-});
-
-const zTakeoverSessionRoleSchema = z.enum([
-  "none",
-  "managed",
-  "takeover-agent"
-]);
-
-const zTakeoverSessionStateSchema = z.object({
-  sessionId: zSessionId,
-  role: zTakeoverSessionRoleSchema,
-  active: z.boolean(),
-  manualPresetId: zTakeoverPresetIdSchema.optional(),
-  presetId: zTakeoverPresetIdSchema.optional(),
-  takeoverSessionId: zSessionId.optional(),
-  context: z.string().optional()
-});
-
 const zComposerSlashSuggestionRpcSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
@@ -181,8 +141,6 @@ export type SessionBrowserNodeRpc = {
   title: string;
   summaryText?: string;
   statusDot: z.infer<typeof zSessionStatusDotSchema>;
-  takeoverStatus?: "managed" | "agent";
-  takeoverPresetId?: z.infer<typeof zTakeoverPresetIdSchema>;
   isExpanded: boolean;
   isActive: boolean;
   isArchived: boolean;
@@ -198,9 +156,8 @@ export type SessionBrowserItemRpc = {
   engineId: string;
   title: string;
   statusDot: z.infer<typeof zSessionStatusDotSchema>;
-  takeoverStatus?: "managed" | "agent";
-  takeoverPresetId?: z.infer<typeof zTakeoverPresetIdSchema>;
   isActive: boolean;
+  isExpanded: boolean;
   childCount: number;
   lastCompletedTurnAt?: string;
 };
@@ -227,9 +184,8 @@ const zSessionBrowserItemSchema = z.object({
   engineId: zEngineId,
   title: z.string().min(1),
   statusDot: zSessionStatusDotSchema,
-  takeoverStatus: z.enum(["managed", "agent"]).optional(),
-  takeoverPresetId: zTakeoverPresetIdSchema.optional(),
   isActive: z.boolean(),
+  isExpanded: z.boolean(),
   childCount: z.number().int().nonnegative(),
   lastCompletedTurnAt: z.string().min(1).optional()
 });
@@ -283,8 +239,6 @@ const zSessionBrowserNodeSchema: z.ZodType<
     title: z.string().min(1),
     summaryText: z.string().min(1).optional(),
     statusDot: zSessionStatusDotSchema,
-    takeoverStatus: z.enum(["managed", "agent"]).optional(),
-    takeoverPresetId: zTakeoverPresetIdSchema.optional(),
     isExpanded: z.boolean(),
     isActive: z.boolean(),
     isArchived: z.boolean(),
@@ -713,56 +667,6 @@ const zSchedulerDeleteRequestSchema = z.object({
   })
 });
 
-const zTakeoverPresetsListRequestSchema = z.object({
-  id: zRequestId,
-  method: z.literal("takeoverPresets.list"),
-  params: z.object({})
-});
-
-const zTakeoverPresetsReadRequestSchema = z.object({
-  id: zRequestId,
-  method: z.literal("takeoverPresets.read"),
-  params: z.object({
-    presetId: zTakeoverPresetIdSchema
-  })
-});
-
-const zTakeoverPresetsUpsertRequestSchema = z.object({
-  id: zRequestId,
-  method: z.literal("takeoverPresets.upsert"),
-  params: z.object({
-    presetId: zTakeoverPresetIdSchema,
-    prompt: z.string(),
-    displayName: z.string().min(1).optional()
-  })
-});
-
-const zTakeoverPresetsDeleteRequestSchema = z.object({
-  id: zRequestId,
-  method: z.literal("takeoverPresets.delete"),
-  params: z.object({
-    presetId: zTakeoverPresetIdSchema
-  })
-});
-
-const zTakeoverGetStateRequestSchema = z.object({
-  id: zRequestId,
-  method: z.literal("takeover.getState"),
-  params: z.object({
-    sessionId: zSessionId
-  })
-});
-
-const zTakeoverSetManualRequestSchema = z.object({
-  id: zRequestId,
-  method: z.literal("takeover.setManual"),
-  params: z.object({
-    sessionId: zSessionId,
-    presetId: zTakeoverPresetIdSchema.optional(),
-    context: z.string().optional()
-  })
-});
-
 const zRuntimeCommandRequestSchema = z.object({
   id: zRequestId,
   method: z.literal("runtime.command"),
@@ -885,7 +789,7 @@ const zSessionBrowserReconcileRequestSchema = z.object({
   id: zRequestId,
   method: z.literal("sessionBrowser.reconcile"),
   params: z.object({
-    workspaceId: z.string().min(1).optional()
+    workspaceIds: z.array(z.string().min(1)).min(1)
   })
 });
 
@@ -1153,12 +1057,6 @@ export const zWorkbenchRpcRequestSchema = z.discriminatedUnion("method", [
   zSchedulerListRequestSchema,
   zSchedulerUpsertRequestSchema,
   zSchedulerDeleteRequestSchema,
-  zTakeoverPresetsListRequestSchema,
-  zTakeoverPresetsReadRequestSchema,
-  zTakeoverPresetsUpsertRequestSchema,
-  zTakeoverPresetsDeleteRequestSchema,
-  zTakeoverGetStateRequestSchema,
-  zTakeoverSetManualRequestSchema,
   zDomainSnapshotRequestSchema,
   zSessionListRequestSchema,
   zWorkspaceListRequestSchema,
@@ -1282,62 +1180,6 @@ const zSchedulerDeleteResponseSchema = z.object({
   })
 });
 
-const zTakeoverPresetsListResponseSchema = z.object({
-  id: zRequestId,
-  method: z.literal("takeoverPresets.list"),
-  ok: z.literal(true),
-  result: z.object({
-    rootPath: z.string().min(1),
-    presets: z.array(zTakeoverPresetSummarySchema)
-  })
-});
-
-const zTakeoverPresetsReadResponseSchema = z.object({
-  id: zRequestId,
-  method: z.literal("takeoverPresets.read"),
-  ok: z.literal(true),
-  result: z.object({
-    preset: zTakeoverPresetDocumentSchema
-  })
-});
-
-const zTakeoverPresetsUpsertResponseSchema = z.object({
-  id: zRequestId,
-  method: z.literal("takeoverPresets.upsert"),
-  ok: z.literal(true),
-  result: z.object({
-    preset: zTakeoverPresetDocumentSchema
-  })
-});
-
-const zTakeoverPresetsDeleteResponseSchema = z.object({
-  id: zRequestId,
-  method: z.literal("takeoverPresets.delete"),
-  ok: z.literal(true),
-  result: z.object({
-    presetId: zTakeoverPresetIdSchema,
-    deleted: z.boolean()
-  })
-});
-
-const zTakeoverGetStateResponseSchema = z.object({
-  id: zRequestId,
-  method: z.literal("takeover.getState"),
-  ok: z.literal(true),
-  result: z.object({
-    state: zTakeoverSessionStateSchema
-  })
-});
-
-const zTakeoverSetManualResponseSchema = z.object({
-  id: zRequestId,
-  method: z.literal("takeover.setManual"),
-  ok: z.literal(true),
-  result: z.object({
-    state: zTakeoverSessionStateSchema
-  })
-});
-
 const zSessionListResponseSchema = z.object({
   id: zRequestId,
   method: z.literal("session.list"),
@@ -1354,7 +1196,8 @@ const zWorkspaceListResponseSchema = z.object({
   result: z.object({
     workspaces: z.array(zWorkspaceRecordSchema),
     lastActiveWorkspaceId: z.string().min(1).optional(),
-    lastActiveSessionId: z.string().min(1).optional()
+    lastActiveSessionId: z.string().min(1).optional(),
+    expandedWorkspaceIds: z.array(z.string().min(1))
   })
 });
 
@@ -1747,12 +1590,6 @@ export const zWorkbenchRpcResponseSchema = z.union([
   zSchedulerListResponseSchema,
   zSchedulerUpsertResponseSchema,
   zSchedulerDeleteResponseSchema,
-  zTakeoverPresetsListResponseSchema,
-  zTakeoverPresetsReadResponseSchema,
-  zTakeoverPresetsUpsertResponseSchema,
-  zTakeoverPresetsDeleteResponseSchema,
-  zTakeoverGetStateResponseSchema,
-  zTakeoverSetManualResponseSchema,
   zDomainSnapshotResponseSchema,
   zSessionListResponseSchema,
   zWorkspaceListResponseSchema,
@@ -1809,15 +1646,6 @@ export const zWorkbenchEventPushBatchSchema = z.object({
 });
 
 export type WorkbenchSettingsRpc = z.infer<typeof zWorkbenchSettingsSchema>;
-export type TakeoverPresetSummaryRpc = z.infer<
-  typeof zTakeoverPresetSummarySchema
->;
-export type TakeoverPresetDocumentRpc = z.infer<
-  typeof zTakeoverPresetDocumentSchema
->;
-export type TakeoverSessionStateRpc = z.infer<
-  typeof zTakeoverSessionStateSchema
->;
 export type WorkbenchEventSubscriptionFilter = z.infer<
   typeof zWorkbenchEventSubscriptionFilterSchema
 >;

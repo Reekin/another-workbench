@@ -19,9 +19,6 @@ import type {
   SessionBrowserPageRpc,
   SessionBrowserPathRpc,
   SkillDescriptorRpc,
-  TakeoverPresetDocumentRpc,
-  TakeoverPresetSummaryRpc,
-  TakeoverSessionStateRpc
 } from "@another-workbench/shared";
 import type { RuntimeEventFilter, RuntimeEventReplayInput } from "@another-workbench/core";
 import {
@@ -66,8 +63,6 @@ import { CodexHookActivityService } from "./engine-extensions/codex/hook-activit
 import { CodexTurnChangesService } from "./engine-extensions/codex/turn-changes-service.js";
 import { ErrorLogService } from "./error-log-service.js";
 import { DiagnosticLogService } from "./diagnostic-log-service.js";
-import { TakeoverPresetStore } from "./takeover-preset-store.js";
-import type { SmartTakeoverService } from "./smart-takeover-service.js";
 import { SchedulerStore } from "./scheduler-store.js";
 import {
   SchedulerWorkbenchBridge,
@@ -178,8 +173,6 @@ export type WorkbenchShellServiceOptions = {
   turnChangeService?: TurnChangeService;
   codexHookActivityService?: CodexHookActivityService;
   codexTurnChangesService?: CodexTurnChangesService;
-  takeoverPresetStore?: TakeoverPresetStore;
-  smartTakeoverService?: SmartTakeoverService;
   schedulerStore?: SchedulerStore;
 };
 
@@ -207,8 +200,6 @@ export class WorkbenchShellService {
   private readonly turnChangeService: TurnChangeService;
   private readonly codexHookActivityService: CodexHookActivityService;
   private readonly codexTurnChangesService: CodexTurnChangesService;
-  private readonly takeoverPresetStore: TakeoverPresetStore;
-  private readonly smartTakeoverService: SmartTakeoverService | undefined;
   private readonly schedulerBridge: SchedulerWorkbenchBridge;
   private openSessionGeneration = 0;
   private activationQueue: Promise<void> = Promise.resolve();
@@ -247,13 +238,9 @@ export class WorkbenchShellService {
       options.errorLogService ?? new ErrorLogService();
     this.diagnosticLogService =
       options.diagnosticLogService ?? new DiagnosticLogService();
-    this.takeoverPresetStore =
-      options.takeoverPresetStore ?? new TakeoverPresetStore();
-    this.smartTakeoverService = options.smartTakeoverService;
     this.schedulerBridge = new SchedulerWorkbenchBridge({
       runtimeService: options.runtimeService,
       schedulerStore: options.schedulerStore,
-      smartTakeoverService: options.smartTakeoverService,
       resolveDefaultEngineId: () => this.resolveDefaultNewSessionEngineId()
     });
     this.turnChangeService =
@@ -334,32 +321,6 @@ export class WorkbenchShellService {
     return this.getSettings();
   }
 
-  public async listTakeoverPresets(): Promise<{
-    rootPath: string;
-    presets: TakeoverPresetSummaryRpc[];
-  }> {
-    return this.takeoverPresetStore.list();
-  }
-
-  public async readTakeoverPreset(input: {
-    presetId: string;
-  }): Promise<TakeoverPresetDocumentRpc> {
-    return this.takeoverPresetStore.read(input.presetId);
-  }
-
-  public async upsertTakeoverPreset(input: {
-    presetId: string;
-    prompt: string;
-    displayName?: string;
-  }): Promise<TakeoverPresetDocumentRpc> {
-    return this.takeoverPresetStore.upsert(input);
-  }
-
-  public async deleteTakeoverPreset(input: {
-    presetId: string;
-  }): Promise<{ presetId: string; deleted: boolean }> {
-    return this.takeoverPresetStore.delete(input.presetId);
-  }
 
   public async listSchedulerTasks(input: {
     workspaceId: string;
@@ -396,32 +357,6 @@ export class WorkbenchShellService {
     return this.schedulerBridge.runTask(input);
   }
 
-  public getTakeoverState(input: {
-    sessionId: string;
-  }): TakeoverSessionStateRpc {
-    return (
-      this.smartTakeoverService?.getSessionState(input.sessionId) ?? {
-        sessionId: input.sessionId,
-        role: "none",
-        active: false
-      }
-    );
-  }
-
-  public async setManualTakeover(input: {
-    sessionId: string;
-    presetId?: string;
-    context?: string;
-  }): Promise<TakeoverSessionStateRpc> {
-    if (!this.smartTakeoverService) {
-      return {
-        sessionId: input.sessionId,
-        role: "none",
-        active: false
-      };
-    }
-    return this.smartTakeoverService.setManualTakeover(input);
-  }
 
   public async executeCommand(input: CommandEnvelope) {
     if ("sessionId" in input.command && typeof input.command.sessionId === "string") {
@@ -493,6 +428,7 @@ export class WorkbenchShellService {
     workspaces: WorkspaceRecord[];
     lastActiveWorkspaceId?: string;
     lastActiveSessionId?: string;
+    expandedWorkspaceIds: string[];
   }> {
     const registry = this.requireWorkspaceRegistry();
     await registry.ready();
@@ -500,7 +436,8 @@ export class WorkbenchShellService {
     return {
       workspaces: state.workspaces,
       lastActiveWorkspaceId: state.lastActiveWorkspaceId,
-      lastActiveSessionId: state.lastActiveSessionId
+      lastActiveSessionId: state.lastActiveSessionId,
+      expandedWorkspaceIds: state.expandedWorkspaceIds
     };
   }
 
@@ -590,13 +527,13 @@ export class WorkbenchShellService {
     return this.sessionCatalog.getPath(sessionId);
   }
 
-  public async reconcileSessionBrowser(workspaceId?: string): Promise<{
+  public async reconcileSessionBrowser(workspaceIds: string[]): Promise<{
     workspaces: number;
     sessions: number;
     relations: number;
   }> {
     return (
-      (await this.sessionReconciliation?.reconcileWorkspace(workspaceId)) ?? {
+      (await this.sessionReconciliation?.reconcileWorkspaces(workspaceIds)) ?? {
         workspaces: 0,
         sessions: 0,
         relations: 0

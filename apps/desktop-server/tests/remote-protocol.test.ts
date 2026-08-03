@@ -34,6 +34,30 @@ const createService = () =>
   });
 
 describe("createRemoteRpcHandler", () => {
+  it("rejects legacy and empty session reconciliation requests before dispatch", async () => {
+    const reconcileSessionBrowser = vi.fn();
+    const handler = createRemoteRpcHandler({
+      listWorkspaces: vi.fn(),
+      reconcileSessionBrowser
+    } as never);
+
+    await expect(
+      handler.handleRequest({
+        id: "req-reconcile-legacy",
+        method: "sessionBrowser.reconcile",
+        params: { workspaceId: "workspace-1" }
+      } as never)
+    ).rejects.toThrow();
+    await expect(
+      handler.handleRequest({
+        id: "req-reconcile-empty",
+        method: "sessionBrowser.reconcile",
+        params: { workspaceIds: [] }
+      } as never)
+    ).rejects.toThrow();
+    expect(reconcileSessionBrowser).not.toHaveBeenCalled();
+  });
+
   it("serves desktop-ipc-compatible engine and session requests", async () => {
     const runtimeService = createService();
     const shellService = {
@@ -130,161 +154,6 @@ describe("createRemoteRpcHandler", () => {
           }
         ]
       }
-    });
-  });
-
-  it("routes takeover preset CRUD through shell services", async () => {
-    const runtimeService = createService();
-    const shellService = {
-      executeCommand: runtimeService.executeCommand.bind(runtimeService),
-      listSessions: runtimeService.listSessions.bind(runtimeService),
-      getSnapshotResult: runtimeService.getSnapshotResult.bind(runtimeService),
-      replay: runtimeService.replay.bind(runtimeService),
-      selectEngine: runtimeService.selectEngine.bind(runtimeService),
-      listWorkspaces: vi.fn().mockResolvedValue({ workspaces: [] }),
-      listTakeoverPresets: vi.fn().mockResolvedValue({
-        rootPath: "I:/Users/Test/.another-workbench/takeover",
-        presets: [
-          {
-            presetId: "review",
-            displayName: "Review",
-            promptPath: "I:/Users/Test/.another-workbench/takeover/review/prompt.md",
-            kind: "directory"
-          }
-        ]
-      }),
-      readTakeoverPreset: vi.fn().mockResolvedValue({
-        presetId: "review",
-        displayName: "Review",
-        promptPath: "I:/Users/Test/.another-workbench/takeover/review/prompt.md",
-        kind: "directory",
-        prompt: "review prompt"
-      }),
-      upsertTakeoverPreset: vi.fn().mockResolvedValue({
-        presetId: "custom",
-        displayName: "Custom",
-        promptPath: "I:/Users/Test/.another-workbench/takeover/custom/prompt.md",
-        kind: "directory",
-        prompt: "custom prompt"
-      }),
-      deleteTakeoverPreset: vi.fn().mockResolvedValue({
-        presetId: "custom",
-        deleted: true
-      }),
-      getTakeoverState: vi.fn().mockReturnValue({
-        sessionId: "session-1",
-        role: "none",
-        active: false
-      }),
-      setManualTakeover: vi.fn().mockResolvedValue({
-        sessionId: "session-1",
-        role: "managed",
-        active: true,
-        manualPresetId: "review",
-        presetId: "review",
-        takeoverSessionId: "session-reviewer"
-      })
-    };
-    const handler = createRemoteRpcHandler(shellService as never);
-
-    await expect(
-      handler.handleRequest({
-        id: "req-list",
-        method: "takeoverPresets.list",
-        params: {}
-      })
-    ).resolves.toMatchObject({
-      method: "takeoverPresets.list",
-      ok: true,
-      result: {
-        presets: [expect.objectContaining({ presetId: "review" })]
-      }
-    });
-    await expect(
-      handler.handleRequest({
-        id: "req-read",
-        method: "takeoverPresets.read",
-        params: { presetId: "review" }
-      })
-    ).resolves.toMatchObject({
-      method: "takeoverPresets.read",
-      ok: true,
-      result: {
-        preset: expect.objectContaining({ prompt: "review prompt" })
-      }
-    });
-    await expect(
-      handler.handleRequest({
-        id: "req-upsert",
-        method: "takeoverPresets.upsert",
-        params: { presetId: "custom", prompt: "custom prompt" }
-      })
-    ).resolves.toMatchObject({
-      method: "takeoverPresets.upsert",
-      ok: true,
-      result: {
-        preset: expect.objectContaining({ presetId: "custom" })
-      }
-    });
-    await expect(
-      handler.handleRequest({
-        id: "req-delete",
-        method: "takeoverPresets.delete",
-        params: { presetId: "custom" }
-      })
-    ).resolves.toMatchObject({
-      method: "takeoverPresets.delete",
-      ok: true,
-      result: {
-        presetId: "custom",
-        deleted: true
-      }
-    });
-    await expect(
-      handler.handleRequest({
-        id: "req-takeover-state",
-        method: "takeover.getState",
-        params: { sessionId: "session-1" }
-      })
-    ).resolves.toMatchObject({
-      method: "takeover.getState",
-      ok: true,
-      result: {
-        state: {
-          sessionId: "session-1",
-          role: "none",
-          active: false
-        }
-      }
-    });
-    await expect(
-      handler.handleRequest({
-        id: "req-takeover-manual",
-        method: "takeover.setManual",
-        params: {
-          sessionId: "session-1",
-          presetId: "review",
-          context: "Check focused files."
-        }
-      })
-    ).resolves.toMatchObject({
-      method: "takeover.setManual",
-      ok: true,
-      result: {
-        state: {
-          sessionId: "session-1",
-          role: "managed",
-          manualPresetId: "review"
-        }
-      }
-    });
-    expect(shellService.getTakeoverState).toHaveBeenCalledWith({
-      sessionId: "session-1"
-    });
-    expect(shellService.setManualTakeover).toHaveBeenCalledWith({
-      sessionId: "session-1",
-      presetId: "review",
-      context: "Check focused files."
     });
   });
 
@@ -958,7 +827,7 @@ describe("createRemoteRpcHandler", () => {
       id: "req-reconcile",
       method: "sessionBrowser.reconcile",
       params: {
-        workspaceId: "workspace-1"
+        workspaceIds: ["workspace-1", "workspace-2"]
       }
     });
     const openSessionResponse = await handler.handleRequest({
@@ -1171,7 +1040,7 @@ describe("createRemoteRpcHandler", () => {
     expect((shellService as any).listSessionTree).toHaveBeenCalledWith("workspace-1");
     expect((shellService as any).pickWorkspaceDirectory).toHaveBeenCalledTimes(1);
     expect((shellService as any).reconcileSessionBrowser).toHaveBeenCalledWith(
-      "workspace-1"
+      ["workspace-1", "workspace-2"]
     );
     expect((shellService as any).openSession).toHaveBeenCalledWith("session-1");
     expect((shellService as any).openSession).toHaveBeenCalledWith("session-1", {

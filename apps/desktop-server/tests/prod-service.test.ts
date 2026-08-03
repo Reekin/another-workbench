@@ -4,10 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  createWorkbenchRuntimeService,
-  resolveCurrentBranchContextFromChatTree
+  createWorkbenchRuntimeService
 } from "../src/prod-service.js";
-import type { ChatTreeProjection } from "../src/codex-app-server-generated/v2/ChatTreeProjection.js";
 
 const codexFixturePath = fileURLToPath(
   new URL("./fixtures/fake-codex-app-server.mjs", import.meta.url)
@@ -58,58 +56,6 @@ describe("prod runtime service", () => {
         await rm(dir, { recursive: true, force: true });
       }
     }
-  });
-
-  it("resolves SmartTakeover branch context from the current chat tree selection", () => {
-    const chatTree: ChatTreeProjection = {
-      version: 1,
-      revision: 1n,
-      currentNodeId: "node-current",
-      visibleNodeIds: ["node-root", "node-current"],
-      visibleTurnIds: ["turn-root", "turn-visible-anchor"],
-      nodes: [
-        {
-          nodeId: "node-root",
-          parentNodeId: null,
-          turnId: "turn-root",
-          order: 0n,
-          status: "completed",
-          summary: null
-        },
-        {
-          nodeId: "node-current",
-          parentNodeId: "node-root",
-          turnId: "turn-current-node",
-          order: 1n,
-          status: "completed",
-          summary: null
-        }
-      ]
-    };
-
-    expect(resolveCurrentBranchContextFromChatTree(chatTree)).toEqual({
-      currentTurnId: "turn-current-node",
-      visibleTurnIds: ["turn-root", "turn-current-node"]
-    });
-    expect(
-      resolveCurrentBranchContextFromChatTree({
-        ...chatTree,
-        visibleTurnIds: []
-      })
-    ).toEqual({
-      currentTurnId: "turn-current-node",
-      visibleTurnIds: ["turn-root", "turn-current-node"]
-    });
-    expect(
-      resolveCurrentBranchContextFromChatTree({
-        ...chatTree,
-        currentNodeId: "node-missing"
-      })
-    ).toEqual({
-      currentTurnId: "turn-visible-anchor",
-      visibleTurnIds: ["turn-root", "turn-visible-anchor"]
-    });
-    expect(resolveCurrentBranchContextFromChatTree(undefined)).toEqual({});
   });
 
   it("uses the real Codex runtime composition instead of demo placeholder text", async () => {

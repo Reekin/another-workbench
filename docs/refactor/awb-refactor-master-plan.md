@@ -640,7 +640,6 @@ task_3_5: task_3_2
 - Codex 与 ACP 各只有一个注册入口。
 - `EngineRegistryService`、`EngineCapabilitySurfaceService`、`WorkbenchAgentBinding` 不再分别保存同一信息。
 - CapabilityRegistry 不再持有完整 service locator context。
-- SmartTakeover 不直接依赖 Codex runtime port。
 - 新增一个 fake engine 的 contract test，只新增 plugin 文件即可跑通基础 chat 注册。
 
 ### 目标接口
@@ -722,7 +721,6 @@ export interface EnginePlugin {
 - 不再把 RuntimeService、SessionIndexStore、IdentityRegistry 全部作为 service locator 传入。
 - 预期生产 LOC：**-500–800**。
 
-### task_4_5：解耦 SmartTakeover 的 Codex 分支读取
 
 - tag: prod
 - executor: subagent
@@ -730,10 +728,8 @@ export interface EnginePlugin {
 - tdd: required
 - 当前位置：
   - `apps/desktop-server/src/prod-service.ts:257-265`
-  - `apps/desktop-server/src/smart-takeover-service.ts`
 - 做法：
   - 在 `ConversationGraphCapability` 增加最小的 current-branch query，或新增内部 `BranchContextCapability`。
-  - SmartTakeover 依赖 capability，而不是 `codexRuntimePort.readChatTreeForSession()`。
 - 预期生产 LOC：**-20–60**。
 
 ### task_4_6：拆分 provider-heavy 大文件，但不做纯搬运
@@ -839,7 +835,6 @@ type RpcResponseEnvelope =
   - `packages/shared/src/rpc/contracts/engine.ts`
   - `settings.ts`
   - `scheduler.ts`
-  - `takeover.ts`
   - `sessions.ts`
   - `chat.ts`
   - `files.ts`
@@ -1086,7 +1081,6 @@ task_6_6: task_5_2 task_6_2
 
 ### 用户可感知结果
 
-行为基本不变，但后续修改 scheduler、takeover、session browser、composer 时不再需要理解整个 ChatShell/WorkbenchShell。
 
 ### 通过标准
 
@@ -1110,27 +1104,19 @@ task_6_6: task_5_2 task_6_2
   - `features/chat/handlers.ts`
   - `features/files/handlers.ts`
   - `features/scheduler/handlers.ts`
-  - `features/takeover/handlers.ts`
   - `features/diagnostics/handlers.ts`
 - 不是简单搬方法：
   - 每个 handler 只注入需要的 service。
   - hydration guard 作为 session command middleware。
 - 区域净 LOC：**-100–+50**。
 
-### task_7_2：拆 SmartTakeover 状态机
 
 - tag: prod
 - executor: subagent
 - subagent_context: inherit
 - tdd: required
 - 当前：
-  - `smart-takeover-service.ts` 约 1,466 行
 - 目标：
-  - `takeover-state-machine.ts`
-  - `takeover-run-coordinator.ts`
-  - `takeover-output-selector.ts`
-  - `takeover-prompt-builder.ts`
-  - `takeover-host-tools.ts`
 - 状态迁移、pending resolver 和 cleanup 由 state machine/coordinator 闭环。
 - 区域净 LOC：**-100–+50**。
 
@@ -1146,7 +1132,6 @@ task_6_6: task_5_2 task_6_2
   - `app/ChatWorkbench.tsx`
   - `features/session-browser/`
   - `features/transcript/`
-  - `features/takeover/`
   - `features/scheduler/`
   - `features/engine-settings/`
 - 每个 feature 暴露 controller model + view。
@@ -1179,7 +1164,6 @@ task_6_6: task_5_2 task_6_2
 - tdd: required
 - 新增 renderer helper：
   - `createLatestRequestGate()` 或 `useLatestRequest()`
-- 取代 takeover、preset、session open 等多套手写 request counter/ref。
 - 预期生产 LOC：**-30–100**。
 
 ### Phase 7 净 LOC
@@ -1286,7 +1270,6 @@ task_7_5: task_7_3
 | `prod-service.ts` | 390 | 140–200 | -190–250 | 只做 composition |
 | `workbench-shell-service.ts` 区域 | 1,279 | 1,100–1,300 | -179–+21 | 主要收益是依赖边界，不是 LOC |
 | `session-discovery.ts` 区域 | 1,602 | 1,450–1,600 | -152–0 | provider mapping 是真实复杂度 |
-| `smart-takeover-service.ts` 区域 | 1,466 | 1,350–1,500 | -116–+34 | 状态机清楚比减行更重要 |
 | `ChatShellApp.tsx` 区域 | 3,409 | 3,300–3,600 | -109–+191 | 顶层文件会大减，区域总量基本持平 |
 | `use-composer-controller.ts` 区域 | 1,232 | 1,150–1,350 | -82–+118 | 拆为可测试 controller |
 
@@ -1362,8 +1345,6 @@ task_7_5: task_7_3
 | Archive/fork/dispose | domain、index、relations 一致 |
 | Remote relay | 同一 contract、错误码、subscription |
 | Scheduler headless | 显式 engine、真实退出码 |
-| SmartTakeover | start/stop/verdict/goal conflict/branch scope |
-| GUI | session switch、composer、approval、takeover、scheduler、settings |
 
 ---
 
@@ -1429,7 +1410,6 @@ task_7_5: task_7_3
 4.2 CodexPlugin
 4.3 AcpPlugin
 4.4 collapse registries
-4.5 takeover capability decoupling
 5.1 RPC contract primitive
 5.2 contract migration
 5.3 handler registry
@@ -1443,7 +1423,6 @@ task_7_5: task_7_3
 6.5 atomic persistence
 6.6 epoch cursor
 7.1 host feature handlers
-7.2 takeover state machine
 7.3 ChatShell features
 7.4 composer controllers
 8.1 legacy deletion

@@ -94,9 +94,8 @@ export class SessionBrowserReadModel {
             seed.title,
             seed.engineId,
             seed.statusDot,
-            seed.takeoverStatus,
-            seed.takeoverPresetId,
             seed.isActive,
+            seed.isExpanded,
             seed.childCount,
             seed.lastCompletedTurnAt,
             seed.sortAt
@@ -205,9 +204,8 @@ export class SessionBrowserReadModel {
       engineId: seed.engineId,
       title: seed.title,
       statusDot: seed.statusDot,
-      takeoverStatus: seed.takeoverStatus,
-      takeoverPresetId: seed.takeoverPresetId,
       isActive: seed.isActive,
+      isExpanded: seed.isExpanded,
       childCount: seed.childCount,
       lastCompletedTurnAt: seed.lastCompletedTurnAt
     };

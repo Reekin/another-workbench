@@ -126,7 +126,7 @@ describe("session browser transport contracts", () => {
             }
           } as const;
         case "sessionBrowser.reconcile":
-          expect(request.params.workspaceId).toBe("workspace-1");
+          expect(request.params.workspaceIds).toEqual(["workspace-1"]);
           return {
             id: request.id,
             method: "sessionBrowser.reconcile",
@@ -242,7 +242,7 @@ describe("session browser transport contracts", () => {
       parentSessionId: "session-root"
     });
     const path = await transport.sessionBrowser.getPath("session-child");
-    const reconcile = await transport.sessionBrowser.reconcile("workspace-1");
+    const reconcile = await transport.sessionBrowser.reconcile(["workspace-1"]);
     const openResult = await transport.sessionBrowser.open("session-child");
     const forceOpenResult = await transport.sessionBrowser.open("session-force", {
       forceProviderHydration: true

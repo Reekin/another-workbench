@@ -30,58 +30,10 @@ import { DiagnosticLogService } from "./diagnostic-log-service.js";
 import { HostToolRegistry } from "./host-tools.js";
 import { createReadSessionHostTool } from "./read-session-host-tool.js";
 import {
-  SmartTakeoverService,
-  type CurrentBranchContext
-} from "./smart-takeover-service.js";
-import { TakeoverPresetStore } from "./takeover-preset-store.js";
-import {
   createOpenAiSessionTitleGenerator,
   type SessionTitleGenerator
 } from "./title-generation-service.js";
 import type { SkillDescriptorRpc } from "@another-workbench/shared";
-import type { ChatTreeProjection } from "./codex-app-server-generated/v2/ChatTreeProjection.js";
-
-export const resolveCurrentBranchContextFromChatTree = (
-  chatTree: ChatTreeProjection | undefined
-): CurrentBranchContext => {
-  if (!chatTree) {
-    return {};
-  }
-  const nodesById = new Map(chatTree.nodes.map((node) => [node.nodeId, node]));
-  const branchTurnIds: string[] = [];
-  const visitedNodeIds = new Set<string>();
-  let nodeId = chatTree.currentNodeId ?? undefined;
-  while (nodeId && !visitedNodeIds.has(nodeId)) {
-    visitedNodeIds.add(nodeId);
-    const node = nodesById.get(nodeId);
-    if (!node) {
-      branchTurnIds.length = 0;
-      break;
-    }
-    if (node.turnId) {
-      branchTurnIds.push(node.turnId);
-    }
-    nodeId = node.parentNodeId ?? undefined;
-  }
-  branchTurnIds.reverse();
-
-  const currentNode = chatTree.nodes.find(
-    (node) => node.nodeId === chatTree.currentNodeId
-  );
-  const currentNodeTurnId = currentNode?.turnId ?? undefined;
-  if (branchTurnIds.length > 0) {
-    return {
-      currentTurnId: currentNodeTurnId,
-      visibleTurnIds: branchTurnIds
-    };
-  }
-
-  const visibleAnchorTurnId = chatTree.visibleTurnIds.at(-1);
-  return {
-    currentTurnId: visibleAnchorTurnId ?? currentNodeTurnId,
-    visibleTurnIds: chatTree.visibleTurnIds
-  };
-};
 
 export type CreateWorkbenchRuntimeServiceOptions = {
   codexCommandPath?: string;
@@ -115,10 +67,6 @@ export const createWorkbenchRuntimeService = (
     now: options.now
   });
   const codexTurnChangesStore = new CodexTurnChangesStore({
-    now: options.now
-  });
-  const takeoverPresetStore = new TakeoverPresetStore({
-    baseDir: options.persistenceBaseDir,
     now: options.now
   });
   const hostTools = new HostToolRegistry();
@@ -254,24 +202,10 @@ export const createWorkbenchRuntimeService = (
   });
 
   service = runtimeService;
-  const smartTakeoverService = new SmartTakeoverService({
-    runtimeService,
-    presetStore: takeoverPresetStore,
-    now: options.now,
-    resolveCurrentBranchContext: async (sessionId) => {
-      const chatTree = await codexRuntimePort.readChatTreeForSession(sessionId);
-      return resolveCurrentBranchContextFromChatTree(chatTree?.chatTree);
-    }
-  });
-  for (const tool of smartTakeoverService.createHostTools()) {
-    hostTools.register(tool);
-  }
   const sessionCatalog = new SessionCatalogService({
     runtimeService,
     workspaceRegistry,
-    sessionIndexStore,
-    resolveTakeoverMarker: (sessionId) =>
-      smartTakeoverService.getSessionMarker(sessionId)
+    sessionIndexStore
   });
   const sessionIdentity = new SessionIdentityRegistry({
     runtimeService,
@@ -365,13 +299,8 @@ export const createWorkbenchRuntimeService = (
     diagnosticLogService: new DiagnosticLogService({
       baseDir: options.persistenceBaseDir,
       now: options.now
-    }),
-    takeoverPresetStore,
-    smartTakeoverService
+    })
   });
-  smartTakeoverService.setParentCommandExecutor((input) =>
-    shellService.executeCommand(input)
-  );
   hostTools.register(
     createReadSessionHostTool({
       getSnapshot: () => runtimeService.getSnapshot(),

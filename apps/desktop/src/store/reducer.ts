@@ -1392,22 +1392,6 @@ const mergeRuntimeEvents = (
     return undefined;
   }
   switch (next.type) {
-    case "message.delta":
-      if (
-        previous.type === "message.delta" &&
-        previous.sessionId === next.sessionId &&
-        previous.turnId === next.turnId &&
-        previous.messageId === next.messageId &&
-        sameOptional(previous.engineId, next.engineId) &&
-        sameOptional(previous.participantId, next.participantId) &&
-        sameOptional(previous.phase, next.phase)
-      ) {
-        return {
-          ...next,
-          delta: appendLimitedStreamText(previous.delta, next.delta)
-        };
-      }
-      return undefined;
     case "tool.delta":
       if (
         previous.type === "tool.delta" &&
@@ -1420,21 +1404,6 @@ const mergeRuntimeEvents = (
         return {
           ...next,
           delta: appendLimitedStreamText(previous.delta, next.delta)
-        };
-      }
-      return undefined;
-    case "terminal.output":
-      if (
-        previous.type === "terminal.output" &&
-        previous.sessionId === next.sessionId &&
-        previous.turnId === next.turnId &&
-        previous.terminalId === next.terminalId &&
-        sameOptional(previous.engineId, next.engineId) &&
-        sameOptional(previous.participantId, next.participantId)
-      ) {
-        return {
-          ...next,
-          chunk: appendLimitedStreamText(previous.chunk, next.chunk)
         };
       }
       return undefined;

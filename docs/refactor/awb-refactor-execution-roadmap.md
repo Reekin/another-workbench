@@ -4,7 +4,6 @@
 >
 > 仓库稳定副本：`docs/refactor/awb-refactor-execution-roadmap.md` 与 `docs/refactor/awb-refactor-master-plan.md`。Downloads 中的同名文件仅作为同步副本。
 >
-> 本 roadmap 以当前工作树为基线，所有 task 默认由独立 subagent 完成；每个阶段完成开发与自验后必须停下，由 reviewer/takeover 验收通过后才能进入下一阶段。
 
 # Phase 0：冻结基线
 
@@ -484,7 +483,6 @@ engine capability/action 更稳定；unsupported 明确降级。
 
 - 每个 engine 只有一个注册入口。
 - fake engine 只新增 plugin 即可注册基础路径。
-- SmartTakeover 不直连 Codex port。
 - capability provider context 不再是 service locator。
 
 ## 验收手段
@@ -569,22 +567,16 @@ plugin contract suite、Codex/ACP smoke、GUI capability 展示与 unsupported �
   - architecture dependency check
   - Codex/Pi smoke
 
-[ ] task_4_5: SmartTakeover 改用 branch capability
 - tag: prod
 - goal: 通用 feature 不直连 Codex runtime
 - executor: subagent
 - subagent_context: inherit
-- subagent_context_reason: 需要继承当前 branch-scoped takeover 语义
 - tdd: required
 - test_design:
   - unit: capability present/absent/current branch
   - integration: Codex plugin 提供 branch context
-  - user_acceptance: 当前分支 takeover 不读取其他 branch 输出
 - done_when:
-  - prod-service 不向 takeover 注入 codexRuntimePort
 - verify:
-  - smart-takeover tests
-  - real branch/takeover smoke
 
 [ ] task_4_6: 拆 Codex runtime/discovery 内部模块
 - tag: polish
@@ -880,7 +872,6 @@ contract parity tests、Electron IPC、remote relay、headless/scheduler smoke�
 
 ## 阶段目标
 
-按业务 ownership 拆 WorkbenchShell、SmartTakeover、ChatShell、Composer。
 
 ## 用户可感知结果
 
@@ -891,12 +882,10 @@ contract parity tests、Electron IPC、remote relay、headless/scheduler smoke�
 - WorkbenchShell facade 200–300 行。
 - ChatShell root 350–500 行。
 - feature controller 拥有自己的 async lifecycle。
-- SmartTakeover 状态迁移与 cleanup 同 owner。
 - GUI 人工验收所有高频路径。
 
 ## 验收手段
 
-组件/控制器测试之外，必须由 agent 实际启动 Electron，操作 session、takeover、scheduler、settings、composer。
 
 ## 伪完成风险
 
@@ -915,13 +904,11 @@ contract parity tests、Electron IPC、remote relay、headless/scheduler smoke�
   - integration: RPC handler 全链
   - user_acceptance: CLI/GUI 主要 API
 - done_when:
-  - workspace/session/chat/files/scheduler/takeover/diagnostics 分模块
   - facade 只组合
 - verify:
   - shell/RPC tests
   - smoke
 
-[ ] task_7_2: SmartTakeover 状态机与 coordinator
 - tag: prod
 - goal: 状态、迁移、pending resolver、cleanup 由同一 owner 闭环
 - executor: subagent
@@ -930,28 +917,23 @@ contract parity tests、Electron IPC、remote relay、headless/scheduler smoke�
 - tdd: required
 - test_design:
   - unit: 全状态迁移、timeout、cancel、verdict race
-  - integration: parent/takeover sessions 与 command coordinator
   - user_acceptance: GUI enable/disable/verdict/interrupt
 - done_when:
   - prompt/output selection 与状态机分离
   - run cleanup 不再散落多个 maps
 - verify:
-  - takeover tests
-  - real GUI takeover flow
 
 [ ] task_7_3: ChatShell feature slices
 - tag: prod
 - goal: 顶层只做布局和组合
 - executor: subagent
 - subagent_context: inherit
-- subagent_context_reason: 需要继承现有 active session、backlog、takeover、settings 交互语义
 - tdd: suggested
 - test_design:
   - unit: feature controller model
   - integration: store/transport/controller
   - user_acceptance: Electron 实际操作全部 feature
 - done_when:
-  - session-browser/transcript/takeover/scheduler/engine-settings 各自拥有 state/effects
   - root 不直接调用这些 feature 的 RPC
 - verify:
   - component/controller tests
@@ -983,7 +965,6 @@ contract parity tests、Electron IPC、remote relay、headless/scheduler smoke�
 - tdd: required
 - test_design:
   - unit: stale resolve/reject、unmount cancel、newest wins
-  - integration: takeover preset/session open
   - user_acceptance: 快速切 session 不闪回旧数据
 - done_when:
   - 主要 feature 不再各自手写 generation counter

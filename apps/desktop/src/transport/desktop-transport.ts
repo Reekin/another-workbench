@@ -30,9 +30,6 @@ import type {
   SessionActionKindRpc,
   SessionActionResultRpc,
   SessionWindowRpc,
-  TakeoverPresetDocumentRpc,
-  TakeoverPresetSummaryRpc,
-  TakeoverSessionStateRpc,
   ThreadGoalStatus,
   WorkspaceFileSearchResultRpc,
   WorkbenchClientApi,
@@ -252,30 +249,6 @@ export type DesktopTransport = {
       deleted: boolean;
     }>;
   };
-  takeoverPresets: {
-    list: () => Promise<{
-      rootPath: string;
-      presets: TakeoverPresetSummaryRpc[];
-    }>;
-    read: (presetId: string) => Promise<TakeoverPresetDocumentRpc>;
-    upsert: (input: {
-      presetId: string;
-      prompt: string;
-      displayName?: string;
-    }) => Promise<TakeoverPresetDocumentRpc>;
-    delete: (presetId: string) => Promise<{
-      presetId: string;
-      deleted: boolean;
-    }>;
-  };
-  takeover: {
-    getState: (sessionId: string) => Promise<TakeoverSessionStateRpc>;
-    setManual: (input: {
-      sessionId: string;
-      presetId?: string;
-      context?: string;
-    }) => Promise<TakeoverSessionStateRpc>;
-  };
   domain: {
     snapshot: () => Promise<{ snapshot: DomainSnapshot; cursor?: string }>;
   };
@@ -291,6 +264,7 @@ export type DesktopTransport = {
       workspaces: WorkspaceRecordRpc[];
       lastActiveWorkspaceId?: string;
       lastActiveSessionId?: string;
+      expandedWorkspaceIds?: string[];
     }>;
     pickDirectory: () => Promise<{
       canceled: boolean;
@@ -325,7 +299,7 @@ export type DesktopTransport = {
       expectedRevision?: string;
     }) => Promise<SessionBrowserPageRpc>;
     getPath: (sessionId: string) => Promise<SessionBrowserPathRpc>;
-    reconcile: (workspaceId?: string) => Promise<{
+    reconcile: (workspaceIds: string[]) => Promise<{
       workspaces: number;
       sessions: number;
       relations: number;
@@ -735,50 +709,6 @@ export const createDesktopTransport = (
     return rpc.request("scheduler.delete", input);
   };
 
-  const requestTakeoverPresetsList = async (): Promise<{
-    rootPath: string;
-    presets: TakeoverPresetSummaryRpc[];
-  }> => {
-    return rpc.request("takeoverPresets.list", {});
-  };
-
-  const requestTakeoverPresetRead = async (
-    presetId: string
-  ): Promise<TakeoverPresetDocumentRpc> => {
-    const result = await rpc.request("takeoverPresets.read", { presetId });
-    return result.preset;
-  };
-
-  const requestTakeoverPresetUpsert = async (input: {
-    presetId: string;
-    prompt: string;
-    displayName?: string;
-  }): Promise<TakeoverPresetDocumentRpc> => {
-    const result = await rpc.request("takeoverPresets.upsert", input);
-    return result.preset;
-  };
-
-  const requestTakeoverPresetDelete = async (
-    presetId: string
-  ): Promise<{ presetId: string; deleted: boolean }> => {
-    return rpc.request("takeoverPresets.delete", { presetId });
-  };
-
-  const requestTakeoverState = async (
-    sessionId: string
-  ): Promise<TakeoverSessionStateRpc> => {
-    const result = await rpc.request("takeover.getState", { sessionId });
-    return result.state;
-  };
-
-  const requestTakeoverSetManual = async (input: {
-    sessionId: string;
-    presetId?: string;
-    context?: string;
-  }): Promise<TakeoverSessionStateRpc> => {
-    const result = await rpc.request("takeover.setManual", input);
-    return result.state;
-  };
 
   const sendCommand = async (command: Command): Promise<CommandReceipt> => {
     const requestId = createId();
@@ -872,16 +802,6 @@ export const createDesktopTransport = (
       upsert: requestSchedulerUpsert,
       delete: requestSchedulerDelete
     },
-    takeoverPresets: {
-      list: requestTakeoverPresetsList,
-      read: requestTakeoverPresetRead,
-      upsert: requestTakeoverPresetUpsert,
-      delete: requestTakeoverPresetDelete
-    },
-    takeover: {
-      getState: requestTakeoverState,
-      setManual: requestTakeoverSetManual
-    },
     domain: {
       snapshot: requestDomainSnapshot
     },
@@ -944,9 +864,9 @@ export const createDesktopTransport = (
         rpc.request("sessionBrowser.getPath", {
           sessionId
         }),
-      reconcile: (workspaceId?: string) =>
+      reconcile: (workspaceIds: string[]) =>
         rpc.request("sessionBrowser.reconcile", {
-          workspaceId
+          workspaceIds
         }),
       toggleExpanded: (sessionId: string) =>
         rpc.request("sessionBrowser.toggleExpanded", {

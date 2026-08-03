@@ -9,7 +9,6 @@ export type SessionBrowserPageQuery =
       workspaceId: string;
       cursor?: string;
       limit?: number;
-      expectedRevision?: string;
     }
   | {
       kind: "children";
@@ -17,36 +16,25 @@ export type SessionBrowserPageQuery =
       parentSessionId: string;
       cursor?: string;
       limit?: number;
-      expectedRevision?: string;
     };
 
 export type SessionBrowserQueryScope =
-  | {
-      kind: "roots";
-      workspaceId: string;
-    }
-  | {
-      kind: "children";
-      workspaceId: string;
-      parentSessionId: string;
-    };
+  | { kind: "roots"; workspaceId: string }
+  | { kind: "children"; workspaceId: string; parentSessionId: string };
 
-export type SessionBrowserQueryOwner = {
-  scope: SessionBrowserQueryScope;
-  generation: number;
-};
+type SessionBrowserCollectionInput = { workspaceId: string; parentSessionId?: string };
 
 export type SessionBrowserQueryResult =
-  | ({ status: "committed"; page: SessionBrowserPageRpc } & SessionBrowserQueryOwner)
-  | ({
+  | {
+      status: "committed";
+      page: SessionBrowserPageRpc;
+      recoveredRootPage?: SessionBrowserPageRpc;
+    }
+  | {
       status: "superseded";
       reason: "replaced" | "invalidated" | "revision_changed";
-    } & SessionBrowserQueryOwner)
-  | ({ status: "cancelled" } & SessionBrowserQueryOwner);
-
-export type SessionBrowserQueryRequest = SessionBrowserQueryOwner & {
-  result: Promise<SessionBrowserQueryResult>;
-};
+    }
+  | { status: "cancelled" };
 
 export type SessionBrowserQueryTransport = {
   listRoots: (input: {
@@ -65,24 +53,41 @@ export type SessionBrowserQueryTransport = {
   getPath: (sessionId: string) => Promise<SessionBrowserPathRpc>;
 };
 
-export const isSessionBrowserCursorStaleError = (error: unknown): boolean =>
-  typeof error === "object" &&
-  error !== null &&
-  "code" in error &&
-  error.code === "CURSOR_STALE";
+const isCursorStale = (error: unknown): boolean =>
+  typeof error === "object" && error !== null && "code" in error && error.code === "CURSOR_STALE";
 
-type QueryState = {
-  data?: SessionBrowserPageRpc;
-  dirty: boolean;
-};
+type TerminalResult = Exclude<SessionBrowserQueryResult, { status: "committed" }>;
 
-type ActiveRequest = SessionBrowserQueryOwner & {
+const invalidated: TerminalResult = { status: "superseded", reason: "invalidated" };
+const revisionChanged: TerminalResult = { status: "superseded", reason: "revision_changed" };
+const cancelled: TerminalResult = { status: "cancelled" };
+
+const committed = (
+  page: SessionBrowserPageRpc,
+  recoveredRootPage?: SessionBrowserPageRpc
+): SessionBrowserQueryResult =>
+  recoveredRootPage
+    ? { status: "committed", page, recoveredRootPage }
+    : { status: "committed", page };
+
+type ActiveRequest = {
   key: string;
-  terminalResult?:
-    | { status: "superseded"; reason: "replaced" | "invalidated" }
-    | { status: "cancelled" };
-  request: SessionBrowserQueryRequest;
+  scope: SessionBrowserQueryScope;
+  workspaceOwner: WorkspaceRevisionOwner;
+  terminalResult?: TerminalResult;
+  result: Promise<SessionBrowserQueryResult>;
 };
+
+type WorkspaceRevisionOwner = { revision?: string };
+
+type RevisionRecovery = {
+  owner?: WorkspaceRevisionOwner;
+  page?: SessionBrowserPageRpc;
+  rootPageClaimed?: boolean;
+  result: Promise<SessionBrowserPageRpc | undefined>;
+};
+
+const rootPageSize = 10;
 
 const queryScope = (query: SessionBrowserPageQuery): SessionBrowserQueryScope =>
   query.kind === "roots"
@@ -106,115 +111,46 @@ const queryKey = (query: SessionBrowserPageQuery): string =>
     query.workspaceId,
     query.kind === "children" ? query.parentSessionId : null,
     query.cursor ?? null,
-    query.expectedRevision ?? null,
     Math.min(100, Math.max(1, query.limit ?? 20))
   ]);
 
 export class SessionBrowserQueryCoordinator {
-  private readonly states = new Map<string, QueryState>();
-  private readonly acceptedRevisionByWorkspace = new Map<string, string>();
-  private readonly generationByScope = new Map<string, number>();
   private readonly activeByScope = new Map<string, ActiveRequest>();
-  private readonly scopeByKey = new Map<string, SessionBrowserQueryScope>();
+  private readonly revisionOwnerByWorkspace = new Map<string, WorkspaceRevisionOwner>();
   private readonly pathRequests = new Map<string, Promise<SessionBrowserPathRpc>>();
+  private readonly revisionRecoveryByWorkspace = new Map<string, RevisionRecovery>();
 
   public constructor(private readonly transport: SessionBrowserQueryTransport) {}
 
-  public load(query: SessionBrowserPageQuery): SessionBrowserQueryRequest {
-    const key = queryKey(query);
+  public load(query: SessionBrowserPageQuery): Promise<SessionBrowserQueryResult> {
     const scope = queryScope(query);
     const collectionKey = scopeKey(scope);
-    this.scopeByKey.set(collectionKey, scope);
+    const key = queryKey(query);
+    const workspaceOwner = this.workspaceOwner(query.workspaceId);
     const existing = this.activeByScope.get(collectionKey);
     if (existing?.key === key) {
-      return existing.request;
+      return existing.result;
     }
     if (existing) {
-      existing.terminalResult = {
-        status: "superseded",
-        reason: "replaced"
-      };
-      this.activeByScope.delete(collectionKey);
+      this.terminate(existing, { status: "superseded", reason: "replaced" });
     }
 
-    const state = this.states.get(key) ?? { dirty: true };
-    this.states.set(key, state);
-    const generation = this.nextGeneration(collectionKey);
-    if (!state.dirty && state.data) {
-      let active!: ActiveRequest;
-      const result = Promise.resolve()
-        .then((): SessionBrowserQueryResult => {
-          if (active.terminalResult) {
-            return { ...active.terminalResult, scope, generation };
-          }
-          if (this.generationByScope.get(collectionKey) !== generation) {
-            return {
-              status: "superseded",
-              reason: "invalidated",
-              scope,
-              generation
-            };
-          }
-          return {
-            status: "committed",
-            scope,
-            generation,
-            page: state.data!
-          };
-        })
-        .finally(() => {
-          if (this.activeByScope.get(collectionKey) === active) {
-            this.activeByScope.delete(collectionKey);
-          }
-        });
-      const request: SessionBrowserQueryRequest = { scope, generation, result };
-      active = { scope, generation, key, request };
-      this.activeByScope.set(collectionKey, active);
-      return request;
-    }
-
-    state.dirty = false;
-    let active!: ActiveRequest;
-    const result = this.requestPage(query)
-      .then((page): SessionBrowserQueryResult => {
-        if (active.terminalResult) {
-          return { ...active.terminalResult, scope, generation };
-        }
-        if (this.generationByScope.get(collectionKey) !== generation) {
-          return {
-            status: "superseded",
-            reason: "invalidated",
-            scope,
-            generation
-          };
-        }
-        if (!this.acceptPage(query, state, page)) {
-          state.dirty = true;
-          return {
-            status: "superseded",
-            reason: "revision_changed",
-            scope,
-            generation
-          };
-        }
-        return { status: "committed", scope, generation, page };
-      })
-      .catch((error: unknown): SessionBrowserQueryResult => {
-        if (active.terminalResult) {
-          return { ...active.terminalResult, scope, generation };
-        }
-        state.dirty = true;
-        throw error;
-      })
+    let active: ActiveRequest;
+    const result = Promise.resolve()
+      .then(() => this.execute(query, active))
       .finally(() => {
         if (this.activeByScope.get(collectionKey) === active) {
           this.activeByScope.delete(collectionKey);
         }
+        this.discardRecoveryIfIdle(query.workspaceId);
       });
-    const request: SessionBrowserQueryRequest = { scope, generation, result };
-    active = { scope, generation, key, request };
+    active = { key, scope, workspaceOwner, result };
     this.activeByScope.set(collectionKey, active);
-    return request;
+    return result;
+  }
+
+  public isLoading(scope: SessionBrowserQueryScope): boolean {
+    return this.activeByScope.has(scopeKey(scope));
   }
 
   public getPath(sessionId: string): Promise<SessionBrowserPathRpc> {
@@ -231,80 +167,184 @@ export class SessionBrowserQueryCoordinator {
     return request;
   }
 
-  public invalidateCollection(input: {
-    workspaceId: string;
-    parentSessionId?: string;
-  }): SessionBrowserQueryOwner[] {
-    const scope: SessionBrowserQueryScope = input.parentSessionId
-      ? {
-          kind: "children",
-          workspaceId: input.workspaceId,
-          parentSessionId: input.parentSessionId
-        }
-      : { kind: "roots", workspaceId: input.workspaceId };
-    this.markScopeDirty(scope);
-    const owner = this.terminateScope(scope, {
-      status: "superseded",
-      reason: "invalidated"
-    });
-    return owner ? [owner] : [];
+  public invalidateCollection(input: SessionBrowserCollectionInput): SessionBrowserQueryScope[] {
+    return this.terminateCollection(input, invalidated);
   }
 
-  public cancelCollection(input: {
-    workspaceId: string;
-    parentSessionId?: string;
-  }): SessionBrowserQueryOwner[] {
-    const scope: SessionBrowserQueryScope = input.parentSessionId
-      ? {
-          kind: "children",
-          workspaceId: input.workspaceId,
-          parentSessionId: input.parentSessionId
-        }
-      : { kind: "roots", workspaceId: input.workspaceId };
-    this.markScopeDirty(scope);
-    const owner = this.terminateScope(scope, { status: "cancelled" });
-    return owner ? [owner] : [];
+  public cancelCollection(
+    input: SessionBrowserCollectionInput
+  ): SessionBrowserQueryScope[] {
+    return this.terminateCollection(input, cancelled);
   }
 
-  public invalidateWorkspace(workspaceId: string): SessionBrowserQueryOwner[] {
-    this.acceptedRevisionByWorkspace.delete(workspaceId);
-    const scopes = this.workspaceScopes(workspaceId);
-    const owners: SessionBrowserQueryOwner[] = [];
-    for (const scope of scopes) {
-      this.markScopeDirty(scope);
-      const owner = this.terminateScope(scope, {
-        status: "superseded",
-        reason: "invalidated"
+  public invalidateWorkspace(workspaceId: string): SessionBrowserQueryScope[] {
+    this.revisionOwnerByWorkspace.delete(workspaceId);
+    this.revisionRecoveryByWorkspace.delete(workspaceId);
+    return this.terminateWorkspace(workspaceId, invalidated);
+  }
+
+  public cancelWorkspace(workspaceId: string): SessionBrowserQueryScope[] {
+    this.revisionRecoveryByWorkspace.delete(workspaceId);
+    return this.terminateWorkspace(workspaceId, cancelled);
+  }
+
+  public clearWorkspace(workspaceId: string): SessionBrowserQueryScope[] { return this.invalidateWorkspace(workspaceId); }
+
+  private async execute(
+    query: SessionBrowserPageQuery,
+    active: ActiveRequest
+  ): Promise<SessionBrowserQueryResult> {
+    const requestedRevision = this.expectedRevision(query, active.workspaceOwner);
+    try {
+      const page = await this.requestPage(query, requestedRevision);
+      const terminal = this.terminalResult(active);
+      if (terminal) return terminal;
+      const rootResult = this.rootResultAfterOwnerChange(active, revisionChanged);
+      if (rootResult) return rootResult;
+      if (!this.isCurrentWorkspaceOwner(active)) {
+        return this.recoverRevision(query, active, requestedRevision);
+      }
+      if (this.acceptPage(query, active, page)) {
+        return committed(page);
+      }
+    } catch (error) {
+      const terminal = this.terminalResult(active);
+      if (terminal) return terminal;
+      const stale = isCursorStale(error);
+      const rootResult = this.rootResultAfterOwnerChange(
+        active,
+        stale ? revisionChanged : undefined
+      );
+      if (rootResult) return rootResult;
+      if (!stale) {
+        throw error;
+      }
+    }
+    return this.recoverRevision(query, active, requestedRevision);
+  }
+
+  private async recoverRevision(
+    query: SessionBrowserPageQuery,
+    active: ActiveRequest,
+    requestedRevision: string | undefined
+  ): Promise<SessionBrowserQueryResult> {
+    try {
+      const currentOwner = this.revisionOwnerByWorkspace.get(query.workspaceId);
+      let recovery = this.revisionRecoveryByWorkspace.get(query.workspaceId);
+      let rootPage: SessionBrowserPageRpc | undefined;
+      if (
+        query.kind === "children" &&
+        requestedRevision &&
+        currentOwner?.revision &&
+        requestedRevision !== currentOwner.revision
+      ) {
+        active.workspaceOwner = currentOwner;
+        rootPage = recovery?.owner === currentOwner ? recovery.page : undefined;
+      } else {
+        if (recovery?.owner === active.workspaceOwner) {
+          this.revisionRecoveryByWorkspace.delete(query.workspaceId);
+          recovery = undefined;
+        }
+        if (currentOwner === active.workspaceOwner) {
+          this.revisionOwnerByWorkspace.delete(query.workspaceId);
+        }
+        recovery ??= this.recoverWorkspaceRevision(query.workspaceId);
+        rootPage = await recovery.result;
+      }
+      const terminal = this.terminalResult(active);
+      if (terminal) {
+        return terminal;
+      }
+      const recoveredOwner =
+        recovery?.owner ?? this.revisionOwnerByWorkspace.get(query.workspaceId);
+      if (
+        !recoveredOwner?.revision ||
+        this.revisionOwnerByWorkspace.get(query.workspaceId) !== recoveredOwner
+      ) {
+        return revisionChanged;
+      }
+      active.workspaceOwner = recoveredOwner;
+      if (query.kind === "roots") {
+        const claimed = this.claimRecovery(query.workspaceId);
+        if (!claimed?.page) {
+          return revisionChanged;
+        }
+        return committed(claimed.page, claimed.page);
+      }
+      const page = await this.requestPage(
+        { ...query, cursor: undefined },
+        recoveredOwner.revision
+      );
+      const retryTerminal = this.terminalResult(active);
+      if (retryTerminal) {
+        return retryTerminal;
+      }
+      if (
+        !this.isCurrentWorkspaceOwner(active) ||
+        page.revision !== recoveredOwner.revision
+      ) {
+        return revisionChanged;
+      }
+      const claimed = rootPage ? this.claimRecovery(query.workspaceId) : undefined;
+      return committed(page, claimed?.page);
+    } catch (error) {
+      const terminal = this.terminalResult(active);
+      if (terminal) {
+        return terminal;
+      }
+      if (isCursorStale(error)) {
+        return revisionChanged;
+      }
+      throw error;
+    }
+  }
+
+  private recoverWorkspaceRevision(workspaceId: string): RevisionRecovery {
+    const existing = this.revisionRecoveryByWorkspace.get(workspaceId);
+    if (existing) {
+      return existing;
+    }
+    let recovery: RevisionRecovery;
+    const result = this.transport
+      .listRoots({
+        workspaceId,
+        cursor: undefined,
+        expectedRevision: undefined,
+        limit: rootPageSize
+      })
+      .then((page) => {
+        if (this.revisionRecoveryByWorkspace.get(workspaceId) !== recovery) {
+          return undefined;
+        }
+        const owner = { revision: page.revision };
+        recovery.owner = owner;
+        recovery.page = page;
+        this.revisionOwnerByWorkspace.set(workspaceId, owner);
+        return page;
+      })
+      .catch((error: unknown) => {
+        if (this.revisionRecoveryByWorkspace.get(workspaceId) === recovery) {
+          this.revisionRecoveryByWorkspace.delete(workspaceId);
+        }
+        throw error;
       });
-      if (owner) {
-        owners.push(owner);
-      }
-    }
-    return owners;
+    recovery = { result };
+    this.revisionRecoveryByWorkspace.set(workspaceId, recovery);
+    return recovery;
   }
 
-  public getCached(query: SessionBrowserPageQuery): SessionBrowserPageRpc | undefined {
-    return this.states.get(queryKey(query))?.data;
+  private expectedRevision(
+    query: SessionBrowserPageQuery,
+    owner = this.revisionOwnerByWorkspace.get(query.workspaceId)
+  ): string | undefined {
+    return query.cursor || query.kind === "children" ? owner?.revision : undefined;
   }
 
-  public clearWorkspace(workspaceId: string): SessionBrowserQueryOwner[] {
-    const owners = this.invalidateWorkspace(workspaceId);
-    for (const key of this.states.keys()) {
-      const parsed = JSON.parse(key) as [string, string];
-      if (parsed[1] === workspaceId) {
-        this.states.delete(key);
-      }
-    }
-    return owners;
-  }
-
-  private requestPage(query: SessionBrowserPageQuery): Promise<SessionBrowserPageRpc> {
+  private requestPage(
+    query: SessionBrowserPageQuery,
+    expectedRevision = this.expectedRevision(query)
+  ): Promise<SessionBrowserPageRpc> {
     const limit = Math.min(100, Math.max(1, query.limit ?? 20));
-    const expectedRevision =
-      query.expectedRevision ??
-      (query.cursor || query.kind === "children"
-        ? this.acceptedRevisionByWorkspace.get(query.workspaceId)
-        : undefined);
     return query.kind === "roots"
       ? this.transport.listRoots({
           workspaceId: query.workspaceId,
@@ -323,82 +363,136 @@ export class SessionBrowserQueryCoordinator {
 
   private acceptPage(
     query: SessionBrowserPageQuery,
-    state: QueryState,
+    active: ActiveRequest,
     page: SessionBrowserPageRpc
   ): boolean {
-    const acceptedRevision = this.acceptedRevisionByWorkspace.get(query.workspaceId);
-    if (acceptedRevision && page.revision !== acceptedRevision) {
-      if (query.cursor || query.kind === "children") {
-        return false;
+    const acceptedRevision = active.workspaceOwner.revision;
+    if (
+      acceptedRevision &&
+      page.revision !== acceptedRevision &&
+      (query.cursor || query.kind === "children")
+    ) {
+      return false;
+    }
+    if (
+      !acceptedRevision ||
+      (!query.cursor &&
+        query.kind === "roots" &&
+        page.revision !== acceptedRevision)
+    ) {
+      const owner = { revision: page.revision };
+      active.workspaceOwner = owner;
+      this.revisionOwnerByWorkspace.set(query.workspaceId, owner);
+      if (
+        query.kind === "roots" &&
+        !query.cursor &&
+        this.revisionRecoveryByWorkspace.get(query.workspaceId)?.page?.revision !==
+          page.revision
+      ) {
+        this.revisionRecoveryByWorkspace.delete(query.workspaceId);
       }
     }
-    if (!query.cursor && acceptedRevision !== page.revision) {
-      this.acceptedRevisionByWorkspace.set(query.workspaceId, page.revision);
-      for (const [key, otherState] of this.states) {
-        if (key === queryKey(query)) {
-          continue;
-        }
-        const parsed = JSON.parse(key) as [string, string];
-        if (
-          parsed[1] === query.workspaceId &&
-          otherState.data?.revision !== page.revision
-        ) {
-          otherState.dirty = true;
-          otherState.data = undefined;
-        }
-      }
-    }
-    state.data = page;
     return true;
   }
 
-  private markScopeDirty(scope: SessionBrowserQueryScope): void {
-    for (const [key, state] of this.states) {
-      const parsed = JSON.parse(key) as [string, string, string | null];
-      if (
-        parsed[1] === scope.workspaceId &&
-        parsed[2] === (scope.kind === "children" ? scope.parentSessionId : null)
-      ) {
-        state.dirty = true;
-      }
+  private terminalResult(active: ActiveRequest): TerminalResult | undefined {
+    return active.terminalResult ??
+      (this.activeByScope.get(scopeKey(active.scope)) === active
+        ? undefined
+        : invalidated);
+  }
+
+  private workspaceOwner(workspaceId: string): WorkspaceRevisionOwner {
+    const existing = this.revisionOwnerByWorkspace.get(workspaceId);
+    if (existing) {
+      return existing;
     }
+    const owner: WorkspaceRevisionOwner = {};
+    this.revisionOwnerByWorkspace.set(workspaceId, owner);
+    return owner;
+  }
+
+  private isCurrentWorkspaceOwner(active: ActiveRequest): boolean {
+    return (
+      this.revisionOwnerByWorkspace.get(active.scope.workspaceId) ===
+      active.workspaceOwner
+    );
+  }
+
+  private rootResultAfterOwnerChange(
+    active: ActiveRequest,
+    fallback?: TerminalResult
+  ): SessionBrowserQueryResult | undefined {
+    if (active.scope.kind !== "roots" || this.isCurrentWorkspaceOwner(active)) return undefined;
+    const recovery = this.claimRecovery(active.scope.workspaceId);
+    if (!recovery?.owner || !recovery.page) return fallback;
+    active.workspaceOwner = recovery.owner;
+    return committed(recovery.page, recovery.page);
+  }
+
+  private claimRecovery(workspaceId: string): RevisionRecovery | undefined {
+    const recovery = this.revisionRecoveryByWorkspace.get(workspaceId);
+    if (
+      !recovery?.owner ||
+      !recovery.page ||
+      recovery.rootPageClaimed ||
+      this.revisionOwnerByWorkspace.get(workspaceId) !== recovery.owner
+    ) {
+      return undefined;
+    }
+    recovery.rootPageClaimed = true;
+    return recovery;
   }
 
   private terminateScope(
     scope: SessionBrowserQueryScope,
-    result:
-      | { status: "superseded"; reason: "invalidated" }
-      | { status: "cancelled" }
-  ): SessionBrowserQueryOwner | undefined {
-    const key = scopeKey(scope);
-    const active = this.activeByScope.get(key);
-    const generation = active?.generation ?? this.generationByScope.get(key);
+    result: TerminalResult
+  ): SessionBrowserQueryScope[] {
+    const active = this.activeByScope.get(scopeKey(scope));
     if (active) {
-      active.terminalResult = result;
-      this.activeByScope.delete(key);
+      this.terminate(active, result);
+      return [scope];
     }
-    this.nextGeneration(key);
-    return generation === undefined ? undefined : { scope, generation };
+    return [];
   }
 
-  private workspaceScopes(workspaceId: string): SessionBrowserQueryScope[] {
-    const scopes = new Map<string, SessionBrowserQueryScope>();
-    for (const [key, scope] of this.scopeByKey) {
-      if (scope.workspaceId === workspaceId) {
-        scopes.set(key, scope);
-      }
-    }
+  private terminateCollection(
+    input: SessionBrowserCollectionInput,
+    result: TerminalResult
+  ): SessionBrowserQueryScope[] {
+    const scope: SessionBrowserQueryScope = input.parentSessionId
+      ? { kind: "children", ...input, parentSessionId: input.parentSessionId }
+      : { kind: "roots", workspaceId: input.workspaceId };
+    const affected = this.terminateScope(scope, result);
+    this.discardRecoveryIfIdle(input.workspaceId);
+    return affected;
+  }
+
+  private terminateWorkspace(workspaceId: string, result: TerminalResult): SessionBrowserQueryScope[] {
+    const affected: SessionBrowserQueryScope[] = [];
     for (const active of this.activeByScope.values()) {
       if (active.scope.workspaceId === workspaceId) {
-        scopes.set(scopeKey(active.scope), active.scope);
+        affected.push(active.scope);
+        this.terminate(active, result);
       }
     }
-    return [...scopes.values()];
+    return affected;
   }
 
-  private nextGeneration(key: string): number {
-    const generation = (this.generationByScope.get(key) ?? 0) + 1;
-    this.generationByScope.set(key, generation);
-    return generation;
+  private discardRecoveryIfIdle(workspaceId: string): void {
+    for (const active of this.activeByScope.values()) {
+      if (active.scope.workspaceId === workspaceId) {
+        return;
+      }
+    }
+    this.revisionRecoveryByWorkspace.delete(workspaceId);
+  }
+
+  private terminate(active: ActiveRequest, result: TerminalResult): void {
+    active.terminalResult = result;
+    const key = scopeKey(active.scope);
+    if (this.activeByScope.get(key) === active) {
+      this.activeByScope.delete(key);
+    }
   }
 }

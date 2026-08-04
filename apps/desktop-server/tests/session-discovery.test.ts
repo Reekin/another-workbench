@@ -198,70 +198,15 @@ describe("Session discovery and reconciliation", () => {
     });
   });
 
-  it("discovers last completed turn time by reading full codex threads", async () => {
-    const baseDir = await createTempDir();
-    const rolloutPath = join(baseDir, "rollout-discovery-completed-at.jsonl");
-    await writeFile(
-      rolloutPath,
-      [
-        {
-          timestamp: "2026-05-08T09:59:59.000Z",
-          type: "event_msg",
-          payload: {
-            type: "task_started",
-            turn_id: "turn-recent"
-          }
-        },
-        {
-          timestamp: "2026-05-08T10:06:00.000Z",
-          type: "event_msg",
-          payload: {
-            type: "task_complete",
-            turn_id: "turn-recent"
-          }
-        }
-      ]
-        .map((entry) => JSON.stringify(entry))
-        .join("\n"),
-      "utf8"
-    );
+  it("discovers listed thread metadata without hydrating transcript content", async () => {
     const listedThread = createThread({
       id: "thread-recent",
-      cwd: "I:/workspace-alpha"
+      cwd: "I:/workspace-alpha",
+      name: "Metadata only"
     });
-    const readThread = vi.fn().mockResolvedValue({
-      ...listedThread,
-      path: rolloutPath,
-      turns: [
-        {
-          id: "turn-recent",
-          status: "completed",
-          error: null,
-          items: [
-            {
-              type: "userMessage",
-              id: "user-1",
-              timestamp: "2026-05-08T10:00:00Z",
-              content: [
-                {
-                  type: "text",
-                  text: "Build it.",
-                  text_elements: []
-                }
-              ]
-            },
-            {
-              type: "agentMessage",
-              id: "agent-1",
-              timestamp: "2026-05-08T10:05:00Z",
-              text: "Done.",
-              phase: "final_answer",
-              memoryCitation: null
-            }
-          ]
-        }
-      ]
-    } as Thread);
+    const readThread = vi.fn();
+    const readRollout = vi.mocked(readCodexRolloutTimestampGroups);
+    readRollout.mockClear();
     const provider = new CodexSessionDiscoveryProvider({
       codexRuntimePort: {
         listThreads: vi.fn().mockResolvedValue({
@@ -277,28 +222,28 @@ describe("Session discovery and reconciliation", () => {
       absolutePath: "I:/workspace-alpha",
       label: "Alpha"
     }]);
-    const discovered = discoveredByWorkspaceId.get("workspace-1")!;
 
-    expect(readThread).toHaveBeenCalledWith("thread-recent", true);
-    expect(discovered.sessions[0]).toMatchObject({
+    expect(readThread).not.toHaveBeenCalled();
+    expect(readRollout).not.toHaveBeenCalled();
+    expect(discoveredByWorkspaceId.get("workspace-1")?.sessions[0]).toMatchObject({
       sessionId: "codex-thread:thread-recent",
-      lastCompletedTurnAt: "2026-05-08T10:06:00.000Z"
+      providerSessionId: "thread-recent",
+      title: "Metadata only"
     });
   });
 
-  it("shares one paged thread scan and deduplicates targeted deep reads", async () => {
-    const sharedThread = { ...createThread({ id: "thread-shared", cwd: "I:/workspace/root/nested" }), path: null };
-    const rootThread = { ...createThread({ id: "thread-root", cwd: "I:/workspace/root" }), path: null };
-    const otherThread = { ...createThread({ id: "thread-other", cwd: "I:/workspace/other" }), path: null };
+  it("shares one paged metadata scan across overlapping workspaces", async () => {
+    const sharedThread = createThread({
+      id: "thread-shared",
+      cwd: "I:/workspace/root/nested"
+    });
+    const rootThread = createThread({ id: "thread-root", cwd: "I:/workspace/root" });
+    const otherThread = createThread({ id: "thread-other", cwd: "I:/workspace/other" });
     const listThreads = vi
       .fn()
       .mockResolvedValueOnce({ data: [sharedThread, rootThread], nextCursor: "page-2" })
       .mockResolvedValueOnce({ data: [sharedThread, otherThread], nextCursor: null });
-    const readThread = vi.fn((threadId: string) =>
-      Promise.resolve(
-        threadId === sharedThread.id ? sharedThread : rootThread
-      )
-    );
+    const readThread = vi.fn();
     const provider = new CodexSessionDiscoveryProvider({
       codexRuntimePort: { listThreads, readThread } as never
     });
@@ -309,12 +254,15 @@ describe("Session discovery and reconciliation", () => {
     ]);
 
     expect(listThreads).toHaveBeenCalledTimes(2);
-    expect(listThreads.mock.calls[0]?.[0]).toMatchObject({ cursor: undefined });
-    expect(listThreads.mock.calls[1]?.[0]).toMatchObject({ cursor: "page-2" });
-    expect(readThread).toHaveBeenCalledTimes(2);
-    expect(readThread).toHaveBeenCalledWith("thread-shared", true);
-    expect(readThread).toHaveBeenCalledWith("thread-root", true);
-    expect(readThread).not.toHaveBeenCalledWith("thread-other", true);
+    expect(listThreads.mock.calls[0]?.[0]).toMatchObject({
+      cursor: undefined,
+      useStateDbOnly: true
+    });
+    expect(listThreads.mock.calls[1]?.[0]).toMatchObject({
+      cursor: "page-2",
+      useStateDbOnly: true
+    });
+    expect(readThread).not.toHaveBeenCalled();
     expect(discovered.get("root")?.sessions.map((session) => session.providerSessionId)).toEqual([
       "thread-shared",
       "thread-root"
@@ -324,20 +272,11 @@ describe("Session discovery and reconciliation", () => {
     ]);
   });
 
-  it("limits targeted thread reads to eight concurrent requests", async () => {
-    const threads = Array.from({ length: 20 }, (_, index) => ({
-      ...createThread({ id: `thread-${index}`, cwd: "I:/workspace-alpha" }),
-      path: null
-    }));
-    let activeReads = 0;
-    let maximumActiveReads = 0;
-    const readThread = vi.fn(async (threadId: string) => {
-      activeReads += 1;
-      maximumActiveReads = Math.max(maximumActiveReads, activeReads);
-      await new Promise((resolve) => setTimeout(resolve, 2));
-      activeReads -= 1;
-      return threads.find((thread) => thread.id === threadId)!;
-    });
+  it("keeps large discovery scans metadata-only", async () => {
+    const threads = Array.from({ length: 10_000 }, (_, index) =>
+      createThread({ id: "thread-" + index, cwd: "I:/workspace-alpha" })
+    );
+    const readThread = vi.fn();
     const provider = new CodexSessionDiscoveryProvider({
       codexRuntimePort: {
         listThreads: vi.fn().mockResolvedValue({ data: threads, nextCursor: null }),
@@ -345,37 +284,12 @@ describe("Session discovery and reconciliation", () => {
       } as never
     });
 
-    await provider.discoverWorkspaces([
+    const discovered = await provider.discoverWorkspaces([
       { workspaceId: "workspace-1", absolutePath: "I:/workspace-alpha", label: "Alpha" }
     ]);
 
-    expect(readThread).toHaveBeenCalledTimes(20);
-    expect(maximumActiveReads).toBe(8);
-  });
-
-  it("reads a shared rollout path once per discovery request", async () => {
-    const baseDir = await createTempDir();
-    const rolloutPath = join(baseDir, "shared-rollout.jsonl");
-    await writeFile(rolloutPath, "", "utf8");
-    const readRollout = vi.mocked(readCodexRolloutTimestampGroups);
-    readRollout.mockClear();
-    const threads = ["one", "two"].map((id) => ({
-      ...createThread({ id }),
-      path: rolloutPath,
-      turns: [{ id: `turn-${id}`, status: "completed", error: null, items: [] }]
-    } as Thread));
-    const provider = new CodexSessionDiscoveryProvider({
-      codexRuntimePort: {
-        listThreads: vi.fn().mockResolvedValue({ data: threads, nextCursor: null })
-      } as never
-    });
-
-    await provider.discoverWorkspaces([
-      { workspaceId: "workspace-1", absolutePath: "I:/workspace-alpha", label: "Alpha" }
-    ]);
-
-    expect(readRollout).toHaveBeenCalledTimes(1);
-    expect(readRollout).toHaveBeenCalledWith(rolloutPath);
+    expect(readThread).not.toHaveBeenCalled();
+    expect(discovered.get("workspace-1")?.sessions).toHaveLength(10_000);
   });
 
   it("hydrates cold session windows from paged codex turns without resuming", async () => {

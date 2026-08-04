@@ -1224,6 +1224,7 @@ export class CodexAppServerRuntimePort
       sourceKinds: params.sourceKinds ?? null,
       archived: params.archived ?? null,
       cwd: params.cwd ?? null,
+      useStateDbOnly: params.useStateDbOnly,
       searchTerm: params.searchTerm ?? null
     })) as ThreadListResponse;
   }

@@ -73,28 +73,6 @@ export {
 } from "./codex-session-identity.js";
 
 const codexAgentId = "codex";
-const discoveryReadConcurrency = 8;
-
-const mapWithConcurrency = async <T, R>(
-  values: readonly T[],
-  concurrency: number,
-  mapValue: (value: T) => Promise<R>
-): Promise<R[]> => {
-  const results = new Array<R>(values.length);
-  let nextIndex = 0;
-  const workers = Array.from(
-    { length: Math.min(concurrency, values.length) },
-    async () => {
-      while (nextIndex < values.length) {
-        const index = nextIndex;
-        nextIndex += 1;
-        results[index] = await mapValue(values[index]!);
-      }
-    }
-  );
-  await Promise.all(workers);
-  return results;
-};
 
 const isoFromUnixSeconds = (value: number): string =>
   new Date(value * 1_000).toISOString();
@@ -877,55 +855,22 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
     const threadsByWorkspaceId = new Map(
       workspaces.map((workspace) => [workspace.workspaceId, new Map<string, Thread>()] as const)
     );
-    const candidateThreadsById = new Map<string, Thread>();
-
     for (const thread of listedThreads) {
       for (const workspace of workspaces) {
         if (!isPathInsideWorkspace(thread.cwd, workspace.absolutePath)) {
           continue;
         }
         threadsByWorkspaceId.get(workspace.workspaceId)?.set(thread.id, thread);
-        candidateThreadsById.set(thread.id, thread);
       }
     }
-
-    const hydratedThreads = await mapWithConcurrency(
-      [...candidateThreadsById.values()],
-      discoveryReadConcurrency,
-      (thread) => this.readThreadWithTurnsForDiscovery(thread)
-    );
-    const hydratedThreadsById = new Map(hydratedThreads.map((thread) => [thread.id, thread]));
-    const rolloutPaths = [
-      ...new Set(
-        hydratedThreads
-          .map((thread) => thread.path)
-          .filter((path): path is string => Boolean(path))
-      )
-    ];
-    const rolloutTimestampGroups = await mapWithConcurrency(
-      rolloutPaths,
-      discoveryReadConcurrency,
-      async (path) => [path, await readCodexRolloutTimestampGroups(path)] as const
-    );
-    const rolloutTimestampGroupsByPath = new Map(rolloutTimestampGroups);
-    const discoveredSessionsByThreadId = new Map(
-      hydratedThreads.map((thread) => [
-        thread.id,
-        this.toDiscoveredSessionRecord(
-          thread,
-          thread.path ? rolloutTimestampGroupsByPath.get(thread.path) : undefined
-        )
-      ])
-    );
 
     return new Map(
       workspaces.map((workspace) => {
         const threads = [...(threadsByWorkspaceId.get(workspace.workspaceId)?.values() ?? [])];
-        const sessions = threads.map((thread) => discoveredSessionsByThreadId.get(thread.id)!);
+        const sessions = threads.map((thread) => this.toDiscoveredSessionRecord(thread));
         const sessionIds = new Set(sessions.map((session) => session.sessionId));
         const relations = threads
-          .flatMap((listedThread) => {
-            const thread = hydratedThreadsById.get(listedThread.id) ?? listedThread;
+          .flatMap((thread) => {
             const relations: DiscoveredSessionRelation[] = [];
             const subagentParentThreadId = toSubagentParentThreadId(thread.source);
             if (subagentParentThreadId) {
@@ -1135,6 +1080,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
       const response = await this.codexRuntimePort.listThreads({
         cursor,
         archived: false,
+        useStateDbOnly: true,
         sourceKinds: [
           "cli",
           "vscode",
@@ -1160,21 +1106,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
       .catch(() => undefined);
   }
 
-  private async readThreadWithTurnsForDiscovery(thread: Thread): Promise<Thread> {
-    if (thread.turns.length > 0) {
-      return thread;
-    }
-    try {
-      return await this.codexRuntimePort.readThread(thread.id, true);
-    } catch {
-      return thread;
-    }
-  }
-
-  private toDiscoveredSessionRecord(
-    thread: Thread,
-    rolloutTimestampGroups: readonly CodexRolloutTimestampGroup[] = []
-  ): DiscoveredSessionRecord {
+  private toDiscoveredSessionRecord(thread: Thread): DiscoveredSessionRecord {
     return {
       sessionId: discoveredCodexSessionId(thread.id),
       engineId: codexAgentId,
@@ -1184,10 +1116,6 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
       summaryText: summarizeThread(thread),
       createdAt: isoFromUnixSeconds(thread.createdAt),
       updatedAt: isoFromUnixSeconds(thread.updatedAt),
-      lastCompletedTurnAt: resolveThreadLastCompletedTurnAt(
-        thread,
-        rolloutTimestampGroups
-      ),
       metadata: {
         rolloutPath: thread.path ?? undefined,
         cwd: thread.cwd

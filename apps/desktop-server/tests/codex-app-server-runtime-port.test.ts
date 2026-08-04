@@ -125,6 +125,27 @@ describe("Codex app-server runtime port", () => {
     }
   });
 
+  it("forwards state-db-only thread listing to the app server", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    vi.spyOn(port, "start").mockResolvedValue();
+    const rpc = vi
+      .spyOn(port as unknown as { rpc: (...args: unknown[]) => Promise<unknown> }, "rpc")
+      .mockResolvedValue({ data: [], nextCursor: null });
+
+    await port.listThreads({ cursor: "page-2", useStateDbOnly: true });
+
+    expect(rpc).toHaveBeenCalledWith("thread/list",
+      expect.objectContaining({
+        cursor: "page-2",
+        useStateDbOnly: true
+      })
+    );
+  });
+
   it("sends expected JSON-RPC payloads for resume and refresh helpers", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "awb-codex-rpc-"));
     const requestLogPath = join(tempDir, "requests.jsonl");

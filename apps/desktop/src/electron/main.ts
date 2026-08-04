@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, crashReporter, dialog, ipcMain, shell } from "electron";
 import {
   createWorkbenchRuntimeService,
   parseSchedulerRunHeadlessArgs,
@@ -20,6 +20,7 @@ import {
 } from "./external-navigation.js";
 import {
   createElectronDiagnosticsLogger,
+  createElectronRunJournal,
   isBlankRendererHealth,
   shouldReloadForChildProcessGone,
   shouldReloadForLoadFailure,
@@ -48,6 +49,7 @@ type WindowRecoveryState = {
 };
 
 const diagnostics = createElectronDiagnosticsLogger();
+const runJournal = createElectronRunJournal({ logger: diagnostics });
 const recoveryState: WindowRecoveryState = {
   isQuitting: false,
   reloadInFlight: false,
@@ -239,6 +241,23 @@ const installWindowDiagnostics = (
   logger: ElectronDiagnosticsLogger
 ): void => {
   const { webContents } = window;
+  const windowId = window.id;
+
+  window.on("close", (event) => {
+    runJournal.record("Main window close requested.", {
+      windowId,
+      defaultPrevented: event.defaultPrevented,
+      visible: window.isVisible(),
+      minimized: window.isMinimized(),
+      url: webContents.getURL()
+    });
+  });
+
+  window.on("closed", () => {
+    runJournal.record("Main window closed.", {
+      windowId
+    });
+  });
 
   webContents.on("did-finish-load", () => {
     logger.log({
@@ -410,6 +429,17 @@ const installAppDiagnostics = (logger: ElectronDiagnosticsLogger): void => {
 
   app.on("before-quit", () => {
     recoveryState.isQuitting = true;
+    runJournal.record("Application before-quit event received.", {
+      windowCount: BrowserWindow.getAllWindows().length
+    });
+  });
+
+  app.on("will-quit", () => {
+    runJournal.record("Application will-quit event received.");
+  });
+
+  app.on("quit", (_event, exitCode) => {
+    runJournal.finish("app-quit", { exitCode });
   });
 };
 
@@ -490,7 +520,27 @@ const loadRendererTarget = async (window: BrowserWindow): Promise<void> => {
 };
 
 const boot = async (): Promise<void> => {
+  runJournal.start();
   installAppDiagnostics(diagnostics);
+  try {
+    crashReporter.start({
+      productName: "Another Workbench",
+      companyName: "Another Workbench",
+      submitURL: "",
+      uploadToServer: false,
+      compress: false
+    });
+    runJournal.record("Electron crash reporter started.", {
+      crashDumpsPath: app.getPath("crashDumps")
+    });
+  } catch (error) {
+    diagnostics.logSync({
+      severity: "error",
+      source: "main-process-lifecycle",
+      message: "Failed to start Electron crash reporter.",
+      details: describeError(error)
+    });
+  }
   const schedulerRunArgs = parseSchedulerRunHeadlessArgs(process.argv);
   if (schedulerRunArgs) {
     const exitCode = await runSchedulerHeadlessCli({
@@ -574,8 +624,12 @@ const boot = async (): Promise<void> => {
   });
 };
 
+process.once("exit", (exitCode) => {
+  runJournal.finish("process-exit", { exitCode });
+});
+
 void boot().catch((error) => {
-  diagnostics.log({
+  diagnostics.logSync({
     severity: "error",
     source: "main-process",
     message: "Failed to boot Electron app.",

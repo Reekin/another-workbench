@@ -137,6 +137,38 @@ export class SessionIdentityRegistry {
     handle: ProviderSessionHandle,
     workspaceId?: string
   ): string | undefined {
-    return this.listSessionIdsByProviderHandle(handle, workspaceId)[0];
+    const sessionIds = this.listSessionIdsByProviderHandle(handle, workspaceId);
+    if (sessionIds.length <= 1) {
+      return sessionIds[0];
+    }
+    const runtimeSessionIds = new Set(
+      this.runtimeService
+        .listSessions({ includeArchived: true })
+        .map((session) => session.sessionId)
+    );
+    const indexEntries = new Map(
+      this.sessionIndexStore
+        .listEntries(workspaceId)
+        .map((entry) => [entry.sessionId, entry] as const)
+    );
+    const providerDerivedSessionId = `${handle.providerKind}:${handle.providerSessionId}`;
+    return [...sessionIds].sort((left, right) => {
+      const leftProviderDerived = left === providerDerivedSessionId;
+      const rightProviderDerived = right === providerDerivedSessionId;
+      if (leftProviderDerived !== rightProviderDerived) {
+        return leftProviderDerived ? 1 : -1;
+      }
+      const leftRuntime = runtimeSessionIds.has(left);
+      const rightRuntime = runtimeSessionIds.has(right);
+      if (leftRuntime !== rightRuntime) {
+        return leftRuntime ? -1 : 1;
+      }
+      const leftReconciled = indexEntries.get(left)?.source === "reconciled";
+      const rightReconciled = indexEntries.get(right)?.source === "reconciled";
+      if (leftReconciled !== rightReconciled) {
+        return leftReconciled ? 1 : -1;
+      }
+      return left.localeCompare(right);
+    })[0];
   }
 }

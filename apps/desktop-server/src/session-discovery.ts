@@ -881,7 +881,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
                 createdAt: isoFromUnixSeconds(thread.createdAt)
               });
             }
-            if (thread.forkedFromId) {
+            if (!subagentParentThreadId && thread.forkedFromId) {
               relations.push({
                 parentSessionId: discoveredCodexSessionId(thread.forkedFromId),
                 childSessionId: discoveredCodexSessionId(thread.id),
@@ -1139,7 +1139,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
         })
       );
     }
-    if (thread.forkedFromId) {
+    if (!subagentParentThreadId && thread.forkedFromId) {
       const parentSessionId = discoveredCodexSessionId(thread.forkedFromId);
       const childSessionId = discoveredCodexSessionId(thread.id);
       relations.push(parseSessionRelation({

@@ -93,6 +93,17 @@ describe("SessionIdentityRegistry", () => {
         getEntry: vi.fn().mockReturnValue(undefined),
         listEntries: vi.fn().mockReturnValue([
           {
+            sessionId: "codex-thread:thread-shared",
+            workspaceId: "workspace-1",
+            conversationId: "conversation-1",
+            engineId: "codex",
+            providerKind: "codex-thread",
+            providerSessionId: "thread-shared",
+            createdAt: "2026-04-20T00:00:00.000Z",
+            updatedAt: "2026-04-20T00:00:02.000Z",
+            source: "reconciled"
+          },
+          {
             sessionId: "session-indexed",
             workspaceId: "workspace-1",
             conversationId: "conversation-1",
@@ -112,12 +123,16 @@ describe("SessionIdentityRegistry", () => {
         providerKind: "codex-thread",
         providerSessionId: "thread-shared"
       })
-    ).toEqual(["session-indexed", "session-runtime"]);
+    ).toEqual([
+      "codex-thread:thread-shared",
+      "session-indexed",
+      "session-runtime"
+    ]);
     expect(
       registry.resolveWorkbenchSessionId({
         providerKind: "codex-thread",
         providerSessionId: "thread-shared"
       })
-    ).toBe("session-indexed");
+    ).toBe("session-runtime");
   });
 });

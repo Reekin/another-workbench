@@ -198,6 +198,49 @@ describe("Session discovery and reconciliation", () => {
     });
   });
 
+  it("prefers the subagent relation when codex also reports the same fork parent", async () => {
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        listThreads: vi.fn().mockResolvedValue({
+          data: [
+            createThread({
+              id: "thread-root"
+            }),
+            createThread({
+              id: "thread-child",
+              forkedFromId: "thread-root",
+              source: {
+                subAgent: {
+                  thread_spawn: {
+                    parent_thread_id: "thread-root",
+                    depth: 1,
+                    agent_nickname: "child",
+                    agent_role: "worker"
+                  }
+                }
+              }
+            })
+          ],
+          nextCursor: null
+        })
+      } as never
+    });
+
+    const discovered = await provider.discoverWorkspaces([{
+      workspaceId: "workspace-1",
+      absolutePath: "I:/workspace-alpha",
+      label: "Alpha"
+    }]);
+
+    expect(discovered.get("workspace-1")?.relations).toEqual([
+      expect.objectContaining({
+        parentSessionId: "codex-thread:thread-root",
+        childSessionId: "codex-thread:thread-child",
+        relationType: "subagent"
+      })
+    ]);
+  });
+
   it("discovers listed thread metadata without hydrating transcript content", async () => {
     const listedThread = createThread({
       id: "thread-recent",

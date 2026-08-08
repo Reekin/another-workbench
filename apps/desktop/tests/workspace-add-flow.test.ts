@@ -24,11 +24,11 @@ const buildTransport = (input?: {
   }) as never;
 
 describe("workspace add flow", () => {
-  it("commits the durable workspace result before refreshing derived sessions", async () => {
-    let resolveRefresh: (() => void) | undefined;
-    const syncWorkspace = vi.fn(
+  it("commits the durable workspace result before loading its catalog", async () => {
+    let resolveCatalogLoad: (() => void) | undefined;
+    const loadWorkspaceCatalog = vi.fn(
       () => new Promise<void>((resolve) => {
-        resolveRefresh = resolve;
+        resolveCatalogLoad = resolve;
       })
     );
     const onWorkspaceCommitted = vi.fn();
@@ -37,10 +37,12 @@ describe("workspace add flow", () => {
     const pending = runAddWorkspaceFlow({
       transport: buildTransport(),
       onWorkspaceCommitted,
-      syncWorkspace,
+      loadWorkspaceCatalog,
       onStatusNotice
     });
-    await vi.waitFor(() => expect(syncWorkspace).toHaveBeenCalledWith("workspace-new"));
+    await vi.waitFor(() =>
+      expect(loadWorkspaceCatalog).toHaveBeenCalledWith("workspace-new")
+    );
 
     expect(onWorkspaceCommitted).toHaveBeenCalledWith(workspace);
     expect(onStatusNotice).toHaveBeenCalledWith({
@@ -48,25 +50,25 @@ describe("workspace add flow", () => {
       source: "workspace-add"
     });
 
-    resolveRefresh?.();
+    resolveCatalogLoad?.();
     await pending;
   });
 
-  it("keeps add committed when the follow-up refresh fails", async () => {
+  it("keeps add committed when the catalog load fails", async () => {
     const onWorkspaceCommitted = vi.fn();
     const onStatusNotice = vi.fn();
 
     await runAddWorkspaceFlow({
       transport: buildTransport(),
       onWorkspaceCommitted,
-      syncWorkspace: vi.fn().mockRejectedValue(new Error("refresh failed")),
+      loadWorkspaceCatalog: vi.fn().mockRejectedValue(new Error("load failed")),
       onStatusNotice
     });
 
     expect(onWorkspaceCommitted).toHaveBeenCalledWith(workspace);
     expect(onStatusNotice).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: expect.stringContaining("Workspace added, but session browser refresh failed")
+        message: expect.stringContaining("Workspace added, but session browser load failed")
       })
     );
     expect(onStatusNotice).not.toHaveBeenCalledWith(
@@ -74,9 +76,9 @@ describe("workspace add flow", () => {
     );
   });
 
-  it("does not commit or refresh when registration fails", async () => {
+  it("does not commit or load the catalog when registration fails", async () => {
     const onWorkspaceCommitted = vi.fn();
-    const syncWorkspace = vi.fn();
+    const loadWorkspaceCatalog = vi.fn();
     const onStatusNotice = vi.fn();
 
     await runAddWorkspaceFlow({
@@ -84,12 +86,12 @@ describe("workspace add flow", () => {
         add: () => Promise.reject(new Error("registration failed"))
       }),
       onWorkspaceCommitted,
-      syncWorkspace,
+      loadWorkspaceCatalog,
       onStatusNotice
     });
 
     expect(onWorkspaceCommitted).not.toHaveBeenCalled();
-    expect(syncWorkspace).not.toHaveBeenCalled();
+    expect(loadWorkspaceCatalog).not.toHaveBeenCalled();
     expect(onStatusNotice).toHaveBeenCalledWith(
       expect.objectContaining({ message: expect.stringContaining("Add workspace failed") })
     );

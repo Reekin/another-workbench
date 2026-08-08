@@ -70,6 +70,10 @@ export const createWorkbenchRuntimeService = (
     now: options.now
   });
   const hostTools = new HostToolRegistry();
+  const diagnosticLogService = new DiagnosticLogService({
+    baseDir: options.persistenceBaseDir,
+    now: options.now
+  });
   const codexRuntimePort = createCodexAppServerRuntimePort({
     engineId: codexAgentId,
     commandPath: options.codexCommandPath,
@@ -78,7 +82,10 @@ export const createWorkbenchRuntimeService = (
       service?.resolveConversationIdForSession(sessionId),
     recordTurnChanges: (input) => codexTurnChangesStore.record(input),
     hostTools,
-    now: options.now
+    now: options.now,
+    writeDiagnostic: (input) => {
+      void diagnosticLogService.write(input).catch(() => undefined);
+    }
   });
   const piRuntimePort = createPiAcpRuntimePort({
     engineId: piAgentId,
@@ -296,10 +303,7 @@ export const createWorkbenchRuntimeService = (
       baseDir: options.persistenceBaseDir,
       now: options.now
     }),
-    diagnosticLogService: new DiagnosticLogService({
-      baseDir: options.persistenceBaseDir,
-      now: options.now
-    })
+    diagnosticLogService
   });
   hostTools.register(
     createReadSessionHostTool({

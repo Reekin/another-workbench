@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { performance } from "node:perf_hooks";
 import type {
   AdapterRuntimePort,
   CodexRuntimeEvent,
@@ -16,8 +17,10 @@ import type {
   Attachment,
   CodexHookRunRpc,
   ContextUsage,
+  DiagnosticsWriteInputRpc,
   EventType
 } from "@another-workbench/shared";
+import { RuntimePipelineDiagnostics } from "./runtime/runtime-pipeline-diagnostics.js";
 import type { GetAuthStatusParams } from "./codex-app-server-generated/GetAuthStatusParams.js";
 import type { GetAuthStatusResponse } from "./codex-app-server-generated/GetAuthStatusResponse.js";
 import type { GitDiffToRemoteParams } from "./codex-app-server-generated/GitDiffToRemoteParams.js";
@@ -185,6 +188,7 @@ export type CodexAppServerRuntimePortOptions = {
   recordTurnChanges?: (input: RecordedCodexTurnChanges) => void;
   hostTools?: HostToolRegistry;
   now?: () => string;
+  writeDiagnostic?: (input: DiagnosticsWriteInputRpc) => void;
 };
 
 const resolveDefaultCodexCommandPath = (): string => {
@@ -871,9 +875,8 @@ export class CodexAppServerRuntimePort
   private readonly lifecycle = createRuntimeLifecycleController();
   private readonly lifecycleGate = new LifecycleGate();
   private readonly processSupervisor = new ChildProcessSupervisor();
-  private readonly rpcClient = new JsonRpcLineClient({
-    defaultTimeoutMs: CODEX_RPC_TIMEOUT_MS
-  });
+  private readonly rpcClient: JsonRpcLineClient;
+  private readonly pipelineDiagnostics: RuntimePipelineDiagnostics | undefined;
   private readonly threadIdBySessionId = new Map<string, string>();
   private readonly sessionIdByThreadId = new Map<string, string>();
   private readonly sessionIdsByThreadId = new Map<string, Set<string>>();
@@ -917,6 +920,13 @@ export class CodexAppServerRuntimePort
     this.recordTurnChanges = options.recordTurnChanges;
     this.hostTools = options.hostTools;
     this.now = options.now ?? (() => new Date().toISOString());
+    this.pipelineDiagnostics = options.writeDiagnostic
+      ? new RuntimePipelineDiagnostics({ write: options.writeDiagnostic })
+      : undefined;
+    this.rpcClient = new JsonRpcLineClient({
+      defaultTimeoutMs: CODEX_RPC_TIMEOUT_MS,
+      diagnostics: (event) => this.pipelineDiagnostics?.recordRpc(event)
+    });
     this.processSupervisor.onStderr((event) => {
       const trimmed = event.text.trim();
       if (!trimmed) {
@@ -3401,8 +3411,26 @@ export class CodexAppServerRuntimePort
       cursor: String(this.sequence),
       occurredAt: this.now()
     };
-    for (const listener of this.listeners) {
-      listener(event);
+    const startedAt = this.pipelineDiagnostics ? performance.now() : 0;
+    try {
+      for (const listener of this.listeners) {
+        listener(event);
+      }
+    } finally {
+      if (this.pipelineDiagnostics) {
+        const text =
+          typeof params.delta === "string"
+            ? params.delta
+            : typeof params.chunk === "string"
+              ? params.chunk
+              : "";
+        this.pipelineDiagnostics.recordRuntimeEvent(
+          method,
+          text.length,
+          performance.now() - startedAt,
+          this.listeners.size
+        );
+      }
     }
   }
 

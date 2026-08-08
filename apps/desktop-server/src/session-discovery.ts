@@ -1168,6 +1168,7 @@ export class SessionReconciliationService {
     string,
     SharedHydrationTask<HydratedSessionWindowSnapshot | undefined>
   >();
+  private repairQueue: Promise<void> = Promise.resolve();
 
   public constructor(options: {
     workspaceRegistry: WorkspaceRegistryService;
@@ -1193,14 +1194,30 @@ export class SessionReconciliationService {
     );
   }
 
-  public async reconcileWorkspaces(workspaceIds: readonly string[]): Promise<{
+  public repairWorkspaces(workspaceIds: readonly string[]): Promise<{
+    workspaces: number;
+    sessions: number;
+    relations: number;
+  }> {
+    const normalizedWorkspaceIds = [...new Set(workspaceIds)];
+    const repair = this.repairQueue.then(() =>
+      this.runWorkspaceRepair(normalizedWorkspaceIds)
+    );
+    this.repairQueue = repair.then(
+      () => undefined,
+      () => undefined
+    );
+    return repair;
+  }
+
+  private async runWorkspaceRepair(workspaceIds: readonly string[]): Promise<{
     workspaces: number;
     sessions: number;
     relations: number;
   }> {
     await this.workspaceRegistry.ready();
     await this.sessionIndexStore.ready();
-    const workspaces = [...new Set(workspaceIds)]
+    const workspaces = workspaceIds
       .map((workspaceId) => this.workspaceRegistry.getWorkspace(workspaceId))
       .filter((workspace): workspace is WorkspaceRecord => Boolean(workspace));
 
@@ -1271,28 +1288,12 @@ export class SessionReconciliationService {
           createdAt: relation.createdAt
         }));
 
-        const result = await this.sessionIndexStore.reconcileWorkspace({
+        const result = await this.sessionIndexStore.applyWorkspaceRepair({
           workspaceId: workspace.workspaceId,
+          engineId: provider.engineId,
           entries,
           relations
         });
-        const discoveredProviderSessionIds = new Set(
-          discovered.sessions.map((session) => session.providerSessionId)
-        );
-        const staleReconciledSessionIds = this.sessionIndexStore
-          .listEntries(workspace.workspaceId)
-          .filter(
-            (entry) =>
-              entry.engineId === provider.engineId &&
-              entry.source === "reconciled" &&
-              !entry.archivedAt &&
-              Boolean(entry.providerSessionId) &&
-              !discoveredProviderSessionIds.has(entry.providerSessionId!)
-          )
-          .map((entry) => entry.sessionId);
-        if (staleReconciledSessionIds.length > 0) {
-          await this.sessionIndexStore.archiveSessions(staleReconciledSessionIds);
-        }
         sessionCount += result.sessionCount;
         relationCount += result.relationCount;
       }

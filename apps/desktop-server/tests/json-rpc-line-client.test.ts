@@ -4,7 +4,8 @@ import type { Writable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   JsonRpcLineClient,
-  type JsonRpcLineRequestPayload
+  type JsonRpcLineRequestPayload,
+  type JsonRpcPipelineDiagnostic
 } from "../src/runtime/json-rpc-line-client.js";
 
 class BackpressureOutput extends EventEmitter {
@@ -32,6 +33,7 @@ const createClient = (options: {
   ids?: Array<string | number>;
   timeoutMs?: number;
   output?: Writable;
+  diagnostics?: (event: JsonRpcPipelineDiagnostic) => void;
 } = {}) => {
   const input = new PassThrough();
   const output = options.output ?? new PassThrough();
@@ -40,6 +42,7 @@ const createClient = (options: {
     input,
     output,
     defaultTimeoutMs: options.timeoutMs ?? 1000,
+    diagnostics: options.diagnostics,
     createRequestId: () => {
       const id = ids.shift();
       if (id === undefined) {
@@ -247,5 +250,84 @@ describe("JsonRpcLineClient", () => {
     ]);
     expect(notifications).toEqual(["server/notification"]);
     expect(errors).toHaveLength(1);
+  });
+  it("reports one aggregate diagnostic per input chunk", async () => {
+    const diagnostics: JsonRpcPipelineDiagnostic[] = [];
+    const { client, input } = createClient({
+      diagnostics: (event) => diagnostics.push(event)
+    });
+    client.onNotification(() => undefined);
+    client.onProtocolError(() => undefined);
+
+    input.write(
+      [
+        JSON.stringify({ method: "message/delta", params: { delta: "a" } }),
+        JSON.stringify({ method: "terminal/output", params: { chunk: "b" } }),
+        "{not json}"
+      ].join("\n") + "\n"
+    );
+    input.write(JSON.stringify({ method: "message/delta" }) + "\n");
+
+    const read = diagnostics.find(
+      (
+        event
+      ): event is Extract<
+        JsonRpcPipelineDiagnostic,
+        { type: "read-completed" }
+      > => event.type === "read-completed"
+    );
+    expect(read).toMatchObject({
+      readSeq: 1,
+      parsedLineCount: 3,
+      parseErrorCount: 1,
+      notificationCount: 2,
+      bufferedBytesBefore: 0,
+      bufferedBytesAfter: 0,
+      pendingRequestCount: 0,
+      methods: {
+        "message/delta": 1,
+        "terminal/output": 1,
+        "<parse-error>": 1
+      }
+    });
+    expect(read?.chunkBytes).toBeGreaterThan(0);
+    expect(read?.syncDurationMs).toBeGreaterThanOrEqual(0);
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "turn-released",
+          firstReadSeq: 1,
+          lastReadSeq: 2,
+          readCount: 2,
+          releaseDelayMs: expect.any(Number)
+        })
+      ])
+    );
+  });
+
+  it("keeps a large JSONL chunk to one read diagnostic", () => {
+    const diagnostics: JsonRpcPipelineDiagnostic[] = [];
+    const { client, input } = createClient({
+      diagnostics: (event) => diagnostics.push(event)
+    });
+    client.onNotification(() => undefined);
+    const line = JSON.stringify({
+      method: "item/agentMessage/delta",
+      params: { delta: "x".repeat(64) }
+    });
+
+    input.write(Array.from({ length: 3_000 }, () => line).join("\n") + "\n");
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({
+      type: "read-completed",
+      parsedLineCount: 3_000,
+      notificationCount: 3_000,
+      methods: {
+        "item/agentMessage/delta": 3_000
+      }
+    });
   });
 });

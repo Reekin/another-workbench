@@ -6,7 +6,7 @@ import type {
 import type { SessionBrowserViewNode } from "../src/ui/chat-shell/workspace-browser-tree.js";
 import {
   collectExpandedLoadedSessionIds,
-  loadCachedThenReconcileWorkspaces,
+  loadWorkspaceCatalogs,
   loadPersistedExpandedChildren,
   projectSessionBrowserLoading,
   resolveStartupWorkspaceIds,
@@ -38,86 +38,37 @@ describe("workspace browser controller operations", () => {
     ).toEqual(["workspace-c"]);
   });
 
-  it("loads cached roots before starting provider reconciliation", async () => {
-    const calls: string[] = [];
-    await loadCachedThenReconcileWorkspaces({
-      workspaceIds: ["workspace-a"],
-      loadCached: async (workspaceId) => {
-        calls.push(`cache:${workspaceId}`);
-      },
-      reconcile: async (workspaceIds) => {
-        calls.push(`reconcile:${workspaceIds.join(",")}`);
-      },
-      reload: async (workspaceId) => {
-        calls.push(`reload:${workspaceId}`);
-      },
-      onReconcileError: vi.fn()
-    });
-    await vi.waitFor(() =>
-      expect(calls).toEqual([
-        "cache:workspace-a",
-        "reconcile:workspace-a",
-        "reload:workspace-a"
-      ])
-    );
-  });
-
-  it("starts cached loads independently and reconciles startup workspaces once", async () => {
+  it("loads startup workspace catalogs independently", async () => {
     let releaseWorkspaceA!: () => void;
-    const workspaceACache = new Promise<void>((resolve) => {
+    const workspaceACatalog = new Promise<void>((resolve) => {
       releaseWorkspaceA = resolve;
     });
     const calls: string[] = [];
 
-    const startup = loadCachedThenReconcileWorkspaces({
+    const startup = loadWorkspaceCatalogs({
       workspaceIds: ["workspace-a", "workspace-b"],
-      loadCached: async (workspaceId) => {
-        calls.push(`cache:${workspaceId}`);
+      loadCatalog: async (workspaceId) => {
+        calls.push(`catalog:${workspaceId}`);
         if (workspaceId === "workspace-a") {
-          await workspaceACache;
+          await workspaceACatalog;
         }
-      },
-      reconcile: async (workspaceIds) => {
-        calls.push(`reconcile:${workspaceIds.join(",")}`);
-      },
-      reload: async (workspaceId) => {
-        calls.push(`reload:${workspaceId}`);
-      },
-      onReconcileError: vi.fn()
+      }
     });
 
     await vi.waitFor(() =>
       expect(calls).toEqual([
-        "cache:workspace-a",
-        "cache:workspace-b",
-        "reconcile:workspace-a,workspace-b",
-        "reload:workspace-a",
-        "reload:workspace-b"
+        "catalog:workspace-a",
+        "catalog:workspace-b"
       ])
     );
     releaseWorkspaceA();
     await startup;
   });
 
-  it("keeps cached sessions when provider reconciliation fails", async () => {
-    const visibleSessions = ["cached-session"];
-    const error = new Error("provider unavailable");
-    const onReconcileError = vi.fn();
-
-    await loadCachedThenReconcileWorkspaces({
-      workspaceIds: ["workspace-a"],
-      loadCached: async () => undefined,
-      reconcile: async () => {
-        throw error;
-      },
-      reload: async () => {
-        visibleSessions.splice(0);
-      },
-      onReconcileError
-    });
-    await vi.waitFor(() => expect(onReconcileError).toHaveBeenCalledWith(error));
-
-    expect(visibleSessions).toEqual(["cached-session"]);
+  it("does not load a catalog when startup has no target workspace", async () => {
+    const loadCatalog = vi.fn();
+    await loadWorkspaceCatalogs({ workspaceIds: [], loadCatalog });
+    expect(loadCatalog).not.toHaveBeenCalled();
   });
 
   it("loads persisted expanded children and toggles from the visible state", async () => {

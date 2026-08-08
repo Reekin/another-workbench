@@ -299,7 +299,7 @@ export type DesktopTransport = {
       expectedRevision?: string;
     }) => Promise<SessionBrowserPageRpc>;
     getPath: (sessionId: string) => Promise<SessionBrowserPathRpc>;
-    reconcile: (workspaceIds: string[]) => Promise<{
+    repair: (workspaceIds: string[]) => Promise<{
       workspaces: number;
       sessions: number;
       relations: number;
@@ -864,8 +864,8 @@ export const createDesktopTransport = (
         rpc.request("sessionBrowser.getPath", {
           sessionId
         }),
-      reconcile: (workspaceIds: string[]) =>
-        rpc.request("sessionBrowser.reconcile", {
+      repair: (workspaceIds: string[]) =>
+        rpc.request("sessionBrowser.repair", {
           workspaceIds
         }),
       toggleExpanded: (sessionId: string) =>

@@ -450,7 +450,7 @@ describe("WorkbenchShellService", () => {
     expect(pickWorkspaceDirectory).toHaveBeenCalledTimes(1);
   });
 
-  it("commits workspace registration without waiting for session reconciliation", async () => {
+  it("commits workspace registration without starting a provider repair", async () => {
     const workspace = {
       workspaceId: "workspace-new",
       absolutePath: "I:\\repo-new",
@@ -459,7 +459,7 @@ describe("WorkbenchShellService", () => {
       updatedAt: "2026-07-20T00:00:00.000Z"
     };
     const registerWorkspace = vi.fn().mockResolvedValue(workspace);
-    const reconcileWorkspaces = vi.fn().mockRejectedValue(new Error("scan failed"));
+    const repairWorkspaces = vi.fn().mockRejectedValue(new Error("scan failed"));
     const service = new WorkbenchShellService({
       runtimeService: {
         getWorkspaceRegistry: () => ({ registerWorkspace })
@@ -467,7 +467,7 @@ describe("WorkbenchShellService", () => {
       sessionCatalog: {} as never,
       sessionActions: {} as never,
       chatTreeProvider: {} as never,
-      sessionReconciliation: { reconcileWorkspaces } as never
+      sessionReconciliation: { repairWorkspaces } as never
     });
 
     await expect(service.addWorkspace({ rootPath: "I:\\repo-new" })).resolves.toEqual(
@@ -477,7 +477,7 @@ describe("WorkbenchShellService", () => {
       absolutePath: "I:\\repo-new",
       label: undefined
     });
-    expect(reconcileWorkspaces).not.toHaveBeenCalled();
+    expect(repairWorkspaces).not.toHaveBeenCalled();
   });
 
   it("removes workspaces from both registry and persisted session index", async () => {
@@ -973,6 +973,92 @@ describe("WorkbenchShellService", () => {
       })
     });
     expect(hydrateSessionWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it("hydrates a loaded provider session when the current chat-tree anchor is uncovered", async () => {
+    const snapshot = buildSessionSnapshot();
+    const providerSession = {
+      ...snapshot.sessions[0],
+      lastTurnId: "turn-stale",
+      metadata: {
+        providerKind: "codex-thread",
+        providerSessionId: "sub-thread-1"
+      }
+    };
+    const currentTurn = {
+      ...snapshot.turns[0],
+      turnId: "turn-current",
+      sessionId: providerSession.sessionId
+    };
+    const hydrateSessionWindow = vi.fn().mockResolvedValue({
+      workspaceId: "workspace-1",
+      conversation: snapshot.conversations[0],
+      session: providerSession,
+      turns: [currentTurn],
+      messageBlocks: [],
+      toolCalls: [],
+      terminalStreams: [],
+      sessionRelations: [],
+      hasOlder: false,
+      hasNewer: false
+    });
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        listSessions: () => [providerSession],
+        getSnapshot: () => ({
+          ...snapshot,
+          sessions: [providerSession],
+          turns: [
+            {
+              ...snapshot.turns[0],
+              turnId: "turn-stale",
+              sessionId: providerSession.sessionId
+            }
+          ]
+        }),
+        getWorkspaceRegistry: () => ({
+          setLastActiveSelection: vi.fn().mockResolvedValue(undefined)
+        }),
+        getSessionIndexStore: () => ({
+          getEntry: () => ({
+            sessionId: providerSession.sessionId,
+            workspaceId: "workspace-1"
+          })
+        })
+      } as never,
+      sessionCatalog: {
+        markSessionRead: vi.fn().mockResolvedValue(undefined)
+      } as never,
+      sessionActions: {} as never,
+      chatTreeProvider: {
+        get: vi.fn().mockResolvedValue({
+          currentNodeId: "node-current",
+          visibleTurnIds: ["turn-current"],
+          nodes: [
+            {
+              nodeId: "node-current",
+              turnId: "turn-current"
+            }
+          ]
+        })
+      } as never,
+      sessionReconciliation: {
+        hydrateSessionWindow
+      } as never
+    });
+
+    await expect(service.openSession(providerSession.sessionId)).resolves.toEqual({
+      page: expect.objectContaining({
+        sessionId: providerSession.sessionId,
+        windowStartTurnId: "turn-current"
+      })
+    });
+    expect(hydrateSessionWindow).toHaveBeenCalledWith(
+      providerSession.sessionId,
+      expect.objectContaining({
+        anchorTurnId: "turn-current"
+      })
+    );
   });
 
   it("applies capability operation guards before jumping a lightweight chat tree", async () => {
@@ -1475,8 +1561,8 @@ describe("WorkbenchShellService", () => {
     expect(listWorkspaceTree).toHaveBeenCalledWith("workspace-1");
   });
 
-  it("forwards explicit reconcile requests to the session reconciliation service", async () => {
-    const reconcileWorkspaces = vi.fn().mockResolvedValue({
+  it("forwards explicit repair requests to the session discovery service", async () => {
+    const repairWorkspaces = vi.fn().mockResolvedValue({
       workspaces: 1,
       sessions: 3,
       relations: 1
@@ -1487,18 +1573,18 @@ describe("WorkbenchShellService", () => {
       sessionActions: {} as never,
       chatTreeProvider: {} as never,
       sessionReconciliation: {
-        reconcileWorkspaces
+        repairWorkspaces
       } as never
     });
 
     await expect(
-      service.reconcileSessionBrowser(["workspace-1", "workspace-2"])
+      service.repairSessionBrowser(["workspace-1", "workspace-2"])
     ).resolves.toEqual({
       workspaces: 1,
       sessions: 3,
       relations: 1
     });
-    expect(reconcileWorkspaces).toHaveBeenCalledWith(["workspace-1", "workspace-2"]);
+    expect(repairWorkspaces).toHaveBeenCalledWith(["workspace-1", "workspace-2"]);
   });
 
   it("routes file search, preview, and actions through the injected file services", async () => {

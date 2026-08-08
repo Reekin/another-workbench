@@ -125,11 +125,11 @@ describe("session browser transport contracts", () => {
               items: []
             }
           } as const;
-        case "sessionBrowser.reconcile":
+        case "sessionBrowser.repair":
           expect(request.params.workspaceIds).toEqual(["workspace-1"]);
           return {
             id: request.id,
-            method: "sessionBrowser.reconcile",
+            method: "sessionBrowser.repair",
             ok: true,
             result: {
               workspaces: 1,
@@ -242,7 +242,7 @@ describe("session browser transport contracts", () => {
       parentSessionId: "session-root"
     });
     const path = await transport.sessionBrowser.getPath("session-child");
-    const reconcile = await transport.sessionBrowser.reconcile(["workspace-1"]);
+    const repair = await transport.sessionBrowser.repair(["workspace-1"]);
     const openResult = await transport.sessionBrowser.open("session-child");
     const forceOpenResult = await transport.sessionBrowser.open("session-force", {
       forceProviderHydration: true
@@ -278,7 +278,7 @@ describe("session browser transport contracts", () => {
     expect(roots.items[0]?.sessionId).toBe("session-root");
     expect(children.items[0]?.sessionId).toBe("session-child");
     expect(path.workspaceId).toBe("workspace-1");
-    expect(reconcile).toEqual({
+    expect(repair).toEqual({
       workspaces: 1,
       sessions: 2,
       relations: 1
@@ -333,7 +333,7 @@ describe("session browser transport contracts", () => {
       "sessionBrowser.listRoots",
       "sessionBrowser.listChildren",
       "sessionBrowser.getPath",
-      "sessionBrowser.reconcile",
+      "sessionBrowser.repair",
       "sessionBrowser.open",
       "sessionBrowser.open",
       "sessionBrowser.activate",

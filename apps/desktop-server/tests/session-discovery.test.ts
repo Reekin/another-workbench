@@ -992,7 +992,7 @@ describe("Session discovery and reconciliation", () => {
       providers: [provider]
     });
 
-    await expect(reconciliation.reconcileWorkspaces(["workspace-1"])).resolves.toEqual({
+    await expect(reconciliation.repairWorkspaces(["workspace-1"])).resolves.toEqual({
       workspaces: 1,
       sessions: 2,
       relations: 1
@@ -1202,7 +1202,7 @@ describe("Session discovery and reconciliation", () => {
       providers: [provider]
     });
 
-    await reconciliation.reconcileWorkspaces(["workspace-1"]);
+    await reconciliation.repairWorkspaces(["workspace-1"]);
 
     expect(sessionIndexStore.listRelations("workspace-1")).toEqual([
       expect.objectContaining({
@@ -2228,7 +2228,7 @@ describe("Session discovery and reconciliation", () => {
     });
 
     await expect(
-      reconciliation.reconcileWorkspaces([
+      reconciliation.repairWorkspaces([
         "workspace-a",
         "workspace-a",
         "missing-workspace",
@@ -2299,7 +2299,7 @@ describe("Session discovery and reconciliation", () => {
       providers: [provider]
     });
 
-    await reconciliation.reconcileWorkspaces(["workspace-1"]);
+    await reconciliation.repairWorkspaces(["workspace-1"]);
 
     expect(sessionIndexStore.getEntry("codex-thread:thread-stale")?.archivedAt).toBeDefined();
     expect(sessionIndexStore.getEntry("codex-thread:thread-fresh")).toMatchObject({

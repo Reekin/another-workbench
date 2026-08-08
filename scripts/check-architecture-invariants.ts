@@ -213,6 +213,45 @@ const assertInteractivePerformanceBoundaries = (): void => {
   if (sessionBrowserController.includes("sessionBrowser.listTree")) {
     fail("The normal desktop session browser must use bounded page queries, not listTree.");
   }
+  if (sessionBrowserController.includes("sessionBrowser.repair")) {
+    fail("The interactive session browser must not trigger provider repair.");
+  }
+
+  const legacySessionRepairFiles = [
+    "packages/shared/src/ipc.ts",
+    "apps/desktop/src/transport/desktop-transport.ts",
+    "apps/desktop-server/src/remote-protocol.ts"
+  ].filter((file) => readRepoFile(file).includes("sessionBrowser.reconcile"));
+  if (legacySessionRepairFiles.length > 0) {
+    fail(
+      `Legacy sessionBrowser.reconcile RPC must not return: ${legacySessionRepairFiles.join(
+        ", "
+      )}.`
+    );
+  }
+
+  const sessionIndexStore = readRepoFile("apps/desktop-server/src/session-index.ts");
+  const repairBody = sessionIndexStore.match(
+    /public async applyWorkspaceRepair\([\s\S]*?\n  public async archiveSession\(/
+  )?.[0];
+  if (!repairBody) {
+    fail("SessionIndexStore must expose an explicit applyWorkspaceRepair batch boundary.");
+  }
+  if (
+    !repairBody.includes("await yieldRepairBatch()") ||
+    !repairBody.includes("this.revision !== baseRevision")
+  ) {
+    fail("applyWorkspaceRepair must yield between batches and fence concurrent mutations.");
+  }
+  for (const forbiddenCall of [
+    "upsertSessionInMemory(",
+    "upsertRelationInMemory(",
+    "archiveSessions("
+  ]) {
+    if (repairBody.includes(forbiddenCall)) {
+      fail(`applyWorkspaceRepair must not call ${forbiddenCall} per item.`);
+    }
+  }
 
   const rendererStore = readRepoFile("apps/desktop/src/store/store.ts");
   if (

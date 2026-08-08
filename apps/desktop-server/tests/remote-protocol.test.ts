@@ -34,28 +34,28 @@ const createService = () =>
   });
 
 describe("createRemoteRpcHandler", () => {
-  it("rejects legacy and empty session reconciliation requests before dispatch", async () => {
-    const reconcileSessionBrowser = vi.fn();
+  it("rejects legacy and empty session repair requests before dispatch", async () => {
+    const repairSessionBrowser = vi.fn();
     const handler = createRemoteRpcHandler({
       listWorkspaces: vi.fn(),
-      reconcileSessionBrowser
+      repairSessionBrowser
     } as never);
 
     await expect(
       handler.handleRequest({
-        id: "req-reconcile-legacy",
-        method: "sessionBrowser.reconcile",
+        id: "req-repair-legacy",
+        method: "sessionBrowser.repair",
         params: { workspaceId: "workspace-1" }
       } as never)
     ).rejects.toThrow();
     await expect(
       handler.handleRequest({
-        id: "req-reconcile-empty",
-        method: "sessionBrowser.reconcile",
+        id: "req-repair-empty",
+        method: "sessionBrowser.repair",
         params: { workspaceIds: [] }
       } as never)
     ).rejects.toThrow();
-    expect(reconcileSessionBrowser).not.toHaveBeenCalled();
+    expect(repairSessionBrowser).not.toHaveBeenCalled();
   });
 
   it("serves desktop-ipc-compatible engine and session requests", async () => {
@@ -707,7 +707,7 @@ describe("createRemoteRpcHandler", () => {
       listSessionTree: vi.fn().mockResolvedValue({
         workspaces: []
       }),
-      reconcileSessionBrowser: vi.fn().mockResolvedValue({
+      repairSessionBrowser: vi.fn().mockResolvedValue({
         workspaces: 1,
         sessions: 2,
         relations: 1
@@ -823,9 +823,9 @@ describe("createRemoteRpcHandler", () => {
       method: "workspace.pickDirectory",
       params: {}
     });
-    const reconcileResponse = await handler.handleRequest({
-      id: "req-reconcile",
-      method: "sessionBrowser.reconcile",
+    const repairResponse = await handler.handleRequest({
+      id: "req-repair",
+      method: "sessionBrowser.repair",
       params: {
         workspaceIds: ["workspace-1", "workspace-2"]
       }
@@ -921,9 +921,9 @@ describe("createRemoteRpcHandler", () => {
         rootPath: "I:/repo"
       }
     });
-    expect(reconcileResponse).toMatchObject({
-      id: "req-reconcile",
-      method: "sessionBrowser.reconcile",
+    expect(repairResponse).toMatchObject({
+      id: "req-repair",
+      method: "sessionBrowser.repair",
       ok: true,
       result: {
         workspaces: 1,
@@ -1039,7 +1039,7 @@ describe("createRemoteRpcHandler", () => {
     });
     expect((shellService as any).listSessionTree).toHaveBeenCalledWith("workspace-1");
     expect((shellService as any).pickWorkspaceDirectory).toHaveBeenCalledTimes(1);
-    expect((shellService as any).reconcileSessionBrowser).toHaveBeenCalledWith(
+    expect((shellService as any).repairSessionBrowser).toHaveBeenCalledWith(
       ["workspace-1", "workspace-2"]
     );
     expect((shellService as any).openSession).toHaveBeenCalledWith("session-1");

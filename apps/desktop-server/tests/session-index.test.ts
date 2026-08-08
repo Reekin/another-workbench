@@ -148,11 +148,12 @@ describe("SessionIndexStore", () => {
     expect(persistenceState.saveCalls).toBe(saveCalls);
   });
 
-  it("persists a changed reconcile once and skips an identical reconcile", async () => {
+  it("persists a changed repair once and skips an identical repair", async () => {
     const baseDir = await createTempDir();
     const store = new SessionIndexStore({ baseDir });
     const input = {
       workspaceId: "workspace-1",
+      engineId: "codex",
       entries: [
         {
           workspaceId: "workspace-1",
@@ -188,20 +189,210 @@ describe("SessionIndexStore", () => {
 
     await store.ready();
     const initialRevision = store.getRevision();
-    await store.reconcileWorkspace(input);
+    await store.applyWorkspaceRepair(input);
     expect(store.getRevision()).toBe(initialRevision + 1);
     expect(persistenceState.saveCalls).toBe(1);
 
     const entryReferences = store.listEntries();
     const relationReference = store.listRelations()[0];
     const revision = store.getRevision();
-    await store.reconcileWorkspace(input);
+    await store.applyWorkspaceRepair(input);
 
     expect(store.listEntries()[0]).toBe(entryReferences[0]);
     expect(store.listEntries()[1]).toBe(entryReferences[1]);
     expect(store.listRelations()[0]).toBe(relationReference);
     expect(store.getRevision()).toBe(revision);
     expect(persistenceState.saveCalls).toBe(1);
+  });
+
+  it("commits provider updates and stale archival in one repair mutation", async () => {
+    const baseDir = await createTempDir();
+    const store = new SessionIndexStore({
+      baseDir,
+      now: () => "2026-08-08T00:00:00.000Z"
+    });
+    await store.upsertSession({
+      workspaceId: "workspace-1",
+      session: {
+        sessionId: "session-stale",
+        conversationId: "conversation-stale",
+        engineId: "codex",
+        createdAt: "2026-04-18T00:00:01Z",
+        updatedAt: "2026-04-18T00:00:01Z"
+      },
+      providerKind: "codex-thread",
+      providerSessionId: "thread-stale",
+      unreadState: "unread_completed",
+      source: "reconciled"
+    });
+    await store.upsertSession({
+      workspaceId: "workspace-2",
+      session: {
+        sessionId: "session-other-workspace",
+        conversationId: "conversation-other",
+        engineId: "codex",
+        createdAt: "2026-04-18T00:00:01Z",
+        updatedAt: "2026-04-18T00:00:01Z"
+      },
+      providerKind: "codex-thread",
+      providerSessionId: "thread-other",
+      source: "reconciled"
+    });
+    const revision = store.getRevision();
+    const saveCalls = persistenceState.saveCalls;
+
+    await store.applyWorkspaceRepair({
+      workspaceId: "workspace-1",
+      engineId: "codex",
+      entries: [
+        {
+          workspaceId: "workspace-1",
+          session: {
+            sessionId: "session-fresh",
+            conversationId: "conversation-fresh",
+            engineId: "codex",
+            createdAt: "2026-08-08T00:00:01Z",
+            updatedAt: "2026-08-08T00:00:01Z"
+          },
+          providerKind: "codex-thread",
+          providerSessionId: "thread-fresh",
+          source: "reconciled"
+        }
+      ]
+    });
+
+    expect(store.getRevision()).toBe(revision + 1);
+    expect(persistenceState.saveCalls).toBe(saveCalls + 1);
+    expect(store.getEntry("session-stale")).toMatchObject({
+      archivedAt: "2026-08-08T00:00:00.000Z",
+      unreadState: "unread_completed"
+    });
+    expect(store.getEntry("session-fresh")?.archivedAt).toBeUndefined();
+    expect(store.getEntry("session-other-workspace")?.archivedAt).toBeUndefined();
+  });
+
+  it("leaves the catalog unchanged when a repair batch is invalid", async () => {
+    const baseDir = await createTempDir();
+    const store = new SessionIndexStore({ baseDir });
+    await store.upsertSession({
+      workspaceId: "workspace-1",
+      session: {
+        sessionId: "session-existing",
+        conversationId: "conversation-existing",
+        engineId: "codex",
+        createdAt: "2026-04-18T00:00:01Z",
+        updatedAt: "2026-04-18T00:00:01Z"
+      }
+    });
+    const state = store.getState();
+    const revision = store.getRevision();
+    const saveCalls = persistenceState.saveCalls;
+
+    await expect(
+      store.applyWorkspaceRepair({
+        workspaceId: "workspace-1",
+        engineId: "codex",
+        entries: [
+          {
+            workspaceId: "workspace-1",
+            session: {
+              sessionId: "session-valid",
+              conversationId: "conversation-valid",
+              engineId: "codex",
+              createdAt: "2026-08-08T00:00:01Z",
+              updatedAt: "2026-08-08T00:00:01Z"
+            }
+          },
+          {
+            workspaceId: "workspace-1",
+            session: {
+              sessionId: "session-invalid",
+              conversationId: "conversation-invalid",
+              engineId: "codex",
+              title: "",
+              createdAt: "2026-08-08T00:00:02Z",
+              updatedAt: "2026-08-08T00:00:02Z"
+            }
+          }
+        ]
+      })
+    ).rejects.toThrow();
+
+    expect(store.getState()).toEqual(state);
+    expect(store.getRevision()).toBe(revision);
+    expect(persistenceState.saveCalls).toBe(saveCalls);
+  });
+
+  it("repairs an eight-thousand-entry catalog without quadratic blocking", async () => {
+    const baseDir = await createTempDir();
+    const store = new SessionIndexStore({ baseDir });
+    const entries = Array.from({ length: 8_382 }, (_, index) => ({
+      workspaceId: "workspace-1",
+      session: {
+        sessionId: `session-${index}`,
+        conversationId: `conversation-${index}`,
+        engineId: "codex",
+        createdAt: "2026-08-08T00:00:00.000Z",
+        updatedAt: `2026-08-08T00:${String(index % 60).padStart(2, "0")}:00.000Z`
+      },
+      providerKind: "codex-thread",
+      providerSessionId: `thread-${index}`,
+      source: "reconciled" as const
+    }));
+    const startedAt = Date.now();
+    let repairFinished = false;
+
+    const repair = store.applyWorkspaceRepair({
+      workspaceId: "workspace-1",
+      engineId: "codex",
+      entries
+    }).then(() => {
+      repairFinished = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(repairFinished).toBe(false);
+    await repair;
+
+    expect(store.listEntries("workspace-1")).toHaveLength(8_382);
+    expect(Date.now() - startedAt).toBeLessThan(8_000);
+  }, 15_000);
+
+  it("restarts a yielded repair when another catalog mutation commits", async () => {
+    const baseDir = await createTempDir();
+    const store = new SessionIndexStore({ baseDir });
+    const repair = store.applyWorkspaceRepair({
+      workspaceId: "workspace-1",
+      engineId: "codex",
+      entries: Array.from({ length: 1_024 }, (_, index) => ({
+        workspaceId: "workspace-1",
+        session: {
+          sessionId: `session-repair-${index}`,
+          conversationId: `conversation-repair-${index}`,
+          engineId: "codex",
+          createdAt: "2026-08-08T00:00:00.000Z",
+          updatedAt: "2026-08-08T00:00:00.000Z"
+        },
+        providerKind: "codex-thread",
+        providerSessionId: `thread-repair-${index}`,
+        source: "reconciled" as const
+      }))
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await store.upsertSession({
+      workspaceId: "workspace-1",
+      session: {
+        sessionId: "session-live",
+        conversationId: "conversation-live",
+        engineId: "codex",
+        createdAt: "2026-08-08T00:00:01.000Z",
+        updatedAt: "2026-08-08T00:00:01.000Z"
+      },
+      source: "registry"
+    });
+    await repair;
+
+    expect(store.getEntry("session-live")).toBeDefined();
+    expect(store.getEntry("session-repair-1023")).toBeDefined();
   });
 
   it("coalesces concurrent real changes without scheduling an extra no-op write", async () => {

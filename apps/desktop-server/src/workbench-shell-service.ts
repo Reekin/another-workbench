@@ -527,13 +527,13 @@ export class WorkbenchShellService {
     return this.sessionCatalog.getPath(sessionId);
   }
 
-  public async reconcileSessionBrowser(workspaceIds: string[]): Promise<{
+  public async repairSessionBrowser(workspaceIds: string[]): Promise<{
     workspaces: number;
     sessions: number;
     relations: number;
   }> {
     return (
-      (await this.sessionReconciliation?.reconcileWorkspaces(workspaceIds)) ?? {
+      (await this.sessionReconciliation?.repairWorkspaces(workspaceIds)) ?? {
         workspaces: 0,
         sessions: 0,
         relations: 0
@@ -637,17 +637,20 @@ export class WorkbenchShellService {
       loadedSession?.metadata?.providerKind &&
         loadedSession.metadata.providerSessionId
     );
-    const hasProjectedTurns = alreadyLoaded
+    const anchorTurnId = await this.resolveProviderAnchorTurnId(sessionId);
+    const projectedTurns = alreadyLoaded
       ? this.runtimeService
           .getSnapshot()
-          .turns.some((turn) => turn.sessionId === sessionId)
-      : false;
-    const isUncoveredProviderSession = isProviderSession && !hasProjectedTurns;
+          .turns.filter((turn) => turn.sessionId === sessionId)
+      : [];
+    const hasProjectedAnchor = anchorTurnId
+      ? projectedTurns.some((turn) => turn.turnId === anchorTurnId)
+      : projectedTurns.length > 0;
+    const isUncoveredProviderSession = isProviderSession && !hasProjectedAnchor;
     const alreadyFullyLoaded =
       alreadyLoaded &&
       !isUncoveredProviderSession &&
       !this.partiallyHydratedSessionIds.has(sessionId);
-    const anchorTurnId = await this.resolveProviderAnchorTurnId(sessionId);
     if (isCancelled()) {
       throw new Error("Open session cancelled.");
     }

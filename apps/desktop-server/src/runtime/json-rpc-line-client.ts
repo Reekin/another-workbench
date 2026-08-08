@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import type { Readable, Writable } from "node:stream";
 import {
   createRuntimeNotStartedError,
@@ -29,11 +30,35 @@ export type JsonRpcLineNotificationPayload = JsonRpcLinePayload & {
   method: string;
 };
 
+export type JsonRpcPipelineDiagnostic =
+  | {
+      type: "read-completed";
+      readSeq: number;
+      chunkBytes: number;
+      bufferedBytesBefore: number;
+      bufferedBytesAfter: number;
+      parsedLineCount: number;
+      parseErrorCount: number;
+      notificationCount: number;
+      maxNotificationListenerSyncMs: number;
+      syncDurationMs: number;
+      pendingRequestCount: number;
+      methods: Record<string, number>;
+    }
+  | {
+      type: "turn-released";
+      firstReadSeq: number;
+      lastReadSeq: number;
+      readCount: number;
+      releaseDelayMs: number;
+    };
+
 export type JsonRpcLineClientOptions = {
   input?: Readable;
   output?: Writable;
   defaultTimeoutMs?: number;
   createRequestId?: () => JsonRpcLineId;
+  diagnostics?: (event: JsonRpcPipelineDiagnostic) => void;
 };
 
 type Listener<T> = (event: T) => void | Promise<void>;
@@ -52,6 +77,24 @@ type PendingWrite = {
   reject: (error: Error) => void;
 };
 
+type PendingReleaseProbe = {
+  firstReadSeq: number;
+  lastReadSeq: number;
+  readCount: number;
+  completedAt: number;
+};
+
+type ActiveReadDiagnostics = {
+  readSeq: number;
+  chunkBytes: number;
+  bufferedBytesBefore: number;
+  parsedLineCount: number;
+  parseErrorCount: number;
+  notificationCount: number;
+  maxNotificationListenerSyncMs: number;
+  methods: Record<string, number>;
+};
+
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 const localRequestId = (id: JsonRpcLineId): string => String(id);
@@ -61,6 +104,7 @@ export class JsonRpcLineClient {
   private output: Writable | undefined;
   private readonly defaultTimeoutMs: number;
   private readonly createRequestId: () => JsonRpcLineId;
+  private readonly diagnostics: JsonRpcLineClientOptions["diagnostics"];
   private readonly requestListeners = new Set<Listener<JsonRpcLineRequestPayload>>();
   private readonly notificationListeners = new Set<
     Listener<JsonRpcLineNotificationPayload>
@@ -70,10 +114,74 @@ export class JsonRpcLineClient {
   private readonly pendingWrites = new Set<PendingWrite>();
   private buffer = "";
   private nextRequestId = 0;
+  private nextReadSeq = 0;
+  private activeReadDiagnostics: ActiveReadDiagnostics | undefined;
+  private pendingReleaseProbe: PendingReleaseProbe | undefined;
 
   private readonly handleData = (chunk: Buffer | string): void => {
-    this.consume(chunk);
+    if (!this.diagnostics) {
+      this.consume(chunk);
+      return;
+    }
+
+    const readSeq = ++this.nextReadSeq;
+    const startedAt = performance.now();
+    const activeRead: ActiveReadDiagnostics = {
+      readSeq,
+      chunkBytes:
+        typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.length,
+      bufferedBytesBefore: Buffer.byteLength(this.buffer),
+      parsedLineCount: 0,
+      parseErrorCount: 0,
+      notificationCount: 0,
+      maxNotificationListenerSyncMs: 0,
+      methods: {}
+    };
+    this.activeReadDiagnostics = activeRead;
+    try {
+      this.consume(chunk);
+    } finally {
+      this.activeReadDiagnostics = undefined;
+      const completedAt = performance.now();
+      this.diagnostics({
+        type: "read-completed",
+        ...activeRead,
+        bufferedBytesAfter: Buffer.byteLength(this.buffer),
+        syncDurationMs: completedAt - startedAt,
+        pendingRequestCount: this.pendingById.size
+      });
+      this.scheduleReleaseProbe(readSeq, completedAt);
+    }
   };
+
+  private scheduleReleaseProbe(readSeq: number, completedAt: number): void {
+    if (this.pendingReleaseProbe) {
+      this.pendingReleaseProbe.lastReadSeq = readSeq;
+      this.pendingReleaseProbe.readCount += 1;
+      return;
+    }
+
+    this.pendingReleaseProbe = {
+      firstReadSeq: readSeq,
+      lastReadSeq: readSeq,
+      readCount: 1,
+      completedAt
+    };
+    setImmediate(() => {
+      const probe = this.pendingReleaseProbe;
+      this.pendingReleaseProbe = undefined;
+      if (!probe) {
+        return;
+      }
+      this.diagnostics?.({
+        type: "turn-released",
+        firstReadSeq: probe.firstReadSeq,
+        lastReadSeq: probe.lastReadSeq,
+        readCount: probe.readCount,
+        releaseDelayMs: performance.now() - probe.completedAt
+      });
+    });
+  }
 
   private readonly handleInputError = (error: Error): void => {
     this.rejectAll(
@@ -99,6 +207,7 @@ export class JsonRpcLineClient {
 
   public constructor(options: JsonRpcLineClientOptions = {}) {
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.diagnostics = options.diagnostics;
     this.createRequestId =
       options.createRequestId ??
       (() => {
@@ -321,10 +430,17 @@ export class JsonRpcLineClient {
   }
 
   private handleLine(line: string): void {
+    if (this.activeReadDiagnostics) {
+      this.activeReadDiagnostics.parsedLineCount += 1;
+    }
     let payload: JsonRpcLinePayload;
     try {
       payload = JSON.parse(line) as JsonRpcLinePayload;
     } catch (error) {
+      if (this.activeReadDiagnostics) {
+        this.activeReadDiagnostics.parseErrorCount += 1;
+        this.incrementActiveMethod("<parse-error>");
+      }
       this.emitProtocolError(
         createRuntimePortError({
           code: "runtime_protocol_error",
@@ -340,11 +456,18 @@ export class JsonRpcLineClient {
       return;
     }
 
+    this.incrementActiveMethod(
+      typeof payload.method === "string" ? payload.method : "<response>"
+    );
+
     if (typeof payload.method === "string" && payload.id !== undefined) {
       this.emitRequest(payload as JsonRpcLineRequestPayload);
       return;
     }
     if (typeof payload.method === "string") {
+      if (this.activeReadDiagnostics) {
+        this.activeReadDiagnostics.notificationCount += 1;
+      }
       this.emitNotification(payload as JsonRpcLineNotificationPayload);
       return;
     }
@@ -551,6 +674,7 @@ export class JsonRpcLineClient {
   }
 
   private emitNotification(payload: JsonRpcLineNotificationPayload): void {
+    const startedAt = this.activeReadDiagnostics ? performance.now() : 0;
     for (const listener of this.notificationListeners) {
       void Promise.resolve(listener(payload)).catch((error: unknown) => {
         this.emitProtocolError(
@@ -560,6 +684,20 @@ export class JsonRpcLineClient {
         );
       });
     }
+    if (this.activeReadDiagnostics) {
+      this.activeReadDiagnostics.maxNotificationListenerSyncMs = Math.max(
+        this.activeReadDiagnostics.maxNotificationListenerSyncMs,
+        performance.now() - startedAt
+      );
+    }
+  }
+
+  private incrementActiveMethod(method: string): void {
+    if (!this.activeReadDiagnostics) {
+      return;
+    }
+    this.activeReadDiagnostics.methods[method] =
+      (this.activeReadDiagnostics.methods[method] ?? 0) + 1;
   }
 
   private emitProtocolError(error: Error): void {

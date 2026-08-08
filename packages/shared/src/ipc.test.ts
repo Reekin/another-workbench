@@ -132,34 +132,41 @@ describe("IPC schemas", () => {
     expect(parsed.success).toBe(true);
   });
 
-  it("requires an explicit non-empty workspace batch for reconciliation", () => {
+  it("requires an explicit non-empty workspace batch for repair", () => {
     expect(
       parseWorkbenchRpcRequest({
-        id: "req-reconcile",
-        method: "sessionBrowser.reconcile",
+        id: "req-repair",
+        method: "sessionBrowser.repair",
         params: { workspaceIds: ["workspace-1", "workspace-2"] }
       }).params
     ).toEqual({ workspaceIds: ["workspace-1", "workspace-2"] });
 
     expect(() =>
       parseWorkbenchRpcRequest({
-        id: "req-reconcile-missing",
-        method: "sessionBrowser.reconcile",
+        id: "req-repair-missing",
+        method: "sessionBrowser.repair",
         params: {}
       })
     ).toThrow();
     expect(() =>
       parseWorkbenchRpcRequest({
-        id: "req-reconcile-empty",
-        method: "sessionBrowser.reconcile",
+        id: "req-repair-empty",
+        method: "sessionBrowser.repair",
         params: { workspaceIds: [] }
       })
     ).toThrow();
     expect(() =>
       parseWorkbenchRpcRequest({
-        id: "req-reconcile-legacy",
-        method: "sessionBrowser.reconcile",
+        id: "req-repair-legacy",
+        method: "sessionBrowser.repair",
         params: { workspaceId: "workspace-1" }
+      })
+    ).toThrow();
+    expect(() =>
+      parseWorkbenchRpcRequest({
+        id: "req-reconcile-removed",
+        method: "sessionBrowser.reconcile",
+        params: { workspaceIds: ["workspace-1"] }
       })
     ).toThrow();
   });

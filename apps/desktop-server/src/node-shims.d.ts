@@ -1,4 +1,5 @@
 declare const Buffer: {
+  byteLength(input: string, encoding?: string): number;
   from(input: string | number[], encoding?: string): {
     length: number;
   };

@@ -428,7 +428,7 @@ export const createDemoWorkbenchShellService = (
     }) => buildSessionBrowserReadModel().listChildren(input),
     getSessionBrowserPath: async (sessionId: string) =>
       buildSessionBrowserReadModel().getPath(sessionId),
-    reconcileSessionBrowser: async () => ({
+    repairSessionBrowser: async () => ({
       workspaces: 1,
       sessions: service.getSnapshot().sessions.length,
       relations: service.getSnapshot().sessionRelations.length

@@ -275,13 +275,12 @@ describe("canActivateCachedSessionWindow", () => {
             providerKind: "codex-thread",
             providerSessionId: "thread-child"
           }
-        },
-        projectedTurnCount: 0
+        }
       })
     ).toBe(false);
   });
 
-  it("keeps valid provider and local cached windows on the fast path", () => {
+  it("routes provider windows through authoritative open while keeping local caches fast", () => {
     const providerWindow = {
       ...sessionWindowFor("session-child"),
       windowStartTurnId: "turn-1",
@@ -298,15 +297,13 @@ describe("canActivateCachedSessionWindow", () => {
     expect(
       canActivateCachedSessionWindow({
         window: providerWindow,
-        session: providerSession,
-        projectedTurnCount: 1
+        session: providerSession
       })
-    ).toBe(true);
+    ).toBe(false);
     expect(
       canActivateCachedSessionWindow({
         window: sessionWindowFor("session-local"),
-        session: snapshotForSession("session-local").sessions[0],
-        projectedTurnCount: 0
+        session: snapshotForSession("session-local").sessions[0]
       })
     ).toBe(true);
   });

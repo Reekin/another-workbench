@@ -49,7 +49,7 @@ export const workbenchRpcMethods = [
   "sessionBrowser.listRoots",
   "sessionBrowser.listChildren",
   "sessionBrowser.getPath",
-  "sessionBrowser.reconcile",
+  "sessionBrowser.repair",
   "sessionBrowser.toggleExpanded",
   "sessionBrowser.create",
   "sessionBrowser.open",
@@ -785,9 +785,9 @@ const zSessionBrowserCreateRequestSchema = z.object({
   })
 });
 
-const zSessionBrowserReconcileRequestSchema = z.object({
+const zSessionBrowserRepairRequestSchema = z.object({
   id: zRequestId,
-  method: z.literal("sessionBrowser.reconcile"),
+  method: z.literal("sessionBrowser.repair"),
   params: z.object({
     workspaceIds: z.array(z.string().min(1)).min(1)
   })
@@ -915,6 +915,7 @@ const zDiagnosticLogKindSchema = z.enum([
   "event-push-batch",
   "ui-input-delay",
   "diagnostic-buffer",
+  "runtime-pipeline",
   "manual"
 ]);
 
@@ -1069,7 +1070,7 @@ export const zWorkbenchRpcRequestSchema = z.discriminatedUnion("method", [
   zSessionBrowserListRootsRequestSchema,
   zSessionBrowserListChildrenRequestSchema,
   zSessionBrowserGetPathRequestSchema,
-  zSessionBrowserReconcileRequestSchema,
+  zSessionBrowserRepairRequestSchema,
   zSessionBrowserToggleExpandedRequestSchema,
   zSessionBrowserCreateRequestSchema,
   zSessionBrowserOpenRequestSchema,
@@ -1300,9 +1301,9 @@ const zSessionBrowserCreateResponseSchema = z.object({
   })
 });
 
-const zSessionBrowserReconcileResponseSchema = z.object({
+const zSessionBrowserRepairResponseSchema = z.object({
   id: zRequestId,
-  method: z.literal("sessionBrowser.reconcile"),
+  method: z.literal("sessionBrowser.repair"),
   ok: z.literal(true),
   result: z.object({
     workspaces: z.number().int().nonnegative(),
@@ -1602,7 +1603,7 @@ export const zWorkbenchRpcResponseSchema = z.union([
   zSessionBrowserListRootsResponseSchema,
   zSessionBrowserListChildrenResponseSchema,
   zSessionBrowserGetPathResponseSchema,
-  zSessionBrowserReconcileResponseSchema,
+  zSessionBrowserRepairResponseSchema,
   zSessionBrowserToggleExpandedResponseSchema,
   zSessionBrowserCreateResponseSchema,
   zSessionBrowserOpenResponseSchema,

@@ -29,7 +29,7 @@ type StatusNoticeSetter = (
 export const runAddWorkspaceFlow = async (input: {
   transport: DesktopTransport;
   onWorkspaceCommitted: (workspace: Awaited<ReturnType<DesktopTransport["workspace"]["add"]>>) => void;
-  syncWorkspace: (workspaceId: string) => Promise<void>;
+  loadWorkspaceCatalog: (workspaceId: string) => Promise<void>;
   onStatusNotice: StatusNoticeSetter;
 }): Promise<void> => {
   let rootPath: string;
@@ -58,10 +58,10 @@ export const runAddWorkspaceFlow = async (input: {
   });
 
   try {
-    await input.syncWorkspace(workspace.workspaceId);
+    await input.loadWorkspaceCatalog(workspace.workspaceId);
   } catch (error) {
     input.onStatusNotice({
-      message: `Workspace added, but session browser refresh failed: ${(error as Error).message}`,
+      message: `Workspace added, but session browser load failed: ${(error as Error).message}`,
       persistent: true,
       source: "session-browser",
       ...statusNoticeErrorDetails(error)
@@ -205,21 +205,13 @@ export const resolveStartupWorkspaceIds = (input: {
       ? [input.lastActiveWorkspaceId]
       : [];
 
-export const loadCachedThenReconcileWorkspaces = async (input: {
+export const loadWorkspaceCatalogs = async (input: {
   workspaceIds: string[];
-  loadCached: (workspaceId: string) => Promise<void>;
-  reconcile: (workspaceIds: string[]) => Promise<unknown>;
-  reload: (workspaceId: string) => Promise<void>;
-  onReconcileError: (error: unknown) => void;
+  loadCatalog: (workspaceId: string) => Promise<void>;
 }): Promise<void> => {
-  const cacheLoads = input.workspaceIds.map((workspaceId) =>
-    input.loadCached(workspaceId)
+  await Promise.all(
+    input.workspaceIds.map((workspaceId) => input.loadCatalog(workspaceId))
   );
-  void input
-    .reconcile(input.workspaceIds)
-    .then(() => Promise.all(input.workspaceIds.map(input.reload)))
-    .catch(input.onReconcileError);
-  await Promise.all(cacheLoads);
 };
 
 export const projectSessionBrowserLoading = (
@@ -534,46 +526,6 @@ export const useWorkspaceBrowserController = (input: {
     }
   };
 
-  const reloadWorkspaceAfterReconciliation = async (
-    workspaceId: string
-  ): Promise<void> => {
-    const coordinator = coordinatorRef.current;
-    if (!coordinator) {
-      return;
-    }
-    clearCollectionLoading(coordinator.invalidateWorkspace(workspaceId));
-    updateWorkspace(workspaceId, resetRootPagination);
-    await loadRootPage(workspaceId);
-  };
-
-  const syncWorkspacesFromProvider = async (
-    workspaceIds: string[]
-  ): Promise<void> => {
-    if (!input.transport || workspaceIds.length === 0) {
-      return;
-    }
-    await loadCachedThenReconcileWorkspaces({
-      workspaceIds,
-      loadCached: loadRootPage,
-      reconcile: (targetWorkspaceIds) =>
-        input.transport!.sessionBrowser.reconcile(targetWorkspaceIds),
-      reload: reloadWorkspaceAfterReconciliation,
-      onReconcileError: (error) => {
-        if (!mountedRef.current) {
-          return;
-        }
-        input.onStatusNotice({
-          message: `Background session sync failed: ${(error as Error).message}`,
-          source: "session-browser",
-          ...statusNoticeErrorDetails(error)
-        });
-      }
-    });
-  };
-
-  const syncWorkspaceFromProvider = (workspaceId: string): Promise<void> =>
-    syncWorkspacesFromProvider([workspaceId]);
-
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -621,7 +573,10 @@ export const useWorkspaceBrowserController = (input: {
       workspaceTreeRef.current = current;
       setWorkspaceTreeState(current);
       const startupWorkspaceIds = resolveStartupWorkspaceIds(workspaceState);
-      void syncWorkspacesFromProvider(startupWorkspaceIds).catch((error) => {
+      void loadWorkspaceCatalogs({
+        workspaceIds: startupWorkspaceIds,
+        loadCatalog: loadRootPage
+      }).catch((error) => {
         if (!mountedRef.current) {
           return;
         }
@@ -682,15 +637,18 @@ export const useWorkspaceBrowserController = (input: {
         transport: input.transport,
         onWorkspaceCommitted: (workspace) => {
           workspaceListGenerationRef.current += 1;
-          setWorkspaceTree((current) =>
-            upsertWorkspaceBrowserRecord(current, workspace).map((candidate) =>
-              candidate.workspaceId === workspace.workspaceId
-                ? { ...candidate, isExpanded: true }
-                : candidate
-            )
+          const next = upsertWorkspaceBrowserRecord(
+            workspaceTreeRef.current,
+            workspace
+          ).map((candidate) =>
+            candidate.workspaceId === workspace.workspaceId
+              ? { ...candidate, isExpanded: true }
+              : candidate
           );
+          workspaceTreeRef.current = next;
+          setWorkspaceTreeState(next);
         },
-        syncWorkspace: syncWorkspaceFromProvider,
+        loadWorkspaceCatalog: loadRootPage,
         onStatusNotice: input.onStatusNotice
       });
     },
@@ -714,7 +672,7 @@ export const useWorkspaceBrowserController = (input: {
         persistExpansion: () =>
           input.transport!.workspace.setExpanded(workspaceId, expanded),
         selectWorkspace: () => input.transport!.workspace.select(workspaceId),
-        loadRoots: () => syncWorkspaceFromProvider(workspaceId)
+        loadRoots: () => loadRootPage(workspaceId)
       });
     },
     onToggleSessionTree: async (sessionId: string, workspaceId?: string) => {

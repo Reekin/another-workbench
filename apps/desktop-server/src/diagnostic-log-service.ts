@@ -151,7 +151,7 @@ export class DiagnosticLogService {
         return;
       }
       this.flushScheduled = true;
-      queueMicrotask(() => {
+      setImmediate(() => {
         this.flushScheduled = false;
         const batch = this.pendingWrites.splice(0, this.pendingWrites.length);
         this.writeChain = this.writeChain.then(() => this.flushBatch(batch));

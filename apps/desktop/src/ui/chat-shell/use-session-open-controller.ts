@@ -31,7 +31,6 @@ export type SessionWindowCoverage = Omit<SessionWindowRpc, "snapshot">;
 export const canActivateCachedSessionWindow = (input: {
   window: SessionWindowCoverage | undefined;
   session: ChatSession | undefined;
-  projectedTurnCount: number;
 }): boolean => {
   if (!input.window) {
     return false;
@@ -40,11 +39,7 @@ export const canActivateCachedSessionWindow = (input: {
     input.session?.metadata?.providerKind &&
       input.session.metadata.providerSessionId
   );
-  return (
-    !isProviderSession ||
-    input.projectedTurnCount > 0 ||
-    Boolean(input.window.windowStartTurnId || input.window.windowEndTurnId)
-  );
+  return !isProviderSession;
 };
 
 const toSessionWindowCoverage = (
@@ -389,8 +384,7 @@ export const useSessionOpenController = (input: {
         const domain = input.store.getDomainReadModel();
         const canActivateCachedWindow = canActivateCachedSessionWindow({
           window: cachedWindow,
-          session: domain.getSession(sessionId),
-          projectedTurnCount: domain.listTurns({ sessionId }).length
+          session: domain.getSession(sessionId)
         });
         if (canActivateCachedWindow && activateLoadedSession(sessionId)) {
           input.viewport.scrollToBottom(sessionId, {

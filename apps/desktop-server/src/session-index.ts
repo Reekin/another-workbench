@@ -84,8 +84,9 @@ export type UpsertSessionRelationInput = {
   createdAt?: string;
 };
 
-export type ReconcileWorkspaceInput = {
+export type RepairWorkspaceInput = {
   workspaceId: string;
+  engineId: string;
   entries: UpsertSessionIndexInput[];
   relations?: UpsertSessionRelationInput[];
 };
@@ -132,6 +133,18 @@ const isSameSessionRelation = (
   left.relationType === right.relationType &&
   left.sourceTurnId === right.sourceTurnId &&
   left.createdAt === right.createdAt;
+
+const relationKey = (input: {
+  parentSessionId: string;
+  childSessionId: string;
+  relationType: SessionRelationType;
+}): string =>
+  `${input.parentSessionId}\u0000${input.childSessionId}\u0000${input.relationType}`;
+
+const repairBatchSize = 256;
+
+const yieldRepairBatch = (): Promise<void> =>
+  new Promise((resolve) => setImmediate(resolve));
 
 type MutationResult<T> = {
   value: T;
@@ -218,26 +231,7 @@ export class SessionIndexStore {
     input: UpsertSessionIndexInput
   ): MutationResult<SessionIndexEntry> {
     const existing = this.getEntry(input.session.sessionId);
-    const normalized = sessionIndexEntrySchema.parse({
-      workspaceId: input.workspaceId,
-      sessionId: input.session.sessionId,
-      conversationId: input.session.conversationId,
-      engineId: input.session.engineId,
-      providerKind: input.providerKind ?? existing?.providerKind,
-      providerSessionId: input.providerSessionId ?? existing?.providerSessionId,
-      title: input.session.title,
-      summaryText:
-        input.summaryText ?? existing?.summaryText,
-      createdAt: input.session.createdAt,
-      updatedAt: input.session.updatedAt,
-      lastCompletedTurnAt:
-        input.lastCompletedTurnAt ?? existing?.lastCompletedTurnAt,
-      archivedAt: input.session.archivedAt,
-      lastTurnId: input.session.lastTurnId,
-      unreadState: input.unreadState ?? existing?.unreadState ?? "read",
-      source: input.source ?? existing?.source ?? "registry",
-      metadata: input.session.metadata
-    });
+    const normalized = this.normalizeSessionEntry(input, existing);
 
     if (existing && isSameSessionEntry(existing, normalized)) {
       return {
@@ -262,29 +256,127 @@ export class SessionIndexStore {
     };
   }
 
-  public async reconcileWorkspace(
-    input: ReconcileWorkspaceInput
+  private normalizeSessionEntry(
+    input: UpsertSessionIndexInput,
+    existing?: SessionIndexEntry
+  ): SessionIndexEntry {
+    return sessionIndexEntrySchema.parse({
+      workspaceId: input.workspaceId,
+      sessionId: input.session.sessionId,
+      conversationId: input.session.conversationId,
+      engineId: input.session.engineId,
+      providerKind: input.providerKind ?? existing?.providerKind,
+      providerSessionId: input.providerSessionId ?? existing?.providerSessionId,
+      title: input.session.title,
+      summaryText:
+        input.summaryText ?? existing?.summaryText,
+      createdAt: input.session.createdAt,
+      updatedAt: input.session.updatedAt,
+      lastCompletedTurnAt:
+        input.lastCompletedTurnAt ?? existing?.lastCompletedTurnAt,
+      archivedAt: input.session.archivedAt,
+      lastTurnId: input.session.lastTurnId,
+      unreadState: input.unreadState ?? existing?.unreadState ?? "read",
+      source: input.source ?? existing?.source ?? "registry",
+      metadata: input.session.metadata
+    });
+  }
+
+  public async applyWorkspaceRepair(
+    input: RepairWorkspaceInput
   ): Promise<{
     workspaceId: string;
     sessionCount: number;
     relationCount: number;
   }> {
     await this.ready();
+    for (;;) {
+      const baseRevision = this.revision;
+      const baseDocument = this.document;
+      const entriesBySessionId = new Map(
+        baseDocument.entries.map((entry) => [entry.sessionId, entry] as const)
+      );
+      const relationsByKey = new Map(
+        baseDocument.relations.map((relation) => [relationKey(relation), relation] as const)
+      );
+      let changed = false;
+      let processed = 0;
+      for (const entry of input.entries) {
+        const existing = entriesBySessionId.get(entry.session.sessionId);
+        const normalized = this.normalizeSessionEntry(entry, existing);
+        if (!existing || !isSameSessionEntry(existing, normalized)) {
+          entriesBySessionId.set(normalized.sessionId, normalized);
+          changed = true;
+        }
+        processed += 1;
+        if (processed % repairBatchSize === 0) {
+          await yieldRepairBatch();
+        }
+      }
 
-    let changed = false;
-    for (const entry of input.entries) {
-      changed = this.upsertSessionInMemory(entry).changed || changed;
-    }
-    for (const relation of input.relations ?? []) {
-      changed = this.upsertRelationInMemory(relation).changed || changed;
-    }
-    await this.persistMutation(changed);
+      const discoveredProviderSessionIds = new Set(
+        input.entries.flatMap((entry) =>
+          entry.providerSessionId ? [entry.providerSessionId] : []
+        )
+      );
+      const archivedAt = this.now();
+      for (const [sessionId, existing] of entriesBySessionId) {
+        if (
+          existing.workspaceId === input.workspaceId &&
+          existing.engineId === input.engineId &&
+          existing.source === "reconciled" &&
+          !existing.archivedAt &&
+          existing.providerSessionId &&
+          !discoveredProviderSessionIds.has(existing.providerSessionId)
+        ) {
+          entriesBySessionId.set(
+            sessionId,
+            sessionIndexEntrySchema.parse({
+              ...existing,
+              archivedAt,
+              updatedAt: archivedAt
+            })
+          );
+          changed = true;
+        }
+        processed += 1;
+        if (processed % repairBatchSize === 0) {
+          await yieldRepairBatch();
+        }
+      }
 
-    return {
-      workspaceId: input.workspaceId,
-      sessionCount: input.entries.length,
-      relationCount: input.relations?.length ?? 0
-    };
+      for (const relation of input.relations ?? []) {
+        const key = relationKey(relation);
+        const existing = relationsByKey.get(key);
+        const normalized = this.normalizeRelation(relation, existing);
+        if (!existing || !isSameSessionRelation(existing, normalized)) {
+          relationsByKey.set(key, normalized);
+          changed = true;
+        }
+        processed += 1;
+        if (processed % repairBatchSize === 0) {
+          await yieldRepairBatch();
+        }
+      }
+
+      if (this.revision !== baseRevision || this.document !== baseDocument) {
+        continue;
+      }
+      if (changed) {
+        this.document = {
+          ...baseDocument,
+          entries: sortEntries([...entriesBySessionId.values()]),
+          relations: [...relationsByKey.values()]
+        };
+      }
+      await this.persistMutation(changed);
+
+      return {
+        workspaceId: input.workspaceId,
+        sessionCount: input.entries.length,
+        relationCount: input.relations?.length ?? 0
+      };
+    }
   }
 
   public async archiveSession(
@@ -424,14 +516,7 @@ export class SessionIndexStore {
     );
     const existing =
       existingIndex >= 0 ? this.document.relations[existingIndex] : undefined;
-    const normalized = sessionRelationIndexSchema.parse({
-      workspaceId: input.workspaceId,
-      parentSessionId: input.parentSessionId,
-      childSessionId: input.childSessionId,
-      relationType: input.relationType,
-      sourceTurnId: input.sourceTurnId,
-      createdAt: input.createdAt ?? existing?.createdAt ?? this.now()
-    });
+    const normalized = this.normalizeRelation(input, existing);
     if (existing && isSameSessionRelation(existing, normalized)) {
       return {
         value: existing,
@@ -451,6 +536,20 @@ export class SessionIndexStore {
       value: normalized,
       changed: true
     };
+  }
+
+  private normalizeRelation(
+    input: UpsertSessionRelationInput,
+    existing?: SessionRelationIndex
+  ): SessionRelationIndex {
+    return sessionRelationIndexSchema.parse({
+      workspaceId: input.workspaceId,
+      parentSessionId: input.parentSessionId,
+      childSessionId: input.childSessionId,
+      relationType: input.relationType,
+      sourceTurnId: input.sourceTurnId,
+      createdAt: input.createdAt ?? existing?.createdAt ?? this.now()
+    });
   }
 
   private async load(): Promise<void> {

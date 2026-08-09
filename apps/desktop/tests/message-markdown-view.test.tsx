@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   MessageMarkdownView,
-  splitStreamingMarkdown
+  splitStreamingMarkdown,
+  splitUserMessageText
 } from "../src/ui/chat-shell/MessageMarkdownView.js";
 
 describe("MessageMarkdownView", () => {
@@ -76,6 +77,48 @@ describe("MessageMarkdownView", () => {
     expect(html).not.toContain("<li>still plain</li>");
   });
 
+  it("preserves user line breaks, Windows paths, and markdown punctuation verbatim", () => {
+    const text =
+      "1.Trim only checks the edges\n2.Keep this line separate\nI:\\GameDev\\Projects\\ConfigDatas\\.Json\\PlayPod\\1.json\n# literal heading\n**literal emphasis**";
+    const html = renderToStaticMarkup(
+      <MessageMarkdownView
+        block={{
+          blockId: "message-user-plain:md",
+          messageId: "message-user-plain",
+          sessionId: "session-1",
+          turnId: "turn-1",
+          role: "user",
+          kind: "markdown",
+          text,
+          actor: {
+            participantId: "participant-1",
+            engineId: "agent-codex"
+          },
+          startedAt: "2026-04-17T00:00:00.000Z",
+          completedAt: "2026-04-17T00:00:01.000Z"
+        }}
+      />
+    );
+
+    expect(html).toContain('class="awb-message__user-text"');
+    expect(html).toContain("1.Trim only checks the edges\n2.Keep this line separate");
+    expect(html).toContain("I:\\GameDev\\Projects\\ConfigDatas\\.Json\\PlayPod\\1.json");
+    expect(html).toContain("# literal heading\n**literal emphasis**");
+    expect(html).not.toContain("<h1>");
+    expect(html).not.toContain("<strong>");
+  });
+
+  it("splits local echo attachments from exact user text", () => {
+    expect(
+      splitUserMessageText(
+        "line one\nline two\n\n![image](file:///C:/image.png)\n[Spec](file:///C:/spec.md)"
+      )
+    ).toEqual({
+      text: "line one\nline two",
+      attachmentMarkdown: "![image](file:///C:/image.png)\n[Spec](file:///C:/spec.md)"
+    });
+  });
+
   it("sanitizes unsafe html fragments in markdown source", () => {
     const html = renderToStaticMarkup(
       <MessageMarkdownView
@@ -124,7 +167,7 @@ describe("MessageMarkdownView", () => {
 
     expect(html).toContain("<img");
     expect(html).toContain(
-      'src="file:///C:/Users/TestUser/Pictures/cat.png?awb_image_cache=message-3%3Amd%3Amarkdown%3A0"'
+      'src="file:///C:/Users/TestUser/Pictures/cat.png?awb_image_cache=message-3%3Amd%3Aattachments"'
     );
   });
 
@@ -205,7 +248,7 @@ describe("MessageMarkdownView", () => {
     expect(html).toContain("<button");
     expect(html).toContain('class="awb-inline-image-button"');
     expect(html).toContain(
-      'src="file:///C:/repo/assets/diagram.png?awb_image_cache=message-3c%3Amd%3Amarkdown%3A0"'
+      'src="file:///C:/repo/assets/diagram.png?awb_image_cache=message-3c%3Amd%3Aattachments"'
     );
   });
 

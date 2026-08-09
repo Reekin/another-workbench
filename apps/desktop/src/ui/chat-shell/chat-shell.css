@@ -761,7 +761,8 @@ button {
   line-height: 1.58;
 }
 
-.awb-message__streaming-tail {
+.awb-message__streaming-tail,
+.awb-message__user-text {
   margin-bottom: 0.72rem;
   white-space: pre-wrap;
   overflow-wrap: anywhere;

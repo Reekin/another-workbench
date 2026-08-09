@@ -83,6 +83,11 @@ type StreamingMarkdownParts = {
   tailText: string;
 };
 
+type UserMessageParts = {
+  text: string;
+  attachmentMarkdown?: string;
+};
+
 const codeCommentLinePattern = /^::code-comment\{(?<attributes>.*)\}$/;
 const directiveAttributeKeys = new Set<keyof CodeCommentDirective>([
   "title",
@@ -259,6 +264,22 @@ const resolveRenderableMarkdownText = (block: MessageBlock, text: string): Strea
   block.role === "assistant" && !block.completedAt
     ? splitStreamingMarkdown(text)
     : { stableMarkdown: text, tailText: "" };
+
+export const splitUserMessageText = (sourceText: string): UserMessageParts => {
+  const sections = sourceText.split(/\r?\n\r?\n/u);
+  const attachmentMarkdown = sections.at(-1) ?? "";
+  const isAttachmentBlock = attachmentMarkdown
+    .split(/\r?\n/u)
+    .every((line) => /^!?\[[^\]\r\n]*\]\((?:file:|data:image\/|blob:)[^\r\n]+\)$/u.test(line));
+  if (!attachmentMarkdown || !isAttachmentBlock) {
+    return { text: sourceText };
+  }
+
+  return {
+    text: sections.length > 1 ? sections.slice(0, -1).join("\n\n") : "",
+    attachmentMarkdown
+  };
+};
 
 const buildRenderableSegments = (sourceText: string): RenderableSegment[] => {
   const lines = sourceText.split(/\r?\n/);
@@ -522,6 +543,7 @@ export const MessageMarkdownView = memo(({
 }: MessageMarkdownViewProps): ReactElement => {
   const sourceText = block.text ?? "";
   const deferredText = useDeferredValue(sourceText);
+  const userMessageParts = splitUserMessageText(deferredText);
   const { stableMarkdown, tailText } = useMemo(
     () => resolveRenderableMarkdownText(block, deferredText),
     [block, deferredText]
@@ -558,7 +580,18 @@ export const MessageMarkdownView = memo(({
         )}
         {isRenderableMarkdownBlock(block) && !isEmpty && (
           <>
-            {renderableSegments.map((segment, index) => {
+            {block.role === "user" && userMessageParts.text ? (
+              <div className="awb-message__user-text">{userMessageParts.text}</div>
+            ) : null}
+            {block.role === "user" && userMessageParts.attachmentMarkdown ? (
+              <MarkdownRenderer
+                text={userMessageParts.attachmentMarkdown}
+                cacheKey={`${block.blockId}:attachments`}
+                onActivateResourceLink={onActivateResourceLink}
+                onPreviewImage={onPreviewImage}
+              />
+            ) : null}
+            {block.role !== "user" && renderableSegments.map((segment, index) => {
               if (segment.kind === "markdown") {
                 return (
                   <MarkdownRenderer
@@ -623,7 +656,9 @@ export const MessageMarkdownView = memo(({
                 </section>
               );
             })}
-            {tailText ? <StreamingPlainTextTail text={tailText} /> : null}
+            {block.role !== "user" && tailText ? (
+              <StreamingPlainTextTail text={tailText} />
+            ) : null}
           </>
         )}
       </div>

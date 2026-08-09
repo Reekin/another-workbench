@@ -1999,6 +1999,73 @@ describe("Codex app-server runtime port", () => {
     expect(port.getThreadIdForSession("codex-thread:sub-thread-1")).toBe("sub-thread-1");
   });
 
+  it("interrupts the active subagent subtree when stopping a parent turn", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "awb-codex-subtree-interrupt-"));
+    const requestLogPath = join(tempDir, "requests.jsonl");
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    disposers.push(() => port.stop());
+
+    const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+    port.subscribe((event) => {
+      events.push({ method: event.method, params: event.params });
+    });
+
+    await port.start({
+      env: {
+        FAKE_CODEX_REQUEST_LOG: requestLogPath
+      }
+    });
+    const started = await port.request({
+      id: "turn-collab-running",
+      method: "turn/start",
+      params: {
+        sessionId: "session-1",
+        content: "please trigger subagent-running"
+      }
+    });
+    await waitFor(() =>
+      events.some(
+        (event) =>
+          event.method === "turn.started" &&
+          event.params.sessionId === "codex-thread:sub-thread-1"
+      )
+    );
+
+    const turnId = String(
+      ((started.result ?? {}) as Record<string, unknown>).turnId
+    );
+    await port.request({
+      id: "interrupt-collab-running",
+      method: "turn/interrupt",
+      params: {
+        sessionId: "session-1",
+        turnId
+      }
+    });
+
+    const interruptRequests = readRequestLog(requestLogPath).filter(
+      (request) => request.method === "turn/interrupt"
+    );
+    expect(interruptRequests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          params: expect.objectContaining({ turnId })
+        }),
+        expect.objectContaining({
+          params: {
+            threadId: "sub-thread-1",
+            turnId: `child-${turnId}`
+          }
+        })
+      ])
+    );
+    expect(interruptRequests).toHaveLength(2);
+  });
+
   it("passes through explicit sandbox and approval selections", async () => {
     const port = createCodexAppServerRuntimePort({
       commandPath: process.execPath,

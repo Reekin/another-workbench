@@ -2449,6 +2449,7 @@ export const ChatShellApp = ({
             activeWorkspaceId={activeWorkspace?.workspaceId}
             activeWorkspaceRootPath={activeWorkspace?.rootPath}
             turns={composerTurns}
+            interruptTurns={turns}
             allowSessionLastTurnFallback={!activeChatTree?.supportsJump}
             approvals={activeSessionApprovals}
             interactions={activeSessionInteractions}

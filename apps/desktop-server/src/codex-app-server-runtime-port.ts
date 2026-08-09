@@ -886,6 +886,7 @@ export class CodexAppServerRuntimePort
     string,
     { turnId: string; sessionId: string }
   >();
+  private readonly childThreadIdsByParentThreadId = new Map<string, Set<string>>();
   private readonly subagentSessionIds = new Set<string>();
   private readonly announcedSubagentSessionIds = new Set<string>();
   private readonly hookTurnIdByThreadAndRun = new Map<string, string>();
@@ -1077,6 +1078,7 @@ export class CodexAppServerRuntimePort
     this.pendingTurnSessionIdByThreadId.clear();
     this.sessionIdByThreadAndTurnId.clear();
     this.activeTurnByThreadId.clear();
+    this.childThreadIdsByParentThreadId.clear();
     this.hookTurnIdByThreadAndRun.clear();
     this.rawCustomToolNameByTurnAndCall.clear();
     this.startedCodexToolItemIds.clear();
@@ -1571,14 +1573,38 @@ export class CodexAppServerRuntimePort
     if (!threadId || !turnId) {
       return;
     }
-    await this.rpc(
-      "turn/interrupt",
-      {
-        threadId,
-        turnId
-      } satisfies TurnInterruptParams,
-      options
+    const targets = [{ threadId, turnId }];
+    const visited = new Set<string>([threadId]);
+    const pendingThreadIds = [...(this.childThreadIdsByParentThreadId.get(threadId) ?? [])];
+    while (pendingThreadIds.length > 0) {
+      const childThreadId = pendingThreadIds.shift()!;
+      if (visited.has(childThreadId)) {
+        continue;
+      }
+      visited.add(childThreadId);
+      const activeTurn = this.activeTurnByThreadId.get(childThreadId);
+      if (activeTurn) {
+        targets.push({ threadId: childThreadId, turnId: activeTurn.turnId });
+      }
+      pendingThreadIds.push(
+        ...(this.childThreadIdsByParentThreadId.get(childThreadId) ?? [])
+      );
+    }
+    const results = await Promise.allSettled(
+      targets.map((target) =>
+        this.rpc(
+          "turn/interrupt",
+          target satisfies TurnInterruptParams,
+          options
+        )
+      )
     );
+    const failed = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected"
+    );
+    if (failed) {
+      throw failed.reason;
+    }
   }
 
   private async handleThreadGoalSet(
@@ -2202,6 +2228,7 @@ export class CodexAppServerRuntimePort
         if (!parentThreadId) {
           return;
         }
+        this.registerSubagentThread(parentThreadId, thread.id);
         const parentSessionId = this.resolveSessionIdFromThreadId(parentThreadId);
         const conversationId = parentSessionId
           ? this.resolveConversationIdBySessionId?.(parentSessionId)
@@ -3200,6 +3227,7 @@ export class CodexAppServerRuntimePort
     }
 
     for (const receiverThreadId of item.receiverThreadIds) {
+      this.registerSubagentThread(item.senderThreadId, receiverThreadId);
       const childSessionId = discoveredCodexSessionId(receiverThreadId);
       this.subagentSessionIds.add(childSessionId);
       this.attachThreadToSession(childSessionId, receiverThreadId);
@@ -3236,6 +3264,13 @@ export class CodexAppServerRuntimePort
         }
       });
     }
+  }
+
+  private registerSubagentThread(parentThreadId: string, childThreadId: string): void {
+    const childThreadIds =
+      this.childThreadIdsByParentThreadId.get(parentThreadId) ?? new Set<string>();
+    childThreadIds.add(childThreadId);
+    this.childThreadIdsByParentThreadId.set(parentThreadId, childThreadIds);
   }
 
   private resolveSessionIdFromThreadId(rawThreadId: unknown): string | undefined {

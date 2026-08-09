@@ -201,6 +201,22 @@ export const resolveComposerIntent = (input: {
   return "send";
 };
 
+export const resolveInterruptTurnId = (input: {
+  activeSession?: ChatSession;
+  turns: Turn[];
+}): string | undefined => {
+  const activeTurn = [...input.turns]
+    .reverse()
+    .find((turn) => turn.status !== "completed");
+  if (activeTurn) {
+    return activeTurn.turnId;
+  }
+  return input.activeSession?.status === "running" ||
+    input.activeSession?.status === "awaiting_approval"
+    ? input.activeSession.lastTurnId
+    : undefined;
+};
+
 type UseComposerControllerInput = {
   transport?: DesktopTransport;
   activeSession?: ChatSession;
@@ -211,6 +227,7 @@ type UseComposerControllerInput = {
   activeWorkspaceId?: string;
   activeWorkspaceRootPath?: string;
   turns: Turn[];
+  interruptTurns: Turn[];
   allowSessionLastTurnFallback?: boolean;
   approvals: ApprovalRequest[];
   isOpeningSelectedSession: boolean;
@@ -296,6 +313,14 @@ export const useComposerController = (
     input.allowSessionLastTurnFallback,
     input.activeSession?.lastTurnId
   ]);
+  const interruptTurnId = useMemo(
+    () =>
+      resolveInterruptTurnId({
+        activeSession: input.activeSession,
+        turns: input.interruptTurns
+      }),
+    [input.activeSession, input.interruptTurns]
+  );
 
   const draft = input.activeSessionId
     ? (draftBySessionId[input.activeSessionId] ?? "")
@@ -340,7 +365,7 @@ export const useComposerController = (
         input.activeSession?.status === "awaiting_approval"
     );
   const canStop =
-    Boolean(input.transport && input.activeSessionId && activeTurnId) &&
+    Boolean(input.transport && input.activeSessionId && interruptTurnId) &&
     (input.activeSession?.status === "running" ||
       input.activeSession?.status === "awaiting_approval");
 
@@ -848,14 +873,14 @@ export const useComposerController = (
   };
 
   const onStop = async (): Promise<void> => {
-    if (!input.transport || !input.activeSessionId || !activeTurnId || !canStop) {
+    if (!input.transport || !input.activeSessionId || !interruptTurnId || !canStop) {
       return;
     }
     setIsDispatching(true);
     try {
       await input.transport.chat.interrupt({
         sessionId: input.activeSessionId,
-        turnId: activeTurnId
+        turnId: interruptTurnId
       });
       input.onStatusNotice({
         message: "Interrupt requested.",

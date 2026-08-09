@@ -24,6 +24,7 @@ export type ComposerContainerProps = {
   activeWorkspaceId?: string;
   activeWorkspaceRootPath?: string;
   turns: Turn[];
+  interruptTurns: Turn[];
   allowSessionLastTurnFallback?: boolean;
   approvals: ApprovalRequest[];
   interactions: RuntimeInteraction[];
@@ -48,6 +49,7 @@ export const ComposerContainer = ({
   activeWorkspaceId,
   activeWorkspaceRootPath,
   turns,
+  interruptTurns,
   allowSessionLastTurnFallback,
   approvals,
   interactions,
@@ -71,6 +73,7 @@ export const ComposerContainer = ({
     activeWorkspaceId,
     activeWorkspaceRootPath,
     turns,
+    interruptTurns,
     allowSessionLastTurnFallback,
     approvals,
     isOpeningSelectedSession,

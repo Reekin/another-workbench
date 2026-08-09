@@ -212,7 +212,7 @@ const emitHappyPath = ({ threadId, turnId, prompt, messagePhase = null }) => {
   });
 };
 
-const emitCollabPath = ({ threadId, turnId }) => {
+const emitCollabPath = ({ threadId, turnId, keepRunning = false }) => {
   const collabId = `collab-${turnId}`;
   const childThreadId = "sub-thread-1";
   const childTurnId = `child-${turnId}`;
@@ -318,16 +318,18 @@ const emitCollabPath = ({ threadId, turnId }) => {
       }
     }
   });
-  send({
-    method: "turn/completed",
-    params: {
-      threadId: childThreadId,
-      turn: {
-        id: childTurnId,
-        status: "completed"
+  if (!keepRunning) {
+    send({
+      method: "turn/completed",
+      params: {
+        threadId: childThreadId,
+        turn: {
+          id: childTurnId,
+          status: "completed"
+        }
       }
-    }
-  });
+    });
+  }
   send({
     method: "item/started",
     params: {
@@ -352,6 +354,9 @@ const emitCollabPath = ({ threadId, turnId }) => {
       }
     }
   });
+  if (keepRunning) {
+    return;
+  }
   send({
     method: "item/completed",
     params: {
@@ -1818,7 +1823,11 @@ const handleRequest = (payload) => {
           }
 
           if (prompt.includes("subagent")) {
-            emitCollabPath({ threadId, turnId });
+            emitCollabPath({
+              threadId,
+              turnId,
+              keepRunning: prompt.includes("subagent-running")
+            });
             return;
           }
 

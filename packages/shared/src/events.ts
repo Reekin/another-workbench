@@ -145,6 +145,7 @@ const zMessageCompletedEvent = z
     sessionId: zSessionId,
     turnId: zTurnId,
     messageId: zMessageId,
+    role: z.enum(["assistant", "user", "system"]).optional(),
     finalText: z.string().optional(),
     isFinalForTurn: z.boolean().optional(),
     phase: zMessagePhase.optional(),

@@ -444,7 +444,7 @@ export class DomainProjector {
             messageId: event.messageId,
             sessionId: event.sessionId,
             turnId: event.turnId,
-            role: existing?.role ?? "assistant",
+            role: existing?.role ?? event.role ?? "assistant",
             phase: event.phase ?? existing?.phase,
             kind: "markdown",
             text:

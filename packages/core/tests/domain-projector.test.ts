@@ -4,6 +4,35 @@ import { DomainProjector } from "../src/domain-projector.js";
 import { DomainStore } from "../src/domain-store.js";
 
 describe("DomainProjector", () => {
+  it("preserves a completed-only user message role", () => {
+    const projector = new DomainProjector();
+    projector.apply({
+      type: "session.created",
+      conversationId: "conversation-a",
+      sessionId: "child-session",
+      engineId: "codex",
+      status: "running"
+    }, "2026-08-08T00:00:00.000Z");
+    projector.apply({
+      type: "turn.started",
+      sessionId: "child-session",
+      turnId: "child-turn"
+    }, "2026-08-08T00:00:01.000Z");
+    projector.apply({
+      type: "message.completed",
+      sessionId: "child-session",
+      turnId: "child-turn",
+      messageId: "delegated-prompt",
+      role: "user",
+      finalText: "Inspect the cancellation path."
+    }, "2026-08-08T00:00:02.000Z");
+
+    expect(projector.store.getMessageBlock("delegated-prompt:md")).toMatchObject({
+      role: "user",
+      text: "Inspect the cancellation path."
+    });
+  });
+
   it("keeps canonical turn contents when turn.started is repeated", () => {
     const projector = new DomainProjector();
     projector.apply({

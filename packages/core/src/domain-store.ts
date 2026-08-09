@@ -1528,6 +1528,15 @@ export class DomainStore {
   public upsertSessionRelation(relation: SessionRelation | unknown): SessionRelation {
     const parsedRelation = parseSessionRelation(relation);
     this.validateSessionRelation(parsedRelation);
+    for (const candidate of this.sessionRelations.values()) {
+      if (
+        candidate.relationId !== parsedRelation.relationId &&
+        candidate.parentSessionId === parsedRelation.parentSessionId &&
+        candidate.childSessionId === parsedRelation.childSessionId
+      ) {
+        this.deleteSessionRelation(candidate.relationId);
+      }
+    }
     const existing = this.sessionRelations.get(parsedRelation.relationId);
     if (existing) {
       if (existing.childSessionId !== parsedRelation.childSessionId) {
@@ -1631,7 +1640,8 @@ export class DomainStore {
     const existing = [...this.sessionRelations.values()].find(
       (candidate) =>
         candidate.relationId !== relation.relationId &&
-        candidate.childSessionId === relation.childSessionId
+        candidate.childSessionId === relation.childSessionId &&
+        candidate.parentSessionId !== relation.parentSessionId
     );
     if (existing) {
       throw new DomainStoreRelationError(

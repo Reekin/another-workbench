@@ -682,6 +682,144 @@ describe("RuntimeOrchestrator", () => {
     );
   });
 
+  it("forwards and persists provider session identity for send commands", async () => {
+    const executeCommand = vi.fn().mockImplementation(async (envelope) => ({
+      commandId: envelope.commandId,
+      commandType: envelope.command.type,
+      accepted: true,
+      outcome: {
+        type: "turn_started" as const,
+        sessionId: envelope.command.sessionId,
+        turnId: `turn-${envelope.command.sessionId}`,
+        ...(envelope.command.sessionId === "session-new"
+          ? { providerSessionId: "thread-new" }
+          : {})
+      }
+    }));
+    let lifecycleState: ReturnType<AgentAdapter["getLifecycleState"]> = "idle";
+    const adapter: AgentAdapter = {
+      id: "codex-adapter",
+      kind: "codex",
+      getLifecycleState: () => lifecycleState,
+      initialize: vi.fn().mockImplementation(async () => {
+        lifecycleState = "ready";
+      }),
+      executeCommand,
+      subscribe: vi.fn().mockReturnValue(() => {}),
+      dispose: vi.fn().mockResolvedValue(undefined)
+    };
+
+    let orchestrator: RuntimeOrchestrator | undefined;
+    const domainService = new DomainService({
+      now: () => "2026-04-20T00:04:00Z",
+      createSessionId: () => "session-new",
+      assertEngineRegistered: (engineId) =>
+        orchestrator?.assertEngineRegistered(engineId),
+      resolveEngineCapabilities: (engineId) =>
+        orchestrator?.getEngineCapabilities(engineId) ?? [],
+      publishRuntimeEvent: () => {}
+    });
+
+    orchestrator = new RuntimeOrchestrator({
+      domainService,
+      sessionIndexSyncService: {
+        syncSession: vi.fn().mockResolvedValue(undefined),
+        syncRelation: vi.fn().mockResolvedValue(undefined),
+        markSessionUnreadCompleted: vi.fn().mockResolvedValue(undefined)
+      } as never,
+      workspaceSelectionService: {
+        activateSelection: vi.fn().mockResolvedValue(undefined),
+        selectWorkspace: vi.fn().mockResolvedValue({
+          workspaceId: "workspace-1"
+        })
+      } as never,
+      publishRuntimeEvent: () => {},
+      createConversationId: () => "conversation-new",
+      agentBindings: [
+        {
+          descriptor: {
+            engineId: "codex",
+            displayName: "Codex",
+            capabilities: ["chat"]
+          },
+          providerKind: "codex-thread",
+          adapter
+        }
+      ]
+    });
+
+    orchestrator.hydrateDiscoveredSession({
+      workspaceId: "workspace-1",
+      conversation: {
+        conversationId: "conversation-child",
+        workspaceId: "workspace-1",
+        participantEngineIds: ["codex"],
+        activeSessionId: "session-child",
+        sessionIds: ["session-child"],
+        createdAt: "2026-04-19T00:00:00Z",
+        updatedAt: "2026-04-19T00:01:00Z"
+      },
+      session: {
+        sessionId: "session-child",
+        conversationId: "conversation-child",
+        engineId: "codex",
+        status: "idle",
+        createdAt: "2026-04-19T00:00:00Z",
+        updatedAt: "2026-04-19T00:01:00Z",
+        metadata: {
+          providerKind: "codex-thread",
+          providerSessionId: "thread-child"
+        }
+      },
+      turns: [],
+      messageBlocks: [],
+      toolCalls: [],
+      terminalStreams: [],
+      sessionRelations: []
+    });
+
+    await orchestrator.executeCommand({
+      commandId: "send-child",
+      command: {
+        type: "sendUserMessage",
+        sessionId: "session-child",
+        messageId: "message-child",
+        content: "continue",
+        attachments: []
+      }
+    });
+
+    expect(executeCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: expect.objectContaining({
+          type: "sendUserMessage",
+          sessionId: "session-child",
+          providerSessionId: "thread-child"
+        })
+      })
+    );
+
+    const newSession = await orchestrator.createSession({
+      engineId: "codex",
+      workspaceId: "workspace-1"
+    });
+    await orchestrator.executeCommand({
+      commandId: "send-new",
+      command: {
+        type: "sendUserMessage",
+        sessionId: newSession.sessionId,
+        messageId: "message-new",
+        content: "hello",
+        attachments: []
+      }
+    });
+
+    expect(domainService.getSession("session-new")?.metadata).toMatchObject({
+      providerKind: "codex-thread",
+      providerSessionId: "thread-new"
+    });
+  });
+
   it("generates a title from the first user message without blocking send", async () => {
     const syncSession = vi.fn().mockResolvedValue(undefined);
     const generateTitle = vi.fn().mockResolvedValue("Mini PC research");

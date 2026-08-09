@@ -343,6 +343,7 @@ describe("Codex app-server runtime port", () => {
       })
     });
     expect(port.getState()).toBe("failed");
+    expect(port.getThreadIdForSession("session-exit")).toBeUndefined();
   });
 
   it("cleans up failed initialize attempts and can start a fresh process", async () => {
@@ -510,6 +511,162 @@ describe("Codex app-server runtime port", () => {
         force: true
       });
     }
+  });
+
+  it("resumes the provider thread before starting a turn when no runtime binding exists", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    vi.spyOn(port, "start").mockResolvedValue();
+    const rpc = vi
+      .spyOn(port as unknown as { rpc: (...args: unknown[]) => Promise<unknown> }, "rpc")
+      .mockImplementation(async (method) => {
+        if (method === "thread/resume") {
+          return {
+            thread: {
+              id: "provider-thread-1"
+            }
+          };
+        }
+        if (method === "turn/start") {
+          return {
+            turn: {
+              id: "turn-resumed-1"
+            }
+          };
+        }
+        throw new Error(`Unexpected RPC method: ${String(method)}`);
+      });
+
+    await port.request({
+      id: "resume-before-turn",
+      method: "turn/start",
+      params: {
+        sessionId: "session-existing-1",
+        providerSessionId: "provider-thread-1",
+        content: "continue the existing thread"
+      }
+    });
+
+    expect(rpc.mock.calls.map(([method]) => method)).toEqual([
+      "thread/resume",
+      "turn/start"
+    ]);
+    expect(rpc).toHaveBeenNthCalledWith(
+      1,
+      "thread/resume",
+      expect.objectContaining({
+        threadId: "provider-thread-1"
+      }),
+      {}
+    );
+    expect(rpc).toHaveBeenNthCalledWith(
+      2,
+      "turn/start",
+      expect.objectContaining({
+        threadId: "provider-thread-1"
+      }),
+      {}
+    );
+    expect(rpc).not.toHaveBeenCalledWith("thread/start", expect.anything());
+  });
+
+  it("resumes a stale provider binding and retries turn start exactly once", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    vi.spyOn(port, "start").mockResolvedValue();
+    port.attachThreadToSession("session-stale-1", "provider-thread-stale-1");
+    const rpc = vi
+      .spyOn(port as unknown as { rpc: (...args: unknown[]) => Promise<unknown> }, "rpc")
+      .mockImplementation(async (method) => {
+        if (method === "thread/resume") {
+          return {
+            thread: {
+              id: "provider-thread-stale-1"
+            }
+          };
+        }
+        if (method === "turn/start" && rpc.mock.calls.filter(([name]) => name === "turn/start").length === 1) {
+          throw Object.assign(
+            new Error("thread not found: provider-thread-stale-1"),
+            {
+              code: "runtime_protocol_error",
+              details: {
+                method: "turn/start"
+              }
+            }
+          );
+        }
+        if (method === "turn/start") {
+          return {
+            turn: {
+              id: "turn-retried-1"
+            }
+          };
+        }
+        throw new Error(`Unexpected RPC method: ${String(method)}`);
+      });
+
+    await port.request({
+      id: "retry-stale-turn",
+      method: "turn/start",
+      params: {
+        sessionId: "session-stale-1",
+        providerSessionId: "provider-thread-stale-1",
+        content: "retry after resume"
+      }
+    });
+
+    expect(rpc.mock.calls.map(([method]) => method)).toEqual([
+      "turn/start",
+      "thread/resume",
+      "turn/start"
+    ]);
+    expect(
+      rpc.mock.calls.filter(([method]) => method === "turn/start")
+    ).toHaveLength(2);
+    expect(
+      rpc.mock.calls.filter(([method]) => method === "thread/resume")
+    ).toHaveLength(1);
+  });
+
+  it("does not resume or retry turn start for non-thread-not-found failures", async () => {
+    const port = createCodexAppServerRuntimePort({
+      commandPath: process.execPath,
+      commandArgs: [fixturePath],
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    vi.spyOn(port, "start").mockResolvedValue();
+    port.attachThreadToSession("session-failed-1", "provider-thread-failed-1");
+    const rpc = vi
+      .spyOn(port as unknown as { rpc: (...args: unknown[]) => Promise<unknown> }, "rpc")
+      .mockRejectedValue(new Error("permission denied"));
+
+    await expect(
+      port.request({
+        id: "do-not-retry-turn",
+        method: "turn/start",
+        params: {
+          sessionId: "session-failed-1",
+          providerSessionId: "provider-thread-failed-1",
+          content: "do not retry this request"
+        }
+      })
+    ).rejects.toThrow("permission denied");
+
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith(
+      "turn/start",
+      expect.objectContaining({
+        threadId: "provider-thread-failed-1"
+      }),
+      {}
+    );
   });
 
   it("maps real app-server style notifications into message, tool, and terminal events", async () => {

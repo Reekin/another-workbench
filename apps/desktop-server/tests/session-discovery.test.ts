@@ -123,6 +123,49 @@ afterEach(async () => {
 });
 
 describe("Session discovery and reconciliation", () => {
+  it("keeps an already-bound main session executable without resuming its running thread", async () => {
+    const resumeThread = vi.fn();
+    const attachThreadToSession = vi.fn();
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        getThreadIdForSession: vi.fn().mockReturnValue("thread-main"),
+        resumeThread,
+        attachThreadToSession
+      } as never
+    });
+
+    await expect(provider.ensureSessionExecutable({
+      sessionId: "codex-thread:thread-main",
+      providerSessionId: "thread-main"
+    } as never)).resolves.toBe(true);
+
+    expect(resumeThread).not.toHaveBeenCalled();
+    expect(attachThreadToSession).not.toHaveBeenCalled();
+  });
+
+  it("resumes an unbound main session into the current app-server process", async () => {
+    const resumeThread = vi.fn().mockResolvedValue(createThread({ id: "thread-main" }));
+    const attachThreadToSession = vi.fn();
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        getThreadIdForSession: vi.fn().mockReturnValue(undefined),
+        resumeThread,
+        attachThreadToSession
+      } as never
+    });
+
+    await expect(provider.ensureSessionExecutable({
+      sessionId: "codex-thread:thread-main",
+      providerSessionId: "thread-main"
+    } as never)).resolves.toBe(true);
+
+    expect(resumeThread).toHaveBeenCalledWith("thread-main");
+    expect(attachThreadToSession).toHaveBeenCalledWith(
+      "codex-thread:thread-main",
+      "thread-main"
+    );
+  });
+
   it("matches codex thread cwd values that include the windows device prefix", async () => {
     const provider = new CodexSessionDiscoveryProvider({
       codexRuntimePort: {

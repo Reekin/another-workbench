@@ -439,6 +439,7 @@ export type SessionDiscoveryProvider = {
       isCancelled?: () => boolean;
     }
   ) => Promise<HydratedSessionWindowSnapshot | undefined>;
+  ensureSessionExecutable?: (entry: SessionIndexEntry) => Promise<boolean>;
 };
 
 type HydrationConsumer = {
@@ -896,6 +897,19 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
         return [workspace.workspaceId, { sessions, relations }] as const;
       })
     );
+  }
+
+  public async ensureSessionExecutable(entry: SessionIndexEntry): Promise<boolean> {
+    const threadId = entry.providerSessionId;
+    if (!threadId) {
+      return false;
+    }
+    if (this.codexRuntimePort.getThreadIdForSession(entry.sessionId) === threadId) {
+      return true;
+    }
+    const thread = await this.codexRuntimePort.resumeThread(threadId);
+    this.codexRuntimePort.attachThreadToSession(entry.sessionId, thread.id);
+    return true;
   }
 
   public async hydrateSession(
@@ -1372,6 +1386,19 @@ export class SessionReconciliationService {
     this.hydrationBySessionId.set(sessionId, hydration);
     const loadedByHydration = await hydration.promise;
     return input.isCancelled?.() ? false : loadedByHydration;
+  }
+
+  public async ensureSessionExecutable(sessionId: string): Promise<boolean> {
+    await this.sessionIndexStore.ready();
+    const entry = this.sessionIndexStore.getEntry(sessionId);
+    if (!entry) {
+      return false;
+    }
+    const provider = this.providersByEngineId.get(entry.engineId);
+    if (!provider?.ensureSessionExecutable) {
+      return true;
+    }
+    return provider.ensureSessionExecutable(entry);
   }
 
   public async hydrateSessionWindow(

@@ -141,7 +141,9 @@ describe("CapabilityRegistry", () => {
           providerSessionId: "thread-1"
         }
       ]),
-      archiveSessions: vi.fn().mockResolvedValue(undefined)
+      archiveSessions: vi.fn(async (sessionIds: string[]) =>
+        sessionIds.map((sessionId) => ({ sessionId }))
+      )
     } as never;
     const sessionIdentity = new SessionIdentityRegistry({
       runtimeService,
@@ -299,7 +301,9 @@ describe("CapabilityRegistry", () => {
         providerSessionId: "thread-untyped"
       }
     ]);
-    const archiveSessions = vi.fn().mockResolvedValue(undefined);
+    const archiveSessions = vi.fn(async (sessionIds: string[]) =>
+      sessionIds.map((sessionId) => ({ sessionId }))
+    );
     const sessionIndexStore = {
       getEntry: vi.fn().mockReturnValue({
         sessionId: "session-codex",
@@ -312,6 +316,7 @@ describe("CapabilityRegistry", () => {
         source: "registry"
       }),
       listEntries: vi.fn().mockReturnValue([]),
+      listRelations: vi.fn().mockReturnValue([]),
       listEntriesByProviderSessionId,
       archiveSessions
     } as never;
@@ -337,7 +342,7 @@ describe("CapabilityRegistry", () => {
     });
 
     expect(listEntriesByProviderSessionId).not.toHaveBeenCalled();
-    expect(archiveSessions).not.toHaveBeenCalled();
+    expect(archiveSessions).toHaveBeenCalledWith(["session-codex"]);
     expect(runtimeService.executeCommand).toHaveBeenCalledWith(
       expect.objectContaining({
         command: {
@@ -346,5 +351,88 @@ describe("CapabilityRegistry", () => {
         }
       })
     );
+  });
+
+  it("archives runtime sessions returned by the cascading index archive", async () => {
+    const entries = [
+      ["session-root", "thread-root"],
+      ["session-child", "thread-child"],
+      ["session-grandchild", "thread-grandchild"],
+      ["session-fork", "thread-fork"]
+    ].map(([sessionId, providerSessionId]) => ({
+      sessionId,
+      workspaceId: "workspace-1",
+      conversationId: "conversation-1",
+      engineId: "codex",
+      providerKind: "codex-thread",
+      providerSessionId,
+      createdAt: "2026-08-09T00:00:00.000Z",
+      updatedAt: "2026-08-09T00:00:00.000Z",
+      source: "registry" as const
+    }));
+    const runtimeSessions = entries
+      .filter((entry) => entry.sessionId !== "session-grandchild")
+      .map((entry) => ({
+        sessionId: entry.sessionId,
+        conversationId: entry.conversationId,
+        engineId: entry.engineId,
+        status: "idle" as const,
+        title: entry.sessionId,
+        createdAt: entry.createdAt,
+        updatedAt: entry.updatedAt
+      }));
+    const runtimeService = {
+      listSessions: vi.fn().mockReturnValue(runtimeSessions),
+      executeCommand: vi.fn().mockResolvedValue({ accepted: true }),
+      resolveProviderSessionHandle: vi.fn((sessionId: string) => {
+        const entry = entries.find((candidate) => candidate.sessionId === sessionId);
+        return entry
+          ? {
+              providerKind: entry.providerKind,
+              providerSessionId: entry.providerSessionId
+            }
+          : undefined;
+      })
+    } as unknown as WorkbenchRuntimeService;
+    const archiveSessions = vi.fn().mockResolvedValue(
+      entries.filter((entry) => entry.sessionId !== "session-fork")
+    );
+    const sessionIndexStore = {
+      getEntry: vi.fn((sessionId: string) =>
+        entries.find((entry) => entry.sessionId === sessionId)
+      ),
+      listEntries: vi.fn().mockReturnValue(entries),
+      archiveSessions
+    } as never;
+    const prepareArchive = vi.fn().mockResolvedValue(undefined);
+    const registry = new CapabilityRegistry({
+      runtimeService,
+      sessionIndexStore,
+      sessionIdentity: new SessionIdentityRegistry({
+        runtimeService,
+        sessionIndexStore
+      }),
+      capabilities: [
+        {
+          engineId: "codex",
+          sessionActions: {
+            prepareArchive
+          }
+        }
+      ]
+    });
+
+    await expect(registry.runSessionAction("session-root", "archive")).resolves.toEqual({
+      action: "archive",
+      archived: true
+    });
+
+    expect(prepareArchive.mock.calls.map(([context]) => context.sessionId)).toEqual([
+      "session-root"
+    ]);
+    expect(archiveSessions).toHaveBeenCalledWith(["session-root"]);
+    expect(
+      vi.mocked(runtimeService.executeCommand).mock.calls.map(([input]) => input.command.sessionId)
+    ).toEqual(["session-root", "session-child"]);
   });
 });

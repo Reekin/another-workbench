@@ -616,6 +616,21 @@ describe("DomainStore", () => {
     expect(store.getSessionChildren("parent-b")).toEqual([]);
   });
 
+  it("replaces duplicate relation identities for the same structural edge", () => {
+    const store = new DomainStore();
+    store.upsertConversation(conversation("conversation-a"));
+    store.upsertSession(session("parent-a"));
+    store.upsertSession(session("child-a"));
+    store.upsertSessionRelation(relation("relation-live", "parent-a", "child-a"));
+
+    store.upsertSessionRelation(relation("relation-index", "parent-a", "child-a"));
+
+    expect(store.listSessionRelations()).toEqual([
+      expect.objectContaining({ relationId: "relation-index" })
+    ]);
+    expect(store.getSessionParent("child-a")).toBe("parent-a");
+  });
+
   it("rejects session relation cycles", () => {
     const store = new DomainStore();
     store.upsertConversation(conversation("conversation-a"));

@@ -151,6 +151,75 @@ type MutationResult<T> = {
   changed: boolean;
 };
 
+const archiveSubagentSessions = (
+  document: SessionIndexDocument,
+  rootSessionIds: readonly string[],
+  archivedAt?: string
+): MutationResult<SessionIndexDocument> & { archivedEntries: SessionIndexEntry[] } => {
+  const entriesBySessionId = new Map(
+    document.entries.map((entry) => [entry.sessionId, entry] as const)
+  );
+  const childrenByParentId = new Map<string, string[]>();
+  for (const relation of document.relations) {
+    if (relation.relationType !== "subagent") {
+      continue;
+    }
+    const children = childrenByParentId.get(relation.parentSessionId) ?? [];
+    children.push(relation.childSessionId);
+    childrenByParentId.set(relation.parentSessionId, children);
+  }
+
+  const queue = rootSessionIds.map((sessionId) => ({
+    sessionId,
+    inheritedArchivedAt: undefined as string | undefined
+  }));
+  const visited = new Set<string>();
+  const archivedEntries: SessionIndexEntry[] = [];
+  let changed = false;
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || visited.has(current.sessionId)) {
+      continue;
+    }
+    const { sessionId, inheritedArchivedAt } = current;
+    visited.add(sessionId);
+    const entry = entriesBySessionId.get(sessionId);
+    const effectiveArchivedAt = archivedAt ?? entry?.archivedAt ?? inheritedArchivedAt;
+    if (!entry || !effectiveArchivedAt) {
+      continue;
+    }
+    const archived = archivedAt || !entry.archivedAt
+      ? {
+          ...entry,
+          archivedAt: effectiveArchivedAt,
+          updatedAt:
+            entry.updatedAt > effectiveArchivedAt ? entry.updatedAt : effectiveArchivedAt
+        }
+      : entry;
+    if (archived !== entry) {
+      entriesBySessionId.set(sessionId, archived);
+      changed = true;
+    }
+    archivedEntries.push(archived);
+    for (const childSessionId of childrenByParentId.get(sessionId) ?? []) {
+      const child = entriesBySessionId.get(childSessionId);
+      if (child?.workspaceId === entry.workspaceId) {
+        queue.push({ sessionId: childSessionId, inheritedArchivedAt: effectiveArchivedAt });
+      }
+    }
+  }
+  return {
+    value: changed
+      ? {
+          ...document,
+          entries: sortEntries([...entriesBySessionId.values()])
+        }
+      : document,
+    changed,
+    archivedEntries
+  };
+};
+
 export class SessionIndexStore {
   private readonly filePath: string;
   private readonly now: Clock;
@@ -413,27 +482,10 @@ export class SessionIndexStore {
     if (sessionIds.length === 0) {
       return [];
     }
-    const targetIds = new Set(sessionIds);
-    const archivedEntries: SessionIndexEntry[] = [];
-    this.document = {
-      ...this.document,
-      entries: sortEntries(
-        this.document.entries.map((entry) => {
-          if (!targetIds.has(entry.sessionId)) {
-            return entry;
-          }
-          const archived = sessionIndexEntrySchema.parse({
-            ...entry,
-            archivedAt,
-            updatedAt: archivedAt
-          });
-          archivedEntries.push(archived);
-          return archived;
-        })
-      )
-    };
+    const result = archiveSubagentSessions(this.document, sessionIds, archivedAt);
+    this.document = result.value;
     await this.persist();
-    return archivedEntries;
+    return result.archivedEntries;
   }
 
   public async removeWorkspace(workspaceId: string): Promise<void> {
@@ -559,18 +611,24 @@ export class SessionIndexStore {
       relations: []
     });
     const parsed = sessionIndexDocumentSchema.safeParse(loaded.value);
-    this.document = parsed.success
-      ? {
-          ...parsed.data,
-          entries: sortEntries(parsed.data.entries)
-        }
-      : {
+    const normalized = parsed.success
+      ? archiveSubagentSessions(
+          {
+            ...parsed.data,
+            entries: sortEntries(parsed.data.entries)
+          },
+          parsed.data.entries
+            .filter((entry) => entry.archivedAt)
+            .map((entry) => entry.sessionId)
+        )
+      : undefined;
+    this.document = normalized?.value ?? {
           version: 1,
           entries: [],
           relations: []
         };
     this.revision += 1;
-    if (loaded.corrupted || !parsed.success) {
+    if (loaded.corrupted || !parsed.success || normalized?.changed) {
       await this.persist();
     }
   }

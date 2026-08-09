@@ -664,6 +664,7 @@ export class WorkbenchShellService {
         throw new Error("Open session cancelled.");
       }
       if (hydratedPage) {
+        await this.ensureOpenedSessionExecutable(sessionId, { isCancelled });
         await this.activateOpenedSession(sessionId, { isCancelled });
         return {
           page: hydratedPage
@@ -695,6 +696,7 @@ export class WorkbenchShellService {
     if (isCancelled()) {
       throw new Error("Open session cancelled.");
     }
+    await this.ensureOpenedSessionExecutable(sessionId, { isCancelled });
     await this.activateOpenedSession(sessionId, { isCancelled });
     return {
       page: this.buildSessionWindow(sessionId, {
@@ -1067,6 +1069,25 @@ export class WorkbenchShellService {
       this.partiallyHydratedSessionIds.has(sessionId)
     ) {
       throw new Error(`Session could not be fully loaded: ${sessionId}`);
+    }
+  }
+
+  private async ensureOpenedSessionExecutable(
+    sessionId: string,
+    input: { isCancelled?: () => boolean } = {}
+  ): Promise<void> {
+    const context = this.sessionIdentity.resolveContext(sessionId);
+    if (!context.providerHandle || !this.sessionReconciliation) {
+      return;
+    }
+    const executable = await this.sessionReconciliation.ensureSessionExecutable(
+      sessionId
+    );
+    if (input.isCancelled?.()) {
+      throw new Error("Open session cancelled.");
+    }
+    if (!executable) {
+      throw new Error("This session could not be resumed for sending.");
     }
   }
 

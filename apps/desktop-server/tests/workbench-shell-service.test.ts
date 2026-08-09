@@ -77,6 +77,61 @@ const buildWorkspaceRegistry = (absolutePath = "I:/repo") => ({
   })
 });
 
+const buildProjectedProviderOpenHarness = (
+  ensureSessionExecutable = vi.fn().mockResolvedValue(true)
+) => {
+  const snapshot = buildSessionSnapshot();
+  const providerSession = {
+    ...snapshot.sessions[0],
+    metadata: {
+      providerKind: "codex-thread",
+      providerSessionId: "thread-1"
+    }
+  };
+  const setLastActiveSelection = vi.fn().mockResolvedValue(undefined);
+  const markSessionRead = vi.fn().mockResolvedValue(undefined);
+  const service = new WorkbenchShellService({
+    runtimeService: {
+      listSessions: () => [providerSession],
+      getSnapshot: () => ({
+        ...snapshot,
+        sessions: [providerSession]
+      }),
+      getWorkspaceRegistry: () => ({
+        setLastActiveSelection
+      }),
+      getSessionIndexStore: () => ({
+        getEntry: () => ({
+          sessionId: "session-1",
+          workspaceId: "workspace-1",
+          providerKind: "codex-thread",
+          providerSessionId: "thread-1"
+        })
+      })
+    } as never,
+    sessionCatalog: {
+      markSessionRead
+    } as never,
+    sessionActions: {} as never,
+    chatTreeProvider: {
+      get: vi.fn().mockResolvedValue({
+        currentNodeId: "node-2",
+        nodes: [{ nodeId: "node-2", turnId: "turn-2" }]
+      })
+    } as never,
+    sessionReconciliation: {
+      ensureSessionExecutable
+    } as never
+  });
+
+  return {
+    service,
+    ensureSessionExecutable,
+    setLastActiveSelection,
+    markSessionRead
+  };
+};
+
 describe("WorkbenchShellService", () => {
   it("serves engine registry and surface from injected engine-control services", () => {
     const service = new WorkbenchShellService({
@@ -635,6 +690,55 @@ describe("WorkbenchShellService", () => {
     expect(getChatTree).toHaveBeenCalledWith("session-1");
   });
 
+  it("ensures a fully projected provider session is executable before activating it", async () => {
+    const {
+      service,
+      ensureSessionExecutable,
+      setLastActiveSelection,
+      markSessionRead
+    } = buildProjectedProviderOpenHarness();
+
+    await expect(service.openSession("session-1")).resolves.toEqual({
+      page: expect.objectContaining({
+        sessionId: "session-1"
+      })
+    });
+    expect(ensureSessionExecutable).toHaveBeenCalledWith("session-1");
+    expect(ensureSessionExecutable.mock.invocationCallOrder[0]).toBeLessThan(
+      setLastActiveSelection.mock.invocationCallOrder[0]!
+    );
+    expect(setLastActiveSelection).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      sessionId: "session-1"
+    });
+    expect(markSessionRead).toHaveBeenCalledWith("session-1");
+  });
+
+  it.each([
+    {
+      label: "returns false",
+      ensure: () => Promise.resolve(false),
+      error: "This session could not be resumed for sending."
+    },
+    {
+      label: "throws",
+      ensure: () => Promise.reject(new Error("resume failed")),
+      error: "resume failed"
+    }
+  ])(
+    "does not activate a fully projected provider session when executable reconciliation $label",
+    async ({ ensure, error }) => {
+      const ensureSessionExecutable = vi.fn(ensure);
+      const { service, setLastActiveSelection, markSessionRead } =
+        buildProjectedProviderOpenHarness(ensureSessionExecutable);
+
+      await expect(service.openSession("session-1")).rejects.toThrow(error);
+      expect(ensureSessionExecutable).toHaveBeenCalledWith("session-1");
+      expect(setLastActiveSelection).not.toHaveBeenCalled();
+      expect(markSessionRead).not.toHaveBeenCalled();
+    }
+  );
+
   it("marks a cached browser session as active and read without reopening its window", async () => {
     const setLastActiveSelection = vi.fn().mockResolvedValue(undefined);
     const markSessionRead = vi.fn().mockResolvedValue(undefined);
@@ -745,6 +849,7 @@ describe("WorkbenchShellService", () => {
     const setLastActiveSelection = vi.fn().mockResolvedValue(undefined);
     const markSessionRead = vi.fn().mockResolvedValue(undefined);
     const ensureSessionLoaded = vi.fn().mockResolvedValue(true);
+    const ensureSessionExecutable = vi.fn().mockResolvedValue(true);
     const getChatTree = vi.fn().mockResolvedValue({
       sessionId: "session-1",
       engineId: "codex",
@@ -783,7 +888,9 @@ describe("WorkbenchShellService", () => {
         getSessionIndexStore: () => ({
           getEntry: () => ({
             sessionId: "session-1",
-            workspaceId: "workspace-1"
+            workspaceId: "workspace-1",
+            providerKind: "codex-thread",
+            providerSessionId: "thread-1"
           })
         })
       } as never,
@@ -796,6 +903,7 @@ describe("WorkbenchShellService", () => {
       } as never,
       sessionReconciliation: {
         ensureSessionLoaded,
+        ensureSessionExecutable,
         hydrateSessionWindow
       } as never
     });
@@ -821,6 +929,13 @@ describe("WorkbenchShellService", () => {
     );
     expect(getChatTree).toHaveBeenCalledWith("session-1");
     expect(ensureSessionLoaded).not.toHaveBeenCalled();
+    expect(ensureSessionExecutable).toHaveBeenCalledWith("session-1");
+    expect(hydrateSessionWindow.mock.invocationCallOrder[0]).toBeLessThan(
+      ensureSessionExecutable.mock.invocationCallOrder[0]!
+    );
+    expect(ensureSessionExecutable.mock.invocationCallOrder[0]).toBeLessThan(
+      setLastActiveSelection.mock.invocationCallOrder[0]!
+    );
     expect(setLastActiveSelection).toHaveBeenCalledWith({
       workspaceId: "workspace-1",
       sessionId: "session-1"
@@ -962,6 +1077,7 @@ describe("WorkbenchShellService", () => {
         get: vi.fn().mockResolvedValue(undefined)
       } as never,
       sessionReconciliation: {
+        ensureSessionExecutable: vi.fn().mockResolvedValue(true),
         hydrateSessionWindow
       } as never
     });
@@ -1043,6 +1159,7 @@ describe("WorkbenchShellService", () => {
         })
       } as never,
       sessionReconciliation: {
+        ensureSessionExecutable: vi.fn().mockResolvedValue(true),
         hydrateSessionWindow
       } as never
     });

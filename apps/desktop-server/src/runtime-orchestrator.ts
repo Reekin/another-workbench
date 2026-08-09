@@ -246,6 +246,24 @@ export class RuntimeOrchestrator {
             this.rejectPendingSendStart(session, pendingStart, result);
             receipt = this.accept(envelope, false);
           } else {
+            if (outcome.providerSessionId) {
+              const binding = this.requireBinding(
+                this.resolveSessionEngineId(session)
+              );
+              this.domainService.commitRuntimeEvent({
+                type: "session.updated",
+                conversationId: session.conversationId,
+                sessionId: session.sessionId,
+                status: "running",
+                metadata: {
+                  ...session.metadata,
+                  ...(binding.providerKind
+                    ? { providerKind: binding.providerKind }
+                    : {}),
+                  providerSessionId: outcome.providerSessionId
+                }
+              });
+            }
             this.domainService.commitAcceptedUserMessage(
               envelope.command,
               outcome.turnId
@@ -600,26 +618,44 @@ export class RuntimeOrchestrator {
     await this.ensureAdapterReady(engineId);
     hooks.before?.();
     return binding.adapter.executeCommand(
-      this.withSessionWorkingDirectory(envelope, session)
+      this.withSessionRuntimeContext(envelope, session, binding)
     );
   }
 
-  private withSessionWorkingDirectory(
+  private withSessionRuntimeContext(
     envelope: CommandEnvelope,
-    session: ReturnType<DomainService["requireSession"]>
+    session: ReturnType<DomainService["requireSession"]>,
+    binding: WorkbenchAgentBinding
   ): CommandEnvelope {
+    if (!("sessionId" in envelope.command)) {
+      return envelope;
+    }
     const cwd =
       session.metadata && typeof session.metadata.cwd === "string"
         ? session.metadata.cwd
         : undefined;
-    if (!cwd || !("sessionId" in envelope.command)) {
+    const runtimeProviderSessionId = binding.resolveProviderSessionId?.(
+      session.sessionId
+    );
+    const persistedProviderSessionId =
+      session.metadata &&
+      typeof session.metadata.providerSessionId === "string" &&
+      (!binding.providerKind ||
+        typeof session.metadata.providerKind !== "string" ||
+        session.metadata.providerKind === binding.providerKind)
+        ? session.metadata.providerSessionId
+        : undefined;
+    const providerSessionId =
+      runtimeProviderSessionId ?? persistedProviderSessionId;
+    if (!cwd && !providerSessionId) {
       return envelope;
     }
     return {
       ...envelope,
       command: {
         ...envelope.command,
-        cwd
+        ...(cwd ? { cwd } : {}),
+        ...(providerSessionId ? { providerSessionId } : {})
       } as CommandEnvelope["command"]
     };
   }

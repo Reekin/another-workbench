@@ -104,6 +104,46 @@ describe("CodexSessionActionsProvider", () => {
     expect(archiveThread).toHaveBeenCalledWith("thread-1");
   });
 
+  it("treats a missing rollout as an already archived Codex thread", async () => {
+    const archiveThread = vi
+      .fn()
+      .mockRejectedValue(new Error("no rollout found for thread id thread-1"));
+    const provider = new CodexSessionActionsProvider({
+      codexRuntimePort: {
+        archiveThread
+      } as unknown as CodexAppServerRuntimePort
+    });
+
+    await expect(
+      provider.prepareArchive({
+        sessionId: "session-1",
+        engineId: "codex",
+        runtimeService: {} as never,
+        sessionIndexStore: {} as never,
+        providerHandle: codexProviderHandle()
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it("keeps unrelated Codex archive failures visible", async () => {
+    const archiveThread = vi.fn().mockRejectedValue(new Error("archive transport failed"));
+    const provider = new CodexSessionActionsProvider({
+      codexRuntimePort: {
+        archiveThread
+      } as unknown as CodexAppServerRuntimePort
+    });
+
+    await expect(
+      provider.prepareArchive({
+        sessionId: "session-1",
+        engineId: "codex",
+        runtimeService: {} as never,
+        sessionIndexStore: {} as never,
+        providerHandle: codexProviderHandle()
+      })
+    ).rejects.toThrow("archive transport failed");
+  });
+
   it("refreshes Codex user config, MCP servers, and skill discovery", async () => {
     const reloadUserConfig = vi.fn().mockResolvedValue(undefined);
     const reloadMcpServers = vi.fn().mockResolvedValue(undefined);

@@ -619,6 +619,44 @@ describe("SessionIndexStore", () => {
     expect(store.getEntry("codex-thread:thread-1")?.archivedAt).toBe("2026-04-18T00:00:03Z");
   });
 
+  it("archives subagent descendants recursively without archiving forks", async () => {
+    const store = new SessionIndexStore({ baseDir: await createTempDir() });
+    const sessionIds = ["root", "child", "grandchild", "fork"];
+    await store.applyWorkspaceRepair({
+      workspaceId: "workspace-1",
+      engineId: "codex",
+      entries: sessionIds.map((sessionId) => ({
+        workspaceId: "workspace-1",
+        session: {
+          sessionId,
+          conversationId: "conversation-1",
+          engineId: "codex",
+          createdAt: "2026-08-09T00:00:00Z",
+          updatedAt: "2026-08-09T00:00:00Z"
+        }
+      })),
+      relations: [
+        ["root", "child", "subagent"],
+        ["child", "grandchild", "subagent"],
+        ["root", "fork", "fork"]
+      ].map(([parentSessionId, childSessionId, relationType]) => ({
+        workspaceId: "workspace-1",
+        parentSessionId,
+        childSessionId,
+        relationType: relationType as "subagent" | "fork"
+      }))
+    });
+
+    const archived = await store.archiveSessions(["root"], "2026-08-09T00:10:00Z");
+
+    expect(archived.map((entry) => entry.sessionId).sort()).toEqual([
+      "child",
+      "grandchild",
+      "root"
+    ]);
+    expect(store.getEntry("fork")?.archivedAt).toBeUndefined();
+  });
+
   it("repairs invalid persisted data by resetting to an empty document", async () => {
     const baseDir = await createTempDir();
     const filePath = join(baseDir, "session-index.json");
@@ -638,5 +676,73 @@ describe("SessionIndexStore", () => {
     expect(repaired.version).toBe(1);
     expect(repaired.entries).toEqual([]);
     expect(repaired.relations).toEqual([]);
+  });
+
+  it("repairs unarchived subagent descendants of archived sessions on load", async () => {
+    const baseDir = await createTempDir();
+    const filePath = join(baseDir, "session-index.json");
+    const entry = (sessionId: string, archivedAt?: string) => ({
+      workspaceId: "workspace-1",
+      sessionId,
+      conversationId: "conversation-1",
+      engineId: "codex",
+      createdAt: "2026-08-09T00:00:00Z",
+      updatedAt: "2026-08-09T00:00:00Z",
+      archivedAt,
+      unreadState: "read",
+      source: "registry"
+    });
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 1,
+        entries: [
+          entry("session-root", "2026-08-09T00:10:00Z"),
+          entry("session-child"),
+          entry("session-grandchild"),
+          entry("session-fork")
+        ],
+        relations: [
+          {
+            workspaceId: "workspace-1",
+            parentSessionId: "session-root",
+            childSessionId: "session-child",
+            relationType: "subagent",
+            createdAt: "2026-08-09T00:01:00Z"
+          },
+          {
+            workspaceId: "workspace-1",
+            parentSessionId: "session-child",
+            childSessionId: "session-grandchild",
+            relationType: "subagent",
+            createdAt: "2026-08-09T00:02:00Z"
+          },
+          {
+            workspaceId: "workspace-1",
+            parentSessionId: "session-root",
+            childSessionId: "session-fork",
+            relationType: "fork",
+            createdAt: "2026-08-09T00:03:00Z"
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const store = new SessionIndexStore({ baseDir });
+    await store.ready();
+
+    expect(store.getEntry("session-child")?.archivedAt).toBe("2026-08-09T00:10:00Z");
+    expect(store.getEntry("session-grandchild")?.archivedAt).toBe(
+      "2026-08-09T00:10:00Z"
+    );
+    expect(store.getEntry("session-fork")?.archivedAt).toBeUndefined();
+    const persisted = JSON.parse(await readFile(filePath, "utf8")) as {
+      entries: Array<{ sessionId: string; archivedAt?: string }>;
+    };
+    expect(
+      persisted.entries.find((candidate) => candidate.sessionId === "session-child")
+        ?.archivedAt
+    ).toBe("2026-08-09T00:10:00Z");
   });
 });

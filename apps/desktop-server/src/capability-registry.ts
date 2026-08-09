@@ -441,26 +441,7 @@ export class CapabilityRegistry {
         };
       case "archive":
         await provider?.prepareArchive?.(context);
-        await this.archiveProviderAliases({
-          handle: context.providerHandle,
-          providerSessionId:
-            provider?.resolveDisplayedSessionId?.(context) ??
-            context.providerHandle?.providerSessionId,
-          workspaceId: context.indexEntry?.workspaceId
-        });
-        if (!session && indexEntry) {
-          return {
-            action,
-            archived: true
-          };
-        }
-        await this.runtimeService.executeCommand({
-          commandId: `archive-${sessionId}`,
-          command: {
-            type: "archiveSession",
-            sessionId
-          }
-        });
+        await this.archiveSessionCascade(context);
         return {
           action,
           archived: true
@@ -633,33 +614,64 @@ export class CapabilityRegistry {
     return capability.get(context);
   }
 
-  private async archiveProviderAliases(
-    input: {
-      handle: ProviderSessionHandle | undefined;
-      providerSessionId?: string;
-      workspaceId?: string;
+  private async archiveSessionCascade(root: SessionCapabilityContext): Promise<void> {
+    const localSessionIds = new Set([
+      root.sessionId,
+      ...(await this.archiveProviderAliases({
+        sessionId: root.sessionId,
+        handle: root.providerHandle,
+        providerSessionId:
+          this.getEngineCapabilities(root.engineId)?.sessionActions?.resolveDisplayedSessionId?.(
+            root
+          ) ?? root.providerHandle?.providerSessionId,
+        workspaceId: root.indexEntry?.workspaceId
+      }))
+    ]);
+
+    const runtimeSessions = new Map(
+      this.runtimeService
+        .listSessions({ includeArchived: true })
+        .map((session) => [session.sessionId, session] as const)
+    );
+    for (const sessionId of localSessionIds) {
+      const session = runtimeSessions.get(sessionId);
+      if (!session || session.archivedAt) {
+        continue;
+      }
+      await this.runtimeService.executeCommand({
+        commandId: `archive-${root.sessionId}-${sessionId}`,
+        command: {
+          type: "archiveSession",
+          sessionId
+        }
+      });
     }
-  ): Promise<void> {
+  }
+
+  private async archiveProviderAliases(input: {
+    sessionId: string;
+    handle: ProviderSessionHandle | undefined;
+    providerSessionId?: string;
+    workspaceId?: string;
+  }): Promise<string[]> {
+    const aliases = new Set([input.sessionId]);
     if (input.handle) {
-      const aliases = this.sessionIdentity.listSessionIdsByProviderHandle(
+      for (const sessionId of this.sessionIdentity.listSessionIdsByProviderHandle(
         input.handle,
         input.workspaceId
-      );
-      if (aliases.length > 0) {
-        await this.sessionIndexStore.archiveSessions(aliases);
-        return;
+      )) {
+        aliases.add(sessionId);
+      }
+    } else if (input.providerSessionId) {
+      for (const entry of this.sessionIndexStore.listEntriesByProviderSessionId(
+        input.providerSessionId,
+        input.workspaceId
+      )) {
+        aliases.add(entry.sessionId);
       }
     }
-
-    if (!input.providerSessionId) {
-      return;
-    }
-    const aliases = this.sessionIndexStore
-      .listEntriesByProviderSessionId(input.providerSessionId, input.workspaceId)
-      .map((entry) => entry.sessionId);
-    if (aliases.length === 0) {
-      return;
-    }
-    await this.sessionIndexStore.archiveSessions(aliases);
+    return (await this.sessionIndexStore.archiveSessions([...aliases])).map(
+      (entry) => entry.sessionId
+    );
   }
 }

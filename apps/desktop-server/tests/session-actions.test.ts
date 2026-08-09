@@ -147,7 +147,9 @@ describe("SessionActionsProvider", () => {
       accepted: true
     });
     const prepareArchive = vi.fn().mockResolvedValue(undefined);
-    const archiveSessions = vi.fn().mockResolvedValue(undefined);
+    const archiveSessions = vi.fn(async (sessionIds: string[]) =>
+      sessionIds.map((sessionId) => ({ sessionId }))
+    );
     const runtimeService = {
       listSessions: vi.fn().mockReturnValue([
         createSession({
@@ -195,6 +197,7 @@ describe("SessionActionsProvider", () => {
             workspaceId: "workspace-1"
           }
         ]),
+        listRelations: vi.fn().mockReturnValue([]),
         archiveSession: vi.fn().mockResolvedValue(undefined),
         archiveSessions,
         listEntriesByProviderSessionId: vi.fn().mockReturnValue([
@@ -216,7 +219,7 @@ describe("SessionActionsProvider", () => {
       ]
     });
 
-    await expect(provider.runAction("session-1", "archive")).resolves.toEqual({
+    await expect(provider.runAction("session-indexed", "archive")).resolves.toEqual({
       action: "archive",
       archived: true
     });
@@ -229,19 +232,15 @@ describe("SessionActionsProvider", () => {
       action: "resume",
       resumed: true
     });
-    await expect(provider.runAction("session-indexed", "archive")).resolves.toEqual({
-      action: "archive",
-      archived: true
-    });
     await expect(provider.runAction("session-indexed", "resume")).resolves.toEqual({
       action: "resume",
       resumed: true
     });
 
-    expect(prepareArchive).toHaveBeenCalledTimes(2);
+    expect(prepareArchive).toHaveBeenCalledTimes(1);
     expect(archiveSessions).toHaveBeenCalledWith(["session-indexed", "session-1"]);
     expect(executeCommand).toHaveBeenNthCalledWith(1, {
-      commandId: "archive-session-1",
+      commandId: "archive-session-indexed-session-1",
       command: {
         type: "archiveSession",
         sessionId: "session-1"

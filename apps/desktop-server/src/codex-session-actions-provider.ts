@@ -22,6 +22,10 @@ import type {
 const isoFromUnixSeconds = (value: number): string =>
   new Date(value * 1_000).toISOString();
 
+const isMissingRolloutError = (error: unknown, threadId: string): boolean =>
+  error instanceof Error &&
+  error.message.includes(`no rollout found for thread id ${threadId}`);
+
 const resolveWorkspaceId = (
   input: SessionActionProviderContext
 ): string | undefined => {
@@ -141,7 +145,13 @@ export class CodexSessionActionsProvider implements SessionAgentActionsProvider 
     if (!threadId) {
       throw new Error("Archive is unavailable without a provider session id.");
     }
-    await this.codexRuntimePort.archiveThread(threadId);
+    try {
+      await this.codexRuntimePort.archiveThread(threadId);
+    } catch (error) {
+      if (!isMissingRolloutError(error, threadId)) {
+        throw error;
+      }
+    }
   }
 
   public async runAction(

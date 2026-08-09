@@ -107,6 +107,13 @@ import { createRuntimePortError } from "./runtime/runtime-lifecycle.js";
 
 type RuntimeListener = (event: CodexRuntimeEvent) => void;
 
+const isThreadNotFoundError = (error: unknown, threadId: string): boolean =>
+  error instanceof Error &&
+  (error as { code?: unknown }).code === "runtime_protocol_error" &&
+  (error as { details?: { method?: unknown } }).details?.method === "turn/start" &&
+  error.message.toLowerCase().includes("thread not found") &&
+  error.message.includes(threadId);
+
 type PendingApproval = {
   requestId: string;
   rawRequestId: string | number;
@@ -955,6 +962,7 @@ export class CodexAppServerRuntimePort
           recoverable: false
         });
       }
+      this.clearRuntimeState();
       this.rpcClient.dispose(
         createRuntimePortError({
           code: "runtime_process_exited",
@@ -1070,6 +1078,16 @@ export class CodexAppServerRuntimePort
         }
       })
     );
+    this.clearRuntimeState();
+
+    await this.processSupervisor.stop({
+      reason: _options.reason,
+      timeoutMs: _options.timeoutMs
+    });
+    this.lifecycle.setState("stopped");
+  }
+
+  private clearRuntimeState(): void {
     this.pendingApprovalsById.clear();
     this.pendingApprovalResolutionsById.clear();
     this.threadIdBySessionId.clear();
@@ -1084,12 +1102,6 @@ export class CodexAppServerRuntimePort
     this.startedCodexToolItemIds.clear();
     this.warnedUnhandledItemLifecycle.clear();
     this.warnedUnhandledRawResponseItems.clear();
-
-    await this.processSupervisor.stop({
-      reason: _options.reason,
-      timeoutMs: _options.timeoutMs
-    });
-    this.lifecycle.setState("stopped");
   }
 
   public async request(
@@ -1303,16 +1315,24 @@ export class CodexAppServerRuntimePort
 
   public async resumeThread(threadId: string): Promise<Thread> {
     await this.start(this.startConfig);
+    return this.resumeThreadInCurrentProcess(threadId);
+  }
+
+  private async resumeThreadInCurrentProcess(
+    threadId: string,
+    cwd?: string,
+    options: RuntimeOperationOptions = {}
+  ): Promise<Thread> {
     const selected = this.resolveSelectedConfig();
     const result = (await this.rpc("thread/resume", {
       threadId,
-      cwd: selected.cwd ?? this.startConfig.cwd ?? null,
+      cwd: cwd ?? selected.cwd ?? this.startConfig.cwd ?? null,
       model: selected.model ?? null,
       modelProvider: selected.modelProvider ?? null,
       serviceTier: selected.serviceTier ?? null,
       approvalPolicy: selected.approvalPolicy ?? null,
       sandbox: selected.sandbox ?? null
-    } satisfies ThreadResumeParams)) as ThreadResumeResponse;
+    } satisfies ThreadResumeParams, options)) as ThreadResumeResponse;
     return result.thread;
   }
 
@@ -1502,24 +1522,58 @@ export class CodexAppServerRuntimePort
       typeof payload.params.cwd === "string" && payload.params.cwd.trim().length > 0
         ? payload.params.cwd
         : undefined;
-    const threadId = await this.ensureThreadForSession(sessionId, cwd, options);
+    const providerSessionId =
+      typeof payload.params.providerSessionId === "string" &&
+      payload.params.providerSessionId.trim().length > 0
+        ? payload.params.providerSessionId
+        : undefined;
+    let threadId = await this.ensureThreadForSession(
+      sessionId,
+      cwd,
+      options,
+      providerSessionId
+    );
     const input = buildCodexTurnInput(content, attachments);
 
-    this.pendingTurnSessionIdByThreadId.set(threadId, sessionId);
+    const startTurn = async (targetThreadId: string): Promise<TurnStartResponse> => {
+      this.pendingTurnSessionIdByThreadId.set(targetThreadId, sessionId);
+      try {
+        return (await this.rpc(
+          "turn/start",
+          {
+            threadId: targetThreadId,
+            input
+          },
+          options
+        )) as TurnStartResponse;
+      } finally {
+        if (
+          this.pendingTurnSessionIdByThreadId.get(targetThreadId) === sessionId
+        ) {
+          this.pendingTurnSessionIdByThreadId.delete(targetThreadId);
+        }
+      }
+    };
+
     let result: TurnStartResponse;
     try {
-      result = (await this.rpc(
-        "turn/start",
-        {
-          threadId,
-          input
-        },
-        options
-      )) as TurnStartResponse;
-    } finally {
-      if (this.pendingTurnSessionIdByThreadId.get(threadId) === sessionId) {
-        this.pendingTurnSessionIdByThreadId.delete(threadId);
+      result = await startTurn(threadId);
+    } catch (error) {
+      if (
+        !providerSessionId ||
+        !isThreadNotFoundError(error, threadId) ||
+        this.activeTurnByThreadId.has(threadId)
+      ) {
+        throw error;
       }
+      const resumed = await this.resumeThreadInCurrentProcess(
+        providerSessionId,
+        cwd,
+        options
+      );
+      threadId = resumed.id;
+      this.attachThreadToSession(sessionId, threadId);
+      result = await startTurn(threadId);
     }
 
     if (!result?.turn?.id) {
@@ -1839,11 +1893,22 @@ export class CodexAppServerRuntimePort
   private async ensureThreadForSession(
     sessionId: string,
     cwd?: string,
-    options: RuntimeOperationOptions = {}
+    options: RuntimeOperationOptions = {},
+    providerSessionId?: string
   ): Promise<string> {
     const existing = this.threadIdBySessionId.get(sessionId);
-    if (existing) {
+    if (existing && (!providerSessionId || existing === providerSessionId)) {
       return existing;
+    }
+
+    if (providerSessionId) {
+      const resumed = await this.resumeThreadInCurrentProcess(
+        providerSessionId,
+        cwd,
+        options
+      );
+      this.attachThreadToSession(sessionId, resumed.id);
+      return resumed.id;
     }
 
     const selected = this.resolveSelectedConfig();

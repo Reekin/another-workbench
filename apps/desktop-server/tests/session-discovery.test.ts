@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,7 +14,10 @@ import {
 import { SessionIndexStore } from "../src/session-index.js";
 import { WorkbenchRuntimeService } from "../src/runtime-service.js";
 import { WorkspaceRegistryService } from "../src/workspace-registry.js";
-import { readCodexRolloutTimestampGroups } from "../src/engine-extensions/codex/rollout-timestamps.js";
+import {
+  consumeCodexRolloutTimestampForItem,
+  readCodexRolloutTimestampGroups
+} from "../src/engine-extensions/codex/rollout-timestamps.js";
 
 vi.mock("../src/engine-extensions/codex/rollout-timestamps.js", async (importOriginal) => {
   const actual = await importOriginal<
@@ -316,6 +319,43 @@ describe("Session discovery and reconciliation", () => {
       providerSessionId: "thread-recent",
       title: "Metadata only"
     });
+  });
+
+  it("uses rollout modification time when state DB activity is stale", async () => {
+    const baseDir = await createTempDir();
+    const rolloutPath = join(baseDir, "rollout-stale-state-db.jsonl");
+    await writeFile(rolloutPath, "{}\n", "utf8");
+    await utimes(
+      rolloutPath,
+      new Date("2026-07-03T18:44:14.486Z"),
+      new Date("2026-07-03T18:44:14.486Z")
+    );
+    const listedThread = {
+      ...createThread({
+        id: "thread-stale-state-db",
+        cwd: "I:/workspace-alpha"
+      }),
+      updatedAt: 1_778_198_400,
+      path: rolloutPath
+    };
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        listThreads: vi.fn().mockResolvedValue({
+          data: [listedThread],
+          nextCursor: null
+        })
+      } as never
+    });
+
+    const discoveredByWorkspaceId = await provider.discoverWorkspaces([{
+      workspaceId: "workspace-1",
+      absolutePath: "I:/workspace-alpha",
+      label: "Alpha"
+    }]);
+
+    expect(discoveredByWorkspaceId.get("workspace-1")?.sessions[0]?.updatedAt).toBe(
+      "2026-07-03T18:44:14.486Z"
+    );
   });
 
   it("shares one paged metadata scan across overlapping workspaces", async () => {
@@ -1567,6 +1607,62 @@ describe("Session discovery and reconciliation", () => {
         })
       ])
     );
+  });
+
+  it("matches duplicate rollout message records by content", async () => {
+    const baseDir = await createTempDir();
+    const rolloutPath = join(baseDir, "rollout-duplicate-message-records.jsonl");
+    await writeFile(
+      rolloutPath,
+      [
+        {
+          timestamp: "2026-07-03T18:34:28.055Z",
+          type: "event_msg",
+          payload: { type: "task_started", turn_id: "turn-1" }
+        },
+        {
+          timestamp: "2026-07-03T18:40:05.080Z",
+          type: "event_msg",
+          payload: { type: "agent_message", message: "Earlier message." }
+        },
+        {
+          timestamp: "2026-07-03T18:40:05.090Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "Earlier message." }]
+          }
+        },
+        {
+          timestamp: "2026-07-03T18:44:14.486Z",
+          type: "event_msg",
+          payload: { type: "agent_message", message: "Target message." }
+        },
+        {
+          timestamp: "2026-07-03T18:44:14.496Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "Target message." }]
+          }
+        }
+      ].map((entry) => JSON.stringify(entry)).join("\n"),
+      "utf8"
+    );
+
+    const timestamps = [...(await readCodexRolloutTimestampGroups(rolloutPath))[0]!.items];
+
+    expect(
+      consumeCodexRolloutTimestampForItem(timestamps, {
+        type: "agentMessage",
+        id: "target",
+        text: "Target message.",
+        phase: "commentary",
+        memoryCitation: null
+      })
+    ).toBe("2026-07-03T18:44:14.486Z");
   });
 
   it("matches rollout timestamps by turn id without hydrating rollout-only messages", async () => {

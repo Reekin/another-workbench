@@ -97,6 +97,7 @@ export class SessionBrowserReadModel {
             seed.isActive,
             seed.isExpanded,
             seed.childCount,
+            seed.activityAt,
             seed.lastCompletedTurnAt,
             seed.sortAt
           ])
@@ -207,6 +208,7 @@ export class SessionBrowserReadModel {
       isActive: seed.isActive,
       isExpanded: seed.isExpanded,
       childCount: seed.childCount,
+      activityAt: seed.activityAt,
       lastCompletedTurnAt: seed.lastCompletedTurnAt
     };
   }

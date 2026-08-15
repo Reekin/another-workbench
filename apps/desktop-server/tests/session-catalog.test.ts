@@ -304,7 +304,7 @@ describe("SessionCatalogService", () => {
     expect(indexStore.getEntry("session-1")?.unreadState).toBe("read");
   });
 
-  it("orders sessions by last completed turn time instead of latest update time", async () => {
+  it("orders sessions by their latest completed or live activity time", async () => {
     const baseDir = await createTempDir();
     const workspaceRegistry = new WorkspaceRegistryService({
       baseDir
@@ -405,14 +405,14 @@ describe("SessionCatalogService", () => {
     const tree = await service.listWorkspaceTree("workspace-1");
 
     expect(tree[0]?.sessions.map((item) => item.sessionId)).toEqual([
-      "session-new",
-      "session-old"
+      "session-old",
+      "session-new"
     ]);
     expect(tree[0]?.sessions[0]?.lastCompletedTurnAt).toBe(
-      "2026-04-18T00:15:00Z"
+      "2026-04-18T00:05:00Z"
     );
     expect(tree[0]?.sessions[1]?.lastCompletedTurnAt).toBe(
-      "2026-04-18T00:05:00Z"
+      "2026-04-18T00:15:00Z"
     );
   });
 
@@ -468,6 +468,64 @@ describe("SessionCatalogService", () => {
       "session-recently-updated",
       "session-newer-created"
     ]);
+  });
+
+  it("keeps newer live activity ahead of an older completed turn", async () => {
+    const baseDir = await createTempDir();
+    const workspaceRegistry = new WorkspaceRegistryService({ baseDir });
+    const indexStore = new SessionIndexStore({ baseDir });
+    await workspaceRegistry.registerWorkspace({
+      workspaceId: "workspace-1",
+      absolutePath: "I:/workspace-alpha"
+    });
+    await indexStore.upsertSession({
+      workspaceId: "workspace-1",
+      session: {
+        sessionId: "session-running",
+        conversationId: "conversation-running",
+        engineId: "codex",
+        createdAt: "2026-08-04T18:37:26.000Z",
+        updatedAt: "2026-08-15T11:20:21.561Z"
+      },
+      providerKind: "codex-thread",
+      providerSessionId: "thread-running",
+      lastCompletedTurnAt: "2026-08-04T18:49:11.852Z"
+    });
+    await indexStore.upsertSession({
+      workspaceId: "workspace-1",
+      session: {
+        sessionId: "session-yesterday",
+        conversationId: "conversation-yesterday",
+        engineId: "codex",
+        createdAt: "2026-08-14T00:00:00.000Z",
+        updatedAt: "2026-08-14T12:00:00.000Z"
+      },
+      providerKind: "codex-thread",
+      providerSessionId: "thread-yesterday",
+      lastCompletedTurnAt: "2026-08-14T12:00:00.000Z"
+    });
+    const service = new SessionCatalogService({
+      runtimeService: {
+        getSnapshot: () => emptySnapshot(),
+        getSessionBrowserRevision: () => 0
+      } as unknown as WorkbenchRuntimeService,
+      workspaceRegistry,
+      sessionIndexStore: indexStore
+    });
+
+    const page = await service.listRoots({
+      workspaceId: "workspace-1",
+      limit: 10
+    });
+
+    expect(page.items.map((item) => item.sessionId)).toEqual([
+      "session-running",
+      "session-yesterday"
+    ]);
+    expect(page.items[0]).toMatchObject({
+      activityAt: "2026-08-15T11:20:21.561Z",
+      lastCompletedTurnAt: "2026-08-04T18:49:11.852Z"
+    });
   });
 
   it("does not expose an unread dot for the active session", async () => {
@@ -609,4 +667,5 @@ describe("SessionCatalogService", () => {
     await service.listRoots({ workspaceId: "workspace-1" });
     expect(getSnapshot).toHaveBeenCalledTimes(3);
   });
+
 });

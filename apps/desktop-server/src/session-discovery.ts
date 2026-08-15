@@ -57,8 +57,9 @@ import {
   summarizeCodexWebSearchAction
 } from "./engine-extensions/codex/process-activity.js";
 import {
-  consumeCodexRolloutTimestamp,
+  consumeCodexRolloutTimestampForItem,
   type CodexRolloutTimestampGroup,
+  readCodexRolloutModifiedAt,
   readCodexRolloutTimestampGroups,
   resolveCodexThreadItemTimestamp
 } from "./engine-extensions/codex/rollout-timestamps.js";
@@ -73,6 +74,28 @@ export {
 } from "./codex-session-identity.js";
 
 const codexAgentId = "codex";
+const discoveryMetadataConcurrency = 16;
+
+const mapWithConcurrency = async <T, R>(
+  values: readonly T[],
+  concurrency: number,
+  mapValue: (value: T) => Promise<R>
+): Promise<R[]> => {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, values.length) },
+    async () => {
+      while (nextIndex < values.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await mapValue(values[index]!);
+      }
+    }
+  );
+  await Promise.all(workers);
+  return results;
+};
 
 const isoFromUnixSeconds = (value: number): string =>
   new Date(value * 1_000).toISOString();
@@ -84,6 +107,15 @@ const trimToUndefined = (value: string | null | undefined): string | undefined =
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
 };
+
+const rolloutPathForEntry = (
+  entry: SessionIndexEntry,
+  thread: Thread
+): string | undefined =>
+  trimToUndefined(thread.path) ??
+  (typeof entry.metadata?.rolloutPath === "string"
+    ? trimToUndefined(entry.metadata.rolloutPath)
+    : undefined);
 
 const summarizeThread = (thread: Thread): string | undefined =>
   trimToUndefined(thread.preview) ?? trimToUndefined(thread.name);
@@ -174,7 +206,7 @@ const resolveThreadTurnItemStartedAts = (
   return turn.items.map(
     (item, itemIndex) =>
       resolveCodexThreadItemTimestamp(item) ??
-      consumeCodexRolloutTimestamp(rolloutTimestamps, item.type) ??
+      consumeCodexRolloutTimestampForItem(rolloutTimestamps, item) ??
       buildDeterministicTurnTimestamp(thread, turnIndex, itemIndex)
   );
 };
@@ -503,6 +535,11 @@ const latestIso = (
   if (!right) {
     return left;
   }
+  const leftMs = Date.parse(left);
+  const rightMs = Date.parse(right);
+  if (Number.isFinite(leftMs) && Number.isFinite(rightMs)) {
+    return leftMs > rightMs ? left : right;
+  }
   return left > right ? left : right;
 };
 
@@ -516,15 +553,18 @@ type HydratedCodexTurnEntities = {
 const hydrateCodexTurnEntities = async (input: {
   entry: SessionIndexEntry;
   thread: Thread;
+  rolloutPath?: string;
   turnChangesStore?: CodexTurnChangesStore;
   isCancelled?: () => boolean;
 }): Promise<HydratedCodexTurnEntities | undefined> => {
-  const { entry, thread, turnChangesStore, isCancelled } = input;
+  const { entry, thread, rolloutPath, turnChangesStore, isCancelled } = input;
   const turns: HydratedTurn[] = [];
   const messageBlocks: MessageBlock[] = [];
   const toolCalls: ToolCall[] = [];
   const terminalStreams: TerminalStream[] = [];
-  const rolloutTimestampGroups = await readCodexRolloutTimestampGroups(thread.path);
+  const rolloutTimestampGroups = await readCodexRolloutTimestampGroups(
+    rolloutPath ?? thread.path
+  );
 
   for (const [turnIndex, turn] of thread.turns.entries()) {
     if (isCancelled?.()) {
@@ -869,6 +909,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
     const threadsByWorkspaceId = new Map(
       workspaces.map((workspace) => [workspace.workspaceId, new Map<string, Thread>()] as const)
     );
+    const candidateThreadsById = new Map<string, Thread>();
     for (const thread of listedThreads) {
       if (isGuardianThreadSource(thread.source)) {
         continue;
@@ -878,13 +919,22 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
           continue;
         }
         threadsByWorkspaceId.get(workspace.workspaceId)?.set(thread.id, thread);
+        candidateThreadsById.set(thread.id, thread);
       }
     }
+
+    const discoveredSessionsByThreadId = new Map(
+      await mapWithConcurrency(
+        [...candidateThreadsById.values()],
+        discoveryMetadataConcurrency,
+        async (thread) => [thread.id, await this.toDiscoveredSessionRecord(thread)] as const
+      )
+    );
 
     return new Map(
       workspaces.map((workspace) => {
         const threads = [...(threadsByWorkspaceId.get(workspace.workspaceId)?.values() ?? [])];
-        const sessions = threads.map((thread) => this.toDiscoveredSessionRecord(thread));
+        const sessions = threads.map((thread) => discoveredSessionsByThreadId.get(thread.id)!);
         const sessionIds = new Set(sessions.map((session) => session.sessionId));
         const relations = threads
           .flatMap((thread) => {
@@ -977,6 +1027,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
     const hydratedTurns = await hydrateCodexTurnEntities({
       entry,
       thread,
+      rolloutPath: rolloutPathForEntry(entry, thread),
       turnChangesStore: this.turnChangesStore,
       isCancelled: input.isCancelled
     });
@@ -1075,6 +1126,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
     const hydratedTurns = await hydrateCodexTurnEntities({
       entry,
       thread: pageThread,
+      rolloutPath: rolloutPathForEntry(entry, thread),
       turnChangesStore: this.turnChangesStore,
       isCancelled: input.isCancelled
     });
@@ -1136,7 +1188,11 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
       .catch(() => undefined);
   }
 
-  private toDiscoveredSessionRecord(thread: Thread): DiscoveredSessionRecord {
+  private async toDiscoveredSessionRecord(
+    thread: Thread
+  ): Promise<DiscoveredSessionRecord> {
+    const threadUpdatedAt = isoFromUnixSeconds(thread.updatedAt);
+    const rolloutModifiedAt = await readCodexRolloutModifiedAt(thread.path);
     return {
       sessionId: discoveredCodexSessionId(thread.id),
       engineId: codexAgentId,
@@ -1145,7 +1201,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
       title: titleForThread(thread),
       summaryText: summarizeThread(thread),
       createdAt: isoFromUnixSeconds(thread.createdAt),
-      updatedAt: isoFromUnixSeconds(thread.updatedAt),
+      updatedAt: latestIso(threadUpdatedAt, rolloutModifiedAt) ?? threadUpdatedAt,
       metadata: {
         rolloutPath: thread.path ?? undefined,
         cwd: thread.cwd

@@ -76,12 +76,34 @@ type SessionCatalogSeed = {
   metadata?: Record<string, unknown>;
 };
 
+const latestSessionTimestamp = (
+  ...timestamps: Array<string | undefined>
+): string | undefined => {
+  let latest: string | undefined;
+  let latestMs = Number.NEGATIVE_INFINITY;
+  for (const timestamp of timestamps) {
+    if (!timestamp) {
+      continue;
+    }
+    const timestampMs = Date.parse(timestamp);
+    if (Number.isFinite(timestampMs) && timestampMs > latestMs) {
+      latest = timestamp;
+      latestMs = timestampMs;
+    }
+  }
+  return latest;
+};
+
+const resolveSeedActivityAt = (seed: SessionCatalogSeed): string =>
+  latestSessionTimestamp(seed.lastCompletedTurnAt, seed.updatedAt, seed.createdAt) ??
+  seed.createdAt;
+
 const compareSeedLastCompletedTurnAtDesc = (
   left: SessionCatalogSeed,
   right: SessionCatalogSeed
 ): number => {
-  const leftSortAt = left.lastCompletedTurnAt ?? left.updatedAt ?? left.createdAt;
-  const rightSortAt = right.lastCompletedTurnAt ?? right.updatedAt ?? right.createdAt;
+  const leftSortAt = resolveSeedActivityAt(left);
+  const rightSortAt = resolveSeedActivityAt(right);
   const bySortAt = rightSortAt.localeCompare(leftSortAt);
   if (bySortAt !== 0) {
     return bySortAt;
@@ -397,6 +419,7 @@ export class SessionCatalogService {
     }
 
     const seeds: SessionBrowserReadModelSeed[] = [...visible.values()].map((seed) => {
+      const activityAt = resolveSeedActivityAt(seed);
       return {
         sessionId: seed.sessionId,
         parentSessionId: parentByChildId.get(seed.sessionId),
@@ -414,8 +437,9 @@ export class SessionCatalogService {
         isActive: registryState.lastActiveSessionId === seed.sessionId,
         isExpanded: registryState.expandedSessionIds.includes(seed.sessionId),
         childCount: childCountByParentId.get(seed.sessionId) ?? 0,
+        activityAt,
         lastCompletedTurnAt: seed.lastCompletedTurnAt,
-        sortAt: seed.lastCompletedTurnAt ?? seed.updatedAt ?? seed.createdAt
+        sortAt: activityAt
       };
     });
     return new SessionBrowserReadModel(seeds);

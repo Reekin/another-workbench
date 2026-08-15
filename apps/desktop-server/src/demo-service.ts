@@ -12,6 +12,7 @@ import type {
   CommandEnvelope,
   DiagnosticsSnapshotRpc,
   EngineDefinitionRpc,
+  EngineModelCatalogRpc,
   EngineSurfaceRpc,
   EventEnvelope,
   WorkbenchSettingsRpc,
@@ -20,6 +21,7 @@ import type {
   DomainSnapshot
 } from "@another-workbench/shared";
 import { createAcpDemoRuntimePort, createCodexDemoRuntimePort } from "./demo-runtime-port.js";
+import { cloneModelSettings } from "./model-settings.js";
 import { WorkbenchRuntimeService } from "./runtime-service.js";
 import { buildSessionWindowSnapshot } from "./session-window.js";
 import {
@@ -42,7 +44,15 @@ export const createDemoWorkbenchRuntimeService = () => {
         adapter: createCodexAdapter(createCodexDemoRuntimePort(codexAgentId), {
           id: codexAgentId,
           fallbackAgentId: codexAgentId
-        })
+        }),
+        sharedCapabilities: [
+          "chat",
+          "turnConfiguration",
+          "tool",
+          "terminal",
+          "approval"
+        ],
+        modelCatalog: async () => demoModelCatalog
       },
       {
         descriptor: {
@@ -86,9 +96,43 @@ const demoEngines: EngineDefinitionRpc[] = [
 
 const demoEngineSurface = (engineId: string): EngineSurfaceRpc => ({
   engineId,
-  sharedCapabilities: ["chat", "tool", "terminal", "approval"],
+  sharedCapabilities:
+    engineId === "codex"
+      ? ["chat", "turnConfiguration", "tool", "terminal", "approval"]
+      : ["chat", "tool", "terminal", "approval"],
   extensions: []
 });
+
+const demoModelCatalog: EngineModelCatalogRpc = {
+  engineId: "codex",
+  models: [
+    {
+      modelId: "gpt-5.5",
+      displayName: "GPT-5.5",
+      description: "Balanced coding and agent work.",
+      reasoningOptions: [
+        { optionId: "low", displayName: "Low" },
+        { optionId: "medium", displayName: "Medium" },
+        { optionId: "high", displayName: "High" },
+        { optionId: "xhigh", displayName: "Extra high" }
+      ],
+      defaultReasoningOptionId: "medium",
+      isDefault: true
+    },
+    {
+      modelId: "gpt-5.4-mini",
+      displayName: "GPT-5.4 mini",
+      description: "Fast, economical coding assistance.",
+      reasoningOptions: [
+        { optionId: "low", displayName: "Low" },
+        { optionId: "medium", displayName: "Medium" },
+        { optionId: "high", displayName: "High" }
+      ],
+      defaultReasoningOptionId: "low",
+      isDefault: false
+    }
+  ]
+};
 
 const sortByUpdatedAtDesc = <
   T extends {
@@ -128,7 +172,10 @@ export const createDemoWorkbenchShellService = (
   const expandedWorkspaceIds = new Set([demoWorkspace.workspaceId]);
   const expandedSessionIds = new Set<string>();
   const settings: WorkbenchSettingsRpc = {
-    defaultNewSessionEngineId: "acp"
+    defaultNewSessionEngineId: "acp",
+    allowedModelIdsByEngineId: {},
+    customModelReasoningOptionIdsByEngineId: {},
+    lastExecutionByEngineId: {}
   };
   let lastActiveWorkspaceId: string | undefined = demoWorkspace.workspaceId;
   let lastActiveSessionId: string | undefined;
@@ -347,10 +394,29 @@ export const createDemoWorkbenchShellService = (
     dispose: service.dispose.bind(service),
     listEngines: () => demoEngines,
     getEngineSurface: (engineId: string) => demoEngineSurface(engineId),
-    getSettings: async () => ({ ...settings }),
-    updateSettings: async (input: WorkbenchSettingsRpc) => {
-      settings.defaultNewSessionEngineId = input.defaultNewSessionEngineId;
-      return { ...settings };
+    listEngineModels: async (engineId: string) =>
+      engineId === demoModelCatalog.engineId
+        ? {
+            ...demoModelCatalog,
+            models: demoModelCatalog.models.map((model) => ({
+              ...model,
+              reasoningOptions: model.reasoningOptions.map((option) => ({ ...option }))
+            }))
+          }
+        : { engineId, models: [] },
+    getSettings: async () => ({
+      ...settings,
+      ...cloneModelSettings(settings)
+    }),
+    updateSettings: async (input: Partial<WorkbenchSettingsRpc>) => {
+      if (Object.hasOwn(input, "defaultNewSessionEngineId")) {
+        settings.defaultNewSessionEngineId = input.defaultNewSessionEngineId;
+      }
+      Object.assign(settings, cloneModelSettings({ ...settings, ...input }));
+      return {
+        ...settings,
+        ...cloneModelSettings(settings)
+      };
     },
     listSchedulerTasks: async () => ({
       rootPath: "demo://scheduler",

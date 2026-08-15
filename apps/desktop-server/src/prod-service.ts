@@ -131,6 +131,7 @@ export const createWorkbenchRuntimeService = (
         engineId: codexAgentId,
         sharedCapabilities: [
           "chat",
+          "turnConfiguration",
           "steer",
           "tool",
           "terminal",
@@ -190,6 +191,7 @@ export const createWorkbenchRuntimeService = (
         providerKind: "codex-thread",
         sharedCapabilities: engineCapabilitySurface.get(codexAgentId).sharedCapabilities,
         extensions: engineCapabilitySurface.get(codexAgentId).extensions,
+        modelCatalog: () => codexRuntimePort.listModelCatalog(),
         resolveProviderSessionId: (sessionId: string) =>
           codexRuntimePort.getThreadIdForSession(sessionId)
       },

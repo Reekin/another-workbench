@@ -4,6 +4,7 @@ import type {
   Command,
   CommandEnvelope,
   DomainSnapshot,
+  EngineModelCatalogRpc,
   EventEnvelope,
   ProviderSessionHandle,
   SessionRelationType
@@ -167,6 +168,10 @@ export class WorkbenchRuntimeService {
 
   public getSelectedEngineId(): string | undefined {
     return this.runtimeOrchestrator.getSelectedEngineId();
+  }
+
+  public async listEngineModels(engineId: string): Promise<EngineModelCatalogRpc> {
+    return this.runtimeOrchestrator.listEngineModels(engineId);
   }
 
   public getWorkspaceRegistry(): WorkspaceRegistryService | undefined {

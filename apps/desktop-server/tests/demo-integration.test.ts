@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createDemoWorkbenchRuntimeService } from "../src/demo-service.js";
+import {
+  createDemoWorkbenchRuntimeService,
+  createDemoWorkbenchShellService
+} from "../src/demo-service.js";
 
 const flushMicrotasks = async (): Promise<void> => {
   await Promise.resolve();
@@ -8,6 +11,25 @@ const flushMicrotasks = async (): Promise<void> => {
 };
 
 describe("demo runtime fixture", () => {
+  it("partially updates and clones last execution settings", async () => {
+    const service = createDemoWorkbenchShellService();
+    const input = {
+      codex: { modelId: "gpt-5.5", reasoningOptionId: "high" }
+    };
+
+    await service.updateSettings({ lastExecutionByEngineId: input });
+    input.codex.modelId = "mutated-after-write";
+    const firstRead = await service.getSettings();
+    firstRead.lastExecutionByEngineId.codex.modelId = "mutated-after-read";
+
+    await expect(service.getSettings()).resolves.toMatchObject({
+      defaultNewSessionEngineId: "acp",
+      lastExecutionByEngineId: {
+        codex: { modelId: "gpt-5.5", reasoningOptionId: "high" }
+      }
+    });
+  });
+
   it("streams codex events for a normal message flow", async () => {
     const service = createDemoWorkbenchRuntimeService();
     await service.executeCommand({

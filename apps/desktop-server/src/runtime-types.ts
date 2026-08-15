@@ -8,6 +8,7 @@ import type {
   DomainSnapshot,
   EventEnvelope,
   EngineIntegrationTierRpc,
+  EngineModelCatalogRpc,
   EngineSharedCapabilityRpc,
   EngineExtensionDescriptorRpc
 } from "@another-workbench/shared";
@@ -55,6 +56,7 @@ export type WorkbenchAgentBinding = {
   runtimeConfig?: AgentAdapterRuntimeConfig;
   providerKind?: string;
   resolveProviderSessionId?: (sessionId: string) => string | undefined;
+  modelCatalog?: () => Promise<EngineModelCatalogRpc>;
   sharedCapabilities?: EngineSharedCapabilityRpc[];
   extensions?: EngineExtensionDescriptorRpc[];
 };

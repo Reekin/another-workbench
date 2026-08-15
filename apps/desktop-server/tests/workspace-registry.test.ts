@@ -53,7 +53,22 @@ describe("WorkspaceRegistryService", () => {
       sessionId: "session-42"
     });
     await service.updateSettings({
-      defaultNewSessionEngineId: "pi"
+      defaultNewSessionEngineId: "pi",
+      allowedModelIdsByEngineId: {
+        codex: ["gpt-5.5-codex"],
+        "pi-acp": []
+      },
+      customModelReasoningOptionIdsByEngineId: {
+        codex: {
+          "custom-model": ["low", "high"]
+        }
+      },
+      lastExecutionByEngineId: {
+        codex: {
+          modelId: "gpt-5.5-codex",
+          reasoningOptionId: "high"
+        }
+      }
     });
 
     const reloaded = new WorkspaceRegistryService({
@@ -69,9 +84,97 @@ describe("WorkspaceRegistryService", () => {
       expandedWorkspaceIds: [beta.workspaceId],
       expandedSessionIds: ["session-42"],
       defaultNewSessionEngineId: "pi",
+      allowedModelIdsByEngineId: {
+        codex: ["gpt-5.5-codex"],
+        "pi-acp": []
+      },
+      customModelReasoningOptionIdsByEngineId: {
+        codex: {
+          "custom-model": ["low", "high"]
+        }
+      },
+      lastExecutionByEngineId: {
+        codex: {
+          modelId: "gpt-5.5-codex",
+          reasoningOptionId: "high"
+        }
+      },
       lastActiveWorkspaceId: beta.workspaceId,
       lastActiveSessionId: "session-42"
     });
+  });
+
+  it("clones model settings and preserves unrelated settings", async () => {
+    const baseDir = await createTempDir();
+    const service = new WorkspaceRegistryService({ baseDir });
+    await service.updateSettings({ defaultNewSessionEngineId: "codex" });
+    const configured = { codex: ["gpt-5.5-codex"], "pi-acp": [] };
+    const customReasoning = {
+      codex: { "custom-model": ["low", "high"] }
+    };
+    const lastExecution = {
+      codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "high" }
+    };
+
+    await service.updateSettings({ allowedModelIdsByEngineId: configured });
+    await service.updateSettings({
+      customModelReasoningOptionIdsByEngineId: customReasoning
+    });
+    await service.updateSettings({ lastExecutionByEngineId: lastExecution });
+    configured.codex.push("mutated-after-write");
+    customReasoning.codex["custom-model"].push("mutated-after-write");
+    lastExecution.codex.modelId = "mutated-after-write";
+    const firstRead = service.getState();
+    firstRead.allowedModelIdsByEngineId.codex.push("mutated-after-read");
+    firstRead.customModelReasoningOptionIdsByEngineId.codex["custom-model"].push(
+      "mutated-after-read"
+    );
+    firstRead.lastExecutionByEngineId.codex.modelId = "mutated-after-read";
+
+    expect(service.getState()).toMatchObject({
+      defaultNewSessionEngineId: "codex",
+      allowedModelIdsByEngineId: {
+        codex: ["gpt-5.5-codex"],
+        "pi-acp": []
+      },
+      customModelReasoningOptionIdsByEngineId: {
+        codex: {
+          "custom-model": ["low", "high"]
+        }
+      },
+      lastExecutionByEngineId: {
+        codex: {
+          modelId: "gpt-5.5-codex",
+          reasoningOptionId: "high"
+        }
+      }
+    });
+  });
+
+  it("defaults last execution settings for existing registry files", async () => {
+    const baseDir = await createTempDir();
+    const registryPath = join(baseDir, "workspace-registry.json");
+    await import("node:fs/promises").then(({ mkdir, writeFile }) =>
+      mkdir(baseDir, { recursive: true }).then(() =>
+        writeFile(
+          registryPath,
+          JSON.stringify({
+            version: 1,
+            workspaces: [],
+            expandedWorkspaceIds: [],
+            expandedSessionIds: [],
+            allowedModelIdsByEngineId: {},
+            customModelReasoningOptionIdsByEngineId: {}
+          }),
+          "utf8"
+        )
+      )
+    );
+
+    const service = new WorkspaceRegistryService({ baseDir });
+    await service.ready();
+
+    expect(service.getState().lastExecutionByEngineId).toEqual({});
   });
 
   it("reuses existing workspace ids for duplicate paths and updates labels", async () => {

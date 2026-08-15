@@ -346,6 +346,95 @@ describe("Codex app-server runtime port", () => {
     expect(port.getThreadIdForSession("session-exit")).toBeUndefined();
   });
 
+  it("lists every visible model page with provider-native reasoning options", async () => {
+    const port = createCodexAppServerRuntimePort({ engineId: "codex" });
+    vi.spyOn(port, "start").mockResolvedValue();
+    const rpc = vi
+      .spyOn(port as unknown as { rpc: (...args: unknown[]) => Promise<unknown> }, "rpc")
+      .mockResolvedValueOnce({
+        data: [
+          {
+            model: "gpt-visible",
+            displayName: "GPT Visible",
+            description: "Visible model",
+            hidden: false,
+            supportedReasoningEfforts: [
+              { reasoningEffort: "xhigh", description: "Deep reasoning" }
+            ],
+            defaultReasoningEffort: "xhigh",
+            isDefault: true
+          },
+          {
+            model: "gpt-hidden",
+            displayName: "GPT Hidden",
+            description: "Hidden model",
+            hidden: true,
+            supportedReasoningEfforts: [],
+            defaultReasoningEffort: "medium",
+            isDefault: false
+          }
+        ],
+        nextCursor: "page-2"
+      })
+      .mockResolvedValueOnce({
+        data: [
+          {
+            model: "gpt-next",
+            displayName: "GPT Next",
+            description: "",
+            hidden: false,
+            supportedReasoningEfforts: [
+              { reasoningEffort: "low", description: "Faster" }
+            ],
+            defaultReasoningEffort: "low",
+            isDefault: false
+          }
+        ],
+        nextCursor: null
+      });
+
+    await expect(port.listModelCatalog()).resolves.toEqual({
+      engineId: "codex",
+      models: [
+        {
+          modelId: "gpt-visible",
+          displayName: "GPT Visible",
+          description: "Visible model",
+          reasoningOptions: [
+            {
+              optionId: "xhigh",
+              displayName: "Xhigh",
+              description: "Deep reasoning"
+            }
+          ],
+          defaultReasoningOptionId: "xhigh",
+          isDefault: true
+        },
+        {
+          modelId: "gpt-next",
+          displayName: "GPT Next",
+          reasoningOptions: [
+            {
+              optionId: "low",
+              displayName: "Low",
+              description: "Faster"
+            }
+          ],
+          defaultReasoningOptionId: "low",
+          isDefault: false
+        }
+      ]
+    });
+    expect(rpc).toHaveBeenNthCalledWith(1, "model/list", {
+      cursor: null,
+      includeHidden: false
+    });
+    expect(rpc).toHaveBeenNthCalledWith(2, "model/list", {
+      cursor: "page-2",
+      includeHidden: false
+    });
+  });
+
   it("cleans up failed initialize attempts and can start a fresh process", async () => {
     const port = createCodexAppServerRuntimePort({
       commandPath: process.execPath,
@@ -571,6 +660,48 @@ describe("Codex app-server runtime port", () => {
       {}
     );
     expect(rpc).not.toHaveBeenCalledWith("thread/start", expect.anything());
+  });
+
+  it("passes per-turn model and reasoning overrides to turn/start", async () => {
+    const port = createCodexAppServerRuntimePort({
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    vi.spyOn(port, "start").mockResolvedValue();
+    const rpc = vi
+      .spyOn(port as unknown as { rpc: (...args: unknown[]) => Promise<unknown> }, "rpc")
+      .mockImplementation(async (method) => {
+        if (method === "thread/resume") {
+          return { thread: { id: "provider-thread-options" } };
+        }
+        if (method === "turn/start") {
+          return { turn: { id: "turn-options" } };
+        }
+        throw new Error(`Unexpected RPC method: ${String(method)}`);
+      });
+
+    await port.request({
+      id: "turn-options-request",
+      method: "turn/start",
+      params: {
+        sessionId: "session-options",
+        providerSessionId: "provider-thread-options",
+        content: "use these options",
+        execution: {
+          modelId: "gpt-5.5-codex",
+          reasoningOptionId: "xhigh"
+        }
+      }
+    });
+
+    expect(rpc).toHaveBeenLastCalledWith(
+      "turn/start",
+      expect.objectContaining({
+        threadId: "provider-thread-options",
+        model: "gpt-5.5-codex",
+        effort: "xhigh"
+      }),
+      {}
+    );
   });
 
   it("resumes a stale provider binding and retries turn start exactly once", async () => {

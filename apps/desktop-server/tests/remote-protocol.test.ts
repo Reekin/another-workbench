@@ -374,6 +374,16 @@ describe("createRemoteRpcHandler", () => {
         sharedCapabilities: ["chat", "terminal", "worktree"],
         extensions: []
       }),
+      listEngineModels: vi.fn().mockResolvedValue({
+        engineId: "codex",
+        models: [
+          {
+            modelId: "gpt-5.5-codex",
+            displayName: "GPT-5.5 Codex",
+            reasoningOptions: []
+          }
+        ]
+      }),
       selectEngine: () => ({ selectedEngineId: "codex" }),
       listWorkspaces: vi.fn().mockResolvedValue({
         workspaces: []
@@ -393,10 +403,24 @@ describe("createRemoteRpcHandler", () => {
       }),
       listSessions: () => [],
       getSettings: vi.fn().mockResolvedValue({
-        defaultNewSessionEngineId: "pi"
+        defaultNewSessionEngineId: "pi",
+        allowedModelIdsByEngineId: { codex: ["gpt-5.5-codex"] },
+        customModelReasoningOptionIdsByEngineId: {
+          codex: { "custom-model": ["low", "high"] }
+        },
+        lastExecutionByEngineId: {
+          codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "high" }
+        }
       }),
       updateSettings: vi.fn().mockResolvedValue({
-        defaultNewSessionEngineId: "codex"
+        defaultNewSessionEngineId: "codex",
+        allowedModelIdsByEngineId: { codex: [] },
+        customModelReasoningOptionIdsByEngineId: {
+          codex: { "custom-model": ["extra"] }
+        },
+        lastExecutionByEngineId: {
+          codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "xhigh" }
+        }
       }),
       executeCommand: vi.fn(),
       replay: vi.fn().mockReturnValue([])
@@ -412,7 +436,14 @@ describe("createRemoteRpcHandler", () => {
       id: "req-settings-update",
       method: "settings.update",
       params: {
-        defaultNewSessionEngineId: "codex"
+        defaultNewSessionEngineId: "codex",
+        allowedModelIdsByEngineId: { codex: [] },
+        customModelReasoningOptionIdsByEngineId: {
+          codex: { "custom-model": ["extra"] }
+        },
+        lastExecutionByEngineId: {
+          codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "xhigh" }
+        }
       }
     });
 
@@ -421,7 +452,14 @@ describe("createRemoteRpcHandler", () => {
       method: "settings.get",
       ok: true,
       result: {
-        defaultNewSessionEngineId: "pi"
+        defaultNewSessionEngineId: "pi",
+        allowedModelIdsByEngineId: { codex: ["gpt-5.5-codex"] },
+        customModelReasoningOptionIdsByEngineId: {
+          codex: { "custom-model": ["low", "high"] }
+        },
+        lastExecutionByEngineId: {
+          codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "high" }
+        }
       }
     });
     expect(updateResponse).toMatchObject({
@@ -429,7 +467,59 @@ describe("createRemoteRpcHandler", () => {
       method: "settings.update",
       ok: true,
       result: {
-        defaultNewSessionEngineId: "codex"
+        defaultNewSessionEngineId: "codex",
+        allowedModelIdsByEngineId: { codex: [] },
+        customModelReasoningOptionIdsByEngineId: {
+          codex: { "custom-model": ["extra"] }
+        },
+        lastExecutionByEngineId: {
+          codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "xhigh" }
+        }
+      }
+    });
+    expect(shellService.updateSettings).toHaveBeenCalledWith({
+      defaultNewSessionEngineId: "codex",
+      allowedModelIdsByEngineId: { codex: [] },
+      customModelReasoningOptionIdsByEngineId: {
+        codex: { "custom-model": ["extra"] }
+      },
+      lastExecutionByEngineId: {
+        codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "xhigh" }
+      }
+    });
+  });
+
+  it("serves engine model catalogs through the shared RPC shape", async () => {
+    const shellService = {
+      listWorkspaces: vi.fn(),
+      listEngineModels: vi.fn().mockResolvedValue({
+        engineId: "codex",
+        models: [
+          {
+            modelId: "gpt-5.5-codex",
+            displayName: "GPT-5.5 Codex",
+            reasoningOptions: []
+          }
+        ]
+      })
+    };
+    const handler = createRemoteRpcHandler(shellService as never);
+
+    await expect(
+      handler.handleRequest({
+        id: "req-models",
+        method: "engine.listModels",
+        params: { engineId: "codex" }
+      })
+    ).resolves.toMatchObject({
+      id: "req-models",
+      method: "engine.listModels",
+      ok: true,
+      result: {
+        catalog: {
+          engineId: "codex",
+          models: [{ modelId: "gpt-5.5-codex" }]
+        }
       }
     });
   });

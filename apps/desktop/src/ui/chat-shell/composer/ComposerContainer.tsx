@@ -2,6 +2,7 @@ import type { ReactElement } from "react";
 import type {
   ApprovalRequest,
   ChatSession,
+  EngineSurfaceRpc,
   RuntimeInteraction,
   ThreadGoal,
   Turn
@@ -13,6 +14,7 @@ import type { ApprovalResponseInput } from "../ApprovalFlowView.js";
 import type { InteractionResponseInput } from "../InteractionFlowView.js";
 import { useComposerController } from "../use-composer-controller.js";
 import { ComposerPanel } from "./ComposerPanel.js";
+import type { ComposerExecutionSelection } from "./composer-types.js";
 
 export type ComposerContainerProps = {
   transport?: DesktopTransport;
@@ -21,6 +23,10 @@ export type ComposerContainerProps = {
   threadGoal?: ThreadGoal;
   displayedSessionId?: string;
   selectedEngineId: string;
+  engineSurface?: EngineSurfaceRpc;
+  allowedModelIds?: string[];
+  customModelReasoningOptionIds?: Record<string, string[]>;
+  lastExecution?: ComposerExecutionSelection;
   activeWorkspaceId?: string;
   activeWorkspaceRootPath?: string;
   turns: Turn[];
@@ -35,6 +41,10 @@ export type ComposerContainerProps = {
   onCreateSession?: (workspaceId: string, engineId: string) => Promise<void>;
   onOpenSession?: (sessionId: string) => Promise<void>;
   onRequestTranscriptBottom?: (sessionId: string) => void;
+  onExecutionPreferenceChange?: (
+    engineId: string,
+    execution: ComposerExecutionSelection
+  ) => void;
   onRespondApproval?: (input: ApprovalResponseInput) => Promise<void>;
   onRespondInteraction?: (input: InteractionResponseInput) => Promise<void>;
 };
@@ -46,6 +56,10 @@ export const ComposerContainer = ({
   threadGoal,
   displayedSessionId,
   selectedEngineId,
+  engineSurface,
+  allowedModelIds,
+  customModelReasoningOptionIds,
+  lastExecution,
   activeWorkspaceId,
   activeWorkspaceRootPath,
   turns,
@@ -60,6 +74,7 @@ export const ComposerContainer = ({
   onCreateSession,
   onOpenSession,
   onRequestTranscriptBottom,
+  onExecutionPreferenceChange,
   onRespondApproval,
   onRespondInteraction
 }: ComposerContainerProps): ReactElement => {
@@ -70,6 +85,10 @@ export const ComposerContainer = ({
     threadGoal,
     displayedSessionId,
     selectedEngineId,
+    engineSurface,
+    allowedModelIds,
+    customModelReasoningOptionIds,
+    lastExecution,
     activeWorkspaceId,
     activeWorkspaceRootPath,
     turns,
@@ -81,7 +100,8 @@ export const ComposerContainer = ({
     onStatusNotice,
     onCreateSession,
     onOpenSession,
-    onRequestTranscriptBottom
+    onRequestTranscriptBottom,
+    onExecutionPreferenceChange
   });
 
   return (
@@ -105,8 +125,14 @@ export const ComposerContainer = ({
       intent={composer.intent}
       supportsSteer={composer.capabilities.supportsSteer}
       supportsAttachments={composer.capabilities.supportsAttachments}
+      models={composer.models}
+      selectedExecution={composer.execution}
+      reasoningOptions={composer.reasoningOptions}
+      isExecutionLoading={composer.isExecutionLoading}
+      isExecutionDisabled={composer.isExecutionDisabled}
+      hasComposedInput={composer.hasComposedInput}
+      isTurnActive={composer.isTurnActive}
       canSubmit={composer.canSubmit}
-      canQueue={composer.canQueue}
       canStop={composer.canStop}
       isDispatching={composer.isDispatching}
       onTextareaChange={composer.onDraftChange}
@@ -123,8 +149,9 @@ export const ComposerContainer = ({
       onPreviewAttachment={onPreviewImage}
       onPickAttachments={composer.onPickAttachments}
       onPrimaryAction={composer.onPrimaryAction}
-      onQueueCurrent={composer.onQueueCurrent}
       onStop={composer.onStop}
+      onModelChange={composer.onModelChange}
+      onReasoningOptionChange={composer.onReasoningOptionChange}
       onSuggestionHover={composer.onSuggestionHover}
       onSuggestionSelect={async (index) => {
         const item = composer.suggestions?.items[index];

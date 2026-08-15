@@ -10,6 +10,8 @@ import type {
 import type {
   ApprovalRequest,
   ContextUsage,
+  EngineModelRpc,
+  EngineReasoningOptionRpc,
   RuntimeInteraction,
   ThreadGoal
 } from "@another-workbench/shared";
@@ -32,21 +34,11 @@ import type {
 } from "../composer-status.js";
 import type {
   ComposerIntent,
+  ComposerExecutionSelection,
   ComposerSkillReference,
   QueuedComposerMessage,
   ComposerSuggestionState
 } from "./composer-types.js";
-
-const primaryLabel = (intent: ComposerIntent): string => {
-  switch (intent) {
-    case "steer":
-      return "Steer";
-    case "queue":
-      return "Queue";
-    default:
-      return "Send";
-  }
-};
 
 const formatTokenCount = (value: number): string => {
   if (value >= 1_000_000) {
@@ -113,8 +105,14 @@ export const ComposerPanel = ({
   intent,
   supportsSteer,
   supportsAttachments,
+  models = [],
+  selectedExecution,
+  reasoningOptions = [],
+  isExecutionLoading = false,
+  isExecutionDisabled = false,
+  hasComposedInput,
+  isTurnActive,
   canSubmit,
-  canQueue,
   canStop,
   isDispatching,
   onTextareaChange,
@@ -131,8 +129,9 @@ export const ComposerPanel = ({
   onPreviewAttachment,
   onPickAttachments,
   onPrimaryAction,
-  onQueueCurrent,
   onStop,
+  onModelChange,
+  onReasoningOptionChange,
   onSuggestionHover,
   onSuggestionSelect,
   onEditQueuedMessage,
@@ -159,8 +158,14 @@ export const ComposerPanel = ({
   intent: ComposerIntent;
   supportsSteer: boolean;
   supportsAttachments: boolean;
+  models: EngineModelRpc[];
+  selectedExecution?: ComposerExecutionSelection;
+  reasoningOptions: EngineReasoningOptionRpc[];
+  isExecutionLoading: boolean;
+  isExecutionDisabled: boolean;
+  hasComposedInput: boolean;
+  isTurnActive: boolean;
   canSubmit: boolean;
-  canQueue: boolean;
   canStop: boolean;
   isDispatching: boolean;
   onTextareaChange: (value: string, selectionStart?: number | null) => void;
@@ -179,8 +184,9 @@ export const ComposerPanel = ({
   onPreviewAttachment?: (input: ImageLightboxState) => void;
   onPickAttachments: () => void;
   onPrimaryAction: () => Promise<void>;
-  onQueueCurrent: () => void;
   onStop: () => Promise<void>;
+  onModelChange: (modelId: string) => void;
+  onReasoningOptionChange: (reasoningOptionId: string) => void;
   onSuggestionHover: (index: number) => void;
   onSuggestionSelect: (index: number) => Promise<void>;
   onEditQueuedMessage: (messageId: string) => void;
@@ -190,6 +196,23 @@ export const ComposerPanel = ({
   onRespondApproval?: (input: ApprovalResponseInput) => Promise<void>;
   onRespondInteraction?: (input: InteractionResponseInput) => Promise<void>;
 }): ReactElement => {
+  const selectedModel = models.find(
+    (model) => model.modelId === selectedExecution?.modelId
+  );
+  const defaultReasoningLabel = selectedModel?.defaultReasoningOptionId
+    ? reasoningOptions.find(
+        (option) => option.optionId === selectedModel.defaultReasoningOptionId
+      )?.displayName ?? selectedModel.defaultReasoningOptionId
+    : undefined;
+  const primaryAction = isTurnActive
+    ? hasComposedInput
+      ? "steer"
+      : "stop"
+    : "send";
+  const primaryDisabled =
+    primaryAction === "stop"
+      ? !canStop
+      : !canSubmit || (primaryAction === "steer" && intent !== "steer");
   return (
   <footer
     className={`awb-composer awb-composer-panel${
@@ -311,6 +334,20 @@ export const ComposerPanel = ({
         onKeyDown={(event) => void onInputKeyDown(event)}
         onPaste={onPaste}
       />
+      <button
+        type="button"
+        className="awb-composer__primary-action"
+        onClick={() =>
+          primaryAction === "stop" ? void onStop() : void onPrimaryAction()
+        }
+        disabled={primaryDisabled}
+      >
+        {primaryAction === "steer"
+          ? "Steer"
+          : primaryAction === "stop"
+            ? "Stop"
+            : "Send"}
+      </button>
       <ComposerSuggestions
         suggestions={suggestions}
         onHover={onSuggestionHover}
@@ -320,25 +357,6 @@ export const ComposerPanel = ({
     <div className="awb-composer__actions awb-composer-panel__actions">
       <div className="awb-composer__meta">
         <ComposerStatusBar status={status} notice={statusNotice} />
-        {contextUsage ? (
-          <div
-            className="awb-composer-context"
-            aria-label={`Context usage ${formatContextUsageLabel(contextUsage)}`}
-            tabIndex={0}
-            style={
-              {
-                "--awb-composer-context-percent": `${
-                  contextUsagePercent(contextUsage) ?? 0
-                }%`
-              } as CSSProperties
-            }
-          >
-            <span className="awb-composer-context__ring" aria-hidden="true" />
-            <span className="awb-composer-context__tooltip" role="tooltip">
-              Context {formatContextUsageLabel(contextUsage)}
-            </span>
-          </div>
-        ) : null}
         {threadGoal ? (
           <div
             className={`awb-composer-goal awb-composer-goal--${threadGoal.status}`}
@@ -361,36 +379,68 @@ export const ComposerPanel = ({
           </div>
         ) : null}
       </div>
-      <div className="awb-composer__buttons">
-        {canQueue ? (
-          <button
-            type="button"
-            className="awb-ghost-button"
-            onClick={onQueueCurrent}
-            disabled={!canQueue}
-          >
-            Queue
-          </button>
+      <div className="awb-composer__right-rail">
+        {isExecutionLoading || models.length > 0 ? (
+          <div className="awb-composer-execution" aria-label="Turn configuration">
+            <label>
+              <span>Model</span>
+              <select
+                aria-label="Model"
+                value={selectedExecution?.modelId ?? ""}
+                onChange={(event) => onModelChange(event.target.value)}
+                disabled={isExecutionDisabled || isExecutionLoading || models.length === 0}
+              >
+                {isExecutionLoading ? <option value="">Loading…</option> : null}
+                {models.map((model) => (
+                  <option key={model.modelId} value={model.modelId}>
+                    {model.displayName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {reasoningOptions.length > 0 ? (
+              <label>
+                <span>Reasoning</span>
+                <select
+                  aria-label="Reasoning"
+                  value={selectedExecution?.reasoningOptionId ?? ""}
+                  onChange={(event) => onReasoningOptionChange(event.target.value)}
+                  disabled={isExecutionDisabled}
+                >
+                  <option value="">
+                    {defaultReasoningLabel
+                      ? `Default (${defaultReasoningLabel})`
+                      : "Default"}
+                  </option>
+                  {reasoningOptions.map((option) => (
+                    <option key={option.optionId} value={option.optionId}>
+                      {option.displayName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+          </div>
         ) : null}
-        {canStop ? (
-          <button
-            type="button"
-            className="awb-ghost-button"
-            onClick={() => void onStop()}
-            disabled={!canStop}
+        {contextUsage ? (
+          <div
+            className="awb-composer-context"
+            aria-label={`Context usage ${formatContextUsageLabel(contextUsage)}`}
+            tabIndex={0}
+            style={
+              {
+                "--awb-composer-context-percent": `${
+                  contextUsagePercent(contextUsage) ?? 0
+                }%`
+              } as CSSProperties
+            }
           >
-            Stop
-          </button>
+            <span className="awb-composer-context__ring" aria-hidden="true" />
+            <span className="awb-composer-context__tooltip" role="tooltip">
+              Context {formatContextUsageLabel(contextUsage)}
+            </span>
+          </div>
         ) : null}
-        <span>
-          <button
-            type="button"
-            onClick={() => void onPrimaryAction()}
-            disabled={!canSubmit}
-          >
-            {primaryLabel(intent)}
-          </button>
-        </span>
       </div>
     </div>
   </footer>

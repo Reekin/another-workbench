@@ -13,10 +13,15 @@ import type {
   ApprovalRequest,
   ChatInteractionCapabilitiesRpc,
   ChatSession,
+  EngineModelCatalogRpc,
+  EngineModelRpc,
+  EngineSurfaceRpc,
+  SessionExecutionProfile,
   SkillDescriptorRpc,
   ThreadGoal,
   Turn
 } from "@another-workbench/shared";
+import { readSessionExecutionProfile } from "@another-workbench/shared";
 import type { DesktopTransport } from "../../transport/desktop-transport.js";
 import {
   createComposerAttachments,
@@ -32,6 +37,7 @@ import {
 import { resolveSlashSuggestionItems } from "./composer/composer-suggestions.js";
 import type {
   ComposerSkillReference,
+  ComposerExecutionSelection,
   ComposerIntent,
   ComposerSuggestionItem,
   ComposerSuggestionQuery,
@@ -201,6 +207,89 @@ export const resolveComposerIntent = (input: {
   return "send";
 };
 
+export const resolveComposerModels = (input: {
+  catalog?: EngineModelCatalogRpc;
+  allowedModelIds?: string[];
+  customModelReasoningOptionIds?: Record<string, string[]>;
+}): EngineModelRpc[] => {
+  if (!input.catalog) {
+    return [];
+  }
+  const configuredIds = input.allowedModelIds ?? [];
+  if (configuredIds.length === 0) {
+    return input.catalog.models;
+  }
+  const catalogById = new Map(
+    input.catalog.models.map((model) => [model.modelId, model] as const)
+  );
+  return configuredIds.map(
+    (modelId): EngineModelRpc =>
+      catalogById.get(modelId) ?? {
+        modelId,
+        displayName: modelId,
+        reasoningOptions: (
+          input.customModelReasoningOptionIds?.[modelId] ?? []
+        ).map((optionId) => ({ optionId, displayName: optionId })),
+        isDefault: false
+      }
+  );
+};
+
+export const snapshotComposerExecution = (
+  execution?: ComposerExecutionSelection
+): ComposerExecutionSelection | undefined =>
+  execution ? { ...execution } : undefined;
+
+export const resolveComposerExecutionSelection = (input: {
+  models: EngineModelRpc[];
+  current?: ComposerExecutionSelection;
+  persistedProfile?: SessionExecutionProfile;
+  lastExecution?: ComposerExecutionSelection;
+}): ComposerExecutionSelection | undefined => {
+  const currentModel = input.current
+    ? input.models.find((model) => model.modelId === input.current?.modelId)
+    : undefined;
+  if (currentModel && input.current) {
+    return {
+      modelId: currentModel.modelId,
+      reasoningOptionId: currentModel.reasoningOptions.some(
+        (option) => option.optionId === input.current?.reasoningOptionId
+      )
+        ? input.current.reasoningOptionId
+        : undefined
+    };
+  }
+  const persistedModel = input.persistedProfile?.modelId
+    ? input.models.find(
+        (model) => model.modelId === input.persistedProfile?.modelId
+      )
+    : undefined;
+  const lastModel = input.lastExecution
+    ? input.models.find((model) => model.modelId === input.lastExecution?.modelId)
+    : undefined;
+  const defaultModel =
+    persistedModel ??
+    lastModel ??
+    input.models.find((model) => model.isDefault) ??
+    input.models[0];
+  if (!defaultModel) {
+    return undefined;
+  }
+  const preferredReasoningOptionId = persistedModel
+    ? input.persistedProfile?.reasoningOptionId
+    : lastModel
+      ? input.lastExecution?.reasoningOptionId
+      : undefined;
+  return {
+    modelId: defaultModel.modelId,
+    reasoningOptionId: defaultModel.reasoningOptions.some(
+      (option) => option.optionId === preferredReasoningOptionId
+    )
+      ? preferredReasoningOptionId
+      : undefined
+  };
+};
+
 export const resolveInterruptTurnId = (input: {
   activeSession?: ChatSession;
   turns: Turn[];
@@ -224,6 +313,10 @@ type UseComposerControllerInput = {
   threadGoal?: ThreadGoal;
   displayedSessionId?: string;
   selectedEngineId: string;
+  engineSurface?: EngineSurfaceRpc;
+  allowedModelIds?: string[];
+  customModelReasoningOptionIds?: Record<string, string[]>;
+  lastExecution?: ComposerExecutionSelection;
   activeWorkspaceId?: string;
   activeWorkspaceRootPath?: string;
   turns: Turn[];
@@ -236,6 +329,10 @@ type UseComposerControllerInput = {
   onCreateSession?: (workspaceId: string, engineId: string) => Promise<void>;
   onOpenSession?: (sessionId: string) => Promise<void>;
   onRequestTranscriptBottom?: (sessionId: string) => void;
+  onExecutionPreferenceChange?: (
+    engineId: string,
+    execution: ComposerExecutionSelection
+  ) => void;
 };
 
 export type UseComposerControllerResult = ComposerViewModel & {
@@ -270,6 +367,8 @@ export type UseComposerControllerResult = ComposerViewModel & {
   onDeleteQueuedMessage: (messageId: string) => void;
   onSendQueuedMessageNow: (messageId: string) => Promise<void>;
   onSteerQueuedMessageNow: (messageId: string) => Promise<void>;
+  onModelChange: (modelId: string) => void;
+  onReasoningOptionChange: (reasoningOptionId: string) => void;
 };
 
 export const useComposerController = (
@@ -282,6 +381,14 @@ export const useComposerController = (
   const [queueBySessionId, setQueueBySessionId] = useState<
     Record<string, QueuedComposerMessage[]>
   >({});
+  const [executionBySessionId, setExecutionBySessionId] = useState<
+    Record<string, ComposerExecutionSelection | undefined>
+  >({});
+  const [detachedExecution, setDetachedExecution] = useState<
+    ComposerExecutionSelection | undefined
+  >();
+  const [modelCatalog, setModelCatalog] = useState<EngineModelCatalogRpc>();
+  const [isExecutionLoading, setIsExecutionLoading] = useState(false);
   const [isDispatching, setIsDispatching] = useState(false);
   const [isDropTarget, setIsDropTarget] = useState(false);
   const [cursorPosition, setCursorPosition] = useState(0);
@@ -328,6 +435,39 @@ export const useComposerController = (
   const queue = input.activeSessionId
     ? (queueBySessionId[input.activeSessionId] ?? [])
     : [];
+  const explicitExecution = input.activeSessionId
+    ? executionBySessionId[input.activeSessionId]
+    : detachedExecution;
+  const supportsTurnConfiguration = Boolean(
+    input.engineSurface?.sharedCapabilities.includes("turnConfiguration")
+  );
+  const models = useMemo<EngineModelRpc[]>(() => {
+    if (!supportsTurnConfiguration || !modelCatalog) {
+      return [];
+    }
+    return resolveComposerModels({
+      catalog: modelCatalog,
+      allowedModelIds: input.allowedModelIds,
+      customModelReasoningOptionIds: input.customModelReasoningOptionIds
+    });
+  }, [
+    input.allowedModelIds,
+    input.customModelReasoningOptionIds,
+    modelCatalog,
+    supportsTurnConfiguration
+  ]);
+  const execution = useMemo(
+    () =>
+      resolveComposerExecutionSelection({
+        models,
+        current: explicitExecution,
+        persistedProfile: readSessionExecutionProfile(input.activeSession?.metadata),
+        lastExecution: input.lastExecution
+      }),
+    [explicitExecution, input.activeSession?.metadata, input.lastExecution, models]
+  );
+  const selectedModel = models.find((model) => model.modelId === execution?.modelId);
+  const reasoningOptions = selectedModel?.reasoningOptions ?? [];
   const intent = resolveComposerIntent({
     activeSession: input.activeSession,
     supportsSteer: capabilities.supportsSteer,
@@ -348,6 +488,10 @@ export const useComposerController = (
     draft.trim().length > 0 ||
     selectedSkills.length > 0 ||
     attachments.length > 0;
+  const isTurnActive = Boolean(
+    input.activeSession?.status === "running" ||
+      input.activeSession?.status === "awaiting_approval"
+  );
   const canSubmit =
     hasComposedInput &&
     Boolean(input.transport && input.activeSessionId) &&
@@ -360,14 +504,10 @@ export const useComposerController = (
     (draft.trim().length > 0 ||
       selectedSkills.length > 0 ||
       attachments.length > 0) &&
-    Boolean(
-      input.activeSession?.status === "running" ||
-        input.activeSession?.status === "awaiting_approval"
-    );
+    isTurnActive;
   const canStop =
     Boolean(input.transport && input.activeSessionId && interruptTurnId) &&
-    (input.activeSession?.status === "running" ||
-      input.activeSession?.status === "awaiting_approval");
+    isTurnActive;
 
   useEffect(() => {
     selectedSkillsRef.current = selectedSkills;
@@ -406,6 +546,44 @@ export const useComposerController = (
     attachmentsRef.current = [];
     setAttachments([]);
   }, [input.activeSessionId]);
+
+  useEffect(() => {
+    if (!input.transport || !input.selectedEngineId || !supportsTurnConfiguration) {
+      setModelCatalog(undefined);
+      setIsExecutionLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setModelCatalog(undefined);
+    setIsExecutionLoading(true);
+    void input.transport.engine
+      .listModels(input.selectedEngineId)
+      .then((catalog) => {
+        if (!cancelled) {
+          setModelCatalog(catalog);
+          setIsExecutionLoading(false);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setModelCatalog(undefined);
+          setIsExecutionLoading(false);
+          input.onStatusNotice({
+            message: `Model catalog failed: ${(error as Error).message}`,
+            source: "settings",
+            ...statusNoticeErrorDetails(error)
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    input.onStatusNotice,
+    input.selectedEngineId,
+    input.transport,
+    supportsTurnConfiguration
+  ]);
 
   useEffect(() => {
     if (!input.transport || !input.activeSessionId) {
@@ -662,6 +840,7 @@ export const useComposerController = (
       text,
       skills: currentSkills,
       attachments: currentAttachments,
+      execution: snapshotComposerExecution(execution),
       source
     });
     replaceSelectedSkills([]);
@@ -680,6 +859,7 @@ export const useComposerController = (
     payloadAttachments: ComposerAttachment[];
     mode: "send" | "steer";
     turnId?: string;
+    execution?: ComposerExecutionSelection;
   }): Promise<boolean> => {
     if (!input.transport || !input.activeSessionId) {
       return false;
@@ -710,7 +890,8 @@ export const useComposerController = (
         const receipt = await input.transport.chat.send({
           sessionId: input.activeSessionId,
           content,
-          attachments: payload.payloadAttachments.map((item) => item.attachment)
+          attachments: payload.payloadAttachments.map((item) => item.attachment),
+          execution: payload.execution
         });
         if (!receipt.accepted) {
           throw new Error("The current runtime rejected the send request.");
@@ -855,7 +1036,8 @@ export const useComposerController = (
       payloadSkills: selectedSkillsRef.current,
       payloadAttachments: currentAttachments,
       mode: intent,
-      turnId: activeTurnId
+      turnId: activeTurnId,
+      execution: intent === "steer" ? undefined : execution
     });
     if (!succeeded) {
       return;
@@ -1138,6 +1320,9 @@ export const useComposerController = (
     onDraftChange(item.text);
     replaceSelectedSkills(item.skills);
     replaceAttachments(item.attachments, { releaseCurrent: true });
+    if (item.execution) {
+      setExecution(item.execution);
+    }
     setTextareaCursorToEnd(item.text);
   };
 
@@ -1158,7 +1343,8 @@ export const useComposerController = (
       payloadSkills: item.skills,
       payloadAttachments: item.attachments,
       mode,
-      turnId: activeTurnId
+      turnId: activeTurnId,
+      execution: mode === "send" ? item.execution : undefined
     });
     if (succeeded) {
       removeQueueItem(messageId, { release: true });
@@ -1190,7 +1376,8 @@ export const useComposerController = (
         text: nextQueued.text,
         payloadSkills: nextQueued.skills,
         payloadAttachments: nextQueued.attachments,
-        mode: "send"
+        mode: "send",
+        execution: nextQueued.execution
       });
       if (!cancelled && succeeded) {
         removeQueueItem(nextQueued.id, { release: true });
@@ -1207,6 +1394,37 @@ export const useComposerController = (
     queue
   ]);
 
+  function setExecution(nextExecution: ComposerExecutionSelection): void {
+    if (input.selectedEngineId) {
+      input.onExecutionPreferenceChange?.(input.selectedEngineId, nextExecution);
+    }
+    if (input.activeSessionId) {
+      setExecutionBySessionId((current) => ({
+        ...current,
+        [input.activeSessionId!]: nextExecution
+      }));
+      return;
+    }
+    setDetachedExecution(nextExecution);
+  }
+
+  const onModelChange = (modelId: string): void => {
+    if (!supportsTurnConfiguration || intent === "steer") {
+      return;
+    }
+    setExecution({ modelId });
+  };
+
+  const onReasoningOptionChange = (reasoningOptionId: string): void => {
+    if (!supportsTurnConfiguration || intent === "steer" || !execution?.modelId) {
+      return;
+    }
+    setExecution({
+      modelId: execution.modelId,
+      reasoningOptionId: reasoningOptionId || undefined
+    });
+  };
+
   return {
     draft,
     selectedSkills,
@@ -1215,8 +1433,15 @@ export const useComposerController = (
     status,
     intent,
     capabilities,
+    models,
+    execution,
+    reasoningOptions,
+    isExecutionLoading,
+    isExecutionDisabled: intent === "steer" || isDispatching,
     suggestions,
     isDispatching,
+    hasComposedInput,
+    isTurnActive,
     canSubmit,
     canQueue,
     canStop,
@@ -1244,6 +1469,8 @@ export const useComposerController = (
     onEditQueuedMessage,
     onDeleteQueuedMessage,
     onSendQueuedMessageNow,
-    onSteerQueuedMessageNow
+    onSteerQueuedMessageNow,
+    onModelChange,
+    onReasoningOptionChange
   };
 };

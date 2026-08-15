@@ -1,6 +1,7 @@
 import type {
   ApprovalRequest,
   ChatInteractionCapabilitiesRpc,
+  EngineModelRpc,
   SkillDescriptorRpc,
 } from "@another-workbench/shared";
 import type {
@@ -9,6 +10,11 @@ import type {
 import type { ComposerStatusModel } from "../composer-status.js";
 
 export type ComposerIntent = "send" | "steer" | "queue";
+
+export type ComposerExecutionSelection = {
+  modelId: string;
+  reasoningOptionId?: string;
+};
 
 export type ComposerSkillReference = {
   id: string;
@@ -25,6 +31,7 @@ export type QueuedComposerMessage = {
   text: string;
   skills: ComposerSkillReference[];
   attachments: ComposerAttachment[];
+  execution?: ComposerExecutionSelection;
   createdAt: string;
   source: "user-queue" | "steer-fallback";
 };
@@ -73,8 +80,15 @@ export type ComposerViewModel = {
   status: ComposerStatusModel;
   intent: ComposerIntent;
   capabilities: ChatInteractionCapabilitiesRpc;
+  models: EngineModelRpc[];
+  execution?: ComposerExecutionSelection;
+  reasoningOptions: EngineModelRpc["reasoningOptions"];
+  isExecutionLoading: boolean;
+  isExecutionDisabled: boolean;
   suggestions: ComposerSuggestionState | undefined;
   isDispatching: boolean;
+  hasComposedInput: boolean;
+  isTurnActive: boolean;
   canSubmit: boolean;
   canQueue: boolean;
   canStop: boolean;

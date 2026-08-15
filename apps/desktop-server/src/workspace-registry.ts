@@ -1,7 +1,17 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
-import { arePathsEquivalent, toDisplayPath } from "@another-workbench/shared";
+import {
+  arePathsEquivalent,
+  toDisplayPath,
+  zSessionExecutionProfileInputSchema
+} from "@another-workbench/shared";
+import {
+  cloneAllowedModelIdsByEngineId,
+  cloneCustomModelReasoningOptionIdsByEngineId,
+  cloneLastExecutionByEngineId,
+  cloneModelSettings
+} from "./model-settings.js";
 import { loadJsonFile, saveJsonFile } from "./persistence-store.js";
 
 const workspaceRecordSchema = z.object({
@@ -18,6 +28,15 @@ const workspaceRegistryDocumentSchema = z.object({
   expandedWorkspaceIds: z.array(z.string().min(1)).default([]),
   expandedSessionIds: z.array(z.string().min(1)).default([]),
   defaultNewSessionEngineId: z.string().min(1).optional(),
+  allowedModelIdsByEngineId: z
+    .record(z.string(), z.array(z.string().min(1)))
+    .default({}),
+  customModelReasoningOptionIdsByEngineId: z
+    .record(z.string(), z.record(z.string(), z.array(z.string().min(1))))
+    .default({}),
+  lastExecutionByEngineId: z
+    .record(z.string(), zSessionExecutionProfileInputSchema)
+    .default({}),
   lastActiveWorkspaceId: z.string().min(1).optional(),
   lastActiveSessionId: z.string().min(1).optional()
 });
@@ -57,7 +76,10 @@ export class WorkspaceRegistryService {
     version: 1,
     workspaces: [],
     expandedWorkspaceIds: [],
-    expandedSessionIds: []
+    expandedSessionIds: [],
+    allowedModelIdsByEngineId: {},
+    customModelReasoningOptionIdsByEngineId: {},
+    lastExecutionByEngineId: {}
   };
   private loadPromise: Promise<void> | undefined;
   private revision = 0;
@@ -90,7 +112,8 @@ export class WorkspaceRegistryService {
       ...this.document,
       workspaces: [...this.document.workspaces],
       expandedWorkspaceIds: [...this.document.expandedWorkspaceIds],
-      expandedSessionIds: [...this.document.expandedSessionIds]
+      expandedSessionIds: [...this.document.expandedSessionIds],
+      ...cloneModelSettings(this.document)
     };
   }
 
@@ -244,11 +267,41 @@ export class WorkspaceRegistryService {
 
   public async updateSettings(input: {
     defaultNewSessionEngineId?: string;
+    allowedModelIdsByEngineId?: Record<string, string[]>;
+    customModelReasoningOptionIdsByEngineId?: Record<
+      string,
+      Record<string, string[]>
+    >;
+    lastExecutionByEngineId?: WorkspaceRegistryDocument["lastExecutionByEngineId"];
   }): Promise<void> {
     await this.ready();
     this.document = {
       ...this.document,
-      defaultNewSessionEngineId: input.defaultNewSessionEngineId
+      ...(Object.hasOwn(input, "defaultNewSessionEngineId")
+        ? { defaultNewSessionEngineId: input.defaultNewSessionEngineId }
+        : {}),
+      ...(Object.hasOwn(input, "allowedModelIdsByEngineId")
+        ? {
+            allowedModelIdsByEngineId: cloneAllowedModelIdsByEngineId(
+              input.allowedModelIdsByEngineId ?? {}
+            )
+          }
+        : {}),
+      ...(Object.hasOwn(input, "customModelReasoningOptionIdsByEngineId")
+        ? {
+            customModelReasoningOptionIdsByEngineId:
+              cloneCustomModelReasoningOptionIdsByEngineId(
+                input.customModelReasoningOptionIdsByEngineId ?? {}
+              )
+          }
+        : {}),
+      ...(Object.hasOwn(input, "lastExecutionByEngineId")
+        ? {
+            lastExecutionByEngineId: cloneLastExecutionByEngineId(
+              input.lastExecutionByEngineId ?? {}
+            )
+          }
+        : {})
     };
     await this.persist();
   }
@@ -258,7 +311,10 @@ export class WorkspaceRegistryService {
       version: 1,
       workspaces: [],
       expandedWorkspaceIds: [],
-      expandedSessionIds: []
+      expandedSessionIds: [],
+      allowedModelIdsByEngineId: {},
+      customModelReasoningOptionIdsByEngineId: {},
+      lastExecutionByEngineId: {}
     });
     const hadLegacySessionViewState =
       typeof loaded.value === "object" &&
@@ -283,7 +339,10 @@ export class WorkspaceRegistryService {
           version: 1,
           workspaces: [],
           expandedWorkspaceIds: [],
-          expandedSessionIds: []
+          expandedSessionIds: [],
+          allowedModelIdsByEngineId: {},
+          customModelReasoningOptionIdsByEngineId: {},
+          lastExecutionByEngineId: {}
         };
     this.revision += 1;
     this.sessionBrowserRevision += 1;

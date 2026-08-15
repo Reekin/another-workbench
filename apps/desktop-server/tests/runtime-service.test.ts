@@ -80,6 +80,39 @@ afterEach(async () => {
 });
 
 describe("WorkbenchRuntimeService", () => {
+  it("returns model catalogs from engine bindings and empty catalogs otherwise", async () => {
+    const service = createService({
+      agentBindings: [
+        {
+          descriptor: {
+            engineId: "codex",
+            displayName: "Codex",
+            capabilities: ["chat"]
+          },
+          modelCatalog: async () => ({
+            engineId: "codex",
+            models: [
+              {
+                modelId: "gpt-5.5-codex",
+                displayName: "GPT-5.5 Codex",
+                reasoningOptions: []
+              }
+            ]
+          })
+        }
+      ]
+    });
+
+    await expect(service.listEngineModels("codex")).resolves.toMatchObject({
+      engineId: "codex",
+      models: [{ modelId: "gpt-5.5-codex" }]
+    });
+    await expect(service.listEngineModels("acp")).resolves.toEqual({
+      engineId: "acp",
+      models: []
+    });
+  });
+
   it("persists workspace-backed session index entries for created, archived, and forked sessions via SessionIndexSyncService", async () => {
     const baseDir = await createTempDir();
     const workspaceRegistry = new WorkspaceRegistryService({

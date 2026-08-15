@@ -683,6 +683,7 @@ describe("RuntimeOrchestrator", () => {
   });
 
   it("forwards and persists provider session identity for send commands", async () => {
+    const syncSession = vi.fn().mockResolvedValue(undefined);
     const executeCommand = vi.fn().mockImplementation(async (envelope) => ({
       commandId: envelope.commandId,
       commandType: envelope.command.type,
@@ -723,7 +724,7 @@ describe("RuntimeOrchestrator", () => {
     orchestrator = new RuntimeOrchestrator({
       domainService,
       sessionIndexSyncService: {
-        syncSession: vi.fn().mockResolvedValue(undefined),
+        syncSession,
         syncRelation: vi.fn().mockResolvedValue(undefined),
         markSessionUnreadCompleted: vi.fn().mockResolvedValue(undefined)
       } as never,
@@ -810,7 +811,11 @@ describe("RuntimeOrchestrator", () => {
         sessionId: newSession.sessionId,
         messageId: "message-new",
         content: "hello",
-        attachments: []
+        attachments: [],
+        execution: {
+          modelId: "gpt-5.4-mini",
+          reasoningOptionId: "high"
+        }
       }
     });
 
@@ -818,6 +823,16 @@ describe("RuntimeOrchestrator", () => {
       providerKind: "codex-thread",
       providerSessionId: "thread-new"
     });
+    expect(
+      readSessionExecutionProfile(
+        domainService.getSession("session-new")?.metadata
+      )
+    ).toEqual({
+      engineId: "codex",
+      modelId: "gpt-5.4-mini",
+      reasoningOptionId: "high"
+    });
+    expect(syncSession).toHaveBeenCalledWith("session-new");
   });
 
   it("generates a title from the first user message without blocking send", async () => {

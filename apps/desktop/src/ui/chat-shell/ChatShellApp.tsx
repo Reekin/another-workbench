@@ -16,11 +16,13 @@ import type {
   AgentParticipant,
   ApprovalRequest,
   EngineDefinitionRpc,
+  EngineModelCatalogRpc,
   EngineSurfaceRpc,
   ExtractedFileReference,
   RuntimeInteraction,
   SchedulerTaskDocumentRpc,
   SchedulerTaskScheduleRpc,
+  WorkbenchSettingsRpc,
   Turn,
   SessionWindowRpc
 } from "@another-workbench/shared";
@@ -82,14 +84,15 @@ import { useRendererDiagnostics } from "./use-renderer-diagnostics.js";
 import { buildEngineInspectorViewModel } from "./engine-summary.js";
 import { resolveAutoRefreshBacklogAttempt } from "./auto-refresh-backlog.js";
 import { ComposerContainer } from "./composer/ComposerContainer.js";
+import type { ComposerExecutionSelection } from "./composer/composer-types.js";
 import "./chat-shell.css";
 
 type SettingsLauncherProps = {
   engines: EngineDefinitionRpc[];
   surfacesByEngineId: Readonly<Record<string, EngineSurfaceRpc | undefined>>;
-  currentEngineId: string;
   transport?: DesktopTransport;
-  onEngineSaved: (engineId: string) => void;
+  settings: WorkbenchSettingsRpc;
+  onSettingsSaved: (settings: WorkbenchSettingsRpc) => void;
   onStatusNotice: (notice: ComposerStatusNotice) => void;
 };
 
@@ -150,6 +153,15 @@ type WorkspaceMenuState = {
 
 const emptyTurns: Turn[] = [];
 const emptyParticipants: AgentParticipant[] = [];
+const resolveLastExecutionPreference = (
+  profile: WorkbenchSettingsRpc["lastExecutionByEngineId"][string] | undefined
+): ComposerExecutionSelection | undefined =>
+  profile?.modelId
+    ? {
+        modelId: profile.modelId,
+        reasoningOptionId: profile.reasoningOptionId
+      }
+    : undefined;
 const weekDayOptions = [
   { value: 1, label: "Mon" },
   { value: 2, label: "Tue" },
@@ -705,44 +717,166 @@ const TranscriptPane = memo(
 const SettingsLauncher = ({
   engines,
   surfacesByEngineId,
-  currentEngineId,
   transport,
-  onEngineSaved,
+  settings,
+  onSettingsSaved,
   onStatusNotice
 }: SettingsLauncherProps): ReactElement => {
   const [isOpen, setIsOpen] = useState(false);
-  const [draftEngineId, setDraftEngineId] = useState(currentEngineId);
+  const [draftSettings, setDraftSettings] = useState(() => structuredClone(settings));
+  const [activePage, setActivePage] = useState<"general" | "models">("general");
+  const [modelCatalogsByEngineId, setModelCatalogsByEngineId] = useState<
+    Record<string, EngineModelCatalogRpc | undefined>
+  >({});
+  const [modelCatalogErrorsByEngineId, setModelCatalogErrorsByEngineId] = useState<
+    Record<string, string | undefined>
+  >({});
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const engineInspector = useMemo(
     () =>
       buildEngineInspectorViewModel({
-        selectedEngineId: draftEngineId || currentEngineId,
+        selectedEngineId: draftSettings.defaultNewSessionEngineId ?? "",
         engines,
         surfacesByEngineId
       }),
-    [currentEngineId, draftEngineId, engines, surfacesByEngineId]
+    [draftSettings.defaultNewSessionEngineId, engines, surfacesByEngineId]
   );
-  const tierByEngineId = useMemo(
+  const modelEngines = useMemo(
     () =>
-      Object.fromEntries(
-        engines.map((engine) => [engine.engineId, engine.integrationTier] as const)
+      engines.filter((engine) =>
+        surfacesByEngineId[engine.engineId]?.sharedCapabilities.includes(
+          "turnConfiguration"
+        )
       ),
-    [engines]
+    [engines, surfacesByEngineId]
   );
 
   useEffect(() => {
-    if (!isOpen) {
-      setDraftEngineId(currentEngineId);
+    if (!isOpen || !transport || activePage !== "models" || modelEngines.length === 0) {
+      return;
     }
-  }, [currentEngineId, isOpen]);
+    let cancelled = false;
+    setIsLoadingModels(true);
+    void Promise.all(
+      modelEngines.map(async (engine) => {
+        try {
+          return {
+            engineId: engine.engineId,
+            catalog: await transport.engine.listModels(engine.engineId)
+          };
+        } catch (error) {
+          return { engineId: engine.engineId, error: (error as Error).message };
+        }
+      })
+    ).then((results) => {
+      if (!cancelled) {
+        setModelCatalogsByEngineId(
+          Object.fromEntries(results.map((result) => [result.engineId, result.catalog]))
+        );
+        setModelCatalogErrorsByEngineId(
+          Object.fromEntries(results.map((result) => [result.engineId, result.error]))
+        );
+        setIsLoadingModels(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activePage, isOpen, modelEngines, transport]);
 
   const close = (): void => {
     setIsOpen(false);
   };
 
   const open = (): void => {
-    setDraftEngineId(currentEngineId);
+    setDraftSettings(structuredClone(settings));
+    setActivePage("general");
     setIsOpen(true);
+  };
+
+  const parseReasoningOptionIds = (value: string): string[] =>
+    Array.from(
+      new Set(
+        value
+          .split(/[\s,]+/)
+          .map((optionId) => optionId.trim())
+          .filter(Boolean)
+      )
+    );
+
+  const toggleCatalogModel = (engineId: string, modelId: string): void => {
+    const catalogIds = modelCatalogsByEngineId[engineId]?.models.map(
+      (model) => model.modelId
+    ) ?? [];
+    setDraftSettings((current) => {
+      const configuredIds = current.allowedModelIdsByEngineId[engineId] ?? [];
+      const effectiveIds = configuredIds.length > 0 ? configuredIds : catalogIds;
+      const nextIds = effectiveIds.includes(modelId)
+        ? effectiveIds.filter((candidate) => candidate !== modelId)
+        : [...effectiveIds, modelId];
+      return {
+        ...current,
+        allowedModelIdsByEngineId: {
+          ...current.allowedModelIdsByEngineId,
+          [engineId]: nextIds
+        }
+      };
+    });
+  };
+
+  const addCustomModel = (engineId: string, form: HTMLFormElement): void => {
+    const formData = new FormData(form);
+    const modelId = String(formData.get("modelId") ?? "").trim();
+    if (!modelId) {
+      return;
+    }
+    setDraftSettings((current) => {
+      const configuredIds = current.allowedModelIdsByEngineId[engineId] ?? [];
+      const catalogIds = modelCatalogsByEngineId[engineId]?.models.map(
+        (model) => model.modelId
+      ) ?? [];
+      const baseIds = configuredIds.length > 0 ? configuredIds : catalogIds;
+      return {
+        ...current,
+        allowedModelIdsByEngineId: {
+          ...current.allowedModelIdsByEngineId,
+          [engineId]: Array.from(new Set([...baseIds, modelId]))
+        },
+        customModelReasoningOptionIdsByEngineId: {
+          ...current.customModelReasoningOptionIdsByEngineId,
+          [engineId]: {
+            ...(current.customModelReasoningOptionIdsByEngineId[engineId] ?? {}),
+            [modelId]: parseReasoningOptionIds(
+              String(formData.get("reasoningOptions") ?? "")
+            )
+          }
+        }
+      };
+    });
+    form.reset();
+  };
+
+  const removeConfiguredModel = (engineId: string, modelId: string): void => {
+    setDraftSettings((current) => {
+      const nextEngineOptions = {
+        ...(current.customModelReasoningOptionIdsByEngineId[engineId] ?? {})
+      };
+      delete nextEngineOptions[modelId];
+      return {
+        ...current,
+        allowedModelIdsByEngineId: {
+          ...current.allowedModelIdsByEngineId,
+          [engineId]: (current.allowedModelIdsByEngineId[engineId] ?? []).filter(
+            (candidate) => candidate !== modelId
+          )
+        },
+        customModelReasoningOptionIdsByEngineId: {
+          ...current.customModelReasoningOptionIdsByEngineId,
+          [engineId]: nextEngineOptions
+        }
+      };
+    });
   };
 
   const onSave = async (): Promise<void> => {
@@ -752,10 +886,11 @@ const SettingsLauncher = ({
     setIsSaving(true);
     try {
       const result = await transport.settings.update({
-        defaultNewSessionEngineId: draftEngineId || undefined
+        ...draftSettings,
+        defaultNewSessionEngineId:
+          draftSettings.defaultNewSessionEngineId || undefined
       });
-      const nextEngineId = result.defaultNewSessionEngineId ?? "";
-      onEngineSaved(nextEngineId);
+      onSettingsSaved(result);
       close();
       onStatusNotice({
         message: result.defaultNewSessionEngineId
@@ -794,18 +929,43 @@ const SettingsLauncher = ({
           </button>
         </header>
         <div className="awb-modal__body awb-settings">
-          <div className="awb-settings__panel">
+          <nav className="awb-settings__tabs" role="tablist" aria-label="Settings pages">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activePage === "general"}
+              className={activePage === "general" ? "is-active" : ""}
+              onClick={() => setActivePage("general")}
+            >
+              General
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activePage === "models"}
+              className={activePage === "models" ? "is-active" : ""}
+              onClick={() => setActivePage("models")}
+            >
+              Models
+            </button>
+          </nav>
+          {activePage === "general" ? <div className="awb-settings__panel">
             <label className="awb-field">
               <span>New session engine</span>
               <select
-                value={draftEngineId}
-                onChange={(event) => setDraftEngineId(event.target.value)}
+                value={draftSettings.defaultNewSessionEngineId ?? ""}
+                onChange={(event) =>
+                  setDraftSettings((current) => ({
+                    ...current,
+                    defaultNewSessionEngineId: event.target.value || undefined
+                  }))
+                }
               >
                 <option value="">Follow first available engine</option>
                 {engines.map((engine) => (
                   <option key={engine.engineId} value={engine.engineId}>
-                    {tierByEngineId[engine.engineId]
-                      ? `${engine.displayName} (${tierByEngineId[engine.engineId]})`
+                    {engine.integrationTier
+                      ? `${engine.displayName} (${engine.integrationTier})`
                       : engine.displayName}
                   </option>
                 ))}
@@ -818,7 +978,145 @@ const SettingsLauncher = ({
               <span>{engineInspector.capabilitiesLabel}</span>
               <span>{engineInspector.extensionsLabel}</span>
             </div>
-          </div>
+          </div> : (
+            <div className="awb-settings__panel awb-settings-models">
+              <p className="awb-settings-models__help">
+                No configured IDs means every model reported by that engine is available.
+              </p>
+              {modelEngines.length === 0 ? (
+                <p className="awb-list__empty">No engine exposes turn configuration.</p>
+              ) : modelEngines.map((engine) => {
+                const catalog = modelCatalogsByEngineId[engine.engineId];
+                const configuredIds =
+                  draftSettings.allowedModelIdsByEngineId[engine.engineId] ?? [];
+                const catalogIds = new Set(catalog?.models.map((model) => model.modelId) ?? []);
+                const addedIds = configuredIds.filter((modelId) => !catalogIds.has(modelId));
+                const usesAllCatalogModels = configuredIds.length === 0;
+                return (
+                  <section key={engine.engineId} className="awb-settings-models__engine">
+                    <header>
+                      <div>
+                        <strong>{engine.displayName}</strong>
+                        <span>{usesAllCatalogModels ? "All catalog models" : `${configuredIds.length} configured`}</span>
+                      </div>
+                      {!usesAllCatalogModels ? (
+                        <button
+                          type="button"
+                          className="awb-ghost-button"
+                          onClick={() => {
+                            setDraftSettings((current) => ({
+                              ...current,
+                              allowedModelIdsByEngineId: {
+                                ...current.allowedModelIdsByEngineId,
+                                [engine.engineId]: []
+                              },
+                              customModelReasoningOptionIdsByEngineId: {
+                                ...current.customModelReasoningOptionIdsByEngineId,
+                                [engine.engineId]: {}
+                              }
+                            }));
+                          }}
+                        >
+                          Use all
+                        </button>
+                      ) : null}
+                    </header>
+                    {modelCatalogErrorsByEngineId[engine.engineId] ? (
+                      <p className="awb-settings-models__error">
+                        Catalog unavailable: {modelCatalogErrorsByEngineId[engine.engineId]}
+                      </p>
+                    ) : null}
+                    <div className="awb-settings-models__list">
+                      {catalog?.models.map((model) => (
+                        <label key={model.modelId} className="awb-settings-models__item">
+                          <input
+                            type="checkbox"
+                            checked={usesAllCatalogModels || configuredIds.includes(model.modelId)}
+                            onChange={() => toggleCatalogModel(engine.engineId, model.modelId)}
+                          />
+                          <span>
+                            <strong>{model.displayName}</strong>
+                            <code>{model.modelId}</code>
+                          </span>
+                        </label>
+                      ))}
+                      {!catalog && isLoadingModels ? (
+                        <span className="awb-list__empty">Loading catalog…</span>
+                      ) : null}
+                    </div>
+                    {addedIds.length > 0 ? (
+                      <div className="awb-settings-models__unavailable">
+                        {addedIds.map((modelId) => (
+                          <div key={modelId}>
+                            <span className="awb-settings-models__add-tag">Add</span>
+                            <code>{modelId}</code>
+                            <input
+                              aria-label={`Efforts for ${modelId}`}
+                              placeholder="low, medium, high"
+                              defaultValue={(
+                                draftSettings.customModelReasoningOptionIdsByEngineId[
+                                  engine.engineId
+                                ]?.[
+                                  modelId
+                                ] ?? []
+                              ).join(", ")}
+                              onBlur={(event) =>
+                                setDraftSettings((current) => ({
+                                  ...current,
+                                  customModelReasoningOptionIdsByEngineId: {
+                                    ...current.customModelReasoningOptionIdsByEngineId,
+                                    [engine.engineId]: {
+                                      ...(current.customModelReasoningOptionIdsByEngineId[
+                                        engine.engineId
+                                      ] ?? {}),
+                                      [modelId]: parseReasoningOptionIds(
+                                        event.target.value
+                                      )
+                                    }
+                                  }
+                                }))
+                              }
+                            />
+                            <button
+                              type="button"
+                              className="awb-ghost-button"
+                              onClick={() => removeConfiguredModel(engine.engineId, modelId)}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                    <form
+                      className="awb-settings-models__custom"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        addCustomModel(engine.engineId, event.currentTarget);
+                      }}
+                    >
+                      <input
+                        name="modelId"
+                        aria-label={`Custom model ID for ${engine.displayName}`}
+                        placeholder="Exact model ID"
+                      />
+                      <input
+                        name="reasoningOptions"
+                        aria-label={`Efforts for custom model in ${engine.displayName}`}
+                        placeholder="Efforts: low, medium, high"
+                      />
+                      <button
+                        type="submit"
+                        className="awb-ghost-button"
+                      >
+                        Add
+                      </button>
+                    </form>
+                  </section>
+                );
+              })}
+            </div>
+          )}
         </div>
         <footer className="awb-modal__footer">
           <button type="button" className="awb-ghost-button" onClick={close}>
@@ -1479,6 +1777,18 @@ export const ChatShellApp = ({
     Record<string, EngineSurfaceRpc | undefined>
   >({});
   const [selectedEngineId, setSelectedEngineId] = useState<string>("");
+  const [allowedModelIdsByEngineId, setAllowedModelIdsByEngineId] = useState<
+    Record<string, string[]>
+  >({});
+  const [customModelReasoningOptionIdsByEngineId, setCustomModelReasoningOptionIdsByEngineId] =
+    useState<Record<string, Record<string, string[]>>>({});
+  const [lastExecutionByEngineId, setLastExecutionByEngineId] = useState<
+    WorkbenchSettingsRpc["lastExecutionByEngineId"]
+  >({});
+  const lastExecutionByEngineIdRef = useRef<
+    WorkbenchSettingsRpc["lastExecutionByEngineId"]
+  >({});
+  const settingsSaveChainRef = useRef<Promise<void>>(Promise.resolve());
   const [statusNotice, setStatusNoticeState] = useState<ComposerStatusNotice | undefined>();
   const [sessionWindows, setSessionWindows] = useState<
     Record<string, SessionWindowCoverage | undefined>
@@ -1542,6 +1852,32 @@ export const ChatShellApp = ({
       setStatusNoticeState(action);
     },
     [writeStatusNoticeLog]
+  );
+
+  const onExecutionPreferenceChange = useCallback(
+    (engineId: string, execution: ComposerExecutionSelection): void => {
+      const next = {
+        ...lastExecutionByEngineIdRef.current,
+        [engineId]: { ...execution }
+      };
+      lastExecutionByEngineIdRef.current = next;
+      setLastExecutionByEngineId(next);
+      if (!transport) {
+        return;
+      }
+      settingsSaveChainRef.current = settingsSaveChainRef.current
+        .then(async () => {
+          await transport.settings.update({ lastExecutionByEngineId: next });
+        })
+        .catch((error) => {
+          setStatusNotice({
+            message: `Model preference save failed: ${(error as Error).message}`,
+            source: "settings",
+            ...statusNoticeErrorDetails(error)
+          });
+        });
+    },
+    [setStatusNotice, transport]
   );
 
   const {
@@ -1608,6 +1944,13 @@ export const ChatShellApp = ({
   const activeSession = activeSessionId
     ? domain.getSession(activeSessionId)
     : undefined;
+  const composerEngineId =
+    [activeSession?.engineId, activeSessionNode?.engineId, selectedEngineId].find(
+      (engineId) => Boolean(engineId && engineSurfacesById[engineId])
+    ) ??
+    activeSessionNode?.engineId ??
+    activeSession?.engineId ??
+    selectedEngineId;
   const activeThreadGoal = activeSessionId
     ? domain.getThreadGoal(activeSessionId)
     : undefined;
@@ -1921,6 +2264,13 @@ export const ChatShellApp = ({
         if (settings.defaultNewSessionEngineId) {
           setSelectedEngineId(settings.defaultNewSessionEngineId);
         }
+        setAllowedModelIdsByEngineId(settings.allowedModelIdsByEngineId ?? {});
+        setCustomModelReasoningOptionIdsByEngineId(
+          settings.customModelReasoningOptionIdsByEngineId ?? {}
+        );
+        const lastExecution = settings.lastExecutionByEngineId ?? {};
+        lastExecutionByEngineIdRef.current = lastExecution;
+        setLastExecutionByEngineId(lastExecution);
         setSettingsHydrated(true);
       })
       .catch((error) => {
@@ -2164,8 +2514,8 @@ export const ChatShellApp = ({
     depth = 0
   ): ReactElement => {
     const statusDot = resolveStatusDotLabel(session.statusDot);
-    const lastCompletedTurnAt = session.lastCompletedTurnAt;
-    const completedAge = formatRelativeCompletedTurnAge(lastCompletedTurnAt);
+    const activityAt = session.activityAt ?? session.lastCompletedTurnAt;
+    const activityAge = formatRelativeCompletedTurnAge(activityAt);
     return (
       <li key={session.sessionId} className="awb-tree__item">
         <div
@@ -2206,9 +2556,9 @@ export const ChatShellApp = ({
               </strong>
               <span className="awb-tree__session-meta">
                 <span>{session.engineId}</span>
-                {completedAge && lastCompletedTurnAt ? (
-                  <time dateTime={lastCompletedTurnAt} title={formatTimestamp(lastCompletedTurnAt)}>
-                    {completedAge}
+                {activityAge && activityAt ? (
+                  <time dateTime={activityAt} title={formatTimestamp(activityAt)}>
+                    {activityAge}
                   </time>
                 ) : null}
               </span>
@@ -2400,9 +2750,23 @@ export const ChatShellApp = ({
             <SettingsLauncher
               engines={engines}
               surfacesByEngineId={engineSurfacesById}
-              currentEngineId={selectedEngineId}
               transport={transport}
-              onEngineSaved={setSelectedEngineId}
+              settings={{
+                defaultNewSessionEngineId: selectedEngineId || undefined,
+                allowedModelIdsByEngineId,
+                customModelReasoningOptionIdsByEngineId,
+                lastExecutionByEngineId
+              }}
+              onSettingsSaved={(nextSettings) => {
+                setSelectedEngineId(nextSettings.defaultNewSessionEngineId ?? "");
+                setAllowedModelIdsByEngineId(nextSettings.allowedModelIdsByEngineId);
+                setCustomModelReasoningOptionIdsByEngineId(
+                  nextSettings.customModelReasoningOptionIdsByEngineId
+                );
+                lastExecutionByEngineIdRef.current =
+                  nextSettings.lastExecutionByEngineId;
+                setLastExecutionByEngineId(nextSettings.lastExecutionByEngineId);
+              }}
               onStatusNotice={setStatusNotice}
             />
           </footer>
@@ -2445,7 +2809,15 @@ export const ChatShellApp = ({
             activeSessionId={activeSessionId}
             threadGoal={activeThreadGoal}
             displayedSessionId={displayedSessionId}
-            selectedEngineId={selectedEngineId}
+            selectedEngineId={composerEngineId}
+            engineSurface={engineSurfacesById[composerEngineId]}
+            allowedModelIds={allowedModelIdsByEngineId[composerEngineId]}
+            customModelReasoningOptionIds={
+              customModelReasoningOptionIdsByEngineId[composerEngineId]
+            }
+            lastExecution={resolveLastExecutionPreference(
+              lastExecutionByEngineId[composerEngineId]
+            )}
             activeWorkspaceId={activeWorkspace?.workspaceId}
             activeWorkspaceRootPath={activeWorkspace?.rootPath}
             turns={composerTurns}
@@ -2460,6 +2832,7 @@ export const ChatShellApp = ({
             onCreateSession={onCreateSession}
             onOpenSession={onOpenSession}
             onRequestTranscriptBottom={viewport.scrollToBottom}
+            onExecutionPreferenceChange={onExecutionPreferenceChange}
             onRespondApproval={transport ? onRespondApproval : undefined}
             onRespondInteraction={transport ? onRespondInteraction : undefined}
           />

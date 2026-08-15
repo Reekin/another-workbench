@@ -18,6 +18,7 @@ import type {
   CodexHookRunRpc,
   ContextUsage,
   DiagnosticsWriteInputRpc,
+  EngineModelCatalogRpc,
   EventType
 } from "@another-workbench/shared";
 import { RuntimePipelineDiagnostics } from "./runtime/runtime-pipeline-diagnostics.js";
@@ -62,6 +63,8 @@ import type { ThreadItem } from "./codex-app-server-generated/v2/ThreadItem.js";
 import type { ResponseItem } from "./codex-app-server-generated/ResponseItem.js";
 import type { SkillsListParams } from "./codex-app-server-generated/v2/SkillsListParams.js";
 import type { SkillsListResponse } from "./codex-app-server-generated/v2/SkillsListResponse.js";
+import type { ModelListParams } from "./codex-app-server-generated/v2/ModelListParams.js";
+import type { ModelListResponse } from "./codex-app-server-generated/v2/ModelListResponse.js";
 import type { JsonValue } from "./codex-app-server-generated/serde_json/JsonValue.js";
 import { buildCodexTurnInput } from "./attachment-inputs.js";
 import {
@@ -1496,6 +1499,51 @@ export class CodexAppServerRuntimePort
     return (await this.rpc("skills/list", payload)) as SkillsListResponse;
   }
 
+  public async listModelCatalog(): Promise<EngineModelCatalogRpc> {
+    await this.start(this.startConfig);
+    const models: EngineModelCatalogRpc["models"] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | null = null;
+
+    do {
+      const response = (await this.rpc("model/list", {
+        cursor,
+        includeHidden: false
+      } satisfies ModelListParams)) as ModelListResponse;
+      for (const model of response.data) {
+        if (model.hidden) {
+          continue;
+        }
+        models.push({
+          modelId: model.model,
+          displayName: model.displayName,
+          description: model.description || undefined,
+          reasoningOptions: model.supportedReasoningEfforts.map((option) => ({
+            optionId: option.reasoningEffort,
+            displayName:
+              option.reasoningEffort.charAt(0).toUpperCase() +
+              option.reasoningEffort.slice(1),
+            description: option.description || undefined
+          })),
+          defaultReasoningOptionId: model.defaultReasoningEffort,
+          isDefault: model.isDefault
+        });
+      }
+      cursor = response.nextCursor;
+      if (cursor && seenCursors.has(cursor)) {
+        throw new Error("Codex model/list returned a repeated pagination cursor.");
+      }
+      if (cursor) {
+        seenCursors.add(cursor);
+      }
+    } while (cursor);
+
+    return {
+      engineId: this.engineId,
+      models
+    };
+  }
+
   public async reloadUserConfig(): Promise<void> {
     await this.start(this.startConfig);
     await this.rpc("config/batchWrite", {
@@ -1527,6 +1575,20 @@ export class CodexAppServerRuntimePort
       payload.params.providerSessionId.trim().length > 0
         ? payload.params.providerSessionId
         : undefined;
+    const execution =
+      typeof payload.params.execution === "object" &&
+      payload.params.execution !== null
+        ? (payload.params.execution as Record<string, unknown>)
+        : undefined;
+    const model =
+      typeof execution?.modelId === "string" && execution.modelId.trim()
+        ? execution.modelId
+        : undefined;
+    const effort =
+      typeof execution?.reasoningOptionId === "string" &&
+      execution.reasoningOptionId.trim()
+        ? execution.reasoningOptionId
+        : undefined;
     let threadId = await this.ensureThreadForSession(
       sessionId,
       cwd,
@@ -1538,12 +1600,15 @@ export class CodexAppServerRuntimePort
     const startTurn = async (targetThreadId: string): Promise<TurnStartResponse> => {
       this.pendingTurnSessionIdByThreadId.set(targetThreadId, sessionId);
       try {
+        const params: Record<string, unknown> = {
+          threadId: targetThreadId,
+          input,
+          ...(model ? { model } : {}),
+          ...(effort ? { effort } : {})
+        };
         return (await this.rpc(
           "turn/start",
-          {
-            threadId: targetThreadId,
-            input
-          },
+          params,
           options
         )) as TurnStartResponse;
       } finally {

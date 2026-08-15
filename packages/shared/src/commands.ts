@@ -38,6 +38,11 @@ const zAttachmentSchema = z.object({
   name: z.string().min(1).optional()
 });
 
+export const zTurnExecutionOptionsSchema = z.object({
+  modelId: z.string().min(1).optional(),
+  reasoningOptionId: z.string().min(1).optional()
+});
+
 const zInitializeCommand = z.object({
   type: z.literal("initialize"),
   runtimeId: zRuntimeId.optional(),
@@ -81,6 +86,7 @@ const zSendUserMessageCommand = z.object({
   messageId: zMessageId,
   content: z.string(),
   attachments: z.array(zAttachmentSchema).default([]),
+  execution: zTurnExecutionOptionsSchema.optional(),
   cwd: z.string().min(1).optional()
 });
 
@@ -171,6 +177,7 @@ export const zCommandEnvelopeSchema = z.object({
 });
 
 export type Attachment = z.infer<typeof zAttachmentSchema>;
+export type TurnExecutionOptions = z.infer<typeof zTurnExecutionOptionsSchema>;
 export type Command = z.infer<typeof zCommandSchema>;
 export type CommandEnvelope = z.infer<typeof zCommandEnvelopeSchema>;
 

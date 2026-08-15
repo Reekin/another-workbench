@@ -10,15 +10,18 @@ import type {
   DiagnosticsWriteInputRpc,
   DiagnosticsWriteResultRpc,
   EngineDefinitionRpc,
+  EngineModelCatalogRpc,
   EngineSharedCapabilityRpc,
   EngineSurfaceRpc,
   EventEnvelope,
   ErrorLogWriteInputRpc,
   ErrorLogWriteResultRpc,
   SchedulerTaskDocumentRpc,
+  SessionExecutionProfileInput,
   SessionBrowserPageRpc,
   SessionBrowserPathRpc,
   SkillDescriptorRpc,
+  WorkbenchSettingsRpc,
 } from "@another-workbench/shared";
 import type { RuntimeEventFilter, RuntimeEventReplayInput } from "@another-workbench/core";
 import {
@@ -35,6 +38,7 @@ import {
   type WorktreeSnapshot
 } from "./capability-registry.js";
 import { ChatTreeProvider } from "./chat-tree-provider.js";
+import { cloneModelSettings } from "./model-settings.js";
 import {
   SessionCatalogService,
   type WorkspaceBrowserNode
@@ -274,6 +278,10 @@ export class WorkbenchShellService {
     };
   }
 
+  public async listEngineModels(engineId: string): Promise<EngineModelCatalogRpc> {
+    return this.runtimeService.listEngineModels(engineId);
+  }
+
   public selectEngine(input: {
     engineId: string;
     config?: Record<string, unknown>;
@@ -296,21 +304,19 @@ export class WorkbenchShellService {
     );
   }
 
-  public async getSettings(): Promise<{
-    defaultNewSessionEngineId?: string;
-  }> {
+  public async getSettings(): Promise<WorkbenchSettingsRpc> {
     const registry = this.requireWorkspaceRegistry();
     await registry.ready();
+    const state = registry.getState();
     return {
-      defaultNewSessionEngineId: registry.getState().defaultNewSessionEngineId
+      defaultNewSessionEngineId: state.defaultNewSessionEngineId,
+      ...cloneModelSettings(state)
     };
   }
 
-  public async updateSettings(input: {
-    defaultNewSessionEngineId?: string;
-  }): Promise<{
-    defaultNewSessionEngineId?: string;
-  }> {
+  public async updateSettings(
+    input: Partial<WorkbenchSettingsRpc>
+  ): Promise<WorkbenchSettingsRpc> {
     const registry = this.requireWorkspaceRegistry();
     await registry.updateSettings(input);
     if (input.defaultNewSessionEngineId) {
@@ -559,10 +565,7 @@ export class WorkbenchShellService {
     workspaceId: string;
     engineId: string;
     conversationId?: string;
-    sessionProfile?: {
-      modeId?: string;
-      modelId?: string;
-    };
+    sessionProfile?: SessionExecutionProfileInput;
     metadata?: Record<string, unknown>;
   }): Promise<{
     sessionId: string;
@@ -578,12 +581,14 @@ export class WorkbenchShellService {
       ...(input.metadata ?? {}),
       cwd: workspace.absolutePath
     };
+    const sessionProfile =
+      input.sessionProfile ?? registry.getState().lastExecutionByEngineId[input.engineId];
     const session = await this.runtimeService.createSession({
       type: "createSession",
       engineId: input.engineId,
       workspaceId: input.workspaceId,
       conversationId: input.conversationId,
-      sessionProfile: input.sessionProfile,
+      sessionProfile,
       metadata
     });
     await this.sessionCatalog.markSessionRead(session.sessionId);

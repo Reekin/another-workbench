@@ -25,6 +25,82 @@ const imageAttachment = (
 });
 
 describe("ComposerPanel", () => {
+  it("renders provider-native model and reasoning options and locks them while steering", () => {
+    const html = renderToStaticMarkup(
+      <ComposerPanel
+        isDropTarget={false}
+        fileInputRef={{ current: null }}
+        textareaRef={{ current: null }}
+        draft="Refine the current turn"
+        selectedSkills={[]}
+        attachments={[]}
+        queue={[]}
+        suggestions={undefined}
+        status={{ kind: "running", label: "Running" }}
+        intent="steer"
+        supportsSteer={true}
+        supportsAttachments={true}
+        models={[
+          {
+            modelId: "gpt-5.5-codex",
+            displayName: "GPT-5.5 Codex",
+            reasoningOptions: [
+              { optionId: "xhigh", displayName: "Extra high" }
+            ],
+            isDefault: true
+          }
+        ]}
+        selectedExecution={{
+          modelId: "gpt-5.5-codex",
+          reasoningOptionId: "xhigh"
+        }}
+        reasoningOptions={[
+          { optionId: "xhigh", displayName: "Extra high" }
+        ]}
+        isExecutionLoading={false}
+        isExecutionDisabled={true}
+        hasComposedInput={true}
+        isTurnActive={true}
+        canSubmit={true}
+        canStop={true}
+        isDispatching={false}
+        onTextareaChange={() => undefined}
+        onTextareaSelect={() => undefined}
+        onInputKeyDown={async () => undefined}
+        onPaste={() => undefined}
+        onFileInputChange={() => undefined}
+        onDragEnter={() => undefined}
+        onDragOver={() => undefined}
+        onDragLeave={() => undefined}
+        onDrop={() => undefined}
+        onRemoveSkill={() => undefined}
+        onRemoveAttachment={() => undefined}
+        onPickAttachments={() => undefined}
+        onPrimaryAction={async () => undefined}
+        onStop={async () => undefined}
+        onModelChange={() => undefined}
+        onReasoningOptionChange={() => undefined}
+        onSuggestionHover={() => undefined}
+        onSuggestionSelect={async () => undefined}
+        onEditQueuedMessage={() => undefined}
+        onDeleteQueuedMessage={() => undefined}
+        onSendQueuedMessageNow={async () => undefined}
+        onSteerQueuedMessageNow={async () => undefined}
+      />
+    );
+
+    expect(html).toContain('aria-label="Model"');
+    expect(html).toContain('value="gpt-5.5-codex" selected=""');
+    expect(html).toContain('value="xhigh" selected=""');
+    expect((html.match(/disabled=""/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(html).toContain(">Default<");
+    expect(html).toContain(">Steer<");
+    expect(html).not.toContain(">Queue<");
+    expect(html.indexOf("awb-composer__primary-action")).toBeLessThan(
+      html.indexOf("awb-composer__actions awb-composer-panel__actions")
+    );
+  });
+
   it("renders multiple image attachments with preview actions", () => {
     const html = renderToStaticMarkup(
       <ComposerPanel
@@ -43,8 +119,9 @@ describe("ComposerPanel", () => {
         intent="send"
         supportsSteer={true}
         supportsAttachments={true}
+        hasComposedInput={true}
+        isTurnActive={false}
         canSubmit={true}
-        canQueue={false}
         canStop={false}
         isDispatching={false}
         onTextareaChange={() => undefined}
@@ -61,7 +138,6 @@ describe("ComposerPanel", () => {
         onPreviewAttachment={() => undefined}
         onPickAttachments={() => undefined}
         onPrimaryAction={async () => undefined}
-        onQueueCurrent={() => undefined}
         onStop={async () => undefined}
         onSuggestionHover={() => undefined}
         onSuggestionSelect={async () => undefined}
@@ -103,8 +179,9 @@ describe("ComposerPanel", () => {
         intent="send"
         supportsSteer={true}
         supportsAttachments={true}
+        hasComposedInput={false}
+        isTurnActive={false}
         canSubmit={true}
-        canQueue={false}
         canStop={false}
         isDispatching={false}
         onTextareaChange={() => undefined}
@@ -121,7 +198,6 @@ describe("ComposerPanel", () => {
         onPreviewAttachment={() => undefined}
         onPickAttachments={() => undefined}
         onPrimaryAction={async () => undefined}
-        onQueueCurrent={() => undefined}
         onStop={async () => undefined}
         onSuggestionHover={() => undefined}
         onSuggestionSelect={async () => undefined}
@@ -164,8 +240,9 @@ describe("ComposerPanel", () => {
         intent="send"
         supportsSteer={true}
         supportsAttachments={true}
+        hasComposedInput={false}
+        isTurnActive={false}
         canSubmit={true}
-        canQueue={false}
         canStop={false}
         isDispatching={false}
         onTextareaChange={() => undefined}
@@ -182,7 +259,6 @@ describe("ComposerPanel", () => {
         onPreviewAttachment={() => undefined}
         onPickAttachments={() => undefined}
         onPrimaryAction={async () => undefined}
-        onQueueCurrent={() => undefined}
         onStop={async () => undefined}
         onSuggestionHover={() => undefined}
         onSuggestionSelect={async () => undefined}
@@ -226,8 +302,9 @@ describe("ComposerPanel", () => {
         intent="send"
         supportsSteer={true}
         supportsAttachments={true}
+        hasComposedInput={false}
+        isTurnActive={true}
         canSubmit={false}
-        canQueue={false}
         canStop={false}
         isDispatching={false}
         onTextareaChange={() => undefined}
@@ -244,7 +321,6 @@ describe("ComposerPanel", () => {
         onPreviewAttachment={() => undefined}
         onPickAttachments={() => undefined}
         onPrimaryAction={async () => undefined}
-        onQueueCurrent={() => undefined}
         onStop={async () => undefined}
         onSuggestionHover={() => undefined}
         onSuggestionSelect={async () => undefined}
@@ -260,6 +336,8 @@ describe("ComposerPanel", () => {
     expect(html).toContain("Run shell command");
     expect(html).toContain("echo hello");
     expect(html).toContain(">Approve<");
+    expect(html).toContain(">Stop<");
+    expect(html).not.toContain(">Queue<");
     expect(html.indexOf("awb-composer-approvals")).toBeLessThan(
       html.indexOf("<textarea")
     );

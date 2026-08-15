@@ -65,6 +65,19 @@ const createPreloadMock = (config?: {
         }
       } as const;
     }
+    if (payload.method === "engine.listModels") {
+      return {
+        id: payload.id,
+        method: "engine.listModels",
+        ok: true,
+        result: {
+          catalog: {
+            engineId: payload.params.engineId,
+            models: []
+          }
+        }
+      } as const;
+    }
     if (payload.method === "engine.select") {
       return {
         id: payload.id,
@@ -280,7 +293,7 @@ describe("Desktop transport facade", () => {
     });
   });
 
-  it("maps engine.list and engine.getSurface to dedicated typed RPC contracts", async () => {
+  it("maps engine discovery RPCs to dedicated typed contracts", async () => {
     const preload = createPreloadMock({
       onRequest: async (request) => {
         if (request.method === "engine.list") {
@@ -313,6 +326,32 @@ describe("Desktop transport facade", () => {
             }
           } as const;
         }
+        if (request.method === "engine.listModels") {
+          return {
+            id: request.id,
+            method: request.method,
+            ok: true,
+            result: {
+              catalog: {
+                engineId: request.params.engineId,
+                models: [
+                  {
+                    modelId: "gpt-5.5-codex",
+                    displayName: "GPT-5.5 Codex",
+                    reasoningOptions: [
+                      {
+                        optionId: "xhigh",
+                        displayName: "Extra high"
+                      }
+                    ],
+                    defaultReasoningOptionId: "xhigh",
+                    isDefault: true
+                  }
+                ]
+              }
+            }
+          } as const;
+        }
         throw new Error(`Unexpected method: ${request.method}`);
       }
     });
@@ -329,6 +368,15 @@ describe("Desktop transport facade", () => {
       engineId: "codex",
       sharedCapabilities: ["chat", "terminal"],
       extensions: []
+    });
+    await expect(transport.engine.listModels("codex")).resolves.toEqual({
+      engineId: "codex",
+      models: [
+        expect.objectContaining({
+          modelId: "gpt-5.5-codex",
+          reasoningOptions: [expect.objectContaining({ optionId: "xhigh" })]
+        })
+      ]
     });
   });
 
@@ -570,16 +618,40 @@ describe("Desktop transport facade", () => {
     await expect(transport.settings.get()).resolves.toEqual({});
     await expect(
       transport.settings.update({
-        defaultNewSessionEngineId: "codex"
+        defaultNewSessionEngineId: "codex",
+        allowedModelIdsByEngineId: {
+          codex: ["gpt-5.5-codex", "custom-model"]
+        },
+        customModelReasoningOptionIdsByEngineId: {
+          codex: { "custom-model": ["low", "high"] }
+        },
+        lastExecutionByEngineId: {
+          codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "xhigh" }
+        }
       })
     ).resolves.toEqual({
-      defaultNewSessionEngineId: "codex"
+      defaultNewSessionEngineId: "codex",
+      allowedModelIdsByEngineId: {
+        codex: ["gpt-5.5-codex", "custom-model"]
+      },
+      customModelReasoningOptionIdsByEngineId: {
+        codex: { "custom-model": ["low", "high"] }
+      },
+      lastExecutionByEngineId: {
+        codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "xhigh" }
+      }
     });
 
     const getRequest = preload.request.mock.calls[0][0] as WorkbenchRpcRequest;
     const updateRequest = preload.request.mock.calls[1][0] as WorkbenchRpcRequest;
     expect(getRequest.method).toBe("settings.get");
     expect(updateRequest.method).toBe("settings.update");
+    if (updateRequest.method !== "settings.update") {
+      throw new Error("Expected settings.update request.");
+    }
+    expect(updateRequest.params.lastExecutionByEngineId).toEqual({
+      codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "xhigh" }
+    });
   });
 
   it("maps steer, chat capabilities, and skills list through the new composer contracts", async () => {
@@ -1321,6 +1393,44 @@ describe("Desktop transport facade", () => {
     expect(store.getState().eventStream.lastCursor).toBe("cursor-3");
     expect(store.getDomainReadModel().getMessageBlock("message-1:md")?.text).toBe("123");
     expect(actions).toEqual(["store/hydrateSnapshot", "store/ingestEnvelopes"]);
+  });
+
+  it("forwards provider-native turn execution options only on ordinary sends", async () => {
+    const preload = createPreloadMock();
+    const transport = createDesktopTransport(preload.api, {
+      createId: () => "fixed-id"
+    });
+
+    await transport.chat.send({
+      sessionId: "session-1",
+      content: "Use the selected model",
+      execution: {
+        modelId: "gpt-5.5-codex",
+        reasoningOptionId: "xhigh"
+      }
+    });
+    await transport.chat.steer({
+      sessionId: "session-1",
+      turnId: "turn-1",
+      content: "Keep going"
+    });
+
+    const sendRequest = preload.request.mock.calls[0][0] as WorkbenchRpcRequest;
+    const steerRequest = preload.request.mock.calls[1][0] as WorkbenchRpcRequest;
+    if (sendRequest.method !== "runtime.command" || steerRequest.method !== "runtime.command") {
+      throw new Error("Expected runtime.command requests.");
+    }
+    expect(sendRequest.params.envelope.command).toMatchObject({
+      type: "sendUserMessage",
+      execution: {
+        modelId: "gpt-5.5-codex",
+        reasoningOptionId: "xhigh"
+      }
+    });
+    expect(steerRequest.params.envelope.command).toMatchObject({
+      type: "steerTurn"
+    });
+    expect(steerRequest.params.envelope.command).not.toHaveProperty("execution");
   });
 
   it("bounds renderer drain batches by serialized bytes", async () => {

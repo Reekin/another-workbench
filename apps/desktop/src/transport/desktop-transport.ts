@@ -12,6 +12,7 @@ import type {
   DiagnosticsSnapshotRpc,
   DomainSnapshot,
   EngineDefinitionRpc,
+  EngineModelCatalogRpc,
   EngineSurfaceRpc,
   ErrorLogWriteInputRpc,
   ErrorLogWriteResultRpc,
@@ -29,6 +30,7 @@ import type {
   SessionActionDescriptorRpc,
   SessionActionKindRpc,
   SessionActionResultRpc,
+  SessionExecutionProfileInput,
   SessionWindowRpc,
   ThreadGoalStatus,
   WorkspaceFileSearchResultRpc,
@@ -96,6 +98,10 @@ export type ChatSendInput = {
   content: string;
   messageId?: string;
   attachments?: Attachment[];
+  execution?: {
+    modelId?: string;
+    reasoningOptionId?: string;
+  };
 };
 
 export type ChatInterruptInput = {
@@ -216,12 +222,16 @@ export type DesktopTransport = {
   engine: {
     list: () => Promise<EngineDefinitionRpc[]>;
     getSurface: (engineId: string) => Promise<EngineSurfaceRpc>;
+    listModels: (engineId: string) => Promise<EngineModelCatalogRpc>;
     select: (input: EngineSelectInput) => Promise<{ selectedEngineId: string }>;
   };
   settings: {
     get: () => Promise<WorkbenchSettingsRpc>;
     update: (input: {
       defaultNewSessionEngineId?: string;
+      allowedModelIdsByEngineId?: Record<string, string[]>;
+      customModelReasoningOptionIdsByEngineId?: Record<string, Record<string, string[]>>;
+      lastExecutionByEngineId?: Record<string, SessionExecutionProfileInput>;
     }) => Promise<WorkbenchSettingsRpc>;
   };
   scheduler: {
@@ -602,6 +612,15 @@ export const createDesktopTransport = (
     return result.surface;
   };
 
+  const requestEngineModels = async (
+    engineId: string
+  ): Promise<EngineModelCatalogRpc> => {
+    const result = await rpc.request("engine.listModels", {
+      engineId
+    });
+    return result.catalog;
+  };
+
   const requestEngineSelect = async (
     input: EngineSelectInput
   ): Promise<{ selectedEngineId: string }> => {
@@ -675,6 +694,9 @@ export const createDesktopTransport = (
 
   const requestSettingsUpdate = async (input: {
     defaultNewSessionEngineId?: string;
+    allowedModelIdsByEngineId?: Record<string, string[]>;
+    customModelReasoningOptionIdsByEngineId?: Record<string, Record<string, string[]>>;
+    lastExecutionByEngineId?: Record<string, SessionExecutionProfileInput>;
   }): Promise<WorkbenchSettingsRpc> => {
     return rpc.request("settings.update", input);
   };
@@ -791,6 +813,7 @@ export const createDesktopTransport = (
     engine: {
       list: requestEngineList,
       getSurface: requestEngineSurface,
+      listModels: requestEngineModels,
       select: requestEngineSelect
     },
     settings: {
@@ -897,7 +920,8 @@ export const createDesktopTransport = (
           sessionId: input.sessionId,
           content: input.content,
           messageId: input.messageId ?? createId(),
-          attachments: input.attachments ?? []
+          attachments: input.attachments ?? [],
+          execution: input.execution
         }),
       steer: (input: ChatSteerInput) =>
         sendCommand({

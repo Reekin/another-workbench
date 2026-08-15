@@ -90,6 +90,22 @@ export const createRemoteRpcHandler = (
                 surface: shellService.getEngineSurface(request.params.engineId)
               }
             });
+          case "engine.listModels":
+            if (!shellService) {
+              return toErrorResponse(
+                request,
+                "ENGINE_MODEL_CATALOG_UNAVAILABLE",
+                "Engine model catalog APIs are unavailable for this runtime service."
+              );
+            }
+            return parseWorkbenchRpcResponse({
+              id: request.id,
+              method: request.method,
+              ok: true,
+              result: {
+                catalog: await shellService.listEngineModels(request.params.engineId)
+              }
+            });
           case "engine.select":
             return parseWorkbenchRpcResponse({
               id: request.id,

@@ -1,5 +1,6 @@
 import type { AdapterCommandResult } from "@another-workbench/adapters";
 import type {
+  EngineModelCatalogRpc,
   ProviderSessionHandle,
   Command,
   SessionExecutionProfile,
@@ -62,6 +63,7 @@ const cloneAgentBinding = (binding: WorkbenchAgentBinding): WorkbenchAgentBindin
   runtimeConfig: binding.runtimeConfig,
   providerKind: binding.providerKind,
   resolveProviderSessionId: binding.resolveProviderSessionId,
+  modelCatalog: binding.modelCatalog,
   sharedCapabilities: binding.sharedCapabilities
     ? [...binding.sharedCapabilities]
     : undefined,
@@ -136,6 +138,7 @@ export class RuntimeOrchestrator {
       runtimeConfig: existing?.runtimeConfig,
       providerKind: existing?.providerKind,
       resolveProviderSessionId: existing?.resolveProviderSessionId,
+      modelCatalog: existing?.modelCatalog,
       sharedCapabilities: existing?.sharedCapabilities
         ? [...existing.sharedCapabilities]
         : undefined,
@@ -174,6 +177,11 @@ export class RuntimeOrchestrator {
 
   public getSelectedEngineId(): string | undefined {
     return this.selectedEngineId;
+  }
+
+  public async listEngineModels(engineId: string): Promise<EngineModelCatalogRpc> {
+    const binding = this.requireBinding(engineId);
+    return binding.modelCatalog?.() ?? { engineId, models: [] };
   }
 
   public hydrateDiscoveredSession(
@@ -246,28 +254,47 @@ export class RuntimeOrchestrator {
             this.rejectPendingSendStart(session, pendingStart, result);
             receipt = this.accept(envelope, false);
           } else {
+            const binding = this.requireBinding(
+              this.resolveSessionEngineId(session)
+            );
+            let nextMetadata = session.metadata;
             if (outcome.providerSessionId) {
-              const binding = this.requireBinding(
-                this.resolveSessionEngineId(session)
-              );
+              nextMetadata = {
+                ...nextMetadata,
+                ...(binding.providerKind
+                  ? { providerKind: binding.providerKind }
+                  : {}),
+                providerSessionId: outcome.providerSessionId
+              };
+            }
+            if (envelope.command.execution) {
+              const currentProfile = resolveSessionExecutionProfile({
+                sessionEngineId: session.engineId,
+                metadata: nextMetadata
+              });
+              nextMetadata = writeSessionExecutionProfile(nextMetadata, {
+                ...currentProfile,
+                modelId: envelope.command.execution.modelId,
+                reasoningOptionId:
+                  envelope.command.execution.reasoningOptionId
+              });
+            }
+            if (nextMetadata !== session.metadata) {
               this.domainService.commitRuntimeEvent({
                 type: "session.updated",
                 conversationId: session.conversationId,
                 sessionId: session.sessionId,
                 status: "running",
-                metadata: {
-                  ...session.metadata,
-                  ...(binding.providerKind
-                    ? { providerKind: binding.providerKind }
-                    : {}),
-                  providerSessionId: outcome.providerSessionId
-                }
+                metadata: nextMetadata
               });
             }
             this.domainService.commitAcceptedUserMessage(
               envelope.command,
               outcome.turnId
             );
+            if (nextMetadata !== session.metadata) {
+              await this.sessionIndexSyncService.syncSession(session.sessionId);
+            }
             this.drainPendingSendEvents(pendingStart);
             receipt = this.accept(envelope, true, {
               sessionId: outcome.sessionId,

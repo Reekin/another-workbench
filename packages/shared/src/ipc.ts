@@ -13,6 +13,7 @@ import { commandTypes, zCommandEnvelopeSchema } from "./commands.js";
 import { zChatSessionSchema, zDomainSnapshotSchema } from "./domain.js";
 import {
   zEngineDefinitionRpcSchema,
+  zEngineModelCatalogRpcSchema,
   zEngineSharedCapabilitySchema,
   zEngineSurfaceRpcSchema
 } from "./engine-control.js";
@@ -31,6 +32,7 @@ import {
 export const workbenchRpcMethods = [
   "engine.list",
   "engine.getSurface",
+  "engine.listModels",
   "engine.select",
   "settings.get",
   "settings.update",
@@ -94,7 +96,14 @@ const zWorkspaceRecordSchema = z.object({
 });
 
 const zWorkbenchSettingsSchema = z.object({
-  defaultNewSessionEngineId: z.string().min(1).optional()
+  defaultNewSessionEngineId: z.string().min(1).optional(),
+  allowedModelIdsByEngineId: z.record(z.string(), z.array(z.string().min(1))).default({}),
+  customModelReasoningOptionIdsByEngineId: z
+    .record(z.string(), z.record(z.string(), z.array(z.string().min(1))))
+    .default({}),
+  lastExecutionByEngineId: z
+    .record(z.string(), zSessionExecutionProfileInputSchema)
+    .default({})
 });
 
 const zComposerSlashSuggestionRpcSchema = z.object({
@@ -159,6 +168,7 @@ export type SessionBrowserItemRpc = {
   isActive: boolean;
   isExpanded: boolean;
   childCount: number;
+  activityAt?: string;
   lastCompletedTurnAt?: string;
 };
 
@@ -187,6 +197,7 @@ const zSessionBrowserItemSchema = z.object({
   isActive: z.boolean(),
   isExpanded: z.boolean(),
   childCount: z.number().int().nonnegative(),
+  activityAt: z.string().min(1).optional(),
   lastCompletedTurnAt: z.string().min(1).optional()
 });
 
@@ -606,6 +617,14 @@ const zEngineGetSurfaceRequestSchema = z.object({
   })
 });
 
+const zEngineListModelsRequestSchema = z.object({
+  id: zRequestId,
+  method: z.literal("engine.listModels"),
+  params: z.object({
+    engineId: z.string().min(1)
+  })
+});
+
 const zEngineSelectRequestSchema = z.object({
   id: zRequestId,
   method: z.literal("engine.select"),
@@ -631,7 +650,16 @@ const zSettingsUpdateRequestSchema = z.object({
   id: zRequestId,
   method: z.literal("settings.update"),
   params: z.object({
-    defaultNewSessionEngineId: z.string().min(1).optional()
+    defaultNewSessionEngineId: z.string().min(1).optional(),
+    allowedModelIdsByEngineId: z
+      .record(z.string(), z.array(z.string().min(1)))
+      .optional(),
+    customModelReasoningOptionIdsByEngineId: z
+      .record(z.string(), z.record(z.string(), z.array(z.string().min(1))))
+      .optional(),
+    lastExecutionByEngineId: z
+      .record(z.string(), zSessionExecutionProfileInputSchema)
+      .optional()
   })
 });
 
@@ -1052,6 +1080,7 @@ const zEventsReplayRequestSchema = z.object({
 export const zWorkbenchRpcRequestSchema = z.discriminatedUnion("method", [
   zEngineListRequestSchema,
   zEngineGetSurfaceRequestSchema,
+  zEngineListModelsRequestSchema,
   zEngineSelectRequestSchema,
   zSettingsGetRequestSchema,
   zSettingsUpdateRequestSchema,
@@ -1116,6 +1145,15 @@ const zEngineGetSurfaceResponseSchema = z.object({
   ok: z.literal(true),
   result: z.object({
     surface: zEngineSurfaceRpcSchema
+  })
+});
+
+const zEngineListModelsResponseSchema = z.object({
+  id: zRequestId,
+  method: z.literal("engine.listModels"),
+  ok: z.literal(true),
+  result: z.object({
+    catalog: zEngineModelCatalogRpcSchema
   })
 });
 
@@ -1585,6 +1623,7 @@ const zWorkbenchRpcErrorResponseSchema = z.object({
 export const zWorkbenchRpcResponseSchema = z.union([
   zEngineListResponseSchema,
   zEngineGetSurfaceResponseSchema,
+  zEngineListModelsResponseSchema,
   zEngineSelectResponseSchema,
   zSettingsGetResponseSchema,
   zSettingsUpdateResponseSchema,

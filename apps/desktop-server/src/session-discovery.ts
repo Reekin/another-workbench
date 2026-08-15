@@ -121,6 +121,19 @@ const toSubagentParentThreadId = (source: SessionSource): string | undefined => 
   return trimToUndefined(subAgentSource.thread_spawn.parent_thread_id);
 };
 
+const isGuardianThreadSource = (source: SessionSource): boolean => {
+  if (!source || typeof source !== "object" || !("subAgent" in source)) {
+    return false;
+  }
+  const subAgentSource = source.subAgent;
+  return Boolean(
+    subAgentSource &&
+      typeof subAgentSource === "object" &&
+      "other" in subAgentSource &&
+      subAgentSource.other === "guardian"
+  );
+};
+
 const buildDeterministicTurnTimestamp = (
   thread: Thread,
   turnIndex: number,
@@ -857,6 +870,9 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
       workspaces.map((workspace) => [workspace.workspaceId, new Map<string, Thread>()] as const)
     );
     for (const thread of listedThreads) {
+      if (isGuardianThreadSource(thread.source)) {
+        continue;
+      }
       for (const workspace of workspaces) {
         if (!isPathInsideWorkspace(thread.cwd, workspace.absolutePath)) {
           continue;

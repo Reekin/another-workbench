@@ -2350,4 +2350,30 @@ describe("Session discovery and reconciliation", () => {
       archivedAt: undefined
     });
   });
+
+  it("omits guardian review threads from workspace discovery", async () => {
+    const listThreads = vi.fn().mockResolvedValue({
+      data: [
+        createThread({ id: "thread-main" }),
+        createThread({
+          id: "thread-guardian",
+          source: { subAgent: { other: "guardian" } }
+        })
+      ],
+      nextCursor: null
+    });
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: { listThreads } as never
+    });
+
+    const discovered = await provider.discoverWorkspaces([{
+      workspaceId: "workspace-1",
+      absolutePath: "I:/workspace-alpha",
+      label: "Alpha"
+    }]);
+
+    expect(listThreads).toHaveBeenCalledTimes(1);
+    expect(discovered.get("workspace-1")?.sessions.map((session) => session.sessionId))
+      .toEqual(["codex-thread:thread-main"]);
+  });
 });

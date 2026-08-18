@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import type {
   AdapterRuntimePort,
@@ -202,30 +201,13 @@ export type CodexAppServerRuntimePortOptions = {
 };
 
 const resolveDefaultCodexCommandPath = (): string => {
-  const envCandidates = [
+  const commandPath = [
     process.env.AWB_CODEX_BIN,
     process.env.CODEX_BIN,
     process.env.CODEX_PATH
-  ].filter((value): value is string => Boolean(value && value.trim().length > 0));
+  ].find((value): value is string => Boolean(value && value.trim().length > 0));
 
-  for (const candidate of envCandidates) {
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  const localCandidates = [
-    "I:/codex-branch/bin/codex.exe",
-    "I:/codex-branch/codex.exe",
-    "I:/codex-branch/codex/codex.exe"
-  ];
-  for (const candidate of localCandidates) {
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  return process.platform === "win32" ? "codex.exe" : "codex";
+  return commandPath?.trim() ?? (process.platform === "win32" ? "codex.exe" : "codex");
 };
 
 const localRequestId = (value: string | number): string => String(value);

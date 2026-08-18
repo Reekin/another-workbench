@@ -215,6 +215,7 @@ const resolveDefaultCodexCommandPath = (): string => {
   }
 
   const localCandidates = [
+    "I:/codex-branch/bin/codex.exe",
     "I:/codex-branch/codex.exe",
     "I:/codex-branch/codex/codex.exe"
   ];

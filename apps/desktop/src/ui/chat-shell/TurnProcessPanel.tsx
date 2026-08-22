@@ -200,10 +200,15 @@ export const TurnProcessPanel = ({
               }
               return (
                 <Fragment key={item.id}>
-                  {item.blocks.map((block) => (
+                  {item.blocks.map((block, blockIndex) => (
                     <MessageMarkdownView
                       key={block.blockId}
                       block={block}
+                      copyBlocks={
+                        blockIndex === item.blocks.length - 1
+                          ? item.blocks
+                          : undefined
+                      }
                       onActivateResourceLink={onActivateResourceLink}
                       onPreviewImage={onPreviewImage}
                     />

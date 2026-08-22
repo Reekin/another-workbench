@@ -21,6 +21,7 @@ import { buildLocalImagePreviewSrc } from "./local-image-preview.js";
 
 export type MessageMarkdownViewProps = {
   block: MessageBlock;
+  copyBlocks?: readonly MessageBlock[];
   onActivateResourceLink?: (reference: ExtractedFileReference) => void;
   onPreviewImage?: (input: { src: string; alt: string }) => void;
 };
@@ -538,10 +539,18 @@ const StreamingPlainTextTail = ({ text }: { text: string }): ReactElement => (
 
 export const MessageMarkdownView = memo(({
   block,
+  copyBlocks,
   onActivateResourceLink,
   onPreviewImage
 }: MessageMarkdownViewProps): ReactElement => {
   const sourceText = block.text ?? "";
+  const copyText = copyBlocks
+    ?.flatMap((candidate) =>
+      isRenderableMarkdownBlock(candidate) && candidate.text
+        ? [candidate.text]
+        : []
+    )
+    .join("\n\n");
   const deferredText = useDeferredValue(sourceText);
   const userMessageParts = splitUserMessageText(deferredText);
   const { stableMarkdown, tailText } = useMemo(
@@ -661,6 +670,22 @@ export const MessageMarkdownView = memo(({
             ) : null}
           </>
         )}
+        {copyText ? (
+          <button
+            type="button"
+            className="awb-message__copy"
+            aria-label="Copy message"
+            title="Copy"
+            onClick={() => {
+              void navigator.clipboard.writeText(copyText);
+            }}
+          >
+            <svg aria-hidden="true" focusable="false" viewBox="0 0 20 20">
+              <rect x="8" y="8" width="9" height="9" rx="1.75" />
+              <path d="M12 8V5.75A1.75 1.75 0 0 0 10.25 4h-4.5A1.75 1.75 0 0 0 4 5.75v4.5A1.75 1.75 0 0 0 5.75 12H8" />
+            </svg>
+          </button>
+        ) : null}
       </div>
     </article>
   );

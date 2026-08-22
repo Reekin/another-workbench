@@ -670,10 +670,15 @@ const TranscriptPane = memo(
                       {isUserTurn ? "No message content." : "Waiting for response…"}
                     </p>
                   )}
-                  {visibleRow.blocks.map((block) => (
+                  {visibleRow.blocks.map((block, blockIndex) => (
                     <MessageMarkdownView
                       key={block.blockId}
                       block={block}
+                      copyBlocks={
+                        blockIndex === visibleRow.blocks.length - 1
+                          ? visibleRow.blocks
+                          : undefined
+                      }
                       onActivateResourceLink={onActivateResourceLink}
                       onPreviewImage={onPreviewImage}
                     />

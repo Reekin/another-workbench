@@ -174,6 +174,7 @@ describe("ChatShellApp inline process output", () => {
     expect(html.indexOf("1 previous message &gt;")).toBeLessThan(
       html.indexOf("completed final")
     );
+    expect((html.match(/aria-label="Copy message"/g) ?? []).length).toBe(3);
     expect(html.indexOf("running turn")).toBeLessThan(
       html.indexOf("grep")
     );
@@ -294,6 +295,7 @@ describe("ChatShellApp inline process output", () => {
     expect(html.indexOf("after tool note")).toBeLessThan(
       html.indexOf("same message continuation")
     );
+    expect((html.match(/aria-label="Copy message"/g) ?? []).length).toBe(2);
   });
 
   it("interleaves approvals and interactions without duplicating them", () => {

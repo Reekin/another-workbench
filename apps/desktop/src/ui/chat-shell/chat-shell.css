@@ -721,6 +721,33 @@ button {
   border-radius: 0;
 }
 
+.awb-message__copy {
+  justify-self: start;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  margin: -0.45rem 0 0 -5px;
+  padding: 0;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--awb-ink-muted);
+}
+
+.awb-message__copy:hover {
+  color: var(--awb-ink-strong);
+}
+
+.awb-message__copy svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .awb-message__empty {
   margin: 0;
   font-size: 0.8rem;

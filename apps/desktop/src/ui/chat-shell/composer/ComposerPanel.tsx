@@ -1,9 +1,11 @@
+import { useState } from "react";
 import type {
   ChangeEvent as ReactChangeEvent,
   ClipboardEvent as ReactClipboardEvent,
   CSSProperties,
   DragEvent as ReactDragEvent,
   KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
   ReactElement,
   RefObject
 } from "react";
@@ -39,6 +41,9 @@ import type {
   QueuedComposerMessage,
   ComposerSuggestionState
 } from "./composer-types.js";
+
+const composerEditorMinHeight = 76;
+const composerTranscriptMinHeight = 120;
 
 const formatTokenCount = (value: number): string => {
   if (value >= 1_000_000) {
@@ -196,6 +201,7 @@ export const ComposerPanel = ({
   onRespondApproval?: (input: ApprovalResponseInput) => Promise<void>;
   onRespondInteraction?: (input: InteractionResponseInput) => Promise<void>;
 }): ReactElement => {
+  const [editorHeight, setEditorHeight] = useState(composerEditorMinHeight);
   const selectedModel = models.find(
     (model) => model.modelId === selectedExecution?.modelId
   );
@@ -213,16 +219,60 @@ export const ComposerPanel = ({
     primaryAction === "stop"
       ? !canStop
       : !canSubmit || (primaryAction === "steer" && intent !== "steer");
+  const onResizeStart = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (event.button !== 0) {
+      return;
+    }
+    const startY = event.clientY;
+    const startHeight = editorHeight;
+    const transcriptHeight =
+      event.currentTarget.parentElement?.previousElementSibling?.getBoundingClientRect()
+        .height ?? 0;
+    const maxHeight = Math.floor(
+      startHeight + Math.max(0, transcriptHeight - composerTranscriptMinHeight)
+    );
+    const onPointerMove = (moveEvent: PointerEvent): void => {
+      const nextHeight = Math.min(
+        maxHeight,
+        Math.max(
+          composerEditorMinHeight,
+          startHeight + startY - moveEvent.clientY
+        )
+      );
+      setEditorHeight(Math.round(nextHeight));
+      moveEvent.preventDefault();
+    };
+    const onPointerEnd = (): void => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerEnd);
+      window.removeEventListener("pointercancel", onPointerEnd);
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerEnd);
+    window.addEventListener("pointercancel", onPointerEnd);
+    event.preventDefault();
+  };
+  const composerStyle = {
+    "--awb-composer-editor-height": `${editorHeight}px`
+  } as CSSProperties;
+
   return (
   <footer
     className={`awb-composer awb-composer-panel${
       isDropTarget ? " is-drop-target" : ""
     }`}
+    style={composerStyle}
     onDragEnter={onDragEnter}
     onDragOver={onDragOver}
     onDragLeave={onDragLeave}
     onDrop={onDrop}
   >
+    <div
+      className="awb-composer__resize-handle"
+      onPointerDown={onResizeStart}
+    >
+      <span aria-hidden="true" />
+    </div>
     <input
       ref={fileInputRef}
       className="awb-composer__file-input"

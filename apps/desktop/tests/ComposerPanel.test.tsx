@@ -96,6 +96,11 @@ describe("ComposerPanel", () => {
     expect(html).toContain(">Default<");
     expect(html).toContain(">Steer<");
     expect(html).not.toContain(">Queue<");
+    expect(html).toContain('class="awb-composer__resize-handle"');
+    expect(html).toContain("--awb-composer-editor-height:76px");
+    expect(html.indexOf("awb-composer__resize-handle")).toBeLessThan(
+      html.indexOf("<textarea")
+    );
     expect(html.indexOf("awb-composer__primary-action")).toBeLessThan(
       html.indexOf("awb-composer__actions awb-composer-panel__actions")
     );

@@ -117,10 +117,26 @@ describe("DomainService", () => {
         let tick = 0;
         return () => `2026-04-20T00:04:${String(++tick).padStart(2, "0")}Z`;
       })(),
+      createSessionId: () => "session-hydrated",
       assertEngineRegistered: vi.fn(),
       resolveEngineCapabilities: () => ["chat", "terminal"],
       publishRuntimeEvent: () => {}
     });
+    service.createSession({
+      conversationId: "conversation-hydrated",
+      engineId: "codex",
+      workspaceId: "workspace-hydrated"
+    });
+    service.commitAcceptedUserMessage(
+      {
+        type: "sendUserMessage",
+        sessionId: "session-hydrated",
+        messageId: "local-user-message",
+        content: "hello",
+        attachments: []
+      },
+      "turn-hydrated"
+    );
 
     const hydrated = service.hydrateDiscoveredSession({
       workspaceId: "workspace-hydrated",
@@ -145,8 +161,34 @@ describe("DomainService", () => {
           providerSessionId: "thread-hydrated"
         }
       },
-      turns: [],
-      messageBlocks: [],
+      turns: [
+        {
+          turnId: "turn-hydrated",
+          sessionId: "session-hydrated",
+          status: "completed",
+          finishReason: "completed",
+          startedAt: "2026-04-19T00:00:10Z",
+          completedAt: "2026-04-19T00:00:20Z",
+          messageIds: ["hydrated:session-hydrated:provider-user-message"],
+          toolCallIds: [],
+          terminalIds: [],
+          approvalRequestIds: [],
+          interactionRequestIds: []
+        }
+      ],
+      messageBlocks: [
+        {
+          blockId: "hydrated:session-hydrated:provider-user-message:md",
+          messageId: "hydrated:session-hydrated:provider-user-message",
+          sessionId: "session-hydrated",
+          turnId: "turn-hydrated",
+          role: "user",
+          kind: "markdown",
+          text: "hello",
+          startedAt: "2026-04-19T00:00:10Z",
+          completedAt: "2026-04-19T00:00:10Z"
+        }
+      ],
       toolCalls: [],
       terminalStreams: [],
       sessionRelations: []
@@ -162,6 +204,16 @@ describe("DomainService", () => {
     expect(service.listSessions({ conversationId: "conversation-hydrated" })).toEqual([
       expect.objectContaining({
         sessionId: "session-hydrated"
+      })
+    ]);
+    const snapshot = service.getSnapshot();
+    expect(snapshot.turns[0]?.messageIds).toEqual([
+      "hydrated:session-hydrated:provider-user-message"
+    ]);
+    expect(snapshot.messageBlocks.filter((block) => block.role === "user")).toEqual([
+      expect.objectContaining({
+        messageId: "hydrated:session-hydrated:provider-user-message",
+        text: "hello"
       })
     ]);
   });

@@ -69,6 +69,9 @@ const withConversationSession = (
 const participantIdFor = (conversationId: string, engineId: string): string =>
   `participant-${conversationId}-${engineId}`;
 
+const normalizeMessageText = (value: string | undefined): string =>
+  (value ?? "").replace(/\r\n/g, "\n").trim();
+
 export class DomainService {
   private readonly assertEngineRegistered: (engineId: string) => void;
   private readonly resolveEngineCapabilities: (engineId: string) => readonly string[];
@@ -111,6 +114,9 @@ export class DomainService {
         createdAt: relation.createdAt
       })
     );
+    const replacedLocalMessageIds = this.resolveHydratedUserMessageReplacements(
+      snapshot
+    );
     this.domainReplica.mergeSnapshot(
       {
         conversations: [
@@ -145,7 +151,8 @@ export class DomainService {
       {
         scope: {
           sessionId: snapshot.session.sessionId
-        }
+        },
+        replaceMessageIds: replacedLocalMessageIds
       }
     );
 
@@ -469,6 +476,34 @@ export class DomainService {
     if (event.type === "turn.completed") {
       this.markSessionUnreadCompleted?.(event.sessionId);
     }
+  }
+
+  private resolveHydratedUserMessageReplacements(
+    snapshot: HydratedSessionSnapshot
+  ): string[] {
+    const replacements = new Set<string>();
+    for (const hydratedBlock of snapshot.messageBlocks) {
+      if (
+        hydratedBlock.role !== "user" ||
+        this.domainReplica.listMessageBlocks({
+          messageId: hydratedBlock.messageId
+        }).length > 0
+      ) {
+        continue;
+      }
+      const duplicate = this.domainReplica
+        .listMessageBlocks({ turnId: hydratedBlock.turnId })
+        .find(
+          (block) =>
+            block.role === "user" &&
+            !replacements.has(block.messageId) &&
+            normalizeMessageText(block.text) === normalizeMessageText(hydratedBlock.text)
+        );
+      if (duplicate) {
+        replacements.add(duplicate.messageId);
+      }
+    }
+    return [...replacements];
   }
 
   private createSessionRecord(input: {

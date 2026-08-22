@@ -1362,6 +1362,31 @@ describe("RuntimeOrchestrator", () => {
           }
         });
         listener?.({
+          eventId: `event-${ordering}-user-start`,
+          occurredAt: "2026-07-18T00:00:01Z",
+          event: {
+            type: "message.started",
+            sessionId: "session-canonical",
+            turnId: "turn-canonical",
+            messageId: "provider-user-canonical",
+            role: "user",
+            engineId: "codex"
+          }
+        });
+        listener?.({
+          eventId: `event-${ordering}-user-complete`,
+          occurredAt: "2026-07-18T00:00:01Z",
+          event: {
+            type: "message.completed",
+            sessionId: "session-canonical",
+            turnId: "turn-canonical",
+            messageId: "provider-user-canonical",
+            role: "user",
+            finalText: "hello",
+            engineId: "codex"
+          }
+        });
+        listener?.({
           eventId: `event-${ordering}-message`,
           occurredAt: "2026-07-18T00:00:02Z",
           event: {
@@ -1495,6 +1520,14 @@ describe("RuntimeOrchestrator", () => {
         turnId: "turn-canonical",
         messageIds: ["message-canonical", "assistant-canonical"]
       });
+      expect(
+        snapshot.messageBlocks.filter((block) => block.role === "user")
+      ).toEqual([
+        expect.objectContaining({
+          messageId: "message-canonical",
+          text: "hello"
+        })
+      ]);
       expect(snapshot.turns.some((turn) => turn.turnId.startsWith("user-turn-"))).toBe(false);
       expect(snapshot.messageBlocks.find(
         (block) => block.messageId === "assistant-canonical"

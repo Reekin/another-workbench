@@ -91,6 +91,7 @@ export class RuntimeOrchestrator {
   private readonly pendingSessionIndexSyncIds = new Set<string>();
   private readonly pendingRelationSyncs = new Map<string, SessionRelationSyncInput>();
   private readonly pendingSendStartBySessionId = new Map<string, PendingSendStart>();
+  private readonly localUserMessageIdByTurn = new Map<string, string>();
   private adapterEventQueueReadIndex = 0;
   private isDrainingAdapterEvents = false;
   private acceptingAdapterEvents = true;
@@ -288,6 +289,10 @@ export class RuntimeOrchestrator {
                 metadata: nextMetadata
               });
             }
+            this.localUserMessageIdByTurn.set(
+              outcome.turnId,
+              envelope.command.messageId
+            );
             this.domainService.commitAcceptedUserMessage(
               envelope.command,
               outcome.turnId
@@ -329,6 +334,10 @@ export class RuntimeOrchestrator {
       }
       case "steerTurn": {
         const session = this.domainService.requireSession(envelope.command.sessionId);
+        this.localUserMessageIdByTurn.set(
+          envelope.command.turnId,
+          envelope.command.messageId
+        );
         this.domainService.commitSteerUserMessage(envelope.command);
         const receipt = await this.forwardSessionCommand(envelope.command.sessionId, envelope, {
           before: () => {
@@ -799,9 +808,31 @@ export class RuntimeOrchestrator {
   }
 
   private commitAdapterEvent(envelope: EventEnvelope): void {
-    this.domainService.ingestRuntimeEvent(envelope.event, envelope.occurredAt);
-    this.publishRuntimeEvent(envelope.event);
-    this.queueSessionIndexSync(envelope);
+    const event = envelope.event;
+    const localMessageId =
+      (event.type === "message.started" || event.type === "message.completed") &&
+      event.role === "user"
+        ? this.localUserMessageIdByTurn.get(event.turnId)
+        : undefined;
+    const reconciledEnvelope =
+      localMessageId && localMessageId !== ("messageId" in event ? event.messageId : "")
+        ? {
+            ...envelope,
+            event: {
+              ...event,
+              messageId: localMessageId
+            }
+          }
+        : envelope;
+    this.domainService.ingestRuntimeEvent(
+      reconciledEnvelope.event,
+      reconciledEnvelope.occurredAt
+    );
+    if (reconciledEnvelope.event.type === "turn.completed") {
+      this.localUserMessageIdByTurn.delete(reconciledEnvelope.event.turnId);
+    }
+    this.publishRuntimeEvent(reconciledEnvelope.event);
+    this.queueSessionIndexSync(reconciledEnvelope);
   }
 
   private eventSessionId(envelope: EventEnvelope): string | undefined {

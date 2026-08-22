@@ -39,6 +39,7 @@ export type DomainSnapshotMergeScope = {
 
 export type DomainSnapshotMergeOptions = {
   scope?: DomainSnapshotMergeScope;
+  replaceMessageIds?: readonly string[];
 };
 
 export type ListSessionsOptions = {
@@ -364,6 +365,9 @@ export class DomainStore {
     const parsedSnapshot = parseDomainSnapshot(snapshot);
     const staged = DomainStore.fromSnapshot(this.getSnapshot());
     staged.assertSnapshotWithinMergeScope(parsedSnapshot, options.scope);
+    for (const messageId of new Set(options.replaceMessageIds ?? [])) {
+      staged.deleteMessage(messageId);
+    }
     staged.applyParsedSnapshot(parsedSnapshot, {
       merge: true
     });
@@ -1149,6 +1153,12 @@ export class DomainStore {
       removeIndexedValue(this.messageIdsByTurn, existing.turnId, existing.messageId);
     }
     return true;
+  }
+
+  private deleteMessage(messageId: string): void {
+    for (const block of this.listMessageBlocks({ messageId })) {
+      this.deleteMessageBlock(block.blockId);
+    }
   }
 
   public getToolCall(toolCallId: string): ToolCall | undefined {

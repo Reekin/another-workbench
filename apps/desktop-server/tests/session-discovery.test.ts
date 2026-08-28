@@ -2275,7 +2275,7 @@ describe("Session discovery and reconciliation", () => {
     });
   });
 
-  it("recovers turn.finalMessageId only when a hydrated agent message is marked final_answer", async () => {
+  it("recovers the explicit final answer or falls back to the last agent message", async () => {
     const provider = new CodexSessionDiscoveryProvider({
       codexRuntimePort: {
         resumeThread: vi.fn().mockResolvedValue({
@@ -2313,8 +2313,29 @@ describe("Session discovery and reconciliation", () => {
               items: [
                 {
                   type: "agentMessage",
-                  id: "msg-legacy",
+                  id: "msg-legacy-progress",
+                  text: "Still working...",
+                  phase: null,
+                  memoryCitation: null
+                },
+                {
+                  type: "agentMessage",
+                  id: "msg-legacy-final",
                   text: "Legacy answer",
+                  phase: null,
+                  memoryCitation: null
+                }
+              ]
+            },
+            {
+              id: "turn-running",
+              status: "inProgress",
+              error: null,
+              items: [
+                {
+                  type: "agentMessage",
+                  id: "msg-running",
+                  text: "Still streaming...",
                   phase: null,
                   memoryCitation: null
                 }
@@ -2347,9 +2368,18 @@ describe("Session discovery and reconciliation", () => {
     });
     expect(hydrated?.turns[1]).toMatchObject({
       turnId: "turn-legacy",
-      messageIds: ["hydrated:codex-thread:thread-final-answer:msg-legacy"]
+      finalMessageId:
+        "hydrated:codex-thread:thread-final-answer:msg-legacy-final",
+      messageIds: [
+        "hydrated:codex-thread:thread-final-answer:msg-legacy-progress",
+        "hydrated:codex-thread:thread-final-answer:msg-legacy-final"
+      ]
     });
-    expect(hydrated?.turns[1]).not.toHaveProperty("finalMessageId");
+    expect(hydrated?.turns[2]).toMatchObject({
+      turnId: "turn-running",
+      messageIds: ["hydrated:codex-thread:thread-final-answer:msg-running"]
+    });
+    expect(hydrated?.turns[2]).not.toHaveProperty("finalMessageId");
   });
 
   it("serializes local image inputs as markdown images with file URLs", async () => {

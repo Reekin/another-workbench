@@ -598,6 +598,7 @@ const hydrateCodexTurnEntities = async (input: {
     const terminalIds: string[] = [];
     const fileChanges: FileUpdateChange[] = [];
     let finalMessageId: string | undefined;
+    let lastAgentMessageId: string | undefined;
 
     for (const [itemIndex, item] of hydratedItems.entries()) {
       if (isCancelled?.()) {
@@ -626,6 +627,7 @@ const hydrateCodexTurnEntities = async (input: {
       }
       if (isAgentMessageItem(item)) {
         messageIds.push(itemEntityId);
+        lastAgentMessageId = itemEntityId;
         if (isFinalAnswerMessageItem(item)) {
           finalMessageId = itemEntityId;
         }
@@ -821,6 +823,10 @@ const hydrateCodexTurnEntities = async (input: {
           })
         );
       }
+    }
+
+    if (!finalMessageId && turn.status !== "inProgress") {
+      finalMessageId = lastAgentMessageId;
     }
 
     if (turn.error) {

@@ -799,6 +799,20 @@ button {
   color: var(--awb-ink-muted);
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .awb-message__copy {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease-out;
+  }
+
+  .awb-message:hover .awb-message__copy,
+  .awb-message:focus-within .awb-message__copy {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 .awb-message__copy:hover {
   color: var(--awb-ink-strong);
 }

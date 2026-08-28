@@ -5,6 +5,7 @@ import {
   formatComposerAttachmentSize,
   mergeComposerAttachments,
   releaseComposerAttachments,
+  writeComposerAttachmentDraft,
   type ComposerAttachment
 } from "../src/ui/chat-shell/composer-attachments.js";
 
@@ -163,6 +164,22 @@ describe("composer attachment helpers", () => {
     expect(result.attachments).toEqual([duplicate, next]);
     expect(result.replaced).toEqual([existing]);
     expect(result.skipped).toEqual([]);
+  });
+
+  it("keeps attachment drafts isolated by session", () => {
+    const imageA = {} as ComposerAttachment;
+    const imageB = {} as ComposerAttachment;
+    const withSessionA = writeComposerAttachmentDraft({}, "session-a", [imageA]);
+    const withBoth = writeComposerAttachmentDraft(withSessionA, "session-b", [imageB]);
+
+    expect(withBoth).toEqual({
+      "session-a": [imageA],
+      "session-b": [imageB]
+    });
+
+    const withoutSessionB = writeComposerAttachmentDraft(withBoth, "session-b", []);
+    expect(withoutSessionB).toEqual({ "session-a": [imageA] });
+    expect(withoutSessionB).not.toHaveProperty("session-b");
   });
 
   it("releases only preview URLs that require cleanup", () => {

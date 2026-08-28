@@ -27,6 +27,7 @@ import {
   createComposerAttachments,
   mergeComposerAttachments,
   releaseComposerAttachments,
+  writeComposerAttachmentDraft,
   type ComposerAttachment
 } from "./composer-attachments.js";
 import {
@@ -377,7 +378,9 @@ export const useComposerController = (
   const [draftBySessionId, setDraftBySessionId] = useState<Record<string, string>>({});
   const [detachedDraft, setDetachedDraft] = useState("");
   const [selectedSkills, setSelectedSkills] = useState<ComposerSkillReference[]>([]);
-  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [attachmentDrafts, setAttachmentDrafts] = useState<
+    Record<string, ComposerAttachment[]>
+  >({});
   const [queueBySessionId, setQueueBySessionId] = useState<
     Record<string, QueuedComposerMessage[]>
   >({});
@@ -402,7 +405,7 @@ export const useComposerController = (
   const [highlightedSuggestionIndex, setHighlightedSuggestionIndex] = useState(0);
   const mountedRef = useRef(true);
   const selectedSkillsRef = useRef<ComposerSkillReference[]>([]);
-  const attachmentsRef = useRef<ComposerAttachment[]>([]);
+  const attachmentDraftsRef = useRef<Record<string, ComposerAttachment[]>>({});
   const queueRef = useRef<Record<string, QueuedComposerMessage[]>>({});
   const dragDepthRef = useRef(0);
   const previousSessionIdRef = useRef<string | undefined>(undefined);
@@ -432,6 +435,9 @@ export const useComposerController = (
   const draft = input.activeSessionId
     ? (draftBySessionId[input.activeSessionId] ?? "")
     : detachedDraft;
+  const attachments = input.activeSessionId
+    ? (attachmentDrafts[input.activeSessionId] ?? [])
+    : [];
   const queue = input.activeSessionId
     ? (queueBySessionId[input.activeSessionId] ?? [])
     : [];
@@ -514,10 +520,6 @@ export const useComposerController = (
   }, [selectedSkills]);
 
   useEffect(() => {
-    attachmentsRef.current = attachments;
-  }, [attachments]);
-
-  useEffect(() => {
     queueRef.current = queueBySessionId;
   }, [queueBySessionId]);
 
@@ -526,7 +528,9 @@ export const useComposerController = (
     return () => {
       mountedRef.current = false;
       selectedSkillsRef.current = [];
-      releaseComposerAttachments(attachmentsRef.current);
+      for (const draftAttachments of Object.values(attachmentDraftsRef.current)) {
+        releaseComposerAttachments(draftAttachments);
+      }
       for (const queuedMessages of Object.values(queueRef.current)) {
         for (const item of queuedMessages) {
           releaseComposerAttachments(item.attachments);
@@ -542,9 +546,6 @@ export const useComposerController = (
     previousSessionIdRef.current = input.activeSessionId;
     selectedSkillsRef.current = [];
     setSelectedSkills([]);
-    releaseComposerAttachments(attachmentsRef.current);
-    attachmentsRef.current = [];
-    setAttachments([]);
   }, [input.activeSessionId]);
 
   useEffect(() => {
@@ -762,17 +763,32 @@ export const useComposerController = (
     setHighlightedSuggestionIndex(0);
   }, [suggestionQuery?.trigger, suggestionQuery?.query]);
 
-  const replaceAttachments = (
+  const getAttachmentsForSession = (
+    sessionId = input.activeSessionId
+  ): ComposerAttachment[] =>
+    sessionId ? (attachmentDraftsRef.current[sessionId] ?? []) : [];
+
+  const replaceAttachmentsForSession = (
+    sessionId: string | undefined,
     nextAttachments: ComposerAttachment[],
     options: {
       releaseCurrent?: boolean;
     } = {}
   ): void => {
-    if (options.releaseCurrent ?? true) {
-      releaseComposerAttachments(attachmentsRef.current);
+    if (!sessionId) {
+      return;
     }
-    attachmentsRef.current = nextAttachments;
-    setAttachments(nextAttachments);
+    const currentAttachments = getAttachmentsForSession(sessionId);
+    if (options.releaseCurrent ?? true) {
+      releaseComposerAttachments(currentAttachments);
+    }
+    const nextDrafts = writeComposerAttachmentDraft(
+      attachmentDraftsRef.current,
+      sessionId,
+      nextAttachments
+    );
+    attachmentDraftsRef.current = nextDrafts;
+    setAttachmentDrafts(nextDrafts);
   };
 
   const appendQueueItem = (
@@ -832,7 +848,7 @@ export const useComposerController = (
   const moveCurrentInputToQueue = (source: QueuedComposerMessage["source"]): void => {
     const text = draft.trim();
     const currentSkills = selectedSkillsRef.current;
-    const currentAttachments = attachmentsRef.current;
+    const currentAttachments = getAttachmentsForSession();
     if (!text && currentSkills.length === 0 && currentAttachments.length === 0) {
       return;
     }
@@ -844,8 +860,11 @@ export const useComposerController = (
       source
     });
     replaceSelectedSkills([]);
-    attachmentsRef.current = [];
-    setAttachments([]);
+    if (input.activeSessionId) {
+      replaceAttachmentsForSession(input.activeSessionId, [], {
+        releaseCurrent: false
+      });
+    }
     onDraftChange("");
     input.onStatusNotice({
       message: "Queued follow-up.",
@@ -1010,7 +1029,7 @@ export const useComposerController = (
     if (goalCommand) {
       if (
         selectedSkillsRef.current.length > 0 ||
-        attachmentsRef.current.length > 0
+        getAttachmentsForSession().length > 0
       ) {
         input.onStatusNotice({
           message: "Goal commands only use the text after /goal.",
@@ -1029,7 +1048,7 @@ export const useComposerController = (
       moveCurrentInputToQueue("user-queue");
       return;
     }
-    const currentAttachments = attachmentsRef.current;
+    const currentAttachments = getAttachmentsForSession();
     const currentDraft = draft;
     const succeeded = await dispatchPayload({
       text: currentDraft,
@@ -1044,7 +1063,9 @@ export const useComposerController = (
     }
     onDraftChange("");
     replaceSelectedSkills([]);
-    replaceAttachments([], { releaseCurrent: true });
+    replaceAttachmentsForSession(input.activeSessionId, [], {
+      releaseCurrent: true
+    });
   };
 
   const onQueueCurrent = (): void => {
@@ -1175,7 +1196,8 @@ export const useComposerController = (
     files: Iterable<File>,
     origin: "picker" | "drop" | "paste"
   ): Promise<void> => {
-    if (input.isOpeningSelectedSession || isDispatching) {
+    const targetSessionId = input.activeSessionId;
+    if (!targetSessionId || input.isOpeningSelectedSession || isDispatching) {
       return;
     }
     if (!capabilities.supportsAttachments) {
@@ -1193,10 +1215,12 @@ export const useComposerController = (
     if (nextAttachments.length === 0) {
       return;
     }
-    const result = mergeComposerAttachments(attachmentsRef.current, nextAttachments);
+    const currentAttachments = getAttachmentsForSession(targetSessionId);
+    const result = mergeComposerAttachments(currentAttachments, nextAttachments);
     releaseComposerAttachments([...result.replaced, ...result.skipped]);
-    attachmentsRef.current = result.attachments;
-    setAttachments(result.attachments);
+    replaceAttachmentsForSession(targetSessionId, result.attachments, {
+      releaseCurrent: false
+    });
   };
 
   const onComposerInputChange = (
@@ -1288,18 +1312,23 @@ export const useComposerController = (
   };
 
   const onRemoveAttachment = (attachmentId: string): void => {
-    const removed = attachmentsRef.current.find(
+    if (!input.activeSessionId) {
+      return;
+    }
+    const currentAttachments = getAttachmentsForSession();
+    const removed = currentAttachments.find(
       (attachment) => attachment.attachment.attachmentId === attachmentId
     );
     if (!removed) {
       return;
     }
     releaseComposerAttachments([removed]);
-    const next = attachmentsRef.current.filter(
+    const next = currentAttachments.filter(
       (attachment) => attachment.attachment.attachmentId !== attachmentId
     );
-    attachmentsRef.current = next;
-    setAttachments(next);
+    replaceAttachmentsForSession(input.activeSessionId, next, {
+      releaseCurrent: false
+    });
   };
 
   const onRemoveSkill = (skillId: string): void => {
@@ -1319,7 +1348,9 @@ export const useComposerController = (
     }
     onDraftChange(item.text);
     replaceSelectedSkills(item.skills);
-    replaceAttachments(item.attachments, { releaseCurrent: true });
+    replaceAttachmentsForSession(input.activeSessionId, item.attachments, {
+      releaseCurrent: true
+    });
     if (item.execution) {
       setExecution(item.execution);
     }

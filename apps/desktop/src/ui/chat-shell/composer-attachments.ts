@@ -244,6 +244,18 @@ export const mergeComposerAttachments = (
   };
 };
 
+export const writeComposerAttachmentDraft = (
+  drafts: Record<string, ComposerAttachment[]>,
+  sessionId: string,
+  attachments: ComposerAttachment[]
+): Record<string, ComposerAttachment[]> => {
+  if (attachments.length > 0) {
+    return { ...drafts, [sessionId]: attachments };
+  }
+  const { [sessionId]: _removed, ...remaining } = drafts;
+  return remaining;
+};
+
 export const releaseComposerAttachments = (
   attachments: Iterable<ComposerAttachment>
 ): void => {

@@ -1089,9 +1089,36 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
     if (input.isCancelled?.()) {
       return undefined;
     }
+    let pageTurns = turnsPage.data;
+    const incompleteTurnIds = new Set(
+      pageTurns
+        .filter(
+          (turn) =>
+            turn.itemsView === "full" &&
+            turn.status === "completed" &&
+            turn.items.some(isUserMessageItem) &&
+            !turn.items.some(isAgentMessageItem)
+        )
+        .map((turn) => turn.id)
+    );
+    if (incompleteTurnIds.size > 0) {
+      const completeThread = await this.codexRuntimePort.readThread(threadId, true);
+      const completeTurnsById = new Map(
+        completeThread.turns
+          .filter(
+            (turn) =>
+              incompleteTurnIds.has(turn.id) && turn.items.some(isAgentMessageItem)
+          )
+          .map((turn) => [turn.id, turn] as const)
+      );
+      pageTurns = pageTurns.map((turn) => completeTurnsById.get(turn.id) ?? turn);
+    }
+    if (input.isCancelled?.()) {
+      return undefined;
+    }
     const pageThread: Thread = {
       ...thread,
-      turns: turnsPage.data
+      turns: pageTurns
     };
     this.codexRuntimePort.attachThreadToSession(entry.sessionId, thread.id);
     await this.refreshThreadGoal(entry.sessionId);
@@ -1114,7 +1141,7 @@ export class CodexSessionDiscoveryProvider implements SessionDiscoveryProvider {
       createdAt: isoFromUnixSeconds(thread.createdAt),
       updatedAt: isoFromUnixSeconds(thread.updatedAt),
       archivedAt: entry.archivedAt,
-      lastTurnId: entry.lastTurnId ?? turnsPage.data[0]?.id,
+      lastTurnId: entry.lastTurnId ?? pageTurns[0]?.id,
       metadata: {
         ...(entry.metadata ?? {}),
         providerKind: codexProviderKind,

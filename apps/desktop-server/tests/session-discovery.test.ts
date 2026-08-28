@@ -504,6 +504,107 @@ describe("Session discovery and reconciliation", () => {
     );
   });
 
+  it("repairs completed user-only pages from the authoritative thread history", async () => {
+    const readThread = vi.fn().mockImplementation(
+      (_threadId: string, includeTurns: boolean) => ({
+        ...createThread({ id: "thread-page" }),
+        turns: includeTurns
+          ? [
+              {
+                id: "turn-page",
+                status: "completed",
+                error: null,
+                itemsView: "full",
+                items: [
+                  {
+                    type: "userMessage",
+                    id: "msg-user-page",
+                    content: [
+                      {
+                        type: "text",
+                        text: "Keep the answer visible.",
+                        text_elements: []
+                      }
+                    ]
+                  },
+                  {
+                    type: "agentMessage",
+                    id: "msg-agent-page",
+                    text: "Completed answer",
+                    phase: null,
+                    memoryCitation: null
+                  }
+                ]
+              }
+            ]
+          : []
+      })
+    );
+    const listThreadTurns = vi.fn().mockResolvedValue({
+      data: [
+        {
+          id: "turn-page",
+          status: "completed",
+          error: null,
+          itemsView: "full",
+          items: [
+            {
+              type: "userMessage",
+              id: "msg-user-page",
+              content: [
+                {
+                  type: "text",
+                  text: "Keep the answer visible.",
+                  text_elements: []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      nextCursor: null,
+      backwardsCursor: null
+    });
+    const provider = new CodexSessionDiscoveryProvider({
+      codexRuntimePort: {
+        readThread,
+        listThreadTurns,
+        attachThreadToSession: vi.fn()
+      } as never
+    });
+
+    const hydrated = await provider.hydrateSessionWindow?.(
+      {
+        sessionId: "codex-thread:thread-page",
+        workspaceId: "workspace-1",
+        conversationId: "conversation-1",
+        engineId: "codex",
+        providerKind: "codex-thread",
+        providerSessionId: "thread-page",
+        title: "Thread page",
+        createdAt: "2026-04-19T00:00:00.000Z",
+        updatedAt: "2026-04-19T00:01:00.000Z",
+        unreadState: "read",
+        source: "reconciled"
+      },
+      {
+        limit: 1,
+        anchorTurnId: "turn-page"
+      }
+    );
+
+    expect(readThread).toHaveBeenNthCalledWith(1, "thread-page", false);
+    expect(readThread).toHaveBeenNthCalledWith(2, "thread-page", true);
+    expect(hydrated?.messageBlocks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "assistant",
+          text: "Completed answer"
+        })
+      ])
+    );
+  });
+
   it("anchors lightweight Codex window hydration to the selected chat tree turn", async () => {
     const readThread = vi.fn().mockResolvedValue(createThread({ id: "thread-page" }));
     const listThreadTurns = vi.fn().mockResolvedValue({

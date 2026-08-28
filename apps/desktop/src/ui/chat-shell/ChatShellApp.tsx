@@ -63,6 +63,7 @@ import {
 import {
   findActiveSessionNode,
   findSessionNode,
+  type AttentionSessionViewNode,
   type SessionBrowserViewNode,
   type WorkspaceBrowserViewNode
 } from "./workspace-browser-tree.js";
@@ -1887,6 +1888,7 @@ export const ChatShellApp = ({
 
   const {
     workspaceTree,
+    attentionSessions,
     refreshSessionBrowser,
     ensureSessionVisible,
     onAddWorkspace,
@@ -2600,6 +2602,46 @@ export const ChatShellApp = ({
     );
   };
 
+  const renderAttentionSession = (
+    session: AttentionSessionViewNode
+  ): ReactElement => {
+    const statusDot = resolveStatusDotLabel(session.statusDot);
+    const activityAge = formatRelativeCompletedTurnAge(session.activityAt);
+    return (
+      <li key={session.sessionId} className="awb-tree__item">
+        <div
+          className={`awb-tree__session awb-attention__session ${
+            session.isActive || session.sessionId === highlightedSessionId
+              ? "is-active"
+              : ""
+          }`}
+          onClick={() => void onOpenSession(session.sessionId)}
+          onContextMenu={(event) => void onOpenSessionMenu(event, session.sessionId)}
+        >
+          <div className="awb-tree__session-main">
+            {statusDot ? (
+              <span className={`awb-tree__dot is-${statusDot}`} />
+            ) : (
+              <span className="awb-tree__dot-placeholder" />
+            )}
+            <div className="awb-tree__labels">
+              <strong>{session.title}</strong>
+              <span className="awb-tree__session-meta">
+                <span>
+                  {session.workspaceLabel} · {session.engineId}
+                </span>
+                <span className="awb-attention__badges">
+                  {session.isPinned ? <span className="awb-attention__pin">Pinned</span> : null}
+                  {activityAge ? <time>{activityAge}</time> : null}
+                </span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </li>
+    );
+  };
+
   const sessionMenuMarkup = sessionMenu ? (
     <div
       className="awb-session-menu"
@@ -2646,6 +2688,20 @@ export const ChatShellApp = ({
             <span className="awb-sidebar__eyebrow">Another Workbench</span>
             <h1>{title}</h1>
           </header>
+
+          <section className="awb-attention">
+            <div className="awb-attention__header">
+              <h2>Attention</h2>
+              <span>{attentionSessions.length}</span>
+            </div>
+            {attentionSessions.length > 0 ? (
+              <ul className="awb-tree__branch awb-attention__list">
+                {attentionSessions.map(renderAttentionSession)}
+              </ul>
+            ) : (
+              <p className="awb-attention__empty">Pinned and active sessions appear here.</p>
+            )}
+          </section>
 
           <section className="awb-sidebar__section awb-sidebar__section--grow">
             <div className="awb-sidebar__section-header">

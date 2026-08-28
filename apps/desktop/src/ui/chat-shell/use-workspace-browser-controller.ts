@@ -7,6 +7,7 @@ import {
 import {
   applyChildrenPage,
   applyRootPage,
+  collectAttentionSessions,
   mergeSessionPath,
   mergeWorkspaceBrowserState,
   resetRootPagination,
@@ -14,6 +15,7 @@ import {
   setSessionChildrenLoading,
   upsertWorkspaceBrowserRecord,
   updateSessionNode,
+  type AttentionSessionViewNode,
   type SessionBrowserViewNode,
   type WorkspaceBrowserViewNode
 } from "./workspace-browser-tree.js";
@@ -231,6 +233,7 @@ export const projectSessionBrowserLoading = (
 
 export type WorkspaceBrowserController = {
   workspaceTree: WorkspaceBrowserViewNode[];
+  attentionSessions: AttentionSessionViewNode[];
   refreshSessionBrowser: (input?: {
     mode?: "all" | "visible" | "workspace";
     workspaceId?: string;
@@ -251,6 +254,7 @@ export const useWorkspaceBrowserController = (input: {
   onStatusNotice: StatusNoticeSetter;
 }): WorkspaceBrowserController => {
   const [workspaceTree, setWorkspaceTreeState] = useState<WorkspaceBrowserViewNode[]>([]);
+  const [attentionSessions, setAttentionSessions] = useState<AttentionSessionViewNode[]>([]);
   const workspaceTreeRef = useRef<WorkspaceBrowserViewNode[]>([]);
   const coordinatorRef = useRef<SessionBrowserQueryCoordinator | undefined>(undefined);
   const mountedRef = useRef(true);
@@ -405,13 +409,18 @@ export const useWorkspaceBrowserController = (input: {
       workspaceListGenerationRef.current += 1;
       workspaceTreeRef.current = [];
       setWorkspaceTreeState([]);
+      setAttentionSessions([]);
       return;
     }
     const requestGeneration = ++workspaceListGenerationRef.current;
-    const workspaceState = await input.transport.workspace.list();
+    const [workspaceState, sessionTree] = await Promise.all([
+      input.transport.workspace.list(),
+      input.transport.sessionBrowser.listTree()
+    ]);
     if (!mountedRef.current || requestGeneration !== workspaceListGenerationRef.current) {
       return;
     }
+    setAttentionSessions(collectAttentionSessions(sessionTree.workspaces));
     const current = mergeWorkspaceBrowserState(workspaceTreeRef.current, workspaceState);
     workspaceTreeRef.current = current;
     setWorkspaceTreeState(current);
@@ -556,16 +565,21 @@ export const useWorkspaceBrowserController = (input: {
       workspaceListGenerationRef.current += 1;
       workspaceTreeRef.current = [];
       setWorkspaceTreeState([]);
+      setAttentionSessions([]);
       return;
     }
     const requestGeneration = ++workspaceListGenerationRef.current;
-    void input.transport.workspace.list().then((workspaceState) => {
+    void Promise.all([
+      input.transport.workspace.list(),
+      input.transport.sessionBrowser.listTree()
+    ]).then(([workspaceState, sessionTree]) => {
       if (
         !mountedRef.current ||
         requestGeneration !== workspaceListGenerationRef.current
       ) {
         return;
       }
+      setAttentionSessions(collectAttentionSessions(sessionTree.workspaces));
       const current = mergeWorkspaceBrowserState(
         workspaceTreeRef.current,
         workspaceState
@@ -627,6 +641,7 @@ export const useWorkspaceBrowserController = (input: {
 
   return {
     workspaceTree,
+    attentionSessions,
     refreshSessionBrowser,
     ensureSessionVisible,
     onAddWorkspace: async () => {

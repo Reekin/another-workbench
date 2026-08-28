@@ -2,6 +2,7 @@ import type {
   SessionBrowserItemRpc,
   SessionBrowserPageRpc,
   SessionBrowserPathRpc,
+  WorkspaceBrowserNodeRpc,
   WorkspaceRecordRpc
 } from "@another-workbench/shared";
 
@@ -30,6 +31,72 @@ export type WorkspaceBrowserViewNode = {
   rootTotalCount: number;
   isLoadingRoots: boolean;
   isDirty: boolean;
+};
+
+export type AttentionSessionViewNode = {
+  sessionId: string;
+  workspaceLabel: string;
+  engineId: string;
+  title: string;
+  statusDot: SessionBrowserItemRpc["statusDot"];
+  isPinned: boolean;
+  isActive: boolean;
+  activityAt?: string;
+};
+
+const attentionPriority = (
+  session: Pick<AttentionSessionViewNode, "statusDot" | "isPinned">
+): number =>
+  session.statusDot === "running"
+    ? 0
+    : session.statusDot === "unread_completed"
+      ? 1
+      : session.isPinned
+        ? 2
+        : 3;
+
+export const collectAttentionSessions = (
+  workspaces: readonly WorkspaceBrowserNodeRpc[]
+): AttentionSessionViewNode[] => {
+  const sessions: AttentionSessionViewNode[] = [];
+  const visit = (
+    workspace: WorkspaceBrowserNodeRpc,
+    nodes: WorkspaceBrowserNodeRpc["sessions"]
+  ): void => {
+    for (const session of nodes) {
+      const shouldInclude =
+        Boolean(session.isPinned) ||
+        (!session.parentSessionId && session.statusDot !== "none");
+      if (shouldInclude) {
+        sessions.push({
+          sessionId: session.sessionId,
+          workspaceLabel: workspace.label,
+          engineId: session.engineId,
+          title: session.title,
+          statusDot: session.statusDot,
+          isPinned: Boolean(session.isPinned),
+          isActive: session.isActive,
+          activityAt: session.lastCompletedTurnAt ?? session.updatedAt
+        });
+      }
+      visit(workspace, session.children);
+    }
+  };
+
+  for (const workspace of workspaces) {
+    visit(workspace, workspace.sessions);
+  }
+
+  return sessions.sort((left, right) => {
+    const byPriority = attentionPriority(left) - attentionPriority(right);
+    if (byPriority !== 0) {
+      return byPriority;
+    }
+    const byActivity = (right.activityAt ?? "").localeCompare(left.activityAt ?? "");
+    return byActivity !== 0
+      ? byActivity
+      : left.sessionId.localeCompare(right.sessionId);
+  });
 };
 
 const createWorkspaceBrowserViewNode = (

@@ -763,10 +763,20 @@ export class WorkbenchShellService {
   public async getSessionActions(
     sessionId: string
   ): Promise<{ actions: SessionActionDescriptor[] }> {
+    const registry = this.requireWorkspaceRegistry();
+    await registry.ready();
+    const isPinned = registry.getState().pinnedSessionIds.includes(sessionId);
+    const engineActions = this.capabilities
+      ? await this.capabilities.listSessionActions(sessionId)
+      : await this.requireSessionActions().listActions(sessionId);
     return {
-      actions: this.capabilities
-        ? await this.capabilities.listSessionActions(sessionId)
-        : await this.requireSessionActions().listActions(sessionId)
+      actions: [
+        {
+          action: isPinned ? "unpin" : "pin",
+          label: isPinned ? "Unpin" : "Pin"
+        },
+        ...engineActions
+      ]
     };
   }
 
@@ -774,6 +784,16 @@ export class WorkbenchShellService {
     sessionId: string;
     action: SessionActionKind;
   }): Promise<SessionActionResult> {
+    if (input.action === "pin" || input.action === "unpin") {
+      await this.sessionCatalog.getPath(input.sessionId);
+      const pinned = input.action === "pin";
+      await this.requireWorkspaceRegistry().setSessionPinned(input.sessionId, pinned);
+      this.sessionCatalog.invalidate();
+      return {
+        action: input.action,
+        pinned
+      } as SessionActionResult;
+    }
     const result = this.capabilities
       ? await this.capabilities.runSessionAction(input.sessionId, input.action)
       : await this.requireSessionActions().runAction(input.sessionId, input.action);

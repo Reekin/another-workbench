@@ -13,8 +13,10 @@ export type SessionActionKind =
   | "copy_session_id"
   | "fork"
   | "open_rollout"
+  | "pin"
   | "refresh"
-  | "resume";
+  | "resume"
+  | "unpin";
 
 export type SessionActionDescriptor = {
   action: SessionActionKind;
@@ -44,8 +46,10 @@ export type SessionActionResult =
       rolloutDisplayPath: string;
       rolloutFileUrl: string;
     }
+  | { action: "pin"; pinned: true }
   | { action: "refresh"; refreshed: true; details?: string }
-  | { action: "resume"; resumed: true };
+  | { action: "resume"; resumed: true }
+  | { action: "unpin"; pinned: false };
 
 export type ConversationGraphNodeSnapshot = {
   nodeId: string;
@@ -513,6 +517,9 @@ export class CapabilityRegistry {
           `Open rollout is not supported for ${context.engineId ?? "unknown"} sessions.`
         );
       }
+      case "pin":
+      case "unpin":
+        throw new Error("Pin actions must be handled by the workbench shell.");
       default: {
         const exhaustive: never = action;
         return exhaustive;

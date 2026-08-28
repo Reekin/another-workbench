@@ -48,6 +48,7 @@ describe("WorkspaceRegistryService", () => {
     await service.reorderWorkspaces([beta.workspaceId, alpha.workspaceId]);
     await service.setWorkspaceExpanded(beta.workspaceId, true);
     await service.setSessionExpanded("session-42", true);
+    await service.setSessionPinned("session-42", true);
     await service.setLastActiveSelection({
       workspaceId: beta.workspaceId,
       sessionId: "session-42"
@@ -83,6 +84,7 @@ describe("WorkspaceRegistryService", () => {
     expect(reloaded.getState()).toMatchObject({
       expandedWorkspaceIds: [beta.workspaceId],
       expandedSessionIds: ["session-42"],
+      pinnedSessionIds: ["session-42"],
       defaultNewSessionEngineId: "pi",
       allowedModelIdsByEngineId: {
         codex: ["gpt-5.5-codex"],
@@ -102,6 +104,18 @@ describe("WorkspaceRegistryService", () => {
       lastActiveWorkspaceId: beta.workspaceId,
       lastActiveSessionId: "session-42"
     });
+  });
+
+  it("toggles pinned sessions without duplicating persisted ids", async () => {
+    const baseDir = await createTempDir();
+    const service = new WorkspaceRegistryService({ baseDir });
+
+    await service.setSessionPinned("session-1", true);
+    await service.setSessionPinned("session-1", true);
+    expect(service.getState().pinnedSessionIds).toEqual(["session-1"]);
+
+    await service.setSessionPinned("session-1", false);
+    expect(service.getState().pinnedSessionIds).toEqual([]);
   });
 
   it("clones model settings and preserves unrelated settings", async () => {

@@ -150,6 +150,7 @@ export type SessionBrowserNodeRpc = {
   title: string;
   summaryText?: string;
   statusDot: z.infer<typeof zSessionStatusDotSchema>;
+  isPinned?: boolean;
   isExpanded: boolean;
   isActive: boolean;
   isArchived: boolean;
@@ -250,6 +251,7 @@ const zSessionBrowserNodeSchema: z.ZodType<
     title: z.string().min(1),
     summaryText: z.string().min(1).optional(),
     statusDot: zSessionStatusDotSchema,
+    isPinned: z.boolean().default(false),
     isExpanded: z.boolean(),
     isActive: z.boolean(),
     isArchived: z.boolean(),
@@ -279,8 +281,10 @@ const zSessionActionKindSchema = z.enum([
   "copy_session_id",
   "fork",
   "open_rollout",
+  "pin",
   "refresh",
-  "resume"
+  "resume",
+  "unpin"
 ]);
 
 const zSessionActionDescriptorSchema = z.object({
@@ -325,6 +329,10 @@ const zSessionActionResultSchema = z.union([
     rolloutFileUrl: z.string().url()
   }),
   z.object({
+    action: z.literal("pin"),
+    pinned: z.literal(true)
+  }),
+  z.object({
     action: z.literal("refresh"),
     refreshed: z.literal(true),
     details: z.string().optional()
@@ -332,6 +340,10 @@ const zSessionActionResultSchema = z.union([
   z.object({
     action: z.literal("resume"),
     resumed: z.literal(true)
+  }),
+  z.object({
+    action: z.literal("unpin"),
+    pinned: z.literal(false)
   })
 ]);
 

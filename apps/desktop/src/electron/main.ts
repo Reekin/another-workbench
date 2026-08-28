@@ -1,4 +1,13 @@
-import { app, BrowserWindow, crashReporter, dialog, ipcMain, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  crashReporter,
+  dialog,
+  ipcMain,
+  Notification,
+  shell,
+  Tray
+} from "electron";
 import {
   createWorkbenchRuntimeService,
   parseSchedulerRunHeadlessArgs,
@@ -28,6 +37,10 @@ import {
   type ElectronDiagnosticsLogger,
   type RendererHealthSnapshot
 } from "./electron-diagnostics.js";
+import {
+  createAgentCompletionNotifier,
+  findMainSessionInPath
+} from "./agent-completion-notification.js";
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const currentDir = dirname(currentFilePath);
@@ -562,6 +575,8 @@ const boot = async (): Promise<void> => {
   }
 
   const service = createWorkbenchRuntimeService({
+    persistenceBaseDir:
+      process.env.AWB_PERSISTENCE_BASE_DIR?.trim() || undefined,
     pickWorkspaceDirectory: async () => {
       const result = await dialog.showOpenDialog(window, {
         title: "Add workspace",
@@ -578,14 +593,90 @@ const boot = async (): Promise<void> => {
     }
   });
   let window = createMainWindow();
+  let completionTray: Tray | undefined;
+  let completionTrayDestroyTimer: ReturnType<typeof setTimeout> | undefined;
+  const focusMainWindow = (): void => {
+    if (window.isDestroyed()) {
+      return;
+    }
+    if (window.isMinimized()) {
+      window.restore();
+    }
+    window.show();
+    window.focus();
+  };
+  const showAgentCompletionNotification = (sessionTitle: string): void => {
+    const title = "Another Workbench";
+    const body = `「${sessionTitle}」会话已完成`;
+    if (process.platform === "win32" && appIconPath) {
+      if (!completionTray || completionTray.isDestroyed()) {
+        completionTray = new Tray(appIconPath);
+        completionTray.setToolTip("Another Workbench");
+        completionTray.on("balloon-click", focusMainWindow);
+      }
+      completionTray.displayBalloon({
+        title,
+        content: body,
+        icon: appIconPath,
+        iconType: "custom",
+        largeIcon: true,
+        noSound: false,
+        respectQuietTime: false
+      });
+      if (completionTrayDestroyTimer) {
+        clearTimeout(completionTrayDestroyTimer);
+      }
+      completionTrayDestroyTimer = setTimeout(() => {
+        completionTray?.destroy();
+        completionTray = undefined;
+        completionTrayDestroyTimer = undefined;
+      }, 12_000);
+      return;
+    }
+    if (!Notification.isSupported()) {
+      return;
+    }
+    const notification = new Notification({
+      title,
+      body,
+      ...(appIconPath ? { icon: appIconPath } : {})
+    });
+    notification.on("click", focusMainWindow);
+    notification.show();
+  };
+  const completionNotifier = createAgentCompletionNotifier({
+    notify: (completed) => {
+      void service
+        .getSessionBrowserPath(completed.sessionId)
+        .then((path) => {
+          const session = findMainSessionInPath(path);
+          if (session) {
+            showAgentCompletionNotification(session.title);
+          }
+        })
+        .catch((error: unknown) => {
+          diagnostics.log({
+            severity: "warning",
+            source: "agent-completion-notification",
+            message: "Skipped completion notification because session scope could not be resolved.",
+            details: {
+              sessionId: completed.sessionId,
+              ...describeError(error)
+            }
+          });
+        });
+    }
+  });
   const router = createWorkbenchIpcRouter({
     service,
     onPush: (push) => {
+      completionNotifier.handlePush(push);
       if (!window.isDestroyed()) {
         window.webContents.send(WORKBENCH_IPC_EVENTS_PUSH_CHANNEL, push);
       }
     },
     onPushBatch: (batch) => {
+      completionNotifier.handleBatch(batch);
       if (!window.isDestroyed()) {
         window.webContents.send(WORKBENCH_IPC_EVENTS_PUSH_CHANNEL, batch);
       }
@@ -618,6 +709,10 @@ const boot = async (): Promise<void> => {
   });
 
   app.once("will-quit", () => {
+    if (completionTrayDestroyTimer) {
+      clearTimeout(completionTrayDestroyTimer);
+    }
+    completionTray?.destroy();
     ipcMain.removeHandler(WORKBENCH_IPC_REQUEST_CHANNEL);
     ipcMain.removeHandler(WORKBENCH_IPC_MATERIALIZE_ATTACHMENT_CHANNEL);
     void router.dispose();

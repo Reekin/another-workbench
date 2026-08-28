@@ -731,6 +731,63 @@ describe("WorkbenchShellService", () => {
     expect(getChatTree).toHaveBeenCalledWith("session-1");
   });
 
+  it("adds a shell-owned pin action and persists pin state", async () => {
+    const ready = vi.fn().mockResolvedValue(undefined);
+    const getState = vi
+      .fn()
+      .mockReturnValueOnce({ pinnedSessionIds: [] })
+      .mockReturnValue({ pinnedSessionIds: ["session-1"] });
+    const setSessionPinned = vi.fn().mockResolvedValue(undefined);
+    const getPath = vi.fn().mockResolvedValue({
+      workspaceId: "workspace-1",
+      revision: "revision-1",
+      items: []
+    });
+    const invalidate = vi.fn();
+    const listActions = vi.fn().mockResolvedValue([
+      { action: "refresh", label: "Refresh" }
+    ]);
+    const service = new WorkbenchShellService({
+      runtimeService: {
+        getWorkspaceRegistry: () => ({
+          ready,
+          getState,
+          setSessionPinned
+        })
+      } as never,
+      sessionCatalog: {
+        getPath,
+        invalidate
+      } as never,
+      sessionActions: {
+        listActions
+      } as never,
+      chatTreeProvider: {} as never
+    });
+
+    await expect(service.getSessionActions("session-1")).resolves.toEqual({
+      actions: [
+        { action: "pin", label: "Pin" },
+        { action: "refresh", label: "Refresh" }
+      ]
+    });
+    await expect(
+      service.runSessionAction({ sessionId: "session-1", action: "pin" })
+    ).resolves.toEqual({
+      action: "pin",
+      pinned: true
+    });
+    await expect(service.getSessionActions("session-1")).resolves.toEqual({
+      actions: [
+        { action: "unpin", label: "Unpin" },
+        { action: "refresh", label: "Refresh" }
+      ]
+    });
+    expect(setSessionPinned).toHaveBeenCalledWith("session-1", true);
+    expect(getPath).toHaveBeenCalledWith("session-1");
+    expect(invalidate).toHaveBeenCalledTimes(1);
+  });
+
   it("ensures a fully projected provider session is executable before activating it", async () => {
     const {
       service,

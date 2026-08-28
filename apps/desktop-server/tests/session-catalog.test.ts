@@ -59,6 +59,7 @@ describe("SessionCatalogService", () => {
     });
     await workspaceRegistry.setWorkspaceExpanded("workspace-1", true);
     await workspaceRegistry.setSessionExpanded("session-root", true);
+    await workspaceRegistry.setSessionPinned("session-root", true);
     await workspaceRegistry.setLastActiveSelection({
       workspaceId: "workspace-1",
       sessionId: "session-child"
@@ -217,6 +218,7 @@ describe("SessionCatalogService", () => {
       title: "Runtime Root",
       summaryText: "summary from index",
       statusDot: "unread_completed",
+      isPinned: true,
       isExpanded: true,
       isActive: false,
       isArchived: false,
@@ -227,6 +229,7 @@ describe("SessionCatalogService", () => {
       sessionId: "session-child",
       parentSessionId: "session-root",
       statusDot: "running",
+      isPinned: false,
       isActive: true
     });
     expect(betaWorkspace).toMatchObject({

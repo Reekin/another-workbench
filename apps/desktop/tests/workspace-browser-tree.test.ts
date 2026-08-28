@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { SessionBrowserItemRpc } from "@another-workbench/shared";
+import type {
+  SessionBrowserItemRpc,
+  SessionBrowserNodeRpc,
+  WorkspaceBrowserNodeRpc
+} from "@another-workbench/shared";
 import {
   applyChildrenPage,
   applyRootPage,
+  collectAttentionSessions,
   mergeSessionPath,
   mergeWorkspaceBrowserState,
   resetRootPagination,
@@ -22,7 +27,96 @@ const workspaceState = {
   lastActiveWorkspaceId: "workspace-1"
 };
 
+const attentionSession = (
+  input: Pick<SessionBrowserNodeRpc, "sessionId" | "title"> &
+    Partial<SessionBrowserNodeRpc>
+): SessionBrowserNodeRpc => ({
+  displaySessionId: input.sessionId,
+  workspaceId: "workspace-1",
+  engineId: "codex",
+  statusDot: "none",
+  isExpanded: false,
+  isActive: false,
+  isArchived: false,
+  children: [],
+  updatedAt: "2026-08-20T00:00:00.000Z",
+  ...input
+});
+
 describe("workspace browser tree", () => {
+  it("collects running, unread, and pinned sessions into a global attention order", () => {
+    const workspaces: WorkspaceBrowserNodeRpc[] = [
+      {
+        workspaceId: "workspace-1",
+        label: "Repo",
+        rootPath: "I:\\repo",
+        isExpanded: true,
+        isActive: true,
+        sessions: [
+          attentionSession({
+            sessionId: "session-pinned",
+            title: "Pinned",
+            isPinned: true
+          }),
+          attentionSession({
+            sessionId: "session-unread",
+            title: "Unread",
+            statusDot: "unread_completed",
+            updatedAt: "2026-08-21T00:00:00.000Z"
+          }),
+          attentionSession({
+            sessionId: "session-running",
+            title: "Running",
+            statusDot: "running",
+            isPinned: true,
+            isActive: true,
+            updatedAt: "2026-08-19T00:00:00.000Z"
+          }),
+          attentionSession({
+            sessionId: "session-ordinary",
+            title: "Ordinary",
+            updatedAt: "2026-08-22T00:00:00.000Z"
+          })
+        ]
+      }
+    ];
+
+    expect(collectAttentionSessions(workspaces).map((session) => session.sessionId))
+      .toEqual(["session-running", "session-unread", "session-pinned"]);
+  });
+
+  it("excludes child status sessions unless the child is explicitly pinned", () => {
+    const unreadChild = attentionSession({
+      sessionId: "session-child-unread",
+      parentSessionId: "session-root",
+      title: "Unread child",
+      statusDot: "unread_completed"
+    });
+    const pinnedChild = attentionSession({
+      sessionId: "session-child-pinned",
+      parentSessionId: "session-root",
+      title: "Pinned child",
+      isPinned: true
+    });
+    const workspaces: WorkspaceBrowserNodeRpc[] = [{
+      workspaceId: "workspace-1",
+      label: "Repo",
+      rootPath: "I:\\repo",
+      isExpanded: true,
+      isActive: true,
+      sessions: [
+        attentionSession({
+          sessionId: "session-root",
+          title: "Root",
+          children: [unreadChild, pinnedChild]
+        })
+      ]
+    }];
+
+    expect(collectAttentionSessions(workspaces).map((session) => session.sessionId))
+      .toEqual(["session-child-pinned"]);
+  });
+
   it("restores persisted workspace expansion independently from active workspace", () => {
     const workspaces = mergeWorkspaceBrowserState([], {
       workspaces: [

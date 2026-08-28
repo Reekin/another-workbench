@@ -112,10 +112,17 @@ export const useSessionActionsController = (input: {
           action
         });
         setSessionMenu(undefined);
-        await input.refreshSessionBrowser({
-          mode: "workspace",
-          workspaceId: findSessionNode(input.workspaceTree, sessionId)?.workspaceId
-        });
+        const workspaceId = findSessionNode(input.workspaceTree, sessionId)?.workspaceId;
+        await input.refreshSessionBrowser(
+          workspaceId
+            ? {
+                mode: "workspace",
+                workspaceId
+              }
+            : {
+                mode: "visible"
+              }
+        );
         if (
           result.action === "copy_session_id" ||
           result.action === "copy_awb_session_id"
@@ -131,6 +138,13 @@ export const useSessionActionsController = (input: {
           window.open(result.rolloutFileUrl, "_blank", "noopener,noreferrer");
           input.onStatusNotice({
             message: `Opened rollout ${result.rolloutDisplayPath}`,
+            source: "session-action"
+          });
+          return;
+        }
+        if (result.action === "pin" || result.action === "unpin") {
+          input.onStatusNotice({
+            message: result.pinned ? "Session pinned." : "Session unpinned.",
             source: "session-action"
           });
           return;

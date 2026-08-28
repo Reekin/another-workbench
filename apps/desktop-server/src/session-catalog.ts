@@ -34,6 +34,7 @@ export type SessionBrowserNode = {
   title: string;
   summaryText?: string;
   statusDot: SessionStatusDot;
+  isPinned: boolean;
   isExpanded: boolean;
   isActive: boolean;
   isArchived: boolean;
@@ -270,6 +271,7 @@ export class SessionCatalogService {
             bySessionId,
             childrenByParentId,
             expandedSessionIds: registryState.expandedSessionIds,
+            pinnedSessionIds: registryState.pinnedSessionIds,
             activeSessionId
           })
         )
@@ -494,6 +496,7 @@ export class SessionCatalogService {
     bySessionId: Map<string, SessionCatalogSeed>;
     childrenByParentId: Map<string, string[]>;
     expandedSessionIds: string[];
+    pinnedSessionIds: string[];
     activeSessionId?: string;
     parentSessionId?: string;
   }): SessionBrowserNode {
@@ -537,6 +540,7 @@ export class SessionCatalogService {
           : input.seed.unreadState === "unread_completed"
             ? "unread_completed"
             : "none",
+      isPinned: input.pinnedSessionIds.includes(input.seed.sessionId),
       isExpanded: input.expandedSessionIds.includes(input.seed.sessionId),
       isActive: input.activeSessionId === input.seed.sessionId,
       isArchived: Boolean(input.seed.archivedAt),

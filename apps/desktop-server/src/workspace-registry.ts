@@ -27,6 +27,7 @@ const workspaceRegistryDocumentSchema = z.object({
   workspaces: z.array(workspaceRecordSchema).default([]),
   expandedWorkspaceIds: z.array(z.string().min(1)).default([]),
   expandedSessionIds: z.array(z.string().min(1)).default([]),
+  pinnedSessionIds: z.array(z.string().min(1)).default([]),
   defaultNewSessionEngineId: z.string().min(1).optional(),
   allowedModelIdsByEngineId: z
     .record(z.string(), z.array(z.string().min(1)))
@@ -77,6 +78,7 @@ export class WorkspaceRegistryService {
     workspaces: [],
     expandedWorkspaceIds: [],
     expandedSessionIds: [],
+    pinnedSessionIds: [],
     allowedModelIdsByEngineId: {},
     customModelReasoningOptionIdsByEngineId: {},
     lastExecutionByEngineId: {}
@@ -113,6 +115,7 @@ export class WorkspaceRegistryService {
       workspaces: [...this.document.workspaces],
       expandedWorkspaceIds: [...this.document.expandedWorkspaceIds],
       expandedSessionIds: [...this.document.expandedSessionIds],
+      pinnedSessionIds: [...this.document.pinnedSessionIds],
       ...cloneModelSettings(this.document)
     };
   }
@@ -251,6 +254,21 @@ export class WorkspaceRegistryService {
     await this.persist();
   }
 
+  public async setSessionPinned(
+    sessionId: string,
+    pinned: boolean
+  ): Promise<void> {
+    await this.ready();
+    this.document = {
+      ...this.document,
+      pinnedSessionIds: pinned
+        ? dedupeIds([...this.document.pinnedSessionIds, sessionId])
+        : this.document.pinnedSessionIds.filter((value) => value !== sessionId)
+    };
+    this.sessionBrowserRevision += 1;
+    await this.persist();
+  }
+
   public async setLastActiveSelection(input: {
     workspaceId?: string;
     sessionId?: string;
@@ -312,6 +330,7 @@ export class WorkspaceRegistryService {
       workspaces: [],
       expandedWorkspaceIds: [],
       expandedSessionIds: [],
+      pinnedSessionIds: [],
       allowedModelIdsByEngineId: {},
       customModelReasoningOptionIdsByEngineId: {},
       lastExecutionByEngineId: {}
@@ -340,6 +359,7 @@ export class WorkspaceRegistryService {
           workspaces: [],
           expandedWorkspaceIds: [],
           expandedSessionIds: [],
+          pinnedSessionIds: [],
           allowedModelIdsByEngineId: {},
           customModelReasoningOptionIdsByEngineId: {},
           lastExecutionByEngineId: {}

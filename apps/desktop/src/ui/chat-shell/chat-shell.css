@@ -901,6 +901,12 @@ button {
   color: #d7d7d3;
 }
 
+.awb-message__unsupported-link-target {
+  margin-left: 0.35em;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .awb-message__content pre {
   padding: 0.82rem 0.92rem;
   border-radius: 6px;

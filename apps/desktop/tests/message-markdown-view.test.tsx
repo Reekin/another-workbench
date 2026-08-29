@@ -197,6 +197,35 @@ describe("MessageMarkdownView", () => {
     expect(html).toContain(">Spec</a>");
   });
 
+  it("shows unsupported link targets without making them navigable", () => {
+    const html = renderToStaticMarkup(
+      <MessageMarkdownView
+        block={{
+          blockId: "message-3e:md",
+          messageId: "message-3e",
+          sessionId: "session-1",
+          turnId: "turn-1",
+          role: "assistant",
+          kind: "markdown",
+          text: "[README.md](I:/repo/README.md:3)",
+          actor: {
+            participantId: "participant-1",
+            engineId: "agent-codex"
+          },
+          startedAt: "2026-04-17T00:00:00.000Z",
+          completedAt: "2026-04-17T00:00:01.000Z"
+        }}
+      />
+    );
+
+    expect(html).toContain('class="awb-message__unsupported-link"');
+    expect(html).toContain(">README.md<");
+    expect(html).toContain(
+      '<code class="awb-message__unsupported-link-target">I:/repo/README.md:3</code>'
+    );
+    expect(html).not.toContain("href=");
+  });
+
   it("renders web links as external browser targets", () => {
     const html = renderToStaticMarkup(
       <MessageMarkdownView

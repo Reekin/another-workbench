@@ -37,6 +37,7 @@ const sanitizeSchema = {
 const allowLocalFileUrls = (url: string): string => url;
 
 const externalLinkProtocols = new Set(["http:", "https:", "mailto:"]);
+const unsupportedLinkHrefPrefix = "#awb-unsupported-link:";
 
 const isExternalLinkHref = (href: string): boolean => {
   try {
@@ -44,6 +45,29 @@ const isExternalLinkHref = (href: string): boolean => {
   } catch {
     return false;
   }
+};
+
+const isSupportedLinkHref = (href: string): boolean =>
+  isExternalLinkHref(href) || href.toLowerCase().startsWith("file:");
+
+type HtmlAstNode = {
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: HtmlAstNode[];
+};
+
+const protectUnsupportedLinkTargets = () => {
+  const visit = (node: HtmlAstNode): void => {
+    const href = node.tagName === "a" ? node.properties?.href : undefined;
+    if (typeof href === "string" && href.length > 0 && !isSupportedLinkHref(href)) {
+      node.properties = {
+        ...node.properties,
+        href: `${unsupportedLinkHrefPrefix}${encodeURIComponent(href)}`
+      };
+    }
+    node.children?.forEach(visit);
+  };
+  return visit;
 };
 
 const openExternalLink = (href: string): void => {
@@ -390,10 +414,23 @@ const MarkdownRenderer = memo(({
 }: MarkdownRendererProps): ReactElement => (
   <ReactMarkdown
     remarkPlugins={[remarkGfm]}
-    rehypePlugins={[[rehypeSanitize, sanitizeSchema]]}
+    rehypePlugins={[protectUnsupportedLinkTargets, [rehypeSanitize, sanitizeSchema]]}
     urlTransform={allowLocalFileUrls}
     components={{
-      a: ({ href, children, ...props }) => {
+      a: ({ href, children, node: _ignoredNode, ...props }) => {
+        const unsupportedTarget = href?.startsWith(unsupportedLinkHrefPrefix)
+          ? decodeURIComponent(href.slice(unsupportedLinkHrefPrefix.length))
+          : undefined;
+        if (unsupportedTarget) {
+          return (
+            <span className="awb-message__unsupported-link">
+              {children}
+              <code className="awb-message__unsupported-link-target">
+                {unsupportedTarget}
+              </code>
+            </span>
+          );
+        }
         const filePath = href ? fileTargetToPath(href) : undefined;
         if (!href || !filePath || !onActivateResourceLink) {
           if (href && isExternalLinkHref(href)) {

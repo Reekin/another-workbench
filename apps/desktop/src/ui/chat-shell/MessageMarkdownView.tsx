@@ -9,20 +9,12 @@ import {
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
-import type {
-  ExtractedFileReference,
-  MessageBlock
-} from "@another-workbench/shared";
-import {
-  createFileReferenceFromPath,
-  fileTargetToPath
-} from "@another-workbench/shared";
+import type { MessageBlock } from "@another-workbench/shared";
 import { buildLocalImagePreviewSrc } from "./local-image-preview.js";
 
 export type MessageMarkdownViewProps = {
   block: MessageBlock;
   copyBlocks?: readonly MessageBlock[];
-  onActivateResourceLink?: (reference: ExtractedFileReference) => void;
   onPreviewImage?: (input: { src: string; alt: string }) => void;
 };
 
@@ -30,7 +22,7 @@ const sanitizeSchema = {
   ...defaultSchema,
   protocols: {
     ...defaultSchema.protocols,
-    href: [...(defaultSchema.protocols?.href ?? []), "file"],
+    href: defaultSchema.protocols?.href,
     src: [...(defaultSchema.protocols?.src ?? []), "file", "data"]
   }
 };
@@ -47,9 +39,6 @@ const isExternalLinkHref = (href: string): boolean => {
   }
 };
 
-const isSupportedLinkHref = (href: string): boolean =>
-  isExternalLinkHref(href) || href.toLowerCase().startsWith("file:");
-
 type HtmlAstNode = {
   tagName?: string;
   properties?: Record<string, unknown>;
@@ -59,7 +48,7 @@ type HtmlAstNode = {
 const protectUnsupportedLinkTargets = () => {
   const visit = (node: HtmlAstNode): void => {
     const href = node.tagName === "a" ? node.properties?.href : undefined;
-    if (typeof href === "string" && href.length > 0 && !isSupportedLinkHref(href)) {
+    if (typeof href === "string" && href.length > 0 && !isExternalLinkHref(href)) {
       node.properties = {
         ...node.properties,
         href: `${unsupportedLinkHrefPrefix}${encodeURIComponent(href)}`
@@ -402,14 +391,12 @@ const buildMermaidRenderId = (blockId: string, index: number, source: string): s
 type MarkdownRendererProps = {
   text: string;
   cacheKey: string;
-  onActivateResourceLink?: (reference: ExtractedFileReference) => void;
   onPreviewImage?: (input: { src: string; alt: string }) => void;
 };
 
 const MarkdownRenderer = memo(({
   text,
   cacheKey,
-  onActivateResourceLink,
   onPreviewImage
 }: MarkdownRendererProps): ReactElement => (
   <ReactMarkdown
@@ -431,49 +418,26 @@ const MarkdownRenderer = memo(({
             </span>
           );
         }
-        const filePath = href ? fileTargetToPath(href) : undefined;
-        if (!href || !filePath || !onActivateResourceLink) {
-          if (href && isExternalLinkHref(href)) {
-            return (
-              <a
-                href={href}
-                target="_blank"
-                rel="noreferrer"
-                {...props}
-                onClick={(event) => {
-                  event.preventDefault();
-                  openExternalLink(href);
-                }}
-              >
-                {children}
-              </a>
-            );
-          }
+        if (href && isExternalLinkHref(href)) {
           return (
-            <a href={href} {...props}>
+            <a
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+              {...props}
+              onClick={(event) => {
+                event.preventDefault();
+                openExternalLink(href);
+              }}
+            >
               {children}
             </a>
           );
         }
-        const label =
-          typeof children === "string"
-            ? children
-            : Array.isArray(children)
-              ? children.filter((item) => typeof item === "string").join("")
-              : "";
         return (
-          <a
-            href={href}
-            {...props}
-            onClick={(event) => {
-              event.preventDefault();
-              onActivateResourceLink(
-                createFileReferenceFromPath(filePath, "markdown_link", label || undefined)
-              );
-            }}
-          >
+          <span {...props}>
             {children}
-          </a>
+          </span>
         );
       },
       img: ({ src, alt, ...props }) => {
@@ -577,7 +541,6 @@ const StreamingPlainTextTail = ({ text }: { text: string }): ReactElement => (
 export const MessageMarkdownView = memo(({
   block,
   copyBlocks,
-  onActivateResourceLink,
   onPreviewImage
 }: MessageMarkdownViewProps): ReactElement => {
   const sourceText = block.text ?? "";
@@ -633,7 +596,6 @@ export const MessageMarkdownView = memo(({
               <MarkdownRenderer
                 text={userMessageParts.attachmentMarkdown}
                 cacheKey={`${block.blockId}:attachments`}
-                onActivateResourceLink={onActivateResourceLink}
                 onPreviewImage={onPreviewImage}
               />
             ) : null}
@@ -644,7 +606,6 @@ export const MessageMarkdownView = memo(({
                     key={`${block.blockId}:markdown:${index}`}
                     text={segment.text}
                     cacheKey={`${block.blockId}:markdown:${index}`}
-                    onActivateResourceLink={onActivateResourceLink}
                     onPreviewImage={onPreviewImage}
                   />
                 );
@@ -679,7 +640,6 @@ export const MessageMarkdownView = memo(({
                       <MarkdownRenderer
                         text={segment.directive.title}
                         cacheKey={`${block.blockId}:directive:${index}:title`}
-                        onActivateResourceLink={onActivateResourceLink}
                         onPreviewImage={onPreviewImage}
                       />
                     </div>
@@ -689,7 +649,6 @@ export const MessageMarkdownView = memo(({
                       <MarkdownRenderer
                         text={segment.directive.body}
                         cacheKey={`${block.blockId}:directive:${index}:body`}
-                        onActivateResourceLink={onActivateResourceLink}
                         onPreviewImage={onPreviewImage}
                       />
                     </div>

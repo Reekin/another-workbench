@@ -104,45 +104,43 @@ verify:
 - `pnpm --filter @another-workbench/desktop-server test -- session-discovery`
 - `pnpm --filter @another-workbench/desktop-server test -- remote-protocol`
 
-### task_03_host_files_vs_engine_extensions
+### task_03_host_file_actions_vs_engine_extensions
 
 status: completed
 
 scope:
 
-- `apps/desktop-server/src/file-*`
-- `apps/desktop-server/src/workspace-file-search-service.ts`
-- `apps/desktop/src/ui/chat-shell/use-file-browser-controller.ts`
-- `apps/desktop/src/ui/chat-shell/FilesDetailPanel.tsx`
+- `apps/desktop-server/src/file-action-service.ts`
 - `apps/desktop/src/transport/desktop-transport.ts`
+- `apps/desktop/src/ui/chat-shell/MessageMarkdownView.tsx`
 
 work:
 
-- 保留 host/workspace 文件能力的独立 API 与 UI
-- 把 turn changed files / undo 从 host file browser 中拆出去
-- 避免 Files panel 变成 engine turn artifacts 的默认承载面
+- host 只保留通用 open / reveal 文件动作
+- 工作区文件搜索、预览和 Files panel 不进入 shell 主路径
+- 消息 Markdown 不提供本地文件链接激活入口
+- turn changed files / undo 由 engine extension 独立承载
 
 tdd:
 
 - 需要
-- 先补 host file browser 与 extension 分离后的 transport / hook 测试
+- 先补通用文件动作与 extension 分离后的 transport 测试
 
 test_design:
 
-- 单元测试：file browser hook、desktop transport
-- 集成测试：workspace file search / preview / open / reveal 仍正常
-- 用户视角验收：Files tab 仍可浏览工作区文件，但不再承担 Codex turn changes 的主展示职责
+- 单元测试：desktop transport 文件动作
+- 集成测试：open / reveal 仍正常，搜索与预览 RPC 不再存在
+- 用户视角验收：详情栏只展示 Graph，消息不暴露本地文件入口
 
 done_when:
 
-- host file API 与 Codex turn changes API 分离
-- Files panel 不依赖 turn diff 数据
-- 相关 hook / transport 测试通过
+- host file action API 与 Codex turn changes API 分离
+- shell 不包含 Files tab、文件搜索或内联预览
+- 相关 transport 测试通过
 
 verify:
 
 - `pnpm --filter @another-workbench/desktop test -- desktop-transport`
-- `pnpm --filter @another-workbench/desktop test -- file-browser`
 
 ### task_04_ui_extension_slot_and_remote_alignment
 
@@ -161,7 +159,7 @@ work:
 
 - transcript 主路径只保留通用消息/工具/审批/终端渲染
 - 新建 turn extension slot，并把 Codex changed files strip 挂到 Codex extension renderer
-- `MessageMarkdownView` 只发资源意图，不直接知道 Files panel
+- `MessageMarkdownView` 不承载本地文件动作
 - remote bootstrap 不再维护平行 `features[]` 真相，改为 host info + engine surface / engine list 同源表达
 
 tdd:
@@ -178,7 +176,7 @@ test_design:
 done_when:
 
 - generic transcript path 不再直接渲染 changed files strip
-- markdown 组件不再直接控制 Files panel
+- markdown 组件不包含宿主本地文件动作
 - remote bootstrap 不再硬编码 engine feature 名单
 
 verify:

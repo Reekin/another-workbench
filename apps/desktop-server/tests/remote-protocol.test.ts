@@ -1148,48 +1148,10 @@ describe("createRemoteRpcHandler", () => {
     expect((shellService as any).getDiagnostics).toHaveBeenCalledWith("session-1");
     expect((shellService as any).getBackgroundRun).toHaveBeenCalledWith("session-1");
   });
-  it("serves file search, preview, and action requests through the shared RPC shape", async () => {
+  it("serves file action requests through the shared RPC shape", async () => {
     const shellService = {
       listWorkspaces: vi.fn().mockResolvedValue({
         workspaces: []
-      }),
-      searchWorkspaceFiles: vi.fn().mockResolvedValue({
-        results: [
-          {
-            workspaceId: "workspace-1",
-            workspaceRoot: "I:\\repo",
-            relativePath: "docs\\README.md",
-            matchScore: 0.98,
-            path: "I:\\repo\\docs\\README.md",
-            displayPath: "I:\\repo\\docs\\README.md",
-            fileUrl: "file:///I:/repo/docs/README.md",
-            label: "README.md",
-            fileName: "README.md",
-            extension: "md",
-            isImage: false,
-            source: "inline_path"
-          }
-        ]
-      }),
-      getFilePreview: vi.fn().mockResolvedValue({
-        preview: {
-          kind: "text",
-          target: {
-            path: "I:\\repo\\docs\\README.md",
-            displayPath: "I:\\repo\\docs\\README.md",
-            fileUrl: "file:///I:/repo/docs/README.md",
-            label: "README.md",
-            fileName: "README.md",
-            extension: "md",
-            isImage: false,
-            source: "inline_path"
-          },
-          exists: true,
-          mimeType: "text/markdown",
-          text: "# Readme",
-          truncated: false,
-          lineCount: 1
-        }
       }),
       runFileAction: vi.fn().mockResolvedValue({
         result: {
@@ -1202,22 +1164,6 @@ describe("createRemoteRpcHandler", () => {
     };
     const handler = createRemoteRpcHandler(shellService as never);
 
-    const searchResponse = await handler.handleRequest({
-      id: "req-file-search",
-      method: "file.searchWorkspace",
-      params: {
-        workspaceId: "workspace-1",
-        query: "readme",
-        limit: 5
-      }
-    });
-    const previewResponse = await handler.handleRequest({
-      id: "req-file-preview",
-      method: "file.getPreview",
-      params: {
-        path: "I:\\repo\\docs\\README.md"
-      }
-    });
     const actionResponse = await handler.handleRequest({
       id: "req-file-action",
       method: "file.runAction",
@@ -1227,31 +1173,6 @@ describe("createRemoteRpcHandler", () => {
       }
     });
 
-    expect(searchResponse).toMatchObject({
-      id: "req-file-search",
-      method: "file.searchWorkspace",
-      ok: true,
-      result: {
-        results: [
-          expect.objectContaining({
-            workspaceId: "workspace-1",
-            relativePath: "docs\\README.md"
-          })
-        ]
-      }
-    });
-    expect(previewResponse).toMatchObject({
-      id: "req-file-preview",
-      method: "file.getPreview",
-      ok: true,
-      result: {
-        preview: expect.objectContaining({
-          kind: "text",
-          exists: true,
-          lineCount: 1
-        })
-      }
-    });
     expect(actionResponse).toMatchObject({
       id: "req-file-action",
       method: "file.runAction",
@@ -1265,14 +1186,6 @@ describe("createRemoteRpcHandler", () => {
       }
     });
 
-    expect(shellService.searchWorkspaceFiles).toHaveBeenCalledWith({
-      workspaceId: "workspace-1",
-      query: "readme",
-      limit: 5
-    });
-    expect(shellService.getFilePreview).toHaveBeenCalledWith(
-      "I:\\repo\\docs\\README.md"
-    );
     expect(shellService.runFileAction).toHaveBeenCalledWith({
       path: "I:\\repo\\docs\\README.md",
       action: "reveal"
@@ -1449,24 +1362,9 @@ describe("createRemoteRpcHandler", () => {
     });
   });
 
-  it("returns typed unavailable errors for file RPCs when shell services are absent", async () => {
+  it("returns a typed unavailable error for file actions when shell services are absent", async () => {
     const handler = createRemoteRpcHandler(createService());
 
-    const searchResponse = await handler.handleRequest({
-      id: "req-file-search",
-      method: "file.searchWorkspace",
-      params: {
-        workspaceId: "workspace-1",
-        query: "readme"
-      }
-    });
-    const previewResponse = await handler.handleRequest({
-      id: "req-file-preview",
-      method: "file.getPreview",
-      params: {
-        path: "I:\\repo\\docs\\README.md"
-      }
-    });
     const actionResponse = await handler.handleRequest({
       id: "req-file-action",
       method: "file.runAction",
@@ -1476,22 +1374,6 @@ describe("createRemoteRpcHandler", () => {
       }
     });
 
-    expect(searchResponse).toMatchObject({
-      id: "req-file-search",
-      method: "file.searchWorkspace",
-      ok: false,
-      error: {
-        code: "FILE_BROWSER_UNAVAILABLE"
-      }
-    });
-    expect(previewResponse).toMatchObject({
-      id: "req-file-preview",
-      method: "file.getPreview",
-      ok: false,
-      error: {
-        code: "FILE_PREVIEW_UNAVAILABLE"
-      }
-    });
     expect(actionResponse).toMatchObject({
       id: "req-file-action",
       method: "file.runAction",

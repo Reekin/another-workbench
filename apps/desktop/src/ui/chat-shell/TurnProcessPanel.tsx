@@ -1,6 +1,5 @@
 import type {
   ApprovalRequest,
-  ExtractedFileReference,
   MessageBlock,
   RuntimeInteraction
 } from "@another-workbench/shared";
@@ -25,7 +24,6 @@ export type TurnProcessPanelProps = {
   row: TurnTranscriptRow;
   hiddenRows?: TurnTranscriptRow[];
   participantDirectory: ParticipantDirectory;
-  onActivateResourceLink: (reference: ExtractedFileReference) => void;
   onPreviewImage?: (input: ImageLightboxState) => void;
   onRespondApproval?: (input: {
     sessionId: string;
@@ -149,7 +147,6 @@ export const TurnProcessPanel = ({
   row,
   hiddenRows = [],
   participantDirectory,
-  onActivateResourceLink,
   onPreviewImage,
   onRespondApproval,
   onRespondInteraction
@@ -209,7 +206,6 @@ export const TurnProcessPanel = ({
                           ? item.blocks
                           : undefined
                       }
-                      onActivateResourceLink={onActivateResourceLink}
                       onPreviewImage={onPreviewImage}
                     />
                   ))}

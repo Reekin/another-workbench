@@ -19,7 +19,6 @@ export type ComposerStatusNotice = {
     | "session-action"
     | "chat-tree"
     | "delegation"
-    | "files"
     | "settings"
     | "scheduler";
 };

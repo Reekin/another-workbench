@@ -634,9 +634,6 @@ export const createDemoWorkbenchShellService = (
       logged: true as const,
       entryId: `demo-error-${Date.now().toString(36)}`,
       logPath: "demo://errors"
-    }),
-    searchWorkspaceFiles: async () => ({
-      results: []
     })
   };
 };

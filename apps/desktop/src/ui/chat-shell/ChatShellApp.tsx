@@ -18,7 +18,6 @@ import type {
   EngineDefinitionRpc,
   EngineModelCatalogRpc,
   EngineSurfaceRpc,
-  ExtractedFileReference,
   RuntimeInteraction,
   SchedulerTaskDocumentRpc,
   SchedulerTaskScheduleRpc,
@@ -35,7 +34,6 @@ import type {
 import { connectDesktopTransportToStore } from "../../transport/store-bridge.js";
 import { renderTurnExtensions } from "../../features/engine-extensions/turn-extension-registry.js";
 import { ChatTreePanel } from "./ChatTreePanel.js";
-import { FilesDetailPanel } from "./FilesDetailPanel.js";
 import { ImageLightbox, type ImageLightboxState } from "./ImageLightbox.js";
 import { MessageMarkdownView } from "./MessageMarkdownView.js";
 import {
@@ -54,7 +52,6 @@ import {
   filterTranscriptRowsForChatTree
 } from "./chat-tree-transcript.js";
 import { buildTurnTranscriptRows } from "./transcript-view-model.js";
-import { useFileBrowserController } from "./use-file-browser-controller.js";
 import {
   useRendererConversationRevision,
   useRendererSessionRevision,
@@ -117,7 +114,6 @@ type TranscriptPaneProps = {
   onLoadOlder: () => void;
   processVisibilityByTurnId: Readonly<Record<string, ProcessVisibilityOverride>>;
   onToggleProcess: (turnId: string, defaultExpanded: boolean) => void;
-  onActivateResourceLink: (reference: ExtractedFileReference) => void;
   onPreviewImage?: (input: ImageLightboxState) => void;
   onRespondApproval?: (input: {
     sessionId: string;
@@ -136,7 +132,6 @@ type TranscriptPaneProps = {
   }) => Promise<void>;
 };
 
-type DetailTab = "graph" | "files";
 type TranscriptRow = ReturnType<typeof buildTurnTranscriptRows>[number];
 type RenderedTurnGroup = {
   visibleRow: TranscriptRow;
@@ -512,7 +507,6 @@ const TranscriptPane = memo(
     onLoadOlder,
     processVisibilityByTurnId,
     onToggleProcess,
-    onActivateResourceLink,
     onPreviewImage,
     onRespondApproval,
     onRespondInteraction
@@ -644,7 +638,6 @@ const TranscriptPane = memo(
                       row={visibleRow}
                       hiddenRows={hiddenRows}
                       participantDirectory={participantDirectory}
-                      onActivateResourceLink={onActivateResourceLink}
                       onPreviewImage={onPreviewImage}
                       onRespondApproval={onRespondApproval}
                       onRespondInteraction={onRespondInteraction}
@@ -658,7 +651,6 @@ const TranscriptPane = memo(
                     row={visibleRow}
                     hiddenRows={[]}
                     participantDirectory={participantDirectory}
-                    onActivateResourceLink={onActivateResourceLink}
                     onPreviewImage={onPreviewImage}
                     onRespondApproval={onRespondApproval}
                     onRespondInteraction={onRespondInteraction}
@@ -681,7 +673,6 @@ const TranscriptPane = memo(
                           ? visibleRow.blocks
                           : undefined
                       }
-                      onActivateResourceLink={onActivateResourceLink}
                       onPreviewImage={onPreviewImage}
                     />
                   ))}
@@ -717,7 +708,6 @@ const TranscriptPane = memo(
     previous.processVisibilityByTurnId === next.processVisibilityByTurnId &&
     previous.transcriptRef === next.transcriptRef &&
     previous.transcriptContentRef === next.transcriptContentRef &&
-    previous.onActivateResourceLink === next.onActivateResourceLink &&
     previous.onPreviewImage === next.onPreviewImage
 );
 
@@ -1803,7 +1793,6 @@ export const ChatShellApp = ({
   const [loadingOlderSessionId, setLoadingOlderSessionId] = useState<
     string | undefined
   >();
-  const [detailTab, setDetailTab] = useState<DetailTab>("graph");
   const [browserSelectedSessionId, setBrowserSelectedSessionId] = useState<
     string | undefined
   >();
@@ -2189,12 +2178,6 @@ export const ChatShellApp = ({
     [activeSessionId, activeSessionRevision, displayedSessionRevision, domain]
   );
 
-  const fileBrowser = useFileBrowserController({
-    transport,
-    activeWorkspaceId: activeWorkspace?.workspaceId,
-    onStatusNotice: setStatusNotice
-  });
-
   const { sessionMenu, onOpenSessionMenu, onRunSessionAction } =
     useSessionActionsController({
       transport,
@@ -2426,11 +2409,6 @@ export const ChatShellApp = ({
       toggleProcessVisibility(current, turnId, defaultExpanded)
     );
   }, []);
-
-  const onActivateResourceLink = useCallback((reference: ExtractedFileReference): void => {
-    setDetailTab("files");
-    fileBrowser.selectFile(reference);
-  }, [fileBrowser.selectFile]);
 
   const onPreviewImage = useCallback((image: ImageLightboxState): void => {
     setLightboxImage(image);
@@ -2858,7 +2836,6 @@ export const ChatShellApp = ({
               onLoadOlder={() => void onLoadOlder()}
               processVisibilityByTurnId={processVisibilityByTurnId}
               onToggleProcess={onToggleProcess}
-              onActivateResourceLink={onActivateResourceLink}
               onPreviewImage={onPreviewImage}
               onRespondApproval={transport ? onRespondApproval : undefined}
               onRespondInteraction={transport ? onRespondInteraction : undefined}
@@ -2901,55 +2878,12 @@ export const ChatShellApp = ({
         </main>
 
         <aside className="awb-shell__detail" aria-label="Session details">
-          <div className="awb-detail__tabs" role="tablist" aria-label="Detail tabs">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={detailTab === "graph"}
-              className={detailTab === "graph" ? "is-active" : ""}
-              onClick={() => setDetailTab("graph")}
-            >
-              Graph
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={detailTab === "files"}
-              className={detailTab === "files" ? "is-active" : ""}
-              onClick={() => setDetailTab("files")}
-            >
-              Files
-            </button>
-          </div>
-          {detailTab === "graph" ? (
-            <section className="awb-detail__graph">
-              <ChatTreePanel
-                chatTree={activeChatTree}
-                onJump={transport ? (nodeId) => void onJumpChatTree(nodeId) : undefined}
-              />
-            </section>
-          ) : (
-            <FilesDetailPanel
-              workspaceLabel={activeWorkspace?.label}
-              hasWorkspace={Boolean(activeWorkspace?.workspaceId)}
-              query={fileBrowser.query}
-              onQueryChange={(value) => {
-                setDetailTab("files");
-                fileBrowser.setQuery(value);
-              }}
-              isSearching={fileBrowser.isSearching}
-              searchResults={fileBrowser.searchResults}
-              selectedFile={fileBrowser.selectedFile}
-              preview={fileBrowser.preview}
-              isLoadingPreview={fileBrowser.isLoadingPreview}
-              onSelectFile={(reference) => {
-                setDetailTab("files");
-                fileBrowser.selectFile(reference);
-              }}
-              onRunFileAction={(input) => void fileBrowser.runFileAction(input)}
-              onOpenImage={onPreviewImage}
+          <section className="awb-detail__graph">
+            <ChatTreePanel
+              chatTree={activeChatTree}
+              onJump={transport ? (nodeId) => void onJumpChatTree(nodeId) : undefined}
             />
-          )}
+          </section>
         </aside>
       </div>
       {sessionMenuMarkup &&

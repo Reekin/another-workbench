@@ -202,6 +202,8 @@ describe("ChatShellApp header and transcript labels", () => {
     expect(html).not.toContain("Attach files");
     expect(html).not.toContain("Message the active session");
     expect(html).not.toContain("In session-1");
+    expect(html).not.toContain('aria-label="Detail tabs"');
+    expect(html).not.toContain(">Files<");
   });
 
   it("surfaces pending approvals above the composer from the active session", () => {

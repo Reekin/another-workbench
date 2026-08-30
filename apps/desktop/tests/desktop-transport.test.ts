@@ -973,62 +973,9 @@ describe("Desktop transport facade", () => {
     expect(request.method).toBe("events.replay");
   });
 
-  it("maps file search, preview, and action to dedicated typed RPC contracts", async () => {
+  it("maps file actions to the typed RPC contract", async () => {
     const preload = createPreloadMock({
       onRequest: async (request) => {
-        if (request.method === "file.searchWorkspace") {
-          return {
-            id: request.id,
-            method: request.method,
-            ok: true,
-            result: {
-              results: [
-                {
-                  workspaceId: request.params.workspaceId,
-                  workspaceRoot: "I:\\repo",
-                  relativePath: "docs\\README.md",
-                  matchScore: 0.98,
-                  path: "I:\\repo\\docs\\README.md",
-                  displayPath: "I:\\repo\\docs\\README.md",
-                  fileUrl: "file:///I:/repo/docs/README.md",
-                  label: "README.md",
-                  fileName: "README.md",
-                  extension: "md",
-                  isImage: false,
-                  source: "inline_path"
-                }
-              ]
-            }
-          } as const;
-        }
-        if (request.method === "file.getPreview") {
-          return {
-            id: request.id,
-            method: request.method,
-            ok: true,
-            result: {
-              preview: {
-                kind: "code",
-                target: {
-                  path: request.params.path,
-                  displayPath: request.params.path,
-                  fileUrl: "file:///I:/repo/docs/README.md",
-                  label: "README.md",
-                  fileName: "README.md",
-                  extension: "md",
-                  isImage: false,
-                  source: "inline_path"
-                },
-                exists: true,
-                mimeType: "text/markdown",
-                text: "# Readme",
-                truncated: false,
-                lineCount: 1,
-                language: "markdown"
-              }
-            }
-          } as const;
-        }
         if (request.method === "file.runAction") {
           return {
             id: request.id,
@@ -1050,27 +997,6 @@ describe("Desktop transport facade", () => {
     const transport = createDesktopTransport(preload.api);
 
     await expect(
-      transport.file.searchWorkspace({
-        workspaceId: "workspace-1",
-        query: "readme",
-        limit: 5
-      })
-    ).resolves.toEqual([
-      expect.objectContaining({
-        workspaceId: "workspace-1",
-        relativePath: "docs\\README.md"
-      })
-    ]);
-    await expect(
-      transport.file.getPreview("I:\\repo\\docs\\README.md")
-    ).resolves.toEqual(
-      expect.objectContaining({
-        kind: "code",
-        exists: true,
-        language: "markdown"
-      })
-    );
-    await expect(
       transport.file.runAction({
         path: "I:\\repo\\docs\\README.md",
         action: "reveal"
@@ -1082,22 +1008,7 @@ describe("Desktop transport facade", () => {
       fileUrl: "file:///I:/repo/docs/README.md"
     });
 
-    const searchRequest = preload.request.mock.calls[0][0] as WorkbenchRpcRequest;
-    const previewRequest = preload.request.mock.calls[1][0] as WorkbenchRpcRequest;
-    const actionRequest = preload.request.mock.calls[2][0] as WorkbenchRpcRequest;
-
-    expect(searchRequest.method).toBe("file.searchWorkspace");
-    if (searchRequest.method === "file.searchWorkspace") {
-      expect(searchRequest.params).toEqual({
-        workspaceId: "workspace-1",
-        query: "readme",
-        limit: 5
-      });
-    }
-    expect(previewRequest.method).toBe("file.getPreview");
-    if (previewRequest.method === "file.getPreview") {
-      expect(previewRequest.params.path).toBe("I:\\repo\\docs\\README.md");
-    }
+    const actionRequest = preload.request.mock.calls[0][0] as WorkbenchRpcRequest;
     expect(actionRequest.method).toBe("file.runAction");
     if (actionRequest.method === "file.runAction") {
       expect(actionRequest.params).toEqual({

@@ -1826,38 +1826,6 @@ button {
   border-left: 1px solid var(--awb-rule);
 }
 
-.awb-detail__tabs {
-  display: flex;
-  align-items: flex-end;
-  gap: 20px;
-  padding: 13px 14px 0;
-  border-bottom: 1px solid var(--awb-rule);
-  background: var(--awb-panel-alt);
-}
-
-.awb-detail__tabs button {
-  min-width: 0;
-  border: 0;
-  border-bottom: 1px solid transparent;
-  border-radius: 0;
-  padding: 0 0 10px;
-  background: transparent;
-  color: var(--awb-ink-muted);
-  font: inherit;
-  font-size: 0.82rem;
-  letter-spacing: 0.02em;
-}
-
-.awb-detail__tabs button.is-active {
-  border-bottom-color: var(--awb-accent-strong);
-  background: transparent;
-  color: var(--awb-ink-strong);
-}
-
-.awb-detail__tabs button:hover {
-  color: var(--awb-ink);
-}
-
 .awb-detail__graph {
   flex: 1 1 auto;
   min-height: 220px;
@@ -3081,8 +3049,7 @@ button {
   font-size: 0.78rem;
 }
 
-.awb-turn-changes__header,
-.awb-files-panel__section-header {
+.awb-turn-changes__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3139,8 +3106,7 @@ button {
   color: #d26d6d;
 }
 
-.awb-turn-changes__list,
-.awb-files-panel__list {
+.awb-turn-changes__list {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -3154,8 +3120,7 @@ button {
   overflow: hidden;
 }
 
-.awb-turn-changes__file-toggle,
-.awb-files-panel__list-item {
+.awb-turn-changes__file-toggle {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -3169,28 +3134,14 @@ button {
   text-align: left;
 }
 
-.awb-turn-changes__file-path,
-.awb-files-panel__list-item strong {
+.awb-turn-changes__file-path {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.awb-files-panel__list-item span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.78rem;
-  color: var(--awb-ink-muted);
 }
 
 .awb-turn-changes__file-toggle:hover {
   background: rgba(255, 255, 255, 0.03);
-}
-
-.awb-files-panel__list-item.is-selected,
-.awb-files-panel__list-item:hover {
-  border-color: var(--awb-accent);
 }
 
 .awb-turn-changes__diff {
@@ -3242,212 +3193,6 @@ button {
 
 .awb-turn-changes__line.is-context {
   color: #d7dbe4;
-}
-
-.awb-files-panel__preview-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.awb-files-panel {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: 18px 14px 14px;
-  gap: 18px;
-  overflow: hidden;
-}
-
-.awb-files-panel__header {
-  display: grid;
-  gap: 14px;
-  padding-bottom: 2px;
-}
-
-.awb-files-panel__header h3 {
-  margin: 4px 0 0;
-  color: var(--awb-ink-strong);
-  font-size: 1.05rem;
-  line-height: 1.2;
-  letter-spacing: -0.015em;
-}
-
-.awb-files-panel__selection-path {
-  margin: -4px 0 8px;
-  padding: 0 0 10px;
-  border-bottom: 1px solid var(--awb-rule);
-  font-size: 0.76rem;
-  line-height: 1.45;
-  color: var(--awb-ink-muted);
-  word-break: break-word;
-}
-
-.awb-files-panel__search input {
-  width: 100%;
-  border: 0;
-  border-bottom: 1px solid var(--awb-rule);
-  border-radius: 0;
-  padding: 8px 0 9px;
-  background: transparent;
-  color: var(--awb-ink);
-  font: inherit;
-  font-size: 0.86rem;
-  outline: none;
-}
-
-.awb-files-panel__search input:focus {
-  border-color: var(--awb-accent-strong);
-  box-shadow: none;
-}
-
-.awb-files-panel__search input::placeholder {
-  color: var(--awb-ink-faint);
-}
-
-.awb-files-panel__results,
-.awb-files-panel__preview {
-  border-top: 1px solid var(--awb-rule);
-  background: transparent;
-  overflow: hidden;
-}
-
-.awb-files-panel__results {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 180px;
-}
-
-.awb-files-panel__section-header {
-  padding: 12px 0 10px;
-}
-
-.awb-files-panel__section-header h4 {
-  margin: 0;
-  font-size: inherit;
-  font-weight: 600;
-}
-
-.awb-files-panel__section-header span {
-  letter-spacing: 0.04em;
-}
-
-.awb-files-panel__results-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-}
-
-.awb-files-panel__list {
-  gap: 0;
-  padding: 0;
-}
-
-.awb-files-panel__list-item {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 3px;
-  padding: 10px 0;
-  border-top: 1px solid var(--awb-rule);
-}
-
-.awb-files-panel__list-item:first-child {
-  border-top-color: transparent;
-}
-
-.awb-files-panel__list-item.is-selected,
-.awb-files-panel__list-item:hover {
-  border-color: var(--awb-rule);
-  background: rgba(255, 255, 255, 0.025);
-}
-
-.awb-files-panel__list-item.is-selected strong {
-  color: var(--awb-ink-strong);
-}
-
-.awb-files-panel__preview {
-  display: flex;
-  flex-direction: column;
-  flex: 0 0 var(--awb-files-preview-height, 248px);
-  min-height: 168px;
-}
-
-.awb-files-panel__empty {
-  display: grid;
-  gap: 6px;
-  padding: 12px 0;
-  color: var(--awb-ink-muted);
-}
-
-.awb-files-panel__empty h4 {
-  margin: 0;
-  color: var(--awb-ink-strong);
-}
-
-.awb-files-panel__empty p {
-  margin: 0;
-}
-
-.awb-files-panel__preview-actions {
-  padding: 0 0 12px;
-}
-
-.awb-files-panel__preview-file {
-  font-size: 0.78rem;
-  letter-spacing: normal;
-  text-transform: none;
-  color: var(--awb-ink-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 180px;
-}
-
-.awb-files-panel__image-preview {
-  width: 100%;
-  padding: 0 0 12px;
-  border: 0;
-  background: transparent;
-}
-
-.awb-files-panel__image-preview img {
-  display: block;
-  width: 100%;
-  max-height: 280px;
-  object-fit: contain;
-  border-radius: 12px;
-  background: rgba(0, 0, 0, 0.06);
-}
-
-.awb-files-panel__text-preview {
-  margin: 0;
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: 0 0 12px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 0.8rem;
-  line-height: 1.45;
-  color: var(--awb-ink);
-}
-
-.awb-files-panel__resize-handle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 10px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: ns-resize;
-}
-
-.awb-files-panel__resize-handle span {
-  display: block;
-  width: 42px;
-  height: 1px;
-  background: var(--awb-rule-strong);
 }
 
 .awb-lightbox {

@@ -1,20 +1,11 @@
 import { filePathToFileUri, isImageMimeType } from "./attachments.js";
-import { normalizePathForIdentity, toDisplayPath } from "./paths.js";
+import { toDisplayPath } from "./paths.js";
 
-const markdownImagePattern = /!\[([^\]]*)\]\(([^)\s]+)\)/gu;
-const markdownLinkPattern = /(?<!!)\[([^\]]+)\]\(([^)\s]+)\)/gu;
-const inlineWindowsPathPattern = /[A-Za-z]:\\[^\s<>"'`|]+/gu;
-const backtickPattern = /`([^`\r\n]+)`/gu;
 const windowsDrivePathPattern = /^[A-Za-z]:[\\/]/u;
 const uncPathPattern = /^\\\\[^\\]/u;
 const posixAbsolutePathPattern = /^\/[^\0]+/u;
 
-export type FileReferenceSource =
-  | "markdown_link"
-  | "markdown_image"
-  | "inline_path";
-
-export type ExtractedFileReference = {
+export type FileReference = {
   path: string;
   displayPath: string;
   fileUrl: string;
@@ -22,10 +13,8 @@ export type ExtractedFileReference = {
   fileName: string;
   extension?: string;
   isImage: boolean;
-  source: FileReferenceSource;
+  source: "inline_path";
 };
-
-const trailingInlinePathPunctuation = /[).,;]+$/u;
 
 const basenameFromPath = (value: string): string => {
   const normalized = value.replace(/\\/gu, "/");
@@ -73,17 +62,6 @@ export const isAbsoluteFilePath = (value: string): boolean => {
   );
 };
 
-const trimTrailingInlinePathPunctuation = (value: string): string => {
-  let current = value.trim();
-  for (;;) {
-    const next = current.replace(trailingInlinePathPunctuation, "");
-    if (next === current) {
-      return current;
-    }
-    current = next;
-  }
-};
-
 export const fileUriToPath = (uri: string): string | undefined => {
   if (!uri.toLowerCase().startsWith("file:")) {
     return undefined;
@@ -106,26 +84,11 @@ export const fileUriToPath = (uri: string): string | undefined => {
   }
 };
 
-export const fileTargetToPath = (target: string): string | undefined => {
-  const trimmedTarget = target.trim();
-  const fileUriPath = fileUriToPath(trimmedTarget);
-  if (fileUriPath) {
-    return fileUriPath;
-  }
-
-  const pathCandidate = trimTrailingInlinePathPunctuation(trimmedTarget);
-  if (isAbsoluteFilePath(pathCandidate)) {
-    return pathCandidate;
-  }
-
-  return undefined;
-};
-
 export const createFileReferenceFromPath = (
   path: string,
-  source: FileReferenceSource,
+  source: "inline_path",
   label?: string
-): ExtractedFileReference => {
+): FileReference => {
   const displayPath = toDisplayPath(path);
   const fileName = basenameFromPath(displayPath);
   const extension = extensionFromPath(displayPath);
@@ -139,108 +102,4 @@ export const createFileReferenceFromPath = (
     isImage: isImageMimeType(inferMimeTypeFromExtension(extension)),
     source
   };
-};
-
-const pushUniqueReference = (
-  references: ExtractedFileReference[],
-  seen: Set<string>,
-  reference: ExtractedFileReference
-): void => {
-  const identity = normalizePathForIdentity(reference.path);
-  if (seen.has(identity)) {
-    return;
-  }
-  seen.add(identity);
-  references.push(reference);
-};
-
-const extractFileUriReferences = (
-  text: string,
-  pattern: RegExp,
-  source: FileReferenceSource,
-  references: ExtractedFileReference[],
-  seen: Set<string>
-): void => {
-  for (const match of text.matchAll(pattern)) {
-    const label = match[1]?.trim();
-    const target = match[2]?.trim();
-    if (!target) {
-      continue;
-    }
-    const path = fileTargetToPath(target);
-    if (!path) {
-      continue;
-    }
-    pushUniqueReference(
-      references,
-      seen,
-      createFileReferenceFromPath(path, source, label)
-    );
-  }
-};
-
-const extractInlineWindowsPaths = (
-  text: string,
-  references: ExtractedFileReference[],
-  seen: Set<string>
-): void => {
-  for (const match of text.matchAll(inlineWindowsPathPattern)) {
-    const candidate = trimTrailingInlinePathPunctuation(match[0] ?? "");
-    if (!candidate || !isAbsoluteFilePath(candidate)) {
-      continue;
-    }
-    pushUniqueReference(
-      references,
-      seen,
-      createFileReferenceFromPath(candidate, "inline_path")
-    );
-  }
-};
-
-const extractBacktickPaths = (
-  text: string,
-  references: ExtractedFileReference[],
-  seen: Set<string>
-): void => {
-  for (const match of text.matchAll(backtickPattern)) {
-    const candidate = trimTrailingInlinePathPunctuation(match[1] ?? "");
-    if (!candidate || !isAbsoluteFilePath(candidate)) {
-      continue;
-    }
-    pushUniqueReference(
-      references,
-      seen,
-      createFileReferenceFromPath(candidate, "inline_path")
-    );
-  }
-};
-
-export const extractFileReferencesFromText = (
-  text: string | undefined
-): ExtractedFileReference[] => {
-  if (!text?.trim()) {
-    return [];
-  }
-
-  const references: ExtractedFileReference[] = [];
-  const seen = new Set<string>();
-
-  extractFileUriReferences(
-    text,
-    markdownImagePattern,
-    "markdown_image",
-    references,
-    seen
-  );
-  extractFileUriReferences(
-    text,
-    markdownLinkPattern,
-    "markdown_link",
-    references,
-    seen
-  );
-  extractBacktickPaths(text, references, seen);
-  extractInlineWindowsPaths(text, references, seen);
-
-  return references;
 };

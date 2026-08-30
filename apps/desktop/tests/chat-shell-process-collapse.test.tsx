@@ -283,7 +283,6 @@ describe("ChatShellApp inline process output", () => {
         row={row}
         hiddenRows={hiddenRows}
         participantDirectory={buildParticipantDirectory([])}
-        onActivateResourceLink={() => undefined}
       />
     );
 
@@ -399,7 +398,6 @@ describe("ChatShellApp inline process output", () => {
         row={row}
         hiddenRows={hiddenRows}
         participantDirectory={buildParticipantDirectory([])}
-        onActivateResourceLink={() => undefined}
       />
     );
 

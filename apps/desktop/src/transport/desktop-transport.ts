@@ -21,7 +21,6 @@ import type {
   CodexTurnChangesUndoResultRpc,
   FileActionKindRpc,
   FileActionResultRpc,
-  FilePreviewRpc,
   SchedulerTaskDocumentRpc,
   SchedulerTaskScheduleRpc,
   SessionBrowserPageRpc,
@@ -33,7 +32,6 @@ import type {
   SessionExecutionProfileInput,
   SessionWindowRpc,
   ThreadGoalStatus,
-  WorkspaceFileSearchResultRpc,
   WorkbenchClientApi,
   EventEnvelope,
   WorkbenchEventPush,
@@ -68,10 +66,10 @@ export type SessionCreateInput = {
   conversationId?: string;
   workspaceId?: string;
   sessionProfile?: {
-    reasoningOptionId?: string;
-    serviceTierId?: string | null;
     modeId?: string;
     modelId?: string;
+    reasoningOptionId?: string;
+    serviceTierId?: string | null;
   };
   metadata?: Record<string, unknown>;
 };
@@ -101,9 +99,9 @@ export type ChatSendInput = {
   messageId?: string;
   attachments?: Attachment[];
   execution?: {
-    serviceTierId?: string | null;
     modelId?: string;
     reasoningOptionId?: string;
+    serviceTierId?: string | null;
   };
 };
 
@@ -325,10 +323,10 @@ export type DesktopTransport = {
       engineId: string;
       conversationId?: string;
       sessionProfile?: {
-        reasoningOptionId?: string;
-        serviceTierId?: string | null;
         modeId?: string;
         modelId?: string;
+        reasoningOptionId?: string;
+        serviceTierId?: string | null;
       };
       metadata?: Record<string, unknown>;
     }) => Promise<{ sessionId: string; conversationId: string }>;
@@ -392,12 +390,6 @@ export type DesktopTransport = {
     write: (input: ErrorLogWriteInputRpc) => Promise<ErrorLogWriteResultRpc>;
   };
   file: {
-    searchWorkspace: (input: {
-      workspaceId: string;
-      query: string;
-      limit?: number;
-    }) => Promise<WorkspaceFileSearchResultRpc[]>;
-    getPreview: (path: string) => Promise<FilePreviewRpc>;
     runAction: (input: {
       path: string;
       action: FileActionKindRpc;
@@ -1039,16 +1031,6 @@ export const createDesktopTransport = (
         rpc.request("errorLog.write", input)
     },
     file: {
-      searchWorkspace: async (input) => {
-        const result = await rpc.request("file.searchWorkspace", input);
-        return result.results;
-      },
-      getPreview: async (path: string) => {
-        const result = await rpc.request("file.getPreview", {
-          path
-        });
-        return result.preview;
-      },
       runAction: async (input) => {
         const result = await rpc.request("file.runAction", input);
         return result.result;

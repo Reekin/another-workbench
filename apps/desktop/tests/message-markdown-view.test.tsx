@@ -171,38 +171,12 @@ describe("MessageMarkdownView", () => {
     );
   });
 
-  it("preserves local file links in markdown", () => {
-    const html = renderToStaticMarkup(
-      <MessageMarkdownView
-        onActivateResourceLink={() => undefined}
-        block={{
-          blockId: "message-3b:md",
-          messageId: "message-3b",
-          sessionId: "session-1",
-          turnId: "turn-1",
-          role: "user",
-          kind: "markdown",
-          text: "[Spec](file:///C:/repo/docs/spec.md)",
-          actor: {
-            participantId: "participant-1",
-            engineId: "agent-codex"
-          },
-          startedAt: "2026-04-17T00:00:00.000Z",
-          completedAt: "2026-04-17T00:00:01.000Z"
-        }}
-      />
-    );
-
-    expect(html).toContain('href="file:///C:/repo/docs/spec.md"');
-    expect(html).toContain(">Spec</a>");
-  });
-
   it("shows unsupported link targets without making them navigable", () => {
     const html = renderToStaticMarkup(
       <MessageMarkdownView
         block={{
-          blockId: "message-3e:md",
-          messageId: "message-3e",
+          blockId: "message-3b:md",
+          messageId: "message-3b",
           sessionId: "session-1",
           turnId: "turn-1",
           role: "assistant",

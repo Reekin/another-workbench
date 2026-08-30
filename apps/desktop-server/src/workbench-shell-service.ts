@@ -60,8 +60,6 @@ import {
   type SessionWindowSnapshot
 } from "./session-window.js";
 import { FileActionService } from "./file-action-service.js";
-import { FilePreviewService } from "./file-preview-service.js";
-import { WorkspaceFileSearchService } from "./workspace-file-search-service.js";
 import { TurnChangeService } from "./turn-change-service.js";
 import { CodexHookActivityService } from "./engine-extensions/codex/hook-activity-service.js";
 import { CodexTurnChangesService } from "./engine-extensions/codex/turn-changes-service.js";
@@ -169,8 +167,6 @@ export type WorkbenchShellServiceOptions = {
     canceled: boolean;
     rootPath?: string;
   }>;
-  fileSearchService?: WorkspaceFileSearchService;
-  filePreviewService?: FilePreviewService;
   fileActionService?: FileActionService;
   errorLogService?: ErrorLogService;
   diagnosticLogService?: DiagnosticLogService;
@@ -196,8 +192,6 @@ export class WorkbenchShellService {
   private readonly pickWorkspaceDirectoryImpl:
     | (() => Promise<{ canceled: boolean; rootPath?: string }>)
     | undefined;
-  private readonly fileSearchService: WorkspaceFileSearchService;
-  private readonly filePreviewService: FilePreviewService;
   private readonly fileActionService: FileActionService;
   private readonly errorLogService: ErrorLogService;
   private readonly diagnosticLogService: DiagnosticLogService;
@@ -232,10 +226,6 @@ export class WorkbenchShellService {
     this.engineRegistry = options.engineRegistry;
     this.engineCapabilitySurface = options.engineCapabilitySurface;
     this.pickWorkspaceDirectoryImpl = options.pickWorkspaceDirectory;
-    this.fileSearchService =
-      options.fileSearchService ?? new WorkspaceFileSearchService();
-    this.filePreviewService =
-      options.filePreviewService ?? new FilePreviewService();
     this.fileActionService =
       options.fileActionService ?? new FileActionService();
     this.errorLogService =
@@ -929,32 +919,6 @@ export class WorkbenchShellService {
     input: DiagnosticsWriteInputRpc
   ): Promise<DiagnosticsWriteResultRpc> {
     return this.diagnosticLogService.write(input);
-  }
-
-  public async searchWorkspaceFiles(input: {
-    workspaceId: string;
-    query: string;
-    limit?: number;
-  }) {
-    const registry = this.requireWorkspaceRegistry();
-    await registry.ready();
-    const workspace = registry.getWorkspace(input.workspaceId);
-    if (!workspace) {
-      throw new Error(`Workspace not found: ${input.workspaceId}`);
-    }
-    return {
-      results: await this.fileSearchService.searchWorkspace({
-        workspace,
-        query: input.query,
-        limit: input.limit
-      })
-    };
-  }
-
-  public async getFilePreview(path: string) {
-    return {
-      preview: await this.filePreviewService.getPreview(path)
-    };
   }
 
   public async runFileAction(input: {

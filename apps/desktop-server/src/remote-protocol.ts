@@ -640,34 +640,6 @@ export const createRemoteRpcHandler = (
               ok: true,
               result: await shellService.writeErrorLog(request.params)
             });
-          case "file.searchWorkspace":
-            if (!shellService) {
-              return toErrorResponse(
-                request,
-                "FILE_BROWSER_UNAVAILABLE",
-                "File browser APIs are unavailable for this runtime service."
-              );
-            }
-            return parseWorkbenchRpcResponse({
-              id: request.id,
-              method: request.method,
-              ok: true,
-              result: await shellService.searchWorkspaceFiles(request.params)
-            });
-          case "file.getPreview":
-            if (!shellService) {
-              return toErrorResponse(
-                request,
-                "FILE_PREVIEW_UNAVAILABLE",
-                "File preview APIs are unavailable for this runtime service."
-              );
-            }
-            return parseWorkbenchRpcResponse({
-              id: request.id,
-              method: request.method,
-              ok: true,
-              result: await shellService.getFilePreview(request.params.path)
-            });
           case "file.runAction":
             if (!shellService) {
               return toErrorResponse(

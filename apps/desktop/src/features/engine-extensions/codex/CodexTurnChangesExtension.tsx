@@ -3,6 +3,7 @@ import {
   summarizeUnifiedDiff,
   type CodexChangedFileRpc
 } from "@another-workbench/shared";
+import { Button } from "../../../ui/chat-shell/Button.js";
 
 export type CodexTurnChangesExtensionProps = {
   sessionId: string;
@@ -86,14 +87,14 @@ export const CodexTurnChangesExtension = ({
             <span className="is-delete">-{summary.linesDeleted}</span>
           </span>
         </div>
-        <button
-          type="button"
-          className="awb-ghost-button"
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={() => void onUndo()}
           disabled={!onUndoTurn || !canUndo || isUndoing || isUndone}
         >
           {isUndone ? "Undone" : isUndoing ? "Undoing…" : canUndo ? "Undo" : "Undo unavailable"}
-        </button>
+        </Button>
       </header>
       {undoError ? <p className="awb-turn-changes__notice is-error">{undoError}</p> : null}
       {isUndone ? (

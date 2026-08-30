@@ -18,6 +18,7 @@ import type {
   RuntimeInteraction,
   ThreadGoal
 } from "@another-workbench/shared";
+import { Button } from "../Button.js";
 import type { ComposerAttachment } from "../composer-attachments.js";
 import type { ImageLightboxState } from "../ImageLightbox.js";
 import {
@@ -302,13 +303,14 @@ export const ComposerPanel = ({
               <strong>{`$${skill.name}`}</strong>
               <span>{skill.shortDescription ?? skill.description ?? skill.path}</span>
             </div>
-            <button
-              type="button"
-              className="awb-ghost-button awb-composer-skill__remove"
+            <Button
+              variant="ghost"
+              size="sm"
+              className="awb-composer-skill__remove"
               onClick={() => onRemoveSkill(skill.id)}
             >
               Remove
-            </button>
+            </Button>
           </article>
         ))}
       </div>
@@ -346,13 +348,14 @@ export const ComposerPanel = ({
                 {attachment.mimeType} · {attachment.sizeLabel}
               </span>
             </div>
-            <button
-              type="button"
-              className="awb-ghost-button awb-composer__attachment-remove"
+            <Button
+              variant="ghost"
+              size="sm"
+              className="awb-composer__attachment-remove"
               onClick={() => onRemoveAttachment(attachment.attachment.attachmentId)}
             >
               Remove
-            </button>
+            </Button>
           </article>
         ))}
       </div>
@@ -389,8 +392,9 @@ export const ComposerPanel = ({
         onKeyDown={(event) => void onInputKeyDown(event)}
         onPaste={onPaste}
       />
-      <button
-        type="button"
+      <Button
+        variant={primaryAction === "stop" ? "danger" : "accent"}
+        size="lg"
         className="awb-composer__primary-action"
         onClick={() =>
           primaryAction === "stop" ? void onStop() : void onPrimaryAction()
@@ -402,7 +406,7 @@ export const ComposerPanel = ({
           : primaryAction === "stop"
             ? "Stop"
             : "Send"}
-      </button>
+      </Button>
       <ComposerSuggestions
         suggestions={suggestions}
         onHover={onSuggestionHover}

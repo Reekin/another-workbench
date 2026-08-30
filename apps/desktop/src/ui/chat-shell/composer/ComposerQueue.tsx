@@ -1,4 +1,5 @@
 import type { ReactElement } from "react";
+import { Button } from "../Button.js";
 import type { ComposerIntent, QueuedComposerMessage } from "./composer-types.js";
 
 const formatQueuedTime = (iso: string): string => {
@@ -47,21 +48,21 @@ export const ComposerQueue = ({
             </span>
           </div>
           <div className="awb-composer-queue__actions">
-            <button type="button" onClick={() => onEdit(item.id)}>
+            <Button variant="ghost" size="sm" onClick={() => onEdit(item.id)}>
               Edit
-            </button>
-            <button type="button" onClick={() => onDelete(item.id)}>
+            </Button>
+            <Button variant="danger" size="sm" onClick={() => onDelete(item.id)}>
               Delete
-            </button>
+            </Button>
             {currentIntent === "send" ? (
-              <button type="button" onClick={() => void onSendNow(item.id)}>
+              <Button variant="secondary" size="sm" onClick={() => void onSendNow(item.id)}>
                 Send now
-              </button>
+              </Button>
             ) : null}
             {supportsSteer && currentIntent !== "send" ? (
-              <button type="button" onClick={() => void onSteerNow(item.id)}>
+              <Button variant="secondary" size="sm" onClick={() => void onSteerNow(item.id)}>
                 Steer now
-              </button>
+              </Button>
             ) : null}
           </div>
         </article>

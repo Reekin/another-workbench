@@ -1,5 +1,6 @@
 import { startTransition, useState, type ReactElement } from "react";
 import type { ApprovalRequest } from "@another-workbench/shared";
+import { Button, type ButtonVariant } from "./Button.js";
 import { ParticipantIdentityBadge } from "./ParticipantIdentityBadge.js";
 import {
   buildParticipantDirectory,
@@ -75,6 +76,11 @@ const actionForDecisionLabel = (label: string): ApprovalAction => {
     return "defer";
   }
   return "approve";
+};
+
+const variantForDecisionLabel = (label: string): ButtonVariant => {
+  const action = actionForDecisionLabel(label);
+  return action === "deny" ? "danger" : action === "defer" ? "ghost" : "primary";
 };
 
 const decisionLabelsFor = (approval: ApprovalRequest): string[] => {
@@ -173,9 +179,10 @@ export const ApprovalFlowView = ({
             <div className="awb-approval-item__actions">
               {decisionLabels.length > 0 ? (
                 decisionLabels.map((decision) => (
-                  <button
+                  <Button
                     key={decision}
-                    type="button"
+                    variant={variantForDecisionLabel(decision)}
+                    size="sm"
                     disabled={disabled}
                     onClick={() =>
                       void onAction(
@@ -186,31 +193,34 @@ export const ApprovalFlowView = ({
                     }
                   >
                     {decisionButtonLabel(decision)}
-                  </button>
+                  </Button>
                 ))
               ) : (
                 <>
-                  <button
-                    type="button"
+                  <Button
+                    variant="primary"
+                    size="sm"
                     disabled={disabled}
                     onClick={() => void onAction(approval, "approve", "accept")}
                   >
                     Approve
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
                     disabled={disabled}
                     onClick={() => void onAction(approval, "deny", "decline")}
                   >
                     Deny
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     disabled={disabled}
                     onClick={() => void onAction(approval, "defer")}
                   >
                     Later
-                  </button>
+                  </Button>
                 </>
               )}
             </div>

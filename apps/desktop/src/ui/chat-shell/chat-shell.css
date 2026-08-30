@@ -25,12 +25,57 @@
   --awb-warm: #8c8987;
   --awb-radius-soft: 4px;
   --awb-radius-tight: 3px;
+  --awb-control-radius: 5px;
+  --awb-control-height-sm: 28px;
+  --awb-control-height-md: 32px;
+  --awb-control-height-lg: 40px;
+  --awb-control-border: rgba(182, 185, 183, 0.18);
+  --awb-control-border-hover: rgba(182, 185, 183, 0.34);
+  --awb-control-focus: rgba(214, 216, 213, 0.72);
+  --awb-control-disabled-opacity: 0.42;
+  --awb-scrollbar-thumb: rgba(182, 185, 183, 0.22);
+  --awb-scrollbar-thumb-hover: rgba(182, 185, 183, 0.38);
   --awb-font-sans: "IBM Plex Sans", "Segoe UI", sans-serif;
   --awb-font-mono: "IBM Plex Mono", "Cascadia Code", monospace;
 }
 
 * {
   box-sizing: border-box;
+  scrollbar-color: var(--awb-scrollbar-thumb) transparent;
+  scrollbar-width: thin;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  min-height: 32px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--awb-scrollbar-thumb);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--awb-scrollbar-thumb-hover);
+  background-clip: content-box;
+}
+
+.awb-attention__list,
+.awb-workspace-tree,
+.awb-transcript,
+.awb-composer textarea,
+.awb-composer-suggestions,
+.awb-scheduler__items,
+.awb-scheduler__editor,
+.awb-modal__body {
+  scrollbar-gutter: stable;
 }
 
 html,
@@ -59,6 +104,10 @@ textarea {
 
 button {
   cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
 }
 
 .awb-shell {
@@ -302,47 +351,155 @@ button {
   background: var(--awb-input-soft);
 }
 
-.awb-secondary-button,
-.awb-ghost-button,
-.awb-workspace__add,
-.awb-approval-item__actions button,
-.awb-composer__actions button,
-.awb-tabs button {
+.awb-button {
   appearance: none;
-  border: 1px solid var(--awb-rule-strong);
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: var(--awb-control-radius);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-weight: 500;
+  line-height: 1;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease,
+    transform 120ms ease;
+}
+
+.awb-button:focus-visible {
+  outline: 1px solid var(--awb-control-focus);
+  outline-offset: 2px;
+}
+
+.awb-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.awb-button:disabled {
+  pointer-events: none;
+  opacity: var(--awb-control-disabled-opacity);
+}
+
+.awb-button--sm {
+  min-height: var(--awb-control-height-sm);
+  padding: 0 9px;
+  font-size: 0.7rem;
+}
+
+.awb-button--md {
+  min-height: var(--awb-control-height-md);
+  padding: 0 11px;
+  font-size: 0.76rem;
+}
+
+.awb-button--lg {
+  min-height: var(--awb-control-height-lg);
+  padding: 0 15px;
+  font-size: 0.82rem;
+}
+
+.awb-button--icon {
+  width: var(--awb-control-height-sm);
+  height: var(--awb-control-height-sm);
+  padding: 0;
+  font-size: 0.9rem;
+}
+
+.awb-button--primary {
+  border-color: rgba(240, 240, 238, 0.78);
+  background: var(--awb-ink-strong);
+  color: var(--awb-bg);
+}
+
+.awb-button--primary:hover:not(:disabled) {
+  border-color: var(--awb-ink-strong);
+  background: #fafaf7;
+  color: #171817;
+}
+
+.awb-button--accent {
+  border-color: rgba(182, 185, 183, 0.3);
+  background: rgba(140, 143, 141, 0.16);
+  color: var(--awb-ink-strong);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+}
+
+.awb-button--accent:hover:not(:disabled) {
+  border-color: rgba(182, 185, 183, 0.42);
+  background: rgba(140, 143, 141, 0.24);
+  color: #fafaf7;
+}
+
+.awb-button--secondary {
+  border-color: var(--awb-control-border);
   background: var(--awb-input-soft);
   color: var(--awb-ink);
+}
+
+.awb-button--secondary:hover:not(:disabled) {
+  border-color: var(--awb-control-border-hover);
+  background: var(--awb-panel-soft);
+  color: var(--awb-ink-strong);
+}
+
+.awb-button--ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--awb-ink-muted);
+}
+
+.awb-button--ghost:hover:not(:disabled) {
+  background: var(--awb-accent-soft);
+  color: var(--awb-ink-strong);
+}
+
+.awb-button--danger {
+  border-color: rgba(201, 163, 163, 0.24);
+  background: rgba(145, 93, 98, 0.12);
+  color: #d1aaaa;
+}
+
+.awb-button--danger:hover:not(:disabled) {
+  border-color: rgba(209, 170, 170, 0.42);
+  background: rgba(145, 93, 98, 0.2);
+  color: #e5c1c1;
+}
+
+.awb-button--text {
+  min-height: auto;
+  border: 0;
+  background: transparent;
+  color: var(--awb-ink-muted);
+  padding-inline: 2px;
+  font-size: 0.74rem;
+}
+
+.awb-button--text:hover:not(:disabled) {
+  color: var(--awb-ink-strong);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.awb-workspace__add {
+  appearance: none;
+  border: 1px solid var(--awb-control-border);
+  background: transparent;
+  color: var(--awb-ink-muted);
   transition:
     border-color 160ms ease,
     background-color 160ms ease,
     color 160ms ease;
 }
 
-.awb-secondary-button:hover,
-.awb-ghost-button:hover,
-.awb-workspace__add:hover,
-.awb-approval-item__actions button:hover:not(:disabled),
-.awb-tabs button:hover {
-  border-color: rgba(182, 185, 183, 0.22);
-  background: var(--awb-panel-soft);
+.awb-workspace__add:hover {
+  border-color: var(--awb-control-border-hover);
+  background: var(--awb-accent-soft);
   color: var(--awb-ink-strong);
-}
-
-.awb-secondary-button {
-  border-radius: var(--awb-radius-soft);
-  padding: 7px 10px;
-  font-size: 0.78rem;
-}
-
-.awb-secondary-button--small {
-  padding: 5px 8px;
-  font-size: 0.72rem;
-}
-
-.awb-ghost-button {
-  border-radius: var(--awb-radius-soft);
-  padding: 6px 9px;
-  font-size: 0.74rem;
 }
 
 .awb-inline-form {
@@ -364,23 +521,6 @@ button {
   overflow: auto;
   display: flex;
   flex-direction: column;
-}
-
-.awb-sidebar__settings {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--awb-radius-soft);
-  border: 1px solid var(--awb-rule-strong);
-  background: var(--awb-input-soft);
-  color: var(--awb-ink-muted);
-}
-
-.awb-sidebar__settings:hover {
-  border-color: rgba(182, 185, 183, 0.22);
-  background: var(--awb-panel-soft);
-  color: var(--awb-ink-strong);
 }
 
 .awb-workspace {
@@ -1741,40 +1881,7 @@ button {
 .awb-composer__primary-action {
   box-sizing: border-box;
   min-width: 68px;
-  height: 40px;
   align-self: center;
-  border-radius: var(--awb-radius-soft);
-  padding: 8px 14px;
-  border-color: rgba(140, 143, 141, 0.3);
-  background: rgba(140, 143, 141, 0.16);
-  color: var(--awb-ink-strong);
-}
-
-.awb-composer__primary-action:hover {
-  background: rgba(140, 143, 141, 0.24);
-}
-
-.awb-composer__primary-action:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.awb-composer__actions button {
-  border-radius: var(--awb-radius-soft);
-  padding: 8px 14px;
-  border-color: rgba(140, 143, 141, 0.3);
-  background: rgba(140, 143, 141, 0.16);
-  color: var(--awb-ink-strong);
-}
-
-.awb-composer__actions button:hover {
-  background: rgba(140, 143, 141, 0.24);
-}
-
-.awb-composer__actions button:disabled,
-.awb-approval-item__actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 @keyframes awb-spin {
@@ -2284,12 +2391,6 @@ button {
   gap: 8px;
 }
 
-.awb-approval-item__actions button {
-  border-radius: var(--awb-radius-soft);
-  padding: 6px 10px;
-  font-size: 0.72rem;
-}
-
 .awb-approval-item__error {
   margin: 8px 0 0;
   color: var(--awb-danger);
@@ -2692,13 +2793,6 @@ button {
 .awb-settings-models__unavailable > span {
   color: var(--awb-ink-faint);
   font-size: 0.68rem;
-}
-
-.awb-settings-models__engine .awb-ghost-button,
-.awb-settings-models__custom .awb-ghost-button {
-  padding: 5px 8px;
-  border-radius: var(--awb-radius-tight);
-  font-size: 0.69rem;
 }
 
 .awb-settings-models__list {

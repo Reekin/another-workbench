@@ -1,5 +1,6 @@
 import { startTransition, useState, type ReactElement } from "react";
 import type { RuntimeInteraction } from "@another-workbench/shared";
+import { Button } from "./Button.js";
 import { ParticipantIdentityBadge } from "./ParticipantIdentityBadge.js";
 import {
   buildParticipantDirectory,
@@ -201,37 +202,41 @@ export const InteractionFlowView = ({
             )}
             {interaction.interactionKind === "tool_user_input" ? (
               <div className="awb-approval-item__actions">
-                <button
-                  type="button"
+                <Button
+                  variant="primary"
+                  size="sm"
                   disabled={disabled}
                   onClick={() => void onAction(interaction, "submit")}
                 >
                   Submit
-                </button>
+                </Button>
               </div>
             ) : (
               <div className="awb-approval-item__actions">
-                <button
-                  type="button"
+                <Button
+                  variant="primary"
+                  size="sm"
                   disabled={disabled}
                   onClick={() => void onAction(interaction, "submit")}
                 >
                   Submit
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
                   disabled={disabled}
                   onClick={() => void onAction(interaction, "decline")}
                 >
                   Decline
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
                   disabled={disabled}
                   onClick={() => void onAction(interaction, "cancel")}
                 >
                   Cancel
-                </button>
+                </Button>
               </div>
             )}
             {requestError && <p className="awb-approval-item__error">{requestError}</p>}

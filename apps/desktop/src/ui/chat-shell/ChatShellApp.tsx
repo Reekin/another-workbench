@@ -33,6 +33,7 @@ import type {
 } from "../../transport/desktop-transport.js";
 import { connectDesktopTransportToStore } from "../../transport/store-bridge.js";
 import { renderTurnExtensions } from "../../features/engine-extensions/turn-extension-registry.js";
+import { Button } from "./Button.js";
 import { ChatTreePanel } from "./ChatTreePanel.js";
 import { ImageLightbox, type ImageLightboxState } from "./ImageLightbox.js";
 import { MessageMarkdownView } from "./MessageMarkdownView.js";
@@ -921,9 +922,9 @@ const SettingsLauncher = ({
             <span className="awb-main__eyebrow">Settings</span>
             <h2 id="awb-settings-title">Preferences</h2>
           </div>
-          <button type="button" className="awb-ghost-button" onClick={close}>
+          <Button variant="ghost" size="sm" onClick={close}>
             Close
-          </button>
+          </Button>
         </header>
         <div className="awb-modal__body awb-settings">
           <nav className="awb-settings__tabs" role="tablist" aria-label="Settings pages">
@@ -997,9 +998,9 @@ const SettingsLauncher = ({
                         <span>{usesAllCatalogModels ? "All catalog models" : `${configuredIds.length} configured`}</span>
                       </div>
                       {!usesAllCatalogModels ? (
-                        <button
-                          type="button"
-                          className="awb-ghost-button"
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           onClick={() => {
                             setDraftSettings((current) => ({
                               ...current,
@@ -1015,7 +1016,7 @@ const SettingsLauncher = ({
                           }}
                         >
                           Use all
-                        </button>
+                        </Button>
                       ) : null}
                     </header>
                     {modelCatalogErrorsByEngineId[engine.engineId] ? (
@@ -1074,13 +1075,13 @@ const SettingsLauncher = ({
                                 }))
                               }
                             />
-                            <button
-                              type="button"
-                              className="awb-ghost-button"
+                            <Button
+                              variant="danger"
+                              size="sm"
                               onClick={() => removeConfiguredModel(engine.engineId, modelId)}
                             >
                               Remove
-                            </button>
+                            </Button>
                           </div>
                         ))}
                       </div>
@@ -1102,12 +1103,13 @@ const SettingsLauncher = ({
                         aria-label={`Efforts for custom model in ${engine.displayName}`}
                         placeholder="Efforts: low, medium, high"
                       />
-                      <button
+                      <Button
                         type="submit"
-                        className="awb-ghost-button"
+                        variant="secondary"
+                        size="sm"
                       >
                         Add
-                      </button>
+                      </Button>
                     </form>
                   </section>
                 );
@@ -1116,17 +1118,17 @@ const SettingsLauncher = ({
           )}
         </div>
         <footer className="awb-modal__footer">
-          <button type="button" className="awb-ghost-button" onClick={close}>
+          <Button variant="ghost" size="sm" onClick={close}>
             Cancel
-          </button>
-          <button
-            type="button"
-            className="awb-secondary-button"
+          </Button>
+          <Button
+            variant="primary"
+            size="md"
             onClick={() => void onSave()}
             disabled={isSaving}
           >
             Save
-          </button>
+          </Button>
         </footer>
       </section>
     </div>
@@ -1134,15 +1136,16 @@ const SettingsLauncher = ({
 
   return (
     <>
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="icon"
         className="awb-sidebar__settings"
         onClick={open}
         aria-label="Open settings"
         title="Settings"
       >
         <span aria-hidden="true">⚙</span>
-      </button>
+      </Button>
       {modalMarkup &&
         (typeof document === "undefined"
           ? modalMarkup
@@ -1536,9 +1539,9 @@ const ScheduleWorkspaceModal = ({
             <span className="awb-main__eyebrow">Schedule</span>
             <h2 id="awb-scheduler-title">{workspace.label}</h2>
           </div>
-          <button type="button" className="awb-ghost-button" onClick={onClose}>
+          <Button variant="ghost" size="sm" onClick={onClose}>
             Close
-          </button>
+          </Button>
         </header>
         <div className="awb-scheduler">
           <aside className="awb-scheduler__list">
@@ -1549,13 +1552,13 @@ const ScheduleWorkspaceModal = ({
                   {rootPath || "~/.another-workbench/scheduler/tasks"}
                 </code>
               </div>
-              <button
-                type="button"
-                className="awb-secondary-button awb-secondary-button--small"
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={newTask}
               >
                 New
-              </button>
+              </Button>
             </div>
             <div className="awb-scheduler__items">
               {tasks.map((task) => (
@@ -1738,22 +1741,22 @@ const ScheduleWorkspaceModal = ({
                 <span>Enabled</span>
               </label>
               <div>
-                <button
-                  type="button"
-                  className="awb-ghost-button"
+                <Button
+                  variant="danger"
+                  size="md"
                   disabled={!selectedTaskId || isSaving}
                   onClick={() => void deleteTask()}
                 >
                   Delete
-                </button>
-                <button
-                  type="button"
-                  className="awb-secondary-button"
+                </Button>
+                <Button
+                  variant="primary"
+                  size="md"
                   disabled={isSaving}
                   onClick={() => void saveTask()}
                 >
                   Save
-                </button>
+                </Button>
               </div>
             </footer>
           </section>
@@ -2561,9 +2564,9 @@ export const ChatShellApp = ({
             ) : null}
             {session.childrenHasMore && session.childrenNextCursor ? (
               <li className="awb-tree__item">
-                <button
-                  type="button"
-                  className="awb-ghost-button"
+                <Button
+                  variant="text"
+                  size="sm"
                   onClick={() =>
                     void onLoadMoreSessionChildren(
                       session.sessionId,
@@ -2572,7 +2575,7 @@ export const ChatShellApp = ({
                   }
                 >
                   Load more
-                </button>
+                </Button>
               </li>
             ) : null}
           </ul>
@@ -2685,13 +2688,13 @@ export const ChatShellApp = ({
           <section className="awb-sidebar__section awb-sidebar__section--grow">
             <div className="awb-sidebar__section-header">
               <h2>Workspaces</h2>
-              <button
-                type="button"
-                className="awb-secondary-button"
+              <Button
+                variant="secondary"
+                size="md"
                 onClick={() => void onAddWorkspace()}
               >
                 Add workspace
-              </button>
+              </Button>
             </div>
 
             <div className="awb-workspace-tree">

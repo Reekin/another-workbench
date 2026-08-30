@@ -105,6 +105,7 @@ export class WorkbenchRuntimeService {
   private readonly eventBus: RuntimeEventBus;
   private readonly domainService: DomainService;
   private readonly runtimeOrchestrator: RuntimeOrchestrator;
+  private readonly sessionIndexTasks = new Set<Promise<void>>();
   private sessionBrowserRevision = 0;
 
   public constructor(options: WorkbenchRuntimeServiceOptions = {}) {
@@ -122,7 +123,7 @@ export class WorkbenchRuntimeService {
         this.publishRuntimeEvent(event);
       },
       markSessionUnreadCompleted: (sessionId) => {
-        void this.markSessionUnreadCompleted(sessionId);
+        this.trackSessionIndexTask(this.markSessionUnreadCompleted(sessionId));
       }
     });
     this.eventBus = new RuntimeEventBus({
@@ -306,6 +307,18 @@ export class WorkbenchRuntimeService {
 
   public async dispose(): Promise<void> {
     await this.runtimeOrchestrator.dispose();
+    await Promise.all(this.sessionIndexTasks);
+  }
+
+  private trackSessionIndexTask(task: Promise<void>): void {
+    const tracked = task
+      .catch((error: unknown) => {
+        console.warn("[another-workbench] Failed to update session read state", error);
+      })
+      .finally(() => {
+        this.sessionIndexTasks.delete(tracked);
+      });
+    this.sessionIndexTasks.add(tracked);
   }
 
   private toSharedEnvelope(envelope: RuntimeEventEnvelope): EventEnvelope {

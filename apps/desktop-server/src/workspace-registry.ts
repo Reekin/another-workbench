@@ -12,7 +12,11 @@ import {
   cloneLastExecutionByEngineId,
   cloneModelSettings
 } from "./model-settings.js";
-import { loadJsonFile, saveJsonFile } from "./persistence-store.js";
+import {
+  loadJsonFile,
+  PersistentStoreCorruptionError,
+  saveJsonFile
+} from "./persistence-store.js";
 
 const workspaceRecordSchema = z.object({
   workspaceId: z.string().min(1),
@@ -352,21 +356,13 @@ export class WorkspaceRegistryService {
           }
         : loaded.value;
     const parsed = workspaceRegistryDocumentSchema.safeParse(migratedValue);
-    this.document = parsed.success
-      ? parsed.data
-      : {
-          version: 1,
-          workspaces: [],
-          expandedWorkspaceIds: [],
-          expandedSessionIds: [],
-          pinnedSessionIds: [],
-          allowedModelIdsByEngineId: {},
-          customModelReasoningOptionIdsByEngineId: {},
-          lastExecutionByEngineId: {}
-        };
+    if (!parsed.success) {
+      throw new PersistentStoreCorruptionError(this.filePath, parsed.error);
+    }
+    this.document = parsed.data;
     this.revision += 1;
     this.sessionBrowserRevision += 1;
-    if (loaded.corrupted || !parsed.success || hadLegacySessionViewState) {
+    if (hadLegacySessionViewState) {
       await this.persist();
     }
   }

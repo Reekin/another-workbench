@@ -237,7 +237,7 @@ describe("WorkspaceRegistryService", () => {
     });
   });
 
-  it("recovers from invalid persisted data by resetting to an empty registry", async () => {
+  it("rejects invalid persisted data without replacing it", async () => {
     const baseDir = await createTempDir();
     const registryPath = join(baseDir, "workspace-registry.json");
     await import("node:fs/promises").then(({ mkdir, writeFile }) =>
@@ -249,14 +249,8 @@ describe("WorkspaceRegistryService", () => {
     const service = new WorkspaceRegistryService({
       baseDir
     });
-    await service.ready();
+    await expect(service.ready()).rejects.toThrow("Failed to read persistent store");
 
-    expect(service.listWorkspaces()).toEqual([]);
-    const repaired = JSON.parse(await readFile(registryPath, "utf8")) as {
-      version: number;
-      workspaces: unknown[];
-    };
-    expect(repaired.version).toBe(1);
-    expect(repaired.workspaces).toEqual([]);
+    expect(await readFile(registryPath, "utf8")).toBe("{not-valid-json");
   });
 });

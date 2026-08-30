@@ -9,6 +9,7 @@ import { WorkbenchRuntimeService } from "../src/runtime-service.js";
 import { WorkspaceRegistryService } from "../src/workspace-registry.js";
 
 const tempDirs: string[] = [];
+const services = new Set<WorkbenchRuntimeService>();
 
 const createTempDir = async (): Promise<string> => {
   const dir = await mkdtemp(join(tmpdir(), "awb-runtime-service-"));
@@ -23,8 +24,8 @@ const flushAsyncEffects = async (): Promise<void> => {
 const createService = (options: {
   persistenceBaseDir?: string;
   agentBindings?: ConstructorParameters<typeof WorkbenchRuntimeService>[0]["agentBindings"];
-} = {}) =>
-  new WorkbenchRuntimeService({
+} = {}) => {
+  const service = new WorkbenchRuntimeService({
     now: (() => {
       let tick = 0;
       return () => `2026-04-18T00:00:${String(++tick).padStart(2, "0")}Z`;
@@ -69,12 +70,24 @@ const createService = (options: {
       }
     ]
   });
+  services.add(service);
+  return service;
+};
 
 afterEach(async () => {
+  for (const service of services) {
+    await service.dispose();
+  }
+  services.clear();
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir) {
-      await rm(dir, { recursive: true, force: true });
+      await rm(dir, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 20
+      });
     }
   }
 });
@@ -282,6 +295,7 @@ describe("WorkbenchRuntimeService", () => {
 
     unsubscribe();
     await service.dispose();
+    services.delete(service);
   });
 
   it("persists provider session identity after adapter events for workspace-backed sessions", async () => {
@@ -476,6 +490,14 @@ describe("WorkbenchRuntimeService", () => {
     expect(service.getSessionIndexStore()?.getEntry("session-2")).toMatchObject({
       unreadState: "read"
     });
+
+    await service.dispose();
+    services.delete(service);
+    const reloadedIndex = new SessionIndexStore({ baseDir });
+    await reloadedIndex.ready();
+    expect(reloadedIndex.getEntry("session-1")?.unreadState).toBe(
+      "unread_completed"
+    );
   });
 
   it("creates, lists, archives, and resumes sessions while maintaining participants", async () => {

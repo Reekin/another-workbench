@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -657,7 +657,7 @@ describe("SessionIndexStore", () => {
     expect(store.getEntry("fork")?.archivedAt).toBeUndefined();
   });
 
-  it("repairs invalid persisted data by resetting to an empty document", async () => {
+  it("rejects invalid persisted data without replacing it", async () => {
     const baseDir = await createTempDir();
     const filePath = join(baseDir, "session-index.json");
     await writeFile(filePath, "{\"broken\": true}", "utf8");
@@ -665,17 +665,47 @@ describe("SessionIndexStore", () => {
     const store = new SessionIndexStore({
       baseDir
     });
+    await expect(store.ready()).rejects.toThrow("Failed to read persistent store");
+
+    expect(await readFile(filePath, "utf8")).toBe("{\"broken\": true}");
+  });
+
+  it("restores a truncated session index from the last valid backup", async () => {
+    const baseDir = await createTempDir();
+    const filePath = join(baseDir, "session-index.json");
+    await writeFile(filePath, "{\"version\":1,\"entries\":[", "utf8");
+    await writeFile(
+      `${filePath}.bak`,
+      JSON.stringify({
+        version: 1,
+        entries: [
+          {
+            workspaceId: "workspace-1",
+            sessionId: "session-restored",
+            conversationId: "conversation-restored",
+            engineId: "codex",
+            title: "Restored",
+            createdAt: "2026-08-30T00:00:00Z",
+            updatedAt: "2026-08-30T00:00:00Z",
+            unreadState: "read",
+            source: "registry"
+          }
+        ],
+        relations: []
+      }),
+      "utf8"
+    );
+
+    const store = new SessionIndexStore({ baseDir });
     await store.ready();
 
-    expect(store.listEntries()).toEqual([]);
-    const repaired = JSON.parse(await readFile(filePath, "utf8")) as {
-      version: number;
-      entries: unknown[];
-      relations: unknown[];
-    };
-    expect(repaired.version).toBe(1);
-    expect(repaired.entries).toEqual([]);
-    expect(repaired.relations).toEqual([]);
+    expect(store.getEntry("session-restored")?.title).toBe("Restored");
+    expect(
+      (JSON.parse(await readFile(filePath, "utf8")) as { entries: unknown[] }).entries
+    ).toHaveLength(1);
+    expect(persistenceState.saveCalls).toBe(0);
+    expect((await readdir(baseDir)).some((name) => name.startsWith("session-index.json.corrupt-")))
+      .toBe(true);
   });
 
   it("repairs unarchived subagent descendants of archived sessions on load", async () => {

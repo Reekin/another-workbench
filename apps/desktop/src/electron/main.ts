@@ -42,6 +42,8 @@ import {
   findMainSessionInPath
 } from "./agent-completion-notification.js";
 
+app.setName("Another Workbench");
+
 const currentFilePath = fileURLToPath(import.meta.url);
 const currentDir = dirname(currentFilePath);
 const appRoot = resolve(currentDir, "..");
@@ -563,6 +565,21 @@ const boot = async (): Promise<void> => {
     app.exit(exitCode);
     return;
   }
+  if (!app.requestSingleInstanceLock()) {
+    app.quit();
+    return;
+  }
+  app.on("second-instance", () => {
+    const [existingWindow] = BrowserWindow.getAllWindows();
+    if (!existingWindow || existingWindow.isDestroyed()) {
+      return;
+    }
+    if (existingWindow.isMinimized()) {
+      existingWindow.restore();
+    }
+    existingWindow.show();
+    existingWindow.focus();
+  });
   await app.whenReady();
   app.setAppUserModelId("com.another-workbench.desktop");
   const appIconPath = resolveAppIconPath();

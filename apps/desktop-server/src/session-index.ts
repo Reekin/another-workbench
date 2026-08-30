@@ -3,7 +3,11 @@ import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import type { ChatSession, SessionRelationType } from "@another-workbench/shared";
-import { loadJsonFile, saveJsonFile } from "./persistence-store.js";
+import {
+  loadJsonFile,
+  PersistentStoreCorruptionError,
+  saveJsonFile
+} from "./persistence-store.js";
 
 const unreadStateSchema = z.enum(["read", "unread_completed"]);
 
@@ -611,24 +615,21 @@ export class SessionIndexStore {
       relations: []
     });
     const parsed = sessionIndexDocumentSchema.safeParse(loaded.value);
-    const normalized = parsed.success
-      ? archiveSubagentSessions(
-          {
-            ...parsed.data,
-            entries: sortEntries(parsed.data.entries)
-          },
-          parsed.data.entries
-            .filter((entry) => entry.archivedAt)
-            .map((entry) => entry.sessionId)
-        )
-      : undefined;
-    this.document = normalized?.value ?? {
-          version: 1,
-          entries: [],
-          relations: []
-        };
+    if (!parsed.success) {
+      throw new PersistentStoreCorruptionError(this.filePath, parsed.error);
+    }
+    const normalized = archiveSubagentSessions(
+      {
+        ...parsed.data,
+        entries: sortEntries(parsed.data.entries)
+      },
+      parsed.data.entries
+        .filter((entry) => entry.archivedAt)
+        .map((entry) => entry.sessionId)
+    );
+    this.document = normalized.value;
     this.revision += 1;
-    if (loaded.corrupted || !parsed.success || normalized?.changed) {
+    if (normalized.changed) {
       await this.persist();
     }
   }

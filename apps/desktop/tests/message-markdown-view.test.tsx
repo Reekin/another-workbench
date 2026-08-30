@@ -181,7 +181,7 @@ describe("MessageMarkdownView", () => {
           turnId: "turn-1",
           role: "assistant",
           kind: "markdown",
-          text: "[README.md](I:/repo/README.md:3)",
+          text: "[recovery](I:\\gpt-projects\\agent-wrappers\\another-workbench\\recovery\\awb-session-index-20260830)",
           actor: {
             participantId: "participant-1",
             engineId: "agent-codex"
@@ -193,9 +193,9 @@ describe("MessageMarkdownView", () => {
     );
 
     expect(html).toContain('class="awb-message__unsupported-link"');
-    expect(html).toContain(">README.md<");
+    expect(html).toContain(">recovery<");
     expect(html).toContain(
-      '<code class="awb-message__unsupported-link-target">I:/repo/README.md:3</code>'
+      '<code class="awb-message__unsupported-link-target">I:\\gpt-projects\\agent-wrappers\\another-workbench\\recovery\\awb-session-index-20260830</code>'
     );
     expect(html).not.toContain("href=");
   });

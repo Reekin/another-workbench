@@ -51,7 +51,7 @@ const protectUnsupportedLinkTargets = () => {
     if (typeof href === "string" && href.length > 0 && !isExternalLinkHref(href)) {
       node.properties = {
         ...node.properties,
-        href: `${unsupportedLinkHrefPrefix}${encodeURIComponent(href)}`
+        href: `${unsupportedLinkHrefPrefix}${encodeURIComponent(decodeURI(href))}`
       };
     }
     node.children?.forEach(visit);

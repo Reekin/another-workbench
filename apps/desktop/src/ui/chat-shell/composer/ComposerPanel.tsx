@@ -14,6 +14,7 @@ import type {
   ContextUsage,
   EngineModelRpc,
   EngineReasoningOptionRpc,
+  EngineServiceTierRpc,
   RuntimeInteraction,
   ThreadGoal
 } from "@another-workbench/shared";
@@ -113,6 +114,7 @@ export const ComposerPanel = ({
   models = [],
   selectedExecution,
   reasoningOptions = [],
+  serviceTiers = [],
   isExecutionLoading = false,
   isExecutionDisabled = false,
   hasComposedInput,
@@ -137,6 +139,7 @@ export const ComposerPanel = ({
   onStop,
   onModelChange,
   onReasoningOptionChange,
+  onServiceTierChange,
   onSuggestionHover,
   onSuggestionSelect,
   onEditQueuedMessage,
@@ -166,6 +169,7 @@ export const ComposerPanel = ({
   models: EngineModelRpc[];
   selectedExecution?: ComposerExecutionSelection;
   reasoningOptions: EngineReasoningOptionRpc[];
+  serviceTiers: EngineServiceTierRpc[];
   isExecutionLoading: boolean;
   isExecutionDisabled: boolean;
   hasComposedInput: boolean;
@@ -192,6 +196,7 @@ export const ComposerPanel = ({
   onStop: () => Promise<void>;
   onModelChange: (modelId: string) => void;
   onReasoningOptionChange: (reasoningOptionId: string) => void;
+  onServiceTierChange: (serviceTierId: string) => void;
   onSuggestionHover: (index: number) => void;
   onSuggestionSelect: (index: number) => Promise<void>;
   onEditQueuedMessage: (messageId: string) => void;
@@ -465,6 +470,28 @@ export const ComposerPanel = ({
                   {reasoningOptions.map((option) => (
                     <option key={option.optionId} value={option.optionId}>
                       {option.displayName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {serviceTiers.length > 0 ? (
+              <label>
+                <span>Speed</span>
+                <select
+                  aria-label="Speed"
+                  value={selectedExecution?.serviceTierId ?? ""}
+                  onChange={(event) => onServiceTierChange(event.target.value)}
+                  disabled={isExecutionDisabled}
+                >
+                  <option value="">Standard</option>
+                  {serviceTiers.map((tier) => (
+                    <option
+                      key={tier.tierId}
+                      value={tier.tierId}
+                      title={tier.description}
+                    >
+                      {tier.displayName}
                     </option>
                   ))}
                 </select>

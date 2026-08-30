@@ -160,7 +160,8 @@ const resolveLastExecutionPreference = (
   profile?.modelId
     ? {
         modelId: profile.modelId,
-        reasoningOptionId: profile.reasoningOptionId
+        reasoningOptionId: profile.reasoningOptionId,
+        serviceTierId: profile.serviceTierId
       }
     : undefined;
 const weekDayOptions = [

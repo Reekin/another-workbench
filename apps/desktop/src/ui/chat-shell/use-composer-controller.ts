@@ -231,6 +231,7 @@ export const resolveComposerModels = (input: {
         reasoningOptions: (
           input.customModelReasoningOptionIds?.[modelId] ?? []
         ).map((optionId) => ({ optionId, displayName: optionId })),
+        serviceTiers: [],
         isDefault: false
       }
   );
@@ -240,6 +241,31 @@ export const snapshotComposerExecution = (
   execution?: ComposerExecutionSelection
 ): ComposerExecutionSelection | undefined =>
   execution ? { ...execution } : undefined;
+
+const resolveComposerServiceTierId = (
+  model: EngineModelRpc,
+  preferredServiceTierId: string | null | undefined
+): string | null | undefined => {
+  if (model.serviceTiers.length === 0) {
+    return undefined;
+  }
+  if (preferredServiceTierId === null) {
+    return null;
+  }
+  if (
+    preferredServiceTierId &&
+    model.serviceTiers.some((tier) => tier.tierId === preferredServiceTierId)
+  ) {
+    return preferredServiceTierId;
+  }
+  if (
+    model.defaultServiceTierId &&
+    model.serviceTiers.some((tier) => tier.tierId === model.defaultServiceTierId)
+  ) {
+    return model.defaultServiceTierId;
+  }
+  return null;
+};
 
 export const resolveComposerExecutionSelection = (input: {
   models: EngineModelRpc[];
@@ -251,13 +277,18 @@ export const resolveComposerExecutionSelection = (input: {
     ? input.models.find((model) => model.modelId === input.current?.modelId)
     : undefined;
   if (currentModel && input.current) {
+    const serviceTierId = resolveComposerServiceTierId(
+      currentModel,
+      input.current.serviceTierId
+    );
     return {
       modelId: currentModel.modelId,
       reasoningOptionId: currentModel.reasoningOptions.some(
         (option) => option.optionId === input.current?.reasoningOptionId
       )
         ? input.current.reasoningOptionId
-        : undefined
+        : undefined,
+      ...(serviceTierId !== undefined ? { serviceTierId } : {})
     };
   }
   const persistedModel = input.persistedProfile?.modelId
@@ -281,13 +312,23 @@ export const resolveComposerExecutionSelection = (input: {
     : lastModel
       ? input.lastExecution?.reasoningOptionId
       : undefined;
+  const preferredServiceTierId = persistedModel
+    ? input.persistedProfile?.serviceTierId
+    : lastModel
+      ? input.lastExecution?.serviceTierId
+      : undefined;
+  const serviceTierId = resolveComposerServiceTierId(
+    defaultModel,
+    preferredServiceTierId
+  );
   return {
     modelId: defaultModel.modelId,
     reasoningOptionId: defaultModel.reasoningOptions.some(
       (option) => option.optionId === preferredReasoningOptionId
     )
       ? preferredReasoningOptionId
-      : undefined
+      : undefined,
+    ...(serviceTierId !== undefined ? { serviceTierId } : {})
   };
 };
 
@@ -370,6 +411,7 @@ export type UseComposerControllerResult = ComposerViewModel & {
   onSteerQueuedMessageNow: (messageId: string) => Promise<void>;
   onModelChange: (modelId: string) => void;
   onReasoningOptionChange: (reasoningOptionId: string) => void;
+  onServiceTierChange: (serviceTierId: string) => void;
 };
 
 export const useComposerController = (
@@ -474,6 +516,7 @@ export const useComposerController = (
   );
   const selectedModel = models.find((model) => model.modelId === execution?.modelId);
   const reasoningOptions = selectedModel?.reasoningOptions ?? [];
+  const serviceTiers = selectedModel?.serviceTiers ?? [];
   const intent = resolveComposerIntent({
     activeSession: input.activeSession,
     supportsSteer: capabilities.supportsSteer,
@@ -1452,7 +1495,19 @@ export const useComposerController = (
     }
     setExecution({
       modelId: execution.modelId,
-      reasoningOptionId: reasoningOptionId || undefined
+      reasoningOptionId: reasoningOptionId || undefined,
+      serviceTierId: execution.serviceTierId
+    });
+  };
+
+  const onServiceTierChange = (serviceTierId: string): void => {
+    if (!supportsTurnConfiguration || intent === "steer" || !execution?.modelId) {
+      return;
+    }
+    setExecution({
+      modelId: execution.modelId,
+      reasoningOptionId: execution.reasoningOptionId,
+      serviceTierId: serviceTierId || null
     });
   };
 
@@ -1467,6 +1522,7 @@ export const useComposerController = (
     models,
     execution,
     reasoningOptions,
+    serviceTiers,
     isExecutionLoading,
     isExecutionDisabled: intent === "steer" || isDispatching,
     suggestions,
@@ -1502,6 +1558,7 @@ export const useComposerController = (
     onSendQueuedMessageNow,
     onSteerQueuedMessageNow,
     onModelChange,
-    onReasoningOptionChange
+    onReasoningOptionChange,
+    onServiceTierChange
   };
 };

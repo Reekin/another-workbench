@@ -117,6 +117,7 @@ const demoModelCatalog: EngineModelCatalogRpc = {
         { optionId: "xhigh", displayName: "Extra high" }
       ],
       defaultReasoningOptionId: "medium",
+      serviceTiers: [],
       isDefault: true
     },
     {
@@ -129,6 +130,7 @@ const demoModelCatalog: EngineModelCatalogRpc = {
         { optionId: "high", displayName: "High" }
       ],
       defaultReasoningOptionId: "low",
+      serviceTiers: [],
       isDefault: false
     }
   ]
@@ -400,7 +402,8 @@ export const createDemoWorkbenchShellService = (
             ...demoModelCatalog,
             models: demoModelCatalog.models.map((model) => ({
               ...model,
-              reasoningOptions: model.reasoningOptions.map((option) => ({ ...option }))
+              reasoningOptions: model.reasoningOptions.map((option) => ({ ...option })),
+              serviceTiers: model.serviceTiers.map((tier) => ({ ...tier }))
             }))
           }
         : { engineId, models: [] },

@@ -47,15 +47,24 @@ describe("ComposerPanel", () => {
             reasoningOptions: [
               { optionId: "xhigh", displayName: "Extra high" }
             ],
+            serviceTiers: [
+              { tierId: "priority", displayName: "Fast" },
+              { tierId: "ultrafast", displayName: "Ultrafast" }
+            ],
             isDefault: true
           }
         ]}
         selectedExecution={{
           modelId: "gpt-5.5-codex",
-          reasoningOptionId: "xhigh"
+          reasoningOptionId: "xhigh",
+          serviceTierId: "ultrafast"
         }}
         reasoningOptions={[
           { optionId: "xhigh", displayName: "Extra high" }
+        ]}
+        serviceTiers={[
+          { tierId: "priority", displayName: "Fast" },
+          { tierId: "ultrafast", displayName: "Ultrafast" }
         ]}
         isExecutionLoading={false}
         isExecutionDisabled={true}
@@ -80,6 +89,7 @@ describe("ComposerPanel", () => {
         onStop={async () => undefined}
         onModelChange={() => undefined}
         onReasoningOptionChange={() => undefined}
+        onServiceTierChange={() => undefined}
         onSuggestionHover={() => undefined}
         onSuggestionSelect={async () => undefined}
         onEditQueuedMessage={() => undefined}
@@ -92,7 +102,10 @@ describe("ComposerPanel", () => {
     expect(html).toContain('aria-label="Model"');
     expect(html).toContain('value="gpt-5.5-codex" selected=""');
     expect(html).toContain('value="xhigh" selected=""');
-    expect((html.match(/disabled=""/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(html).toContain('aria-label="Speed"');
+    expect(html).toContain('value="ultrafast" selected=""');
+    expect(html).toContain(">Standard<");
+    expect((html.match(/disabled=""/g) ?? []).length).toBeGreaterThanOrEqual(3);
     expect(html).toContain(">Default<");
     expect(html).toContain(">Steer<");
     expect(html).not.toContain(">Queue<");

@@ -128,6 +128,7 @@ export const ComposerContainer = ({
       models={composer.models}
       selectedExecution={composer.execution}
       reasoningOptions={composer.reasoningOptions}
+      serviceTiers={composer.serviceTiers}
       isExecutionLoading={composer.isExecutionLoading}
       isExecutionDisabled={composer.isExecutionDisabled}
       hasComposedInput={composer.hasComposedInput}
@@ -152,6 +153,7 @@ export const ComposerContainer = ({
       onStop={composer.onStop}
       onModelChange={composer.onModelChange}
       onReasoningOptionChange={composer.onReasoningOptionChange}
+      onServiceTierChange={composer.onServiceTierChange}
       onSuggestionHover={composer.onSuggestionHover}
       onSuggestionSelect={async (index) => {
         const item = composer.suggestions?.items[index];

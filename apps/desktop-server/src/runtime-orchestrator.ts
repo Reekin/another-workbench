@@ -277,7 +277,8 @@ export class RuntimeOrchestrator {
                 ...currentProfile,
                 modelId: envelope.command.execution.modelId,
                 reasoningOptionId:
-                  envelope.command.execution.reasoningOptionId
+                  envelope.command.execution.reasoningOptionId,
+                serviceTierId: envelope.command.execution.serviceTierId
               });
             }
             if (nextMetadata !== session.metadata) {

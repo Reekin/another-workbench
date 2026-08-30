@@ -1509,6 +1509,12 @@ export class CodexAppServerRuntimePort
             description: option.description || undefined
           })),
           defaultReasoningOptionId: model.defaultReasoningEffort,
+          serviceTiers: model.serviceTiers.map((tier) => ({
+            tierId: tier.id,
+            displayName: tier.name,
+            description: tier.description || undefined
+          })),
+          defaultServiceTierId: model.defaultServiceTier ?? undefined,
           isDefault: model.isDefault
         });
       }
@@ -1572,6 +1578,13 @@ export class CodexAppServerRuntimePort
       execution.reasoningOptionId.trim()
         ? execution.reasoningOptionId
         : undefined;
+    const serviceTier =
+      execution?.serviceTierId === null
+        ? null
+        : typeof execution?.serviceTierId === "string" &&
+            execution.serviceTierId.trim()
+          ? execution.serviceTierId
+          : undefined;
     let threadId = await this.ensureThreadForSession(
       sessionId,
       cwd,
@@ -1587,7 +1600,8 @@ export class CodexAppServerRuntimePort
           threadId: targetThreadId,
           input,
           ...(model ? { model } : {}),
-          ...(effort ? { effort } : {})
+          ...(effort ? { effort } : {}),
+          ...(serviceTier !== undefined ? { serviceTier } : {})
         };
         return (await this.rpc(
           "turn/start",

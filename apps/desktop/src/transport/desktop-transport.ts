@@ -68,6 +68,8 @@ export type SessionCreateInput = {
   conversationId?: string;
   workspaceId?: string;
   sessionProfile?: {
+    reasoningOptionId?: string;
+    serviceTierId?: string | null;
     modeId?: string;
     modelId?: string;
   };
@@ -99,6 +101,7 @@ export type ChatSendInput = {
   messageId?: string;
   attachments?: Attachment[];
   execution?: {
+    serviceTierId?: string | null;
     modelId?: string;
     reasoningOptionId?: string;
   };
@@ -322,6 +325,8 @@ export type DesktopTransport = {
       engineId: string;
       conversationId?: string;
       sessionProfile?: {
+        reasoningOptionId?: string;
+        serviceTierId?: string | null;
         modeId?: string;
         modelId?: string;
       };

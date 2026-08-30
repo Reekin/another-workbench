@@ -40,7 +40,8 @@ const zAttachmentSchema = z.object({
 
 export const zTurnExecutionOptionsSchema = z.object({
   modelId: z.string().min(1).optional(),
-  reasoningOptionId: z.string().min(1).optional()
+  reasoningOptionId: z.string().min(1).optional(),
+  serviceTierId: z.string().min(1).nullable().optional()
 });
 
 const zInitializeCommand = z.object({

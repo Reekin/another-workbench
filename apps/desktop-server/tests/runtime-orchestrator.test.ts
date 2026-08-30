@@ -814,7 +814,8 @@ describe("RuntimeOrchestrator", () => {
         attachments: [],
         execution: {
           modelId: "gpt-5.4-mini",
-          reasoningOptionId: "high"
+          reasoningOptionId: "high",
+          serviceTierId: null
         }
       }
     });
@@ -830,7 +831,8 @@ describe("RuntimeOrchestrator", () => {
     ).toEqual({
       engineId: "codex",
       modelId: "gpt-5.4-mini",
-      reasoningOptionId: "high"
+      reasoningOptionId: "high",
+      serviceTierId: null
     });
     expect(syncSession).toHaveBeenCalledWith("session-new");
   });

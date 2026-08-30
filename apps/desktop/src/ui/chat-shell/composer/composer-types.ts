@@ -14,6 +14,7 @@ export type ComposerIntent = "send" | "steer" | "queue";
 export type ComposerExecutionSelection = {
   modelId: string;
   reasoningOptionId?: string;
+  serviceTierId?: string | null;
 };
 
 export type ComposerSkillReference = {
@@ -83,6 +84,7 @@ export type ComposerViewModel = {
   models: EngineModelRpc[];
   execution?: ComposerExecutionSelection;
   reasoningOptions: EngineModelRpc["reasoningOptions"];
+  serviceTiers: EngineModelRpc["serviceTiers"];
   isExecutionLoading: boolean;
   isExecutionDisabled: boolean;
   suggestions: ComposerSuggestionState | undefined;

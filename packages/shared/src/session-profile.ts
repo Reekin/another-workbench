@@ -8,13 +8,15 @@ export const zSessionExecutionProfileSchema = z.object({
   engineId: z.string().min(1),
   modeId: z.string().min(1).optional(),
   modelId: z.string().min(1).optional(),
-  reasoningOptionId: z.string().min(1).optional()
+  reasoningOptionId: z.string().min(1).optional(),
+  serviceTierId: z.string().min(1).nullable().optional()
 });
 
 export const zSessionExecutionProfileInputSchema = z.object({
   modeId: z.string().min(1).optional(),
   modelId: z.string().min(1).optional(),
-  reasoningOptionId: z.string().min(1).optional()
+  reasoningOptionId: z.string().min(1).optional(),
+  serviceTierId: z.string().min(1).nullable().optional()
 });
 
 export type SessionExecutionProfile = z.infer<

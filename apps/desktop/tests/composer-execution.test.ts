@@ -14,12 +14,25 @@ const catalog = {
       reasoningOptions: [
         { optionId: "xhigh", displayName: "Extra high" }
       ],
+      serviceTiers: [
+        {
+          tierId: "priority",
+          displayName: "Fast",
+          description: "1.5x speed, increased usage"
+        },
+        {
+          tierId: "ultrafast",
+          displayName: "Ultrafast",
+          description: "5x speed, increased usage"
+        }
+      ],
       isDefault: true
     },
     {
       modelId: "gpt-5.4-mini",
       displayName: "GPT-5.4 Mini",
       reasoningOptions: [],
+      serviceTiers: [],
       isDefault: false
     }
   ]
@@ -43,6 +56,7 @@ describe("composer execution configuration", () => {
         modelId: "future-provider-model",
         displayName: "future-provider-model",
         reasoningOptions: [],
+        serviceTiers: [],
         isDefault: false
       }
     ]);
@@ -65,6 +79,7 @@ describe("composer execution configuration", () => {
           { optionId: "low", displayName: "low" },
           { optionId: "extra", displayName: "extra" }
         ],
+        serviceTiers: [],
         isDefault: false
       }
     ]);
@@ -73,7 +88,8 @@ describe("composer execution configuration", () => {
   it("snapshots provider-native execution IDs for queued messages", () => {
     const selection = {
       modelId: "gpt-5.5-codex",
-      reasoningOptionId: "xhigh"
+      reasoningOptionId: "xhigh",
+      serviceTierId: "ultrafast"
     };
     const queuedSnapshot = snapshotComposerExecution(selection);
 
@@ -88,12 +104,14 @@ describe("composer execution configuration", () => {
         persistedProfile: {
           engineId: "codex",
           modelId: "gpt-5.5-codex",
-          reasoningOptionId: "xhigh"
+          reasoningOptionId: "xhigh",
+          serviceTierId: "priority"
         }
       })
     ).toEqual({
       modelId: "gpt-5.5-codex",
-      reasoningOptionId: "xhigh"
+      reasoningOptionId: "xhigh",
+      serviceTierId: "priority"
     });
   });
 
@@ -127,7 +145,8 @@ describe("composer execution configuration", () => {
       })
     ).toEqual({
       modelId: "gpt-5.5-codex",
-      reasoningOptionId: "xhigh"
+      reasoningOptionId: "xhigh",
+      serviceTierId: null
     });
   });
 
@@ -160,7 +179,24 @@ describe("composer execution configuration", () => {
       })
     ).toEqual({
       modelId: "gpt-5.5-codex",
-      reasoningOptionId: undefined
+      reasoningOptionId: undefined,
+      serviceTierId: null
+    });
+  });
+
+  it("drops stale speed tiers and resets the model to standard speed", () => {
+    expect(
+      resolveComposerExecutionSelection({
+        models: [...catalog.models],
+        current: {
+          modelId: "gpt-5.5-codex",
+          serviceTierId: "unsupported-tier"
+        }
+      })
+    ).toEqual({
+      modelId: "gpt-5.5-codex",
+      reasoningOptionId: undefined,
+      serviceTierId: null
     });
   });
 });

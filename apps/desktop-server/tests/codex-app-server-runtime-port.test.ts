@@ -362,6 +362,19 @@ describe("Codex app-server runtime port", () => {
               { reasoningEffort: "xhigh", description: "Deep reasoning" }
             ],
             defaultReasoningEffort: "xhigh",
+            serviceTiers: [
+              {
+                id: "priority",
+                name: "Fast",
+                description: "1.5x speed, increased usage"
+              },
+              {
+                id: "ultrafast",
+                name: "Ultrafast",
+                description: "5x speed, increased usage"
+              }
+            ],
+            defaultServiceTier: null,
             isDefault: true
           },
           {
@@ -371,6 +384,8 @@ describe("Codex app-server runtime port", () => {
             hidden: true,
             supportedReasoningEfforts: [],
             defaultReasoningEffort: "medium",
+            serviceTiers: [],
+            defaultServiceTier: null,
             isDefault: false
           }
         ],
@@ -387,6 +402,8 @@ describe("Codex app-server runtime port", () => {
               { reasoningEffort: "low", description: "Faster" }
             ],
             defaultReasoningEffort: "low",
+            serviceTiers: [],
+            defaultServiceTier: null,
             isDefault: false
           }
         ],
@@ -408,6 +425,18 @@ describe("Codex app-server runtime port", () => {
             }
           ],
           defaultReasoningOptionId: "xhigh",
+          serviceTiers: [
+            {
+              tierId: "priority",
+              displayName: "Fast",
+              description: "1.5x speed, increased usage"
+            },
+            {
+              tierId: "ultrafast",
+              displayName: "Ultrafast",
+              description: "5x speed, increased usage"
+            }
+          ],
           isDefault: true
         },
         {
@@ -421,6 +450,7 @@ describe("Codex app-server runtime port", () => {
             }
           ],
           defaultReasoningOptionId: "low",
+          serviceTiers: [],
           isDefault: false
         }
       ]
@@ -662,7 +692,7 @@ describe("Codex app-server runtime port", () => {
     expect(rpc).not.toHaveBeenCalledWith("thread/start", expect.anything());
   });
 
-  it("passes per-turn model and reasoning overrides to turn/start", async () => {
+  it("passes per-turn model, speed, and reasoning overrides to turn/start", async () => {
     const port = createCodexAppServerRuntimePort({
       resolveConversationIdBySessionId: () => "conversation-1"
     });
@@ -688,7 +718,8 @@ describe("Codex app-server runtime port", () => {
         content: "use these options",
         execution: {
           modelId: "gpt-5.5-codex",
-          reasoningOptionId: "xhigh"
+          reasoningOptionId: "xhigh",
+          serviceTierId: "ultrafast"
         }
       }
     });
@@ -698,7 +729,50 @@ describe("Codex app-server runtime port", () => {
       expect.objectContaining({
         threadId: "provider-thread-options",
         model: "gpt-5.5-codex",
-        effort: "xhigh"
+        effort: "xhigh",
+        serviceTier: "ultrafast"
+      }),
+      {}
+    );
+  });
+
+  it("passes an explicit null service tier to return a thread to standard speed", async () => {
+    const port = createCodexAppServerRuntimePort({
+      resolveConversationIdBySessionId: () => "conversation-1"
+    });
+    vi.spyOn(port, "start").mockResolvedValue();
+    const rpc = vi
+      .spyOn(port as unknown as { rpc: (...args: unknown[]) => Promise<unknown> }, "rpc")
+      .mockImplementation(async (method) => {
+        if (method === "thread/resume") {
+          return { thread: { id: "provider-thread-standard" } };
+        }
+        if (method === "turn/start") {
+          return { turn: { id: "turn-standard" } };
+        }
+        throw new Error(`Unexpected RPC method: ${String(method)}`);
+      });
+
+    await port.request({
+      id: "turn-standard-request",
+      method: "turn/start",
+      params: {
+        sessionId: "session-standard",
+        providerSessionId: "provider-thread-standard",
+        content: "return to standard speed",
+        execution: {
+          modelId: "gpt-5.5-codex",
+          serviceTierId: null
+        }
+      }
+    });
+
+    expect(rpc).toHaveBeenLastCalledWith(
+      "turn/start",
+      expect.objectContaining({
+        threadId: "provider-thread-standard",
+        model: "gpt-5.5-codex",
+        serviceTier: null
       }),
       {}
     );

@@ -1406,7 +1406,8 @@ describe("Desktop transport facade", () => {
       content: "Use the selected model",
       execution: {
         modelId: "gpt-5.5-codex",
-        reasoningOptionId: "xhigh"
+        reasoningOptionId: "xhigh",
+        serviceTierId: "ultrafast"
       }
     });
     await transport.chat.steer({
@@ -1424,7 +1425,8 @@ describe("Desktop transport facade", () => {
       type: "sendUserMessage",
       execution: {
         modelId: "gpt-5.5-codex",
-        reasoningOptionId: "xhigh"
+        reasoningOptionId: "xhigh",
+        serviceTierId: "ultrafast"
       }
     });
     expect(steerRequest.params.envelope.command).toMatchObject({

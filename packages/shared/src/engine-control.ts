@@ -32,12 +32,20 @@ export const zEngineReasoningOptionRpcSchema = z.object({
   description: z.string().min(1).optional()
 });
 
+export const zEngineServiceTierRpcSchema = z.object({
+  tierId: z.string().min(1),
+  displayName: z.string().min(1),
+  description: z.string().min(1).optional()
+});
+
 export const zEngineModelRpcSchema = z.object({
   modelId: z.string().min(1),
   displayName: z.string().min(1),
   description: z.string().min(1).optional(),
   reasoningOptions: z.array(zEngineReasoningOptionRpcSchema).default([]),
   defaultReasoningOptionId: z.string().min(1).optional(),
+  serviceTiers: z.array(zEngineServiceTierRpcSchema).default([]),
+  defaultServiceTierId: z.string().min(1).optional(),
   isDefault: z.boolean().default(false)
 });
 
@@ -65,6 +73,9 @@ export type EngineDefinitionRpc = z.infer<typeof zEngineDefinitionRpcSchema>;
 export type EngineSharedCapabilityRpc = z.infer<typeof zEngineSharedCapabilitySchema>;
 export type EngineReasoningOptionRpc = z.infer<
   typeof zEngineReasoningOptionRpcSchema
+>;
+export type EngineServiceTierRpc = z.infer<
+  typeof zEngineServiceTierRpcSchema
 >;
 export type EngineModelRpc = z.infer<typeof zEngineModelRpcSchema>;
 export type EngineModelCatalogRpc = z.infer<typeof zEngineModelCatalogRpcSchema>;

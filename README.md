@@ -1,5 +1,5 @@
 # another-workbench
-一个主要简洁的工作台wrapper，目前主要支持codex。
+一个简洁的工作台wrapper，目前主要支持codex。
 
 # 核心feature
 它唯一值得一提的特色feature是树状对话功能，支持在不同节点之间任意跳转并在对应位置产生新的分支。

@@ -20,7 +20,7 @@ describe("composer attachment helpers", () => {
     });
     Object.defineProperty(file, "path", {
       configurable: true,
-      value: "I:\\gpt-projects\\agent-wrappers\\another-workbench\\README.md"
+      value: "D:\\workspace\\another-workbench\\README.md"
     });
 
     const attachment = await createComposerAttachment(file, "picker");
@@ -40,7 +40,7 @@ describe("composer attachment helpers", () => {
     });
     Object.defineProperty(file, "path", {
       configurable: true,
-      value: "I:\\gpt-projects\\agent-wrappers\\another-workbench\\diagram.png"
+      value: "D:\\workspace\\another-workbench\\diagram.png"
     });
 
     const attachment = await createComposerAttachment(file, "picker");

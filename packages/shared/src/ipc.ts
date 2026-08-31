@@ -22,12 +22,6 @@ import {
   zSessionExecutionProfileInputSchema,
   zSessionExecutionProfileSchema
 } from "./session-profile.js";
-import {
-  zSchedulerDateSchema,
-  zSchedulerTaskDocumentSchema,
-  zSchedulerTaskIdSchema,
-  zSchedulerTaskScheduleSchema
-} from "./scheduler.js";
 
 export const workbenchRpcMethods = [
   "engine.list",
@@ -36,9 +30,6 @@ export const workbenchRpcMethods = [
   "engine.select",
   "settings.get",
   "settings.update",
-  "scheduler.list",
-  "scheduler.upsert",
-  "scheduler.delete",
   "domain.snapshot",
   "session.list",
   "workspace.list",
@@ -613,38 +604,6 @@ const zSettingsUpdateRequestSchema = z.object({
   })
 });
 
-const zSchedulerListRequestSchema = z.object({
-  id: zRequestId,
-  method: z.literal("scheduler.list"),
-  params: z.object({
-    workspaceId: z.string().min(1)
-  })
-});
-
-const zSchedulerUpsertRequestSchema = z.object({
-  id: zRequestId,
-  method: z.literal("scheduler.upsert"),
-  params: z.object({
-    taskId: zSchedulerTaskIdSchema.optional(),
-    name: z.string().min(1),
-    enabled: z.boolean(),
-    schedule: zSchedulerTaskScheduleSchema,
-    startDate: zSchedulerDateSchema.optional(),
-    endDate: zSchedulerDateSchema.optional(),
-    workspaceId: z.string().min(1),
-    prompt: z.string().min(1)
-  })
-});
-
-const zSchedulerDeleteRequestSchema = z.object({
-  id: zRequestId,
-  method: z.literal("scheduler.delete"),
-  params: z.object({
-    taskId: zSchedulerTaskIdSchema,
-    workspaceId: z.string().min(1)
-  })
-});
-
 const zRuntimeCommandRequestSchema = z.object({
   id: zRequestId,
   method: z.literal("runtime.command"),
@@ -1016,9 +975,6 @@ export const zWorkbenchRpcRequestSchema = z.discriminatedUnion("method", [
   zEngineSelectRequestSchema,
   zSettingsGetRequestSchema,
   zSettingsUpdateRequestSchema,
-  zSchedulerListRequestSchema,
-  zSchedulerUpsertRequestSchema,
-  zSchedulerDeleteRequestSchema,
   zDomainSnapshotRequestSchema,
   zSessionListRequestSchema,
   zWorkspaceListRequestSchema,
@@ -1118,35 +1074,6 @@ const zSettingsUpdateResponseSchema = z.object({
   method: z.literal("settings.update"),
   ok: z.literal(true),
   result: zWorkbenchSettingsSchema
-});
-
-const zSchedulerListResponseSchema = z.object({
-  id: zRequestId,
-  method: z.literal("scheduler.list"),
-  ok: z.literal(true),
-  result: z.object({
-    rootPath: z.string().min(1),
-    tasks: z.array(zSchedulerTaskDocumentSchema)
-  })
-});
-
-const zSchedulerUpsertResponseSchema = z.object({
-  id: zRequestId,
-  method: z.literal("scheduler.upsert"),
-  ok: z.literal(true),
-  result: z.object({
-    task: zSchedulerTaskDocumentSchema
-  })
-});
-
-const zSchedulerDeleteResponseSchema = z.object({
-  id: zRequestId,
-  method: z.literal("scheduler.delete"),
-  ok: z.literal(true),
-  result: z.object({
-    taskId: zSchedulerTaskIdSchema,
-    deleted: z.boolean()
-  })
 });
 
 const zSessionListResponseSchema = z.object({
@@ -1539,9 +1466,6 @@ export const zWorkbenchRpcResponseSchema = z.union([
   zEngineSelectResponseSchema,
   zSettingsGetResponseSchema,
   zSettingsUpdateResponseSchema,
-  zSchedulerListResponseSchema,
-  zSchedulerUpsertResponseSchema,
-  zSchedulerDeleteResponseSchema,
   zDomainSnapshotResponseSchema,
   zSessionListResponseSchema,
   zWorkspaceListResponseSchema,

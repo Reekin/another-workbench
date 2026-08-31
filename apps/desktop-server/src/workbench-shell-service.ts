@@ -16,7 +16,6 @@ import type {
   EventEnvelope,
   ErrorLogWriteInputRpc,
   ErrorLogWriteResultRpc,
-  SchedulerTaskDocumentRpc,
   SessionExecutionProfileInput,
   SessionBrowserPageRpc,
   SessionBrowserPathRpc,
@@ -65,11 +64,6 @@ import { CodexHookActivityService } from "./engine-extensions/codex/hook-activit
 import { CodexTurnChangesService } from "./engine-extensions/codex/turn-changes-service.js";
 import { ErrorLogService } from "./error-log-service.js";
 import { DiagnosticLogService } from "./diagnostic-log-service.js";
-import { SchedulerStore } from "./scheduler-store.js";
-import {
-  SchedulerWorkbenchBridge,
-  type RunSchedulerTaskResult
-} from "./scheduler-workbench-bridge.js";
 
 const defaultSessionWindowLimit = 8;
 
@@ -173,7 +167,6 @@ export type WorkbenchShellServiceOptions = {
   turnChangeService?: TurnChangeService;
   codexHookActivityService?: CodexHookActivityService;
   codexTurnChangesService?: CodexTurnChangesService;
-  schedulerStore?: SchedulerStore;
 };
 
 export class WorkbenchShellService {
@@ -198,7 +191,6 @@ export class WorkbenchShellService {
   private readonly turnChangeService: TurnChangeService;
   private readonly codexHookActivityService: CodexHookActivityService;
   private readonly codexTurnChangesService: CodexTurnChangesService;
-  private readonly schedulerBridge: SchedulerWorkbenchBridge;
   private openSessionGeneration = 0;
   private activationQueue: Promise<void> = Promise.resolve();
   private readonly partiallyHydratedSessionIds = new Set<string>();
@@ -232,11 +224,6 @@ export class WorkbenchShellService {
       options.errorLogService ?? new ErrorLogService();
     this.diagnosticLogService =
       options.diagnosticLogService ?? new DiagnosticLogService();
-    this.schedulerBridge = new SchedulerWorkbenchBridge({
-      runtimeService: options.runtimeService,
-      schedulerStore: options.schedulerStore,
-      resolveDefaultEngineId: () => this.resolveDefaultNewSessionEngineId()
-    });
     this.turnChangeService =
       options.turnChangeService ?? new TurnChangeService();
     this.codexHookActivityService =
@@ -316,43 +303,6 @@ export class WorkbenchShellService {
     }
     return this.getSettings();
   }
-
-
-  public async listSchedulerTasks(input: {
-    workspaceId: string;
-  }): Promise<{ rootPath: string; tasks: SchedulerTaskDocumentRpc[] }> {
-    return this.schedulerBridge.listTasks(input);
-  }
-
-  public async upsertSchedulerTask(input: {
-    taskId?: string;
-    name: string;
-    enabled: boolean;
-    schedule: SchedulerTaskDocumentRpc["schedule"];
-    startDate?: string;
-    endDate?: string;
-    workspaceId: string;
-    prompt: string;
-  }): Promise<SchedulerTaskDocumentRpc> {
-    return this.schedulerBridge.upsertTask(input);
-  }
-
-  public async deleteSchedulerTask(input: {
-    taskId: string;
-    workspaceId: string;
-  }): Promise<{ taskId: string; deleted: boolean }> {
-    return this.schedulerBridge.deleteTask(input);
-  }
-
-  public async runSchedulerTask(input: {
-    taskId: string;
-    scheduledAt?: string;
-    schedulerRootPath?: string;
-    waitForCompletion?: boolean;
-  }): Promise<RunSchedulerTaskResult> {
-    return this.schedulerBridge.runTask(input);
-  }
-
 
   public async executeCommand(input: CommandEnvelope) {
     if ("sessionId" in input.command && typeof input.command.sessionId === "string") {

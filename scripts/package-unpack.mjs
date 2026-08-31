@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(currentDir, "..");
 const desktopRoot = resolve(repoRoot, "apps/desktop");
-const schedulerRoot = resolve(repoRoot, "apps/scheduler");
 const releaseRoot = resolve(repoRoot, "release");
 const outputDir = process.env.AWB_UNPACK_OUTPUT_DIR
   ? resolve(process.env.AWB_UNPACK_OUTPUT_DIR)
@@ -52,24 +51,6 @@ await copyDirectory(electronDistDir, outputDir);
 await mkdir(appDir, { recursive: true });
 await copyDirectory(resolve(desktopRoot, "dist-electron"), resolve(appDir, "dist-electron"));
 await copyDirectory(resolve(desktopRoot, "dist-web"), resolve(appDir, "dist-web"));
-
-if (process.platform === "win32") {
-  await assertExists(resolve(schedulerRoot, "dist/scheduler.exe"), "scheduler.exe");
-  await assertExists(
-    resolve(schedulerRoot, "dist/scheduler-console.exe"),
-    "scheduler-console.exe"
-  );
-  await cp(resolve(schedulerRoot, "dist/scheduler.exe"), resolve(outputDir, "scheduler.exe"), {
-    force: true
-  });
-  await cp(
-    resolve(schedulerRoot, "dist/scheduler-console.exe"),
-    resolve(outputDir, "scheduler-console.exe"),
-    {
-      force: true
-    }
-  );
-}
 
 const rootPackage = await readJson(resolve(repoRoot, "package.json"));
 const desktopPackage = await readJson(resolve(desktopRoot, "package.json"));

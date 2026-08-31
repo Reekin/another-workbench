@@ -59,7 +59,6 @@ describe("ChatShellApp header and transcript labels", () => {
   });
 
   it("labels workspace context menu actions", () => {
-    expect(workspaceMenuActionLabel("schedule")).toBe("Schedule");
     expect(workspaceMenuActionLabel("open_directory")).toBe(
       "Open workspace directory"
     );

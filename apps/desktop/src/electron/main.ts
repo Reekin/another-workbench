@@ -8,11 +8,7 @@ import {
   shell,
   Tray
 } from "electron";
-import {
-  createWorkbenchRuntimeService,
-  parseSchedulerRunHeadlessArgs,
-  runSchedulerHeadlessCli
-} from "@another-workbench/desktop-server";
+import { createWorkbenchRuntimeService } from "@another-workbench/desktop-server";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -555,15 +551,6 @@ const boot = async (): Promise<void> => {
       message: "Failed to start Electron crash reporter.",
       details: describeError(error)
     });
-  }
-  const schedulerRunArgs = parseSchedulerRunHeadlessArgs(process.argv);
-  if (schedulerRunArgs) {
-    const exitCode = await runSchedulerHeadlessCli({
-      args: schedulerRunArgs,
-      createService: createWorkbenchRuntimeService
-    });
-    app.exit(exitCode);
-    return;
   }
   if (!app.requestSingleInstanceLock()) {
     app.quit();

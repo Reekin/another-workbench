@@ -75,7 +75,7 @@ describe("attachment input helpers", () => {
       {
         type: "text",
         text:
-          "Review the attached context.\n\nAttached file: README.md\nPath: I:\\gpt-projects\\agent-wrappers\\another-workbench\\README.md",
+          "Review the attached context.\n\nAttached file: README.md\nPath: D:\\workspace\\another-workbench\\README.md",
         text_elements: []
       },
       {

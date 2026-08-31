@@ -21,8 +21,6 @@ import type {
   CodexTurnChangesUndoResultRpc,
   FileActionKindRpc,
   FileActionResultRpc,
-  SchedulerTaskDocumentRpc,
-  SchedulerTaskScheduleRpc,
   SessionBrowserPageRpc,
   SessionBrowserPathRpc,
   SkillDescriptorRpc,
@@ -234,31 +232,6 @@ export type DesktopTransport = {
       customModelReasoningOptionIdsByEngineId?: Record<string, Record<string, string[]>>;
       lastExecutionByEngineId?: Record<string, SessionExecutionProfileInput>;
     }) => Promise<WorkbenchSettingsRpc>;
-  };
-  scheduler: {
-    list: (input: {
-      workspaceId: string;
-    }) => Promise<{
-      rootPath: string;
-      tasks: SchedulerTaskDocumentRpc[];
-    }>;
-    upsert: (input: {
-      taskId?: string;
-      name: string;
-      enabled: boolean;
-      schedule: SchedulerTaskScheduleRpc;
-      startDate?: string;
-      endDate?: string;
-      workspaceId: string;
-      prompt: string;
-    }) => Promise<SchedulerTaskDocumentRpc>;
-    delete: (input: {
-      taskId: string;
-      workspaceId: string;
-    }) => Promise<{
-      taskId: string;
-      deleted: boolean;
-    }>;
   };
   domain: {
     snapshot: () => Promise<{ snapshot: DomainSnapshot; cursor?: string }>;
@@ -698,37 +671,6 @@ export const createDesktopTransport = (
     return rpc.request("settings.update", input);
   };
 
-  const requestSchedulerList = async (input: {
-    workspaceId: string;
-  }): Promise<{
-    rootPath: string;
-    tasks: SchedulerTaskDocumentRpc[];
-  }> => {
-    return rpc.request("scheduler.list", input);
-  };
-
-  const requestSchedulerUpsert = async (input: {
-    taskId?: string;
-    name: string;
-    enabled: boolean;
-    schedule: SchedulerTaskScheduleRpc;
-    startDate?: string;
-    endDate?: string;
-    workspaceId: string;
-    prompt: string;
-  }): Promise<SchedulerTaskDocumentRpc> => {
-    const result = await rpc.request("scheduler.upsert", input);
-    return result.task;
-  };
-
-  const requestSchedulerDelete = async (input: {
-    taskId: string;
-    workspaceId: string;
-  }): Promise<{ taskId: string; deleted: boolean }> => {
-    return rpc.request("scheduler.delete", input);
-  };
-
-
   const sendCommand = async (command: Command): Promise<CommandReceipt> => {
     const requestId = createId();
     const response = await preloadApi.request({
@@ -816,11 +758,6 @@ export const createDesktopTransport = (
     settings: {
       get: requestSettingsGet,
       update: requestSettingsUpdate
-    },
-    scheduler: {
-      list: requestSchedulerList,
-      upsert: requestSchedulerUpsert,
-      delete: requestSchedulerDelete
     },
     domain: {
       snapshot: requestDomainSnapshot

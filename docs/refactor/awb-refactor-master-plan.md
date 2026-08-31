@@ -46,7 +46,7 @@ Electron Main / Headless Host
   │    ├─ LifecycleGate
   │    ├─ ChildProcessSupervisor
   │    └─ JsonRpcLineClient
-  └─ file-backed catalog/settings/scheduler persistence
+  └─ file-backed catalog/settings persistence
 
 Optional remote relay
   └─ only forwards versioned RPC/event envelopes
@@ -786,7 +786,7 @@ task_4_6: task_4_2 task_1_5
 - `remote-protocol.ts` 不再有 50+ case switch。
 - generic client 自动取得 params/result 类型。
 - request params 和 result 都按 method schema 校验。
-- Electron local、remote relay、scheduler/headless 调用均通过。
+- Electron local、remote relay 和 headless 调用均通过。
 - 协议 envelope 带 `protocolVersion`。
 
 ### 目标 contract
@@ -834,7 +834,6 @@ type RpcResponseEnvelope =
 - 新目录：
   - `packages/shared/src/rpc/contracts/engine.ts`
   - `settings.ts`
-  - `scheduler.ts`
   - `sessions.ts`
   - `chat.ts`
   - `files.ts`
@@ -1103,7 +1102,6 @@ task_6_6: task_5_2 task_6_2
   - `features/sessions/handlers.ts`
   - `features/chat/handlers.ts`
   - `features/files/handlers.ts`
-  - `features/scheduler/handlers.ts`
   - `features/diagnostics/handlers.ts`
 - 不是简单搬方法：
   - 每个 handler 只注入需要的 service。
@@ -1132,7 +1130,6 @@ task_6_6: task_5_2 task_6_2
   - `app/ChatWorkbench.tsx`
   - `features/session-browser/`
   - `features/transcript/`
-  - `features/scheduler/`
   - `features/engine-settings/`
 - 每个 feature 暴露 controller model + view。
 - 目标不是追求更小文件，而是顶层不再拥有各 feature 的异步 workflow。
@@ -1196,7 +1193,7 @@ task_7_5: task_7_3
 - architecture checks 基于依赖/AST，不再只靠字符串正则。
 - build/release/tsbuildinfo 不作为源代码跟踪。
 - 根仓库只保留一个 pnpm lockfile。
-- 最终 full tests、Codex/ACP smoke、remote relay smoke、scheduler headless、GUI user acceptance 全部通过。
+- 最终 full tests、Codex/ACP smoke、remote relay smoke 和 GUI user acceptance 全部通过。
 
 ### task_8_1：删除 legacy adapters
 
@@ -1344,7 +1341,6 @@ task_7_5: task_7_3
 | Snapshot/replay gap | 强制 snapshot fallback |
 | Archive/fork/dispose | domain、index、relations 一致 |
 | Remote relay | 同一 contract、错误码、subscription |
-| Scheduler headless | 显式 engine、真实退出码 |
 
 ---
 

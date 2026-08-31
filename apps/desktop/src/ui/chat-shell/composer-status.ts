@@ -19,8 +19,7 @@ export type ComposerStatusNotice = {
     | "session-action"
     | "chat-tree"
     | "delegation"
-    | "settings"
-    | "scheduler";
+    | "settings";
 };
 
 export const statusNoticeErrorDetails = (

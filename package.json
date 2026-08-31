@@ -6,7 +6,7 @@
   "packageManager": "pnpm@10.28.2",
   "scripts": {
     "build": "pnpm -r build",
-    "package:unpack": "pnpm build && pnpm --filter @another-workbench/scheduler build:console && pnpm exec node ./scripts/package-unpack.mjs",
+    "package:unpack": "pnpm build && pnpm exec node ./scripts/package-unpack.mjs",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm run check:architecture && pnpm -r lint",
     "check:architecture": "pnpm exec tsx ./scripts/check-architecture-invariants.ts",

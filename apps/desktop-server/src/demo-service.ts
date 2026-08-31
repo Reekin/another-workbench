@@ -421,17 +421,6 @@ export const createDemoWorkbenchShellService = (
         ...cloneModelSettings(settings)
       };
     },
-    listSchedulerTasks: async () => ({
-      rootPath: "demo://scheduler",
-      tasks: []
-    }),
-    upsertSchedulerTask: async () => {
-      throw new Error("Demo scheduler tasks are read-only.");
-    },
-    deleteSchedulerTask: async (taskId: string) => ({
-      taskId,
-      deleted: false
-    }),
     listWorkspaces: async () => ({
       workspaces: [demoWorkspace],
       lastActiveWorkspaceId,

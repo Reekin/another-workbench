@@ -5,9 +5,6 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "bin": {
-    "another-workbench": "./dist/scheduler-run-cli.js"
-  },
   "exports": {
     ".": "./src/index.ts",
     "./browser": "./src/browser.ts"
@@ -16,7 +13,6 @@
     "build": "pnpm exec tsc -b tsconfig.json --pretty false",
     "typecheck": "pnpm exec tsc -b tsconfig.json --pretty false",
     "lint": "pnpm exec tsc -b tsconfig.json --pretty false",
-    "scheduler:run": "tsx ./src/scheduler-run-cli.ts",
     "test": "pnpm exec vitest run"
   },
   "dependencies": {

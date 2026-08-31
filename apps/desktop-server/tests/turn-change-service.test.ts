@@ -17,7 +17,7 @@ describe("TurnChangeService", () => {
 
     await expect(
       service.undoTurnChanges({
-        cwd: "I:\\gpt-projects\\agent-wrappers\\another-workbench",
+        cwd: "D:\\workspace\\another-workbench",
         diff: `diff --git a/D:/workspace/another-workbench/apps/desktop/abc.txt b/D:/workspace/another-workbench/apps/desktop/abc.txt
 --- a/D:/workspace/another-workbench/apps/desktop/abc.txt
 +++ b/D:/workspace/another-workbench/apps/desktop/abc.txt
@@ -33,7 +33,7 @@ describe("TurnChangeService", () => {
     });
 
     expect(runGitApply).toHaveBeenNthCalledWith(1, {
-      cwd: "I:\\gpt-projects\\agent-wrappers\\another-workbench",
+      cwd: "D:\\workspace\\another-workbench",
       reverse: true,
       check: true,
       diff: `diff --git a/apps/desktop/abc.txt b/apps/desktop/abc.txt

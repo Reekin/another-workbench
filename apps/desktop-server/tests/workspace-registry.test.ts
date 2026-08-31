@@ -225,15 +225,15 @@ describe("WorkspaceRegistryService", () => {
       absolutePath: "D:/workspace"
     });
     const second = await service.registerWorkspace({
-      absolutePath: "\\\\?\\I:\\gpt-projects\\agent-wrappers",
-      label: "Agent Wrappers"
+      absolutePath: "\\\\?\\D:\\workspace",
+      label: "Workspace"
     });
 
     expect(second.workspaceId).toBe(first.workspaceId);
     expect(service.listWorkspaces()).toHaveLength(1);
     expect(service.getWorkspace(first.workspaceId)).toMatchObject({
-      absolutePath: "I:\\gpt-projects\\agent-wrappers",
-      label: "Agent Wrappers"
+      absolutePath: "D:\\workspace",
+      label: "Workspace"
     });
   });
 

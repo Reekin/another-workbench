@@ -13,7 +13,7 @@
 
 ## 用户可感知结果
 
-无新功能；现有 reload、replay、provider identity、scheduler engine 语义不回退。
+无新功能；现有 reload、replay 和 provider identity 语义不回退。
 
 ## 通过标准
 
@@ -617,7 +617,7 @@ local/remote 的错误、校验和结果一致。
 
 ## 验收手段
 
-contract parity tests、Electron IPC、remote relay、headless/scheduler smoke。
+contract parity tests、Electron IPC、remote relay 和 headless smoke。
 
 ## 伪完成风险
 

@@ -18,7 +18,6 @@ awb会按顺序从以下路径中寻找`codex.exe`：
 - CODEX_BIN
 - CODEX_PATH
 - PATH
-
 ## Commands
 - `pnpm install`
 - `pnpm typecheck`
@@ -27,3 +26,6 @@ awb会按顺序从以下路径中寻找`codex.exe`：
 - `pnpm --filter @another-workbench/desktop start`
 - `pnpm --filter @another-workbench/desktop dev:demo`
 - `pnpm smoke:codex`
+
+# 友情链接
+[LINUX DO](https://linux.do) — 新的理想型社区

@@ -366,12 +366,11 @@ export const useSessionOpenController = (input: {
       const manualOpenToken = beginManualSessionOpen();
       const requestId = ++openSessionRequestIdRef.current;
       try {
-        let visibleWorkspaceId = findSessionNode(
-          input.workspaceTree,
-          sessionId
-        )?.workspaceId;
-        if (!visibleWorkspaceId && input.ensureSessionVisible) {
-          visibleWorkspaceId = await input.ensureSessionVisible(sessionId);
+        const isSessionVisible = Boolean(
+          findSessionNode(input.workspaceTree, sessionId)
+        );
+        if (!isSessionVisible && input.ensureSessionVisible) {
+          await input.ensureSessionVisible(sessionId);
         }
         const previousSessionId = input.viewport.displayedSessionIdRef.current;
         if (previousSessionId && previousSessionId !== sessionId) {
@@ -395,10 +394,6 @@ export const useSessionOpenController = (input: {
             if (openSessionRequestIdRef.current !== requestId) {
               return;
             }
-            await input.refreshSessionBrowser({
-              mode: "workspace",
-              workspaceId: visibleWorkspaceId
-            });
             input.setOpeningSessionId(undefined);
             input.onStatusNotice(undefined);
           } catch (error) {
@@ -425,10 +420,6 @@ export const useSessionOpenController = (input: {
           if (openSessionRequestIdRef.current !== requestId) {
             return;
           }
-          await input.refreshSessionBrowser({
-            mode: "workspace",
-            workspaceId: visibleWorkspaceId
-          });
           input.setOpeningSessionId(undefined);
           input.onStatusNotice(undefined);
         } catch (error) {

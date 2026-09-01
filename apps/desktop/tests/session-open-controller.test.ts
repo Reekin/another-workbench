@@ -73,10 +73,13 @@ const flushMicrotasks = async (): Promise<void> => {
 };
 
 const renderController = (
-  displayedSessionId: string
+  displayedSessionId: string,
+  cachedSessionId?: string
 ): {
   controller: SessionOpenController;
   open: ReturnType<typeof vi.fn>;
+  activate: ReturnType<typeof vi.fn>;
+  refreshSessionBrowser: ReturnType<typeof vi.fn>;
   openRequests: Map<
     string,
     Array<ReturnType<typeof deferred<{ page: SessionWindowRpc }>>>
@@ -85,6 +88,14 @@ const renderController = (
   viewportDisplayedSessionIdRef: { current: string | undefined };
 } => {
   const store = createRendererStore();
+  if (cachedSessionId) {
+    store.hydrateSessionWindow(
+      cachedSessionId,
+      snapshotForSession(cachedSessionId),
+      "replace",
+      `cursor-${cachedSessionId}`
+    );
+  }
   const openRequests = new Map<
     string,
     Array<ReturnType<typeof deferred<{ page: SessionWindowRpc }>>>
@@ -96,7 +107,14 @@ const renderController = (
     openRequests.set(sessionId, requests);
     return request.promise;
   });
-  let sessionWindows: Record<string, SessionWindowRpc | undefined> = {};
+  const activate = vi.fn(async (sessionId: string) => ({ sessionId }));
+  const refreshSessionBrowser = vi.fn(async () => {});
+  let sessionWindows: Record<string, SessionWindowRpc | undefined> =
+    cachedSessionId
+      ? {
+          [cachedSessionId]: sessionWindowFor(cachedSessionId)
+        }
+      : {};
   const viewportDisplayedSessionIdRef: { current: string | undefined } = {
     current: displayedSessionId
   };
@@ -120,7 +138,7 @@ const renderController = (
     transport: {
       sessionBrowser: {
         open,
-        activate: vi.fn(),
+        activate,
         create: vi.fn(),
         loadOlder: vi.fn()
       }
@@ -139,7 +157,7 @@ const renderController = (
     isOpeningSelectedSession: false,
     onResetSessionSwitchState: vi.fn(),
     onStatusNotice: vi.fn() as SessionOpenControllerInput["onStatusNotice"],
-    refreshSessionBrowser: vi.fn()
+    refreshSessionBrowser
   };
 
   const Harness = (): ReturnType<typeof createElement> => {
@@ -154,6 +172,8 @@ const renderController = (
   return {
     controller,
     open,
+    activate,
+    refreshSessionBrowser,
     openRequests,
     sessionWindows: () => sessionWindows,
     viewportDisplayedSessionIdRef
@@ -166,7 +186,8 @@ describe("useSessionOpenController background refresh", () => {
       controller,
       open,
       openRequests,
-      sessionWindows
+      sessionWindows,
+      refreshSessionBrowser
     } = renderController("session-a");
 
     const manualOpen = controller.onOpenSession("session-b");
@@ -187,6 +208,22 @@ describe("useSessionOpenController background refresh", () => {
 
     expect(sessionWindows()["session-b"]?.cursor).toBe("cursor-b");
     expect(sessionWindows()["session-a"]).toBeUndefined();
+    expect(refreshSessionBrowser).not.toHaveBeenCalled();
+  });
+
+  it("opens a cached session without refreshing or resetting the browser page", async () => {
+    const {
+      controller,
+      open,
+      activate,
+      refreshSessionBrowser
+    } = renderController("session-a", "session-b");
+
+    await controller.onOpenSession("session-b");
+
+    expect(open).not.toHaveBeenCalled();
+    expect(activate).toHaveBeenCalledWith("session-b");
+    expect(refreshSessionBrowser).not.toHaveBeenCalled();
   });
 
   it("does not let an in-flight background refresh cancel or apply over a manual switch", async () => {

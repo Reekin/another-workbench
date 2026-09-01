@@ -9,3 +9,6 @@ export const WORKBENCH_IPC_MATERIALIZE_ATTACHMENT_CHANNEL =
 
 export const WORKBENCH_IPC_PICK_ENGINE_PROGRAM_CHANNEL =
   "another-workbench:desktop:pick-engine-program";
+
+export const WORKBENCH_IPC_WRITE_CLIPBOARD_TEXT_CHANNEL =
+  "another-workbench:desktop:write-clipboard-text";

@@ -40,6 +40,21 @@ export const formatSessionCopyStatusNotice = (
     ? `Copied AWB session id ${copiedText}`
     : `Copied session id ${copiedText}`;
 
+export const writeSessionActionClipboardText = async (
+  text: string
+): Promise<void> => {
+  const desktopWriter = window.workbenchDesktop?.writeClipboardText;
+  if (desktopWriter) {
+    await desktopWriter(text);
+    return;
+  }
+
+  if (!navigator.clipboard) {
+    throw new Error("Clipboard API is unavailable.");
+  }
+  await navigator.clipboard.writeText(text);
+};
+
 export const useSessionActionsController = (input: {
   transport?: DesktopTransport;
   workspaceTree: WorkspaceBrowserViewNode[];
@@ -106,12 +121,23 @@ export const useSessionActionsController = (input: {
       if (!input.transport) {
         return;
       }
+      setSessionMenu(undefined);
       try {
         const result = await input.transport.sessionBrowser.runAction({
           sessionId,
           action
         });
-        setSessionMenu(undefined);
+        if (
+          result.action === "copy_session_id" ||
+          result.action === "copy_awb_session_id"
+        ) {
+          await writeSessionActionClipboardText(result.copiedText);
+          input.onStatusNotice({
+            message: formatSessionCopyStatusNotice(result.action, result.copiedText),
+            source: "session-action"
+          });
+          return;
+        }
         const workspaceId = findSessionNode(input.workspaceTree, sessionId)?.workspaceId;
         await input.refreshSessionBrowser(
           workspaceId
@@ -123,17 +149,6 @@ export const useSessionActionsController = (input: {
                 mode: "visible"
               }
         );
-        if (
-          result.action === "copy_session_id" ||
-          result.action === "copy_awb_session_id"
-        ) {
-          await navigator.clipboard?.writeText(result.copiedText);
-          input.onStatusNotice({
-            message: formatSessionCopyStatusNotice(result.action, result.copiedText),
-            source: "session-action"
-          });
-          return;
-        }
         if (result.action === "open_rollout") {
           window.open(result.rolloutFileUrl, "_blank", "noopener,noreferrer");
           input.onStatusNotice({

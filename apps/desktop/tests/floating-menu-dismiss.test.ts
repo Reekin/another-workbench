@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   formatSessionCopyStatusNotice,
-  shouldDismissFloatingMenuForContextMenu
+  shouldDismissFloatingMenuForContextMenu,
+  writeSessionActionClipboardText
 } from "../src/ui/chat-shell/use-session-actions-controller.js";
 
 class FakeElement {
@@ -47,5 +48,39 @@ describe("floating context menu dismissal", () => {
     expect(
       formatSessionCopyStatusNotice("copy_awb_session_id", "session-1")
     ).toBe("Copied AWB session id session-1");
+  });
+
+  it("uses the focus-independent desktop clipboard when available", async () => {
+    const desktop = vi.fn(async () => {});
+    const browser = vi.fn(async () => {});
+    vi.stubGlobal("window", {
+      workbenchDesktop: {
+        writeClipboardText: desktop
+      }
+    });
+    vi.stubGlobal("navigator", {
+      clipboard: {
+        writeText: browser
+      }
+    });
+
+    await writeSessionActionClipboardText("thread-1");
+
+    expect(desktop).toHaveBeenCalledWith("thread-1");
+    expect(browser).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the browser clipboard outside the desktop host", async () => {
+    const browser = vi.fn(async () => {});
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("navigator", {
+      clipboard: {
+        writeText: browser
+      }
+    });
+
+    await writeSessionActionClipboardText("thread-1");
+
+    expect(browser).toHaveBeenCalledWith("thread-1");
   });
 });

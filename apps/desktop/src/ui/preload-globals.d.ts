@@ -20,6 +20,7 @@ declare global {
       canceled: boolean;
       path?: string;
     }>;
+    writeClipboardText: (text: string) => Promise<void>;
   };
 
   interface Window {

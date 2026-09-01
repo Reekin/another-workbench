@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   crashReporter,
   dialog,
   ipcMain,
@@ -16,7 +17,8 @@ import {
   WORKBENCH_IPC_EVENTS_PUSH_CHANNEL,
   WORKBENCH_IPC_MATERIALIZE_ATTACHMENT_CHANNEL,
   WORKBENCH_IPC_PICK_ENGINE_PROGRAM_CHANNEL,
-  WORKBENCH_IPC_REQUEST_CHANNEL
+  WORKBENCH_IPC_REQUEST_CHANNEL,
+  WORKBENCH_IPC_WRITE_CLIPBOARD_TEXT_CHANNEL
 } from "./ipc-channels.js";
 import { createWorkbenchIpcRouter } from "./workbench-ipc-router.js";
 import { materializeAttachmentDataUri } from "./attachment-materializer.js";
@@ -710,6 +712,15 @@ const boot = async (): Promise<void> => {
       };
     }
   );
+  ipcMain.handle(
+    WORKBENCH_IPC_WRITE_CLIPBOARD_TEXT_CHANNEL,
+    (_event, text: unknown) => {
+      if (typeof text !== "string") {
+        throw new TypeError("Clipboard text must be a string.");
+      }
+      clipboard.writeText(text);
+    }
+  );
 
   await loadRendererTarget(window);
 
@@ -734,6 +745,7 @@ const boot = async (): Promise<void> => {
     ipcMain.removeHandler(WORKBENCH_IPC_REQUEST_CHANNEL);
     ipcMain.removeHandler(WORKBENCH_IPC_MATERIALIZE_ATTACHMENT_CHANNEL);
     ipcMain.removeHandler(WORKBENCH_IPC_PICK_ENGINE_PROGRAM_CHANNEL);
+    ipcMain.removeHandler(WORKBENCH_IPC_WRITE_CLIPBOARD_TEXT_CHANNEL);
     void router.dispose();
   });
 };

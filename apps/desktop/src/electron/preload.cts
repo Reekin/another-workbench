@@ -15,7 +15,8 @@ import {
   WORKBENCH_IPC_EVENTS_PUSH_CHANNEL,
   WORKBENCH_IPC_MATERIALIZE_ATTACHMENT_CHANNEL,
   WORKBENCH_IPC_PICK_ENGINE_PROGRAM_CHANNEL,
-  WORKBENCH_IPC_REQUEST_CHANNEL
+  WORKBENCH_IPC_REQUEST_CHANNEL,
+  WORKBENCH_IPC_WRITE_CLIPBOARD_TEXT_CHANNEL
 } from "./ipc-channels.js";
 
 type WorkbenchLocalAssetsApi = {
@@ -36,6 +37,7 @@ type WorkbenchDesktopApi = {
     canceled: boolean;
     path?: string;
   }>;
+  writeClipboardText: (text: string) => Promise<void>;
 };
 
 const handlersBySubscriptionId = new Map<string, Set<WorkbenchEventHandler>>();
@@ -153,7 +155,10 @@ const desktopApi: WorkbenchDesktopApi = {
     (await ipcRenderer.invoke(
       WORKBENCH_IPC_PICK_ENGINE_PROGRAM_CHANNEL,
       engineId
-    )) as Awaited<ReturnType<WorkbenchDesktopApi["pickEngineProgramPath"]>>
+    )) as Awaited<ReturnType<WorkbenchDesktopApi["pickEngineProgramPath"]>>,
+  writeClipboardText: async (text) => {
+    await ipcRenderer.invoke(WORKBENCH_IPC_WRITE_CLIPBOARD_TEXT_CHANNEL, text);
+  }
 };
 
 contextBridge.exposeInMainWorld("workbench", api);

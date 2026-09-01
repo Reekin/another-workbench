@@ -4,6 +4,38 @@ on:
   push:
     branches:
       - master
+    paths:
+      - ".github/workflows/release.yml"
+      - ".npmrc"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tsconfig.json"
+      - "tsconfig.base.json"
+      - "scripts/package-unpack.mjs"
+      - "apps/desktop/package.json"
+      - "apps/desktop/tsconfig.json"
+      - "apps/desktop/vite.config.ts"
+      - "apps/desktop/index.html"
+      - "apps/desktop/demo.html"
+      - "apps/desktop/public/**"
+      - "apps/desktop/scripts/**"
+      - "apps/desktop/src/**"
+      - "apps/desktop-server/package.json"
+      - "apps/desktop-server/tsconfig.json"
+      - "apps/desktop-server/src/**"
+      - "packages/adapters/package.json"
+      - "packages/adapters/tsconfig.json"
+      - "packages/adapters/src/**"
+      - "packages/core/package.json"
+      - "packages/core/tsconfig.json"
+      - "packages/core/src/**"
+      - "packages/shared/package.json"
+      - "packages/shared/tsconfig.json"
+      - "packages/shared/src/**"
+      - "!apps/desktop/src/**/*.test.ts"
+      - "!apps/desktop-server/src/**/*.test.ts"
+      - "!packages/**/src/**/*.test.ts"
 
 permissions:
   contents: write
@@ -33,7 +65,12 @@ jobs:
 
       - name: Build unpacked application
         shell: pwsh
-        run: pnpm package:unpack
+        run: |
+          $bundle = "release/another-workbench-unpacked-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+          "AWB_UNPACK_OUTPUT_DIR=$bundle" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $env:AWB_UNPACK_OUTPUT_DIR = $bundle
+          pnpm package:unpack
 
       - name: Create release assets
         id: release
@@ -41,7 +78,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          $bundle = "release/another-workbench-unpacked"
+          $bundle = $env:AWB_UNPACK_OUTPUT_DIR
           $archive = "release/another-workbench-windows-x64.zip"
           $checksumFile = "release/SHA256SUMS.txt"
           $requiredFiles = @(

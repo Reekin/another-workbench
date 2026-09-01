@@ -105,6 +105,10 @@ import {
   type JsonRpcLineRequestPayload
 } from "./runtime/json-rpc-line-client.js";
 import { LifecycleGate } from "./runtime/lifecycle-gate.js";
+import {
+  resolveEngineProgramCommand,
+  resolveEngineSpawnCommand
+} from "./engine-program-resolution.js";
 import { createRuntimePortError } from "./runtime/runtime-lifecycle.js";
 
 type RuntimeListener = (event: CodexRuntimeEvent) => void;
@@ -193,21 +197,14 @@ export type CodexAppServerRuntimePortOptions = {
   engineId?: string;
   commandPath?: string;
   commandArgs?: string[];
+  resolveCommand?: () =>
+    | { commandPath: string; commandArgs: string[] }
+    | Promise<{ commandPath: string; commandArgs: string[] }>;
   resolveConversationIdBySessionId?: (sessionId: string) => string | undefined;
   recordTurnChanges?: (input: RecordedCodexTurnChanges) => void;
   hostTools?: HostToolRegistry;
   now?: () => string;
   writeDiagnostic?: (input: DiagnosticsWriteInputRpc) => void;
-};
-
-const resolveDefaultCodexCommandPath = (): string => {
-  const commandPath = [
-    process.env.AWB_CODEX_BIN,
-    process.env.CODEX_BIN,
-    process.env.CODEX_PATH
-  ].find((value): value is string => Boolean(value && value.trim().length > 0));
-
-  return commandPath?.trim() ?? (process.platform === "win32" ? "codex.exe" : "codex");
 };
 
 const localRequestId = (value: string | number): string => String(value);
@@ -857,8 +854,9 @@ export class CodexAppServerRuntimePort
     AdapterRuntimePort<CodexRuntimeRequest, CodexRuntimeResponse, CodexRuntimeEvent>
 {
   private readonly engineId: string;
-  private readonly commandPath: string;
-  private readonly commandArgs: string[];
+  private readonly resolveCommand: () =>
+    | { commandPath: string; commandArgs: string[] }
+    | Promise<{ commandPath: string; commandArgs: string[] }>;
   private readonly resolveConversationIdBySessionId:
     | ((sessionId: string) => string | undefined)
     | undefined;
@@ -907,8 +905,16 @@ export class CodexAppServerRuntimePort
 
   public constructor(options: CodexAppServerRuntimePortOptions = {}) {
     this.engineId = options.engineId ?? "codex";
-    this.commandPath = options.commandPath ?? resolveDefaultCodexCommandPath();
-    this.commandArgs = options.commandArgs ?? ["app-server"];
+    const defaultCommand = resolveEngineProgramCommand("codex", {
+      configuredPath: options.commandPath,
+      configuredArgs: options.commandArgs
+    });
+    this.resolveCommand =
+      options.resolveCommand ??
+      (() => ({
+        commandPath: defaultCommand.path,
+        commandArgs: defaultCommand.args
+      }));
     this.resolveConversationIdBySessionId =
       options.resolveConversationIdBySessionId;
     this.recordTurnChanges = options.recordTurnChanges;
@@ -1000,9 +1006,14 @@ export class CodexAppServerRuntimePort
     this.startConfig = config;
     this.lifecycle.setState("starting");
     try {
+      const command = await this.resolveCommand();
+      const spawnCommand = resolveEngineSpawnCommand(
+        command.commandPath,
+        command.commandArgs
+      );
       const { process: child } = await this.processSupervisor.start({
-        command: this.commandPath,
-        args: this.commandArgs,
+        command: spawnCommand.command,
+        args: spawnCommand.args,
         options: {
           env: {
             ...process.env,

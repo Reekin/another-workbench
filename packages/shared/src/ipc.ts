@@ -86,6 +86,17 @@ const zWorkspaceRecordSchema = z.object({
 
 const zWorkbenchSettingsSchema = z.object({
   defaultNewSessionEngineId: z.string().min(1).optional(),
+  engineProgramPathsByEngineId: z.record(z.string(), z.string().min(1)).default({}),
+  engineProgramResolutionsByEngineId: z
+    .record(
+      z.string(),
+      z.object({
+        path: z.string().min(1),
+        source: z.enum(["custom", "configured", "environment", "default"]),
+        environmentVariable: z.string().min(1).optional()
+      })
+    )
+    .default({}),
   allowedModelIdsByEngineId: z.record(z.string(), z.array(z.string().min(1))).default({}),
   customModelReasoningOptionIdsByEngineId: z
     .record(z.string(), z.record(z.string(), z.array(z.string().min(1))))
@@ -592,6 +603,9 @@ const zSettingsUpdateRequestSchema = z.object({
   method: z.literal("settings.update"),
   params: z.object({
     defaultNewSessionEngineId: z.string().min(1).optional(),
+    engineProgramPathsByEngineId: z
+      .record(z.string(), z.string().min(1))
+      .optional(),
     allowedModelIdsByEngineId: z
       .record(z.string(), z.array(z.string().min(1)))
       .optional(),
@@ -1520,6 +1534,8 @@ export const zWorkbenchEventPushBatchSchema = z.object({
 });
 
 export type WorkbenchSettingsRpc = z.infer<typeof zWorkbenchSettingsSchema>;
+export type EngineProgramResolutionRpc =
+  WorkbenchSettingsRpc["engineProgramResolutionsByEngineId"][string];
 export type WorkbenchEventSubscriptionFilter = z.infer<
   typeof zWorkbenchEventSubscriptionFilterSchema
 >;

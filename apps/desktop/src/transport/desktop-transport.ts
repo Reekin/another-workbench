@@ -231,6 +231,7 @@ export type DesktopTransport = {
       allowedModelIdsByEngineId?: Record<string, string[]>;
       customModelReasoningOptionIdsByEngineId?: Record<string, Record<string, string[]>>;
       lastExecutionByEngineId?: Record<string, SessionExecutionProfileInput>;
+      engineProgramPathsByEngineId?: Record<string, string>;
     }) => Promise<WorkbenchSettingsRpc>;
   };
   domain: {
@@ -664,6 +665,7 @@ export const createDesktopTransport = (
 
   const requestSettingsUpdate = async (input: {
     defaultNewSessionEngineId?: string;
+    engineProgramPathsByEngineId?: Record<string, string>;
     allowedModelIdsByEngineId?: Record<string, string[]>;
     customModelReasoningOptionIdsByEngineId?: Record<string, Record<string, string[]>>;
     lastExecutionByEngineId?: Record<string, SessionExecutionProfileInput>;

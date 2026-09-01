@@ -210,6 +210,8 @@ describe("WorkbenchShellService", () => {
 
     await expect(service.getSettings()).resolves.toEqual({
       defaultNewSessionEngineId: "pi",
+      engineProgramPathsByEngineId: {},
+      engineProgramResolutionsByEngineId: {},
       allowedModelIdsByEngineId: { codex: ["gpt-5.5-codex"] },
       customModelReasoningOptionIdsByEngineId: {
         codex: { "custom-model": ["low", "high"] }
@@ -238,6 +240,8 @@ describe("WorkbenchShellService", () => {
       })
     ).resolves.toEqual({
       defaultNewSessionEngineId: "codex",
+      engineProgramPathsByEngineId: {},
+      engineProgramResolutionsByEngineId: {},
       allowedModelIdsByEngineId: { codex: ["gpt-5.5-codex"] },
       customModelReasoningOptionIdsByEngineId: {
         codex: { "custom-model": ["low", "high"] }

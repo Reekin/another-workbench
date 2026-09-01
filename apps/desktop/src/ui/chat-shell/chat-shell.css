@@ -2526,7 +2526,23 @@ button:disabled {
 }
 
 .awb-settings__panel {
+  display: grid;
+  align-content: start;
+  gap: 14px;
   min-height: 0;
+}
+
+.awb-engine-program__controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.awb-engine-program__controls input {
+  min-width: 0;
+  font-family: var(--awb-font-mono);
+  font-size: 0.7rem;
 }
 
 .awb-settings__tabs {
@@ -2711,7 +2727,8 @@ button:disabled {
   }
 
   .awb-settings-models__unavailable > div,
-  .awb-settings-models__custom {
+  .awb-settings-models__custom,
+  .awb-engine-program__controls {
     grid-template-columns: 1fr;
   }
 }

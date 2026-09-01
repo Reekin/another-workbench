@@ -14,6 +14,7 @@ import {
 import {
   WORKBENCH_IPC_EVENTS_PUSH_CHANNEL,
   WORKBENCH_IPC_MATERIALIZE_ATTACHMENT_CHANNEL,
+  WORKBENCH_IPC_PICK_ENGINE_PROGRAM_CHANNEL,
   WORKBENCH_IPC_REQUEST_CHANNEL
 } from "./ipc-channels.js";
 
@@ -27,6 +28,13 @@ type WorkbenchLocalAssetsApi = {
     bytesWritten: number;
     displayUri: string;
     filePath: string;
+  }>;
+};
+
+type WorkbenchDesktopApi = {
+  pickEngineProgramPath: (engineId: string) => Promise<{
+    canceled: boolean;
+    path?: string;
   }>;
 };
 
@@ -140,5 +148,14 @@ const localAssetsApi: WorkbenchLocalAssetsApi = {
     )) as Awaited<ReturnType<WorkbenchLocalAssetsApi["materializeAttachmentDataUri"]>>
 };
 
+const desktopApi: WorkbenchDesktopApi = {
+  pickEngineProgramPath: async (engineId) =>
+    (await ipcRenderer.invoke(
+      WORKBENCH_IPC_PICK_ENGINE_PROGRAM_CHANNEL,
+      engineId
+    )) as Awaited<ReturnType<WorkbenchDesktopApi["pickEngineProgramPath"]>>
+};
+
 contextBridge.exposeInMainWorld("workbench", api);
 contextBridge.exposeInMainWorld("workbenchLocalAssets", localAssetsApi);
+contextBridge.exposeInMainWorld("workbenchDesktop", desktopApi);

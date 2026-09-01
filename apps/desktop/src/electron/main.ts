@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import {
   WORKBENCH_IPC_EVENTS_PUSH_CHANNEL,
   WORKBENCH_IPC_MATERIALIZE_ATTACHMENT_CHANNEL,
+  WORKBENCH_IPC_PICK_ENGINE_PROGRAM_CHANNEL,
   WORKBENCH_IPC_REQUEST_CHANNEL
 } from "./ipc-channels.js";
 import { createWorkbenchIpcRouter } from "./workbench-ipc-router.js";
@@ -696,6 +697,19 @@ const boot = async (): Promise<void> => {
       join(app.getPath("userData"), "attachments", "pasted-images")
     )
   );
+  ipcMain.handle(
+    WORKBENCH_IPC_PICK_ENGINE_PROGRAM_CHANNEL,
+    async (_event, engineId: unknown) => {
+      const result = await dialog.showOpenDialog(window, {
+        title: `Select ${String(engineId)} program`,
+        properties: ["openFile"]
+      });
+      return {
+        canceled: result.canceled,
+        path: result.filePaths[0]
+      };
+    }
+  );
 
   await loadRendererTarget(window);
 
@@ -719,6 +733,7 @@ const boot = async (): Promise<void> => {
     completionTray?.destroy();
     ipcMain.removeHandler(WORKBENCH_IPC_REQUEST_CHANNEL);
     ipcMain.removeHandler(WORKBENCH_IPC_MATERIALIZE_ATTACHMENT_CHANNEL);
+    ipcMain.removeHandler(WORKBENCH_IPC_PICK_ENGINE_PROGRAM_CHANNEL);
     void router.dispose();
   });
 };

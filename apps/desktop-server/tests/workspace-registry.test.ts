@@ -122,6 +122,12 @@ describe("WorkspaceRegistryService", () => {
     const baseDir = await createTempDir();
     const service = new WorkspaceRegistryService({ baseDir });
     await service.updateSettings({ defaultNewSessionEngineId: "codex" });
+    await service.updateSettings({
+      engineProgramPathsByEngineId: {
+        codex: " C:\\tools\\codex.exe ",
+        "pi-acp": ""
+      }
+    });
     const configured = { codex: ["gpt-5.5-codex"], "pi-acp": [] };
     const customReasoning = {
       codex: { "custom-model": ["low", "high"] }
@@ -147,6 +153,9 @@ describe("WorkspaceRegistryService", () => {
 
     expect(service.getState()).toMatchObject({
       defaultNewSessionEngineId: "codex",
+      engineProgramPathsByEngineId: {
+        codex: "C:\\tools\\codex.exe"
+      },
       allowedModelIdsByEngineId: {
         codex: ["gpt-5.5-codex"],
         "pi-acp": []

@@ -727,6 +727,19 @@ const SettingsLauncher = ({
   >({});
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const selectedSettingsEngineId =
+    draftSettings.defaultNewSessionEngineId ?? engines[0]?.engineId ?? "";
+  const selectedEngineProgramPath =
+    draftSettings.engineProgramPathsByEngineId[selectedSettingsEngineId] ?? "";
+  const savedEngineProgramPath =
+    settings.engineProgramPathsByEngineId[selectedSettingsEngineId] ?? "";
+  const selectedEngineProgramResolution =
+    settings.engineProgramResolutionsByEngineId[selectedSettingsEngineId];
+  const isClearingEngineProgramPath =
+    Boolean(savedEngineProgramPath) && !selectedEngineProgramPath;
+  const displayedEngineProgramPath = isClearingEngineProgramPath
+    ? ""
+    : selectedEngineProgramPath || selectedEngineProgramResolution?.path || "";
   const engineInspector = useMemo(
     () =>
       buildEngineInspectorViewModel({
@@ -873,6 +886,60 @@ const SettingsLauncher = ({
     });
   };
 
+  const setEngineProgramPath = (path?: string): void => {
+    if (!selectedSettingsEngineId) {
+      return;
+    }
+    setDraftSettings((current) => {
+      const paths = { ...current.engineProgramPathsByEngineId };
+      if (path) {
+        paths[selectedSettingsEngineId] = path;
+      } else {
+        delete paths[selectedSettingsEngineId];
+      }
+      return { ...current, engineProgramPathsByEngineId: paths };
+    });
+  };
+
+  const pickEngineProgramPath = async (): Promise<void> => {
+    const picker = window.workbenchDesktop?.pickEngineProgramPath;
+    if (!picker || !selectedSettingsEngineId) {
+      return;
+    }
+    try {
+      const result = await picker(selectedSettingsEngineId);
+      if (!result.canceled && result.path) {
+        setEngineProgramPath(result.path);
+      }
+    } catch (error) {
+      onStatusNotice({
+        message: `Program selection failed: ${(error as Error).message}`,
+        persistent: true,
+        source: "settings",
+        ...statusNoticeErrorDetails(error)
+      });
+    }
+  };
+
+  const engineProgramSourceLabel = (() => {
+    if (selectedEngineProgramPath) {
+      return "Custom path. This takes priority over environment variables.";
+    }
+    if (isClearingEngineProgramPath) {
+      return "Custom path will be cleared when settings are saved.";
+    }
+    if (selectedEngineProgramResolution?.source === "environment") {
+      return `Detected from ${selectedEngineProgramResolution.environmentVariable}.`;
+    }
+    if (selectedEngineProgramResolution?.source === "configured") {
+      return "Provided by the application configuration.";
+    }
+    if (selectedEngineProgramResolution) {
+      return "Using the default command from PATH.";
+    }
+    return "No program resolution is available for this engine.";
+  })();
+
   const onSave = async (): Promise<void> => {
     if (!transport) {
       return;
@@ -971,6 +1038,37 @@ const SettingsLauncher = ({
               <span>{engineInspector.integrationLabel}</span>
               <span>{engineInspector.capabilitiesLabel}</span>
               <span>{engineInspector.extensionsLabel}</span>
+            </div>
+            <div className="awb-field awb-engine-program" aria-live="polite">
+              <span>Engine program</span>
+              <div className="awb-engine-program__controls">
+                <input
+                  readOnly
+                  value={displayedEngineProgramPath}
+                  placeholder="No engine program detected"
+                  title={displayedEngineProgramPath}
+                />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={
+                    !window.workbenchDesktop ||
+                    !selectedSettingsEngineId
+                  }
+                  onClick={() => void pickEngineProgramPath()}
+                >
+                  Browse
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={!selectedEngineProgramPath}
+                  onClick={() => setEngineProgramPath()}
+                >
+                  Clear
+                </Button>
+              </div>
+              <span>{engineProgramSourceLabel}</span>
             </div>
           </div> : (
             <div className="awb-settings__panel awb-settings-models">
@@ -1161,6 +1259,11 @@ export const ChatShellApp = ({
     Record<string, EngineSurfaceRpc | undefined>
   >({});
   const [selectedEngineId, setSelectedEngineId] = useState<string>("");
+  const [engineProgramSettings, setEngineProgramSettings] = useState({
+    engineProgramPathsByEngineId: {} as WorkbenchSettingsRpc["engineProgramPathsByEngineId"],
+    engineProgramResolutionsByEngineId:
+      {} as WorkbenchSettingsRpc["engineProgramResolutionsByEngineId"]
+  });
   const [allowedModelIdsByEngineId, setAllowedModelIdsByEngineId] = useState<
     Record<string, string[]>
   >({});
@@ -1640,6 +1743,11 @@ export const ChatShellApp = ({
         if (settings.defaultNewSessionEngineId) {
           setSelectedEngineId(settings.defaultNewSessionEngineId);
         }
+        setEngineProgramSettings({
+          engineProgramPathsByEngineId: settings.engineProgramPathsByEngineId,
+          engineProgramResolutionsByEngineId:
+            settings.engineProgramResolutionsByEngineId
+        });
         setAllowedModelIdsByEngineId(settings.allowedModelIdsByEngineId ?? {});
         setCustomModelReasoningOptionIdsByEngineId(
           settings.customModelReasoningOptionIdsByEngineId ?? {}
@@ -2170,12 +2278,19 @@ export const ChatShellApp = ({
               transport={transport}
               settings={{
                 defaultNewSessionEngineId: selectedEngineId || undefined,
+                ...engineProgramSettings,
                 allowedModelIdsByEngineId,
                 customModelReasoningOptionIdsByEngineId,
                 lastExecutionByEngineId
               }}
               onSettingsSaved={(nextSettings) => {
                 setSelectedEngineId(nextSettings.defaultNewSessionEngineId ?? "");
+                setEngineProgramSettings({
+                  engineProgramPathsByEngineId:
+                    nextSettings.engineProgramPathsByEngineId,
+                  engineProgramResolutionsByEngineId:
+                    nextSettings.engineProgramResolutionsByEngineId
+                });
                 setAllowedModelIdsByEngineId(nextSettings.allowedModelIdsByEngineId);
                 setCustomModelReasoningOptionIdsByEngineId(
                   nextSettings.customModelReasoningOptionIdsByEngineId

@@ -6,3 +6,6 @@ export const WORKBENCH_IPC_EVENTS_PUSH_CHANNEL =
 
 export const WORKBENCH_IPC_MATERIALIZE_ATTACHMENT_CHANNEL =
   "another-workbench:attachments:materialize";
+
+export const WORKBENCH_IPC_PICK_ENGINE_PROGRAM_CHANNEL =
+  "another-workbench:desktop:pick-engine-program";

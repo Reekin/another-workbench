@@ -33,6 +33,10 @@ import { buildAcpPromptContent } from "./attachment-inputs.js";
 import { ChildProcessSupervisor } from "./runtime/child-process-supervisor.js";
 import { LifecycleGate } from "./runtime/lifecycle-gate.js";
 import {
+  resolveEngineProgramCommand,
+  resolveEngineSpawnCommand
+} from "./engine-program-resolution.js";
+import {
   createRuntimeNotStartedError,
   createRuntimePortError,
   createRuntimeRequestTimeoutError,
@@ -84,66 +88,12 @@ export type PiAcpRuntimePortOptions = {
   engineId?: string;
   commandPath?: string;
   commandArgs?: string[];
+  resolveCommand?: () =>
+    | { commandPath: string; commandArgs: string[] }
+    | Promise<{ commandPath: string; commandArgs: string[] }>;
   piCommandPath?: string;
   resolveConversationIdBySessionId?: (sessionId: string) => string | undefined;
   now?: () => string;
-};
-
-const defaultNpxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
-
-const quoteForWindowsShell = (value: string): string =>
-  /[\s"]/u.test(value) ? `"${value.replace(/"/gu, '""')}"` : value;
-
-const resolveSpawnCommand = (
-  commandPath: string,
-  commandArgs: string[]
-): {
-  command: string;
-  args: string[];
-  shell?: boolean;
-} => {
-  if (process.platform !== "win32") {
-    return {
-      command: commandPath,
-      args: commandArgs
-    };
-  }
-
-  if (!/\.(cmd|bat)$/iu.test(commandPath)) {
-    return {
-      command: commandPath,
-      args: commandArgs
-    };
-  }
-
-  const shellCommand = [commandPath, ...commandArgs]
-    .map((part) => quoteForWindowsShell(part))
-    .join(" ");
-
-  return {
-    command: process.env.ComSpec?.trim() || "cmd.exe",
-    args: ["/d", "/s", "/c", shellCommand]
-  };
-};
-
-const resolveDefaultPiAcpCommand = (): {
-  commandPath: string;
-  commandArgs: string[];
-} => {
-  const explicitPath =
-    process.env.AWB_PI_ACP_BIN?.trim() || process.env.PI_ACP_BIN?.trim();
-
-  if (explicitPath) {
-    return {
-      commandPath: explicitPath,
-      commandArgs: []
-    };
-  }
-
-  return {
-    commandPath: defaultNpxCommand,
-    commandArgs: ["-y", "pi-acp"]
-  };
 };
 
 const toRecord = (value: unknown): Record<string, unknown> | undefined =>
@@ -326,8 +276,9 @@ class PiAcpRuntimePort
     AdapterRuntimePort<AcpRuntimeRequest, AcpRuntimeResponse, AcpRuntimeEvent>
 {
   private readonly engineId: string;
-  private readonly commandPath: string;
-  private readonly commandArgs: string[];
+  private readonly resolveCommand: () =>
+    | { commandPath: string; commandArgs: string[] }
+    | Promise<{ commandPath: string; commandArgs: string[] }>;
   private readonly piCommandPath: string | undefined;
   private readonly resolveConversationIdBySessionId:
     | ((sessionId: string) => string | undefined)
@@ -347,10 +298,17 @@ class PiAcpRuntimePort
   private sequence = 0;
 
   public constructor(options: PiAcpRuntimePortOptions = {}) {
-    const resolvedCommand = resolveDefaultPiAcpCommand();
+    const defaultCommand = resolveEngineProgramCommand("pi-acp", {
+      configuredPath: options.commandPath,
+      configuredArgs: options.commandArgs
+    });
     this.engineId = options.engineId ?? "pi-acp";
-    this.commandPath = options.commandPath ?? resolvedCommand.commandPath;
-    this.commandArgs = options.commandArgs ?? resolvedCommand.commandArgs;
+    this.resolveCommand =
+      options.resolveCommand ??
+      (() => ({
+        commandPath: defaultCommand.path,
+        commandArgs: defaultCommand.args
+      }));
     this.piCommandPath =
       options.piCommandPath ??
       process.env.AWB_PI_BIN?.trim() ??
@@ -410,7 +368,11 @@ class PiAcpRuntimePort
     this.lifecycle.setState("starting");
     this.startConfig = config;
     try {
-      const spawnCommand = resolveSpawnCommand(this.commandPath, this.commandArgs);
+      const command = await this.resolveCommand();
+      const spawnCommand = resolveEngineSpawnCommand(
+        command.commandPath,
+        command.commandArgs
+      );
       const { process: child } = await this.processSupervisor.start({
         command: spawnCommand.command,
         args: spawnCommand.args,

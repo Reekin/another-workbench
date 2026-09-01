@@ -175,6 +175,8 @@ export const createDemoWorkbenchShellService = (
   const expandedSessionIds = new Set<string>();
   const settings: WorkbenchSettingsRpc = {
     defaultNewSessionEngineId: "acp",
+    engineProgramPathsByEngineId: {},
+    engineProgramResolutionsByEngineId: {},
     allowedModelIdsByEngineId: {},
     customModelReasoningOptionIdsByEngineId: {},
     lastExecutionByEngineId: {}

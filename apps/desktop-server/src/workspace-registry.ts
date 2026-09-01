@@ -33,6 +33,7 @@ const workspaceRegistryDocumentSchema = z.object({
   expandedSessionIds: z.array(z.string().min(1)).default([]),
   pinnedSessionIds: z.array(z.string().min(1)).default([]),
   defaultNewSessionEngineId: z.string().min(1).optional(),
+  engineProgramPathsByEngineId: z.record(z.string(), z.string().min(1)).default({}),
   allowedModelIdsByEngineId: z
     .record(z.string(), z.array(z.string().min(1)))
     .default({}),
@@ -83,6 +84,7 @@ export class WorkspaceRegistryService {
     expandedWorkspaceIds: [],
     expandedSessionIds: [],
     pinnedSessionIds: [],
+    engineProgramPathsByEngineId: {},
     allowedModelIdsByEngineId: {},
     customModelReasoningOptionIdsByEngineId: {},
     lastExecutionByEngineId: {}
@@ -120,6 +122,7 @@ export class WorkspaceRegistryService {
       expandedWorkspaceIds: [...this.document.expandedWorkspaceIds],
       expandedSessionIds: [...this.document.expandedSessionIds],
       pinnedSessionIds: [...this.document.pinnedSessionIds],
+      engineProgramPathsByEngineId: { ...this.document.engineProgramPathsByEngineId },
       ...cloneModelSettings(this.document)
     };
   }
@@ -289,6 +292,7 @@ export class WorkspaceRegistryService {
 
   public async updateSettings(input: {
     defaultNewSessionEngineId?: string;
+    engineProgramPathsByEngineId?: Record<string, string>;
     allowedModelIdsByEngineId?: Record<string, string[]>;
     customModelReasoningOptionIdsByEngineId?: Record<
       string,
@@ -301,6 +305,15 @@ export class WorkspaceRegistryService {
       ...this.document,
       ...(Object.hasOwn(input, "defaultNewSessionEngineId")
         ? { defaultNewSessionEngineId: input.defaultNewSessionEngineId }
+        : {}),
+      ...(Object.hasOwn(input, "engineProgramPathsByEngineId")
+        ? {
+            engineProgramPathsByEngineId: Object.fromEntries(
+              Object.entries(input.engineProgramPathsByEngineId ?? {})
+                .map(([engineId, path]) => [engineId, path.trim()] as const)
+                .filter(([, path]) => path.length > 0)
+            )
+          }
         : {}),
       ...(Object.hasOwn(input, "allowedModelIdsByEngineId")
         ? {
@@ -335,6 +348,7 @@ export class WorkspaceRegistryService {
       expandedWorkspaceIds: [],
       expandedSessionIds: [],
       pinnedSessionIds: [],
+      engineProgramPathsByEngineId: {},
       allowedModelIdsByEngineId: {},
       customModelReasoningOptionIdsByEngineId: {},
       lastExecutionByEngineId: {}

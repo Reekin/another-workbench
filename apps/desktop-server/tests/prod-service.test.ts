@@ -58,6 +58,44 @@ describe("prod runtime service", () => {
     }
   });
 
+  it("reports the same configured program path used by the runtime", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "awb-program-resolution-"));
+    tempDirs.push(baseDir);
+    const service = createWorkbenchRuntimeService({
+      codexCommandPath: "C:\\configured\\codex.exe",
+      piAcpCommandPath: "C:\\configured\\pi-acp.cmd",
+      persistenceBaseDir: baseDir
+    });
+    disposers.push(() => service.dispose());
+
+    await expect(service.getSettings()).resolves.toMatchObject({
+      engineProgramResolutionsByEngineId: {
+        codex: {
+          path: "C:\\configured\\codex.exe",
+          source: "configured"
+        },
+        "pi-acp": {
+          path: "C:\\configured\\pi-acp.cmd",
+          source: "configured"
+        }
+      }
+    });
+
+    await service.updateSettings({
+      engineProgramPathsByEngineId: {
+        codex: "C:\\custom\\codex.exe"
+      }
+    });
+    await expect(service.getSettings()).resolves.toMatchObject({
+      engineProgramResolutionsByEngineId: {
+        codex: {
+          path: "C:\\custom\\codex.exe",
+          source: "custom"
+        }
+      }
+    });
+  });
+
   it("uses the real Codex runtime composition instead of demo placeholder text", async () => {
     const service = createWorkbenchRuntimeService({
       codexCommandPath: process.execPath,

@@ -11,6 +11,7 @@ import type {
   DiagnosticsWriteResultRpc,
   EngineDefinitionRpc,
   EngineModelCatalogRpc,
+  EngineProgramResolutionRpc,
   EngineSharedCapabilityRpc,
   EngineSurfaceRpc,
   EventEnvelope,
@@ -64,6 +65,7 @@ import { CodexHookActivityService } from "./engine-extensions/codex/hook-activit
 import { CodexTurnChangesService } from "./engine-extensions/codex/turn-changes-service.js";
 import { ErrorLogService } from "./error-log-service.js";
 import { DiagnosticLogService } from "./diagnostic-log-service.js";
+import { resolveEngineProgramCommand } from "./engine-program-resolution.js";
 
 const defaultSessionWindowLimit = 8;
 
@@ -161,6 +163,10 @@ export type WorkbenchShellServiceOptions = {
     canceled: boolean;
     rootPath?: string;
   }>;
+  resolveEngineProgram?: (
+    engineId: string,
+    customPath?: string
+  ) => EngineProgramResolutionRpc;
   fileActionService?: FileActionService;
   errorLogService?: ErrorLogService;
   diagnosticLogService?: DiagnosticLogService;
@@ -185,6 +191,9 @@ export class WorkbenchShellService {
   private readonly pickWorkspaceDirectoryImpl:
     | (() => Promise<{ canceled: boolean; rootPath?: string }>)
     | undefined;
+  private readonly resolveEngineProgram: NonNullable<
+    WorkbenchShellServiceOptions["resolveEngineProgram"]
+  >;
   private readonly fileActionService: FileActionService;
   private readonly errorLogService: ErrorLogService;
   private readonly diagnosticLogService: DiagnosticLogService;
@@ -218,6 +227,14 @@ export class WorkbenchShellService {
     this.engineRegistry = options.engineRegistry;
     this.engineCapabilitySurface = options.engineCapabilitySurface;
     this.pickWorkspaceDirectoryImpl = options.pickWorkspaceDirectory;
+    this.resolveEngineProgram =
+      options.resolveEngineProgram ??
+      ((engineId, customPath) => {
+        const { args: _args, ...resolution } = resolveEngineProgramCommand(engineId, {
+          customPath
+        });
+        return resolution;
+      });
     this.fileActionService =
       options.fileActionService ?? new FileActionService();
     this.errorLogService =
@@ -287,6 +304,16 @@ export class WorkbenchShellService {
     const state = registry.getState();
     return {
       defaultNewSessionEngineId: state.defaultNewSessionEngineId,
+      engineProgramPathsByEngineId: { ...state.engineProgramPathsByEngineId },
+      engineProgramResolutionsByEngineId: Object.fromEntries(
+        this.listEngines().map((engine) => [
+          engine.engineId,
+          this.resolveEngineProgram(
+            engine.engineId,
+            state.engineProgramPathsByEngineId[engine.engineId]
+          )
+        ])
+      ),
       ...cloneModelSettings(state)
     };
   }

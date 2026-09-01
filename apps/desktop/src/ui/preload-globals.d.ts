@@ -15,9 +15,17 @@ declare global {
     }>;
   };
 
+  type WorkbenchDesktopApi = {
+    pickEngineProgramPath: (engineId: string) => Promise<{
+      canceled: boolean;
+      path?: string;
+    }>;
+  };
+
   interface Window {
     workbench?: WorkbenchClientApi;
     workbenchLocalAssets?: WorkbenchLocalAssetsApi;
+    workbenchDesktop?: WorkbenchDesktopApi;
     workbenchRemoteBootstrap?: RemoteWorkbenchBootstrap;
   }
 }

@@ -34,6 +34,7 @@ import {
   type SessionTitleGenerator
 } from "./title-generation-service.js";
 import type { SkillDescriptorRpc } from "@another-workbench/shared";
+import { resolveEngineProgramCommand } from "./engine-program-resolution.js";
 
 export type CreateWorkbenchRuntimeServiceOptions = {
   codexCommandPath?: string;
@@ -74,10 +75,35 @@ export const createWorkbenchRuntimeService = (
     baseDir: options.persistenceBaseDir,
     now: options.now
   });
+  const configuredPrograms = {
+    [codexAgentId]: {
+      path: options.codexCommandPath,
+      args: options.codexCommandArgs
+    },
+    [piAgentId]: {
+      path: options.piAcpCommandPath,
+      args: options.piAcpCommandArgs
+    }
+  };
+  const resolveProgram = (engineId: string, customPath?: string) => {
+    const configured = configuredPrograms[engineId as keyof typeof configuredPrograms];
+    return resolveEngineProgramCommand(engineId, {
+      customPath,
+      configuredPath: configured?.path,
+      configuredArgs: configured?.args
+    });
+  };
+  const resolveRuntimeCommand = async (engineId: string) => {
+    await workspaceRegistry.ready();
+    const command = resolveProgram(
+      engineId,
+      workspaceRegistry.getState().engineProgramPathsByEngineId[engineId]
+    );
+    return { commandPath: command.path, commandArgs: command.args };
+  };
   const codexRuntimePort = createCodexAppServerRuntimePort({
     engineId: codexAgentId,
-    commandPath: options.codexCommandPath,
-    commandArgs: options.codexCommandArgs,
+    resolveCommand: () => resolveRuntimeCommand(codexAgentId),
     resolveConversationIdBySessionId: (sessionId: string) =>
       service?.resolveConversationIdForSession(sessionId),
     recordTurnChanges: (input) => codexTurnChangesStore.record(input),
@@ -89,8 +115,7 @@ export const createWorkbenchRuntimeService = (
   });
   const piRuntimePort = createPiAcpRuntimePort({
     engineId: piAgentId,
-    commandPath: options.piAcpCommandPath,
-    commandArgs: options.piAcpCommandArgs,
+    resolveCommand: () => resolveRuntimeCommand(piAgentId),
     piCommandPath: options.piCommandPath,
     resolveConversationIdBySessionId: (sessionId: string) =>
       service?.resolveConversationIdForSession(sessionId),
@@ -297,6 +322,10 @@ export const createWorkbenchRuntimeService = (
     engineRegistry,
     engineCapabilitySurface,
     pickWorkspaceDirectory: options.pickWorkspaceDirectory,
+    resolveEngineProgram: (engineId, customPath) => {
+      const { args: _args, ...resolution } = resolveProgram(engineId, customPath);
+      return resolution;
+    },
     fileActionService: new FileActionService({
       openPath: options.openFilePath,
       revealPath: options.revealFilePath

@@ -8,9 +8,25 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(currentDir, "..");
 const desktopRoot = resolve(repoRoot, "apps/desktop");
 const releaseRoot = resolve(repoRoot, "release");
+const pad = (value) => String(value).padStart(2, "0");
+const formatLocalTimestamp = (date) =>
+  [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate())
+  ].join("")
+  + "-"
+  + [
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+    pad(date.getSeconds())
+  ].join("");
 const outputDir = process.env.AWB_UNPACK_OUTPUT_DIR
   ? resolve(process.env.AWB_UNPACK_OUTPUT_DIR)
-  : resolve(releaseRoot, "another-workbench-unpacked");
+  : resolve(
+      releaseRoot,
+      `another-workbench-unpacked-${formatLocalTimestamp(new Date())}`
+    );
 const appDir = resolve(outputDir, "resources/app");
 
 const assertInside = (parent, child) => {
@@ -45,7 +61,9 @@ const electronDistDir = dirname(electronBinaryPath);
 
 assertInside(releaseRoot, outputDir);
 await mkdir(releaseRoot, { recursive: true });
-await rm(outputDir, { recursive: true, force: true });
+if (existsSync(outputDir)) {
+  throw new Error(`Refusing to overwrite existing output directory: ${outputDir}`);
+}
 await copyDirectory(electronDistDir, outputDir);
 
 await mkdir(appDir, { recursive: true });

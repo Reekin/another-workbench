@@ -1,19 +1,10 @@
 import { z } from "zod";
-import { zWorkbenchEventPushSchema, zWorkbenchRpcRequestSchema } from "./ipc.js";
+import { zWorkbenchEventPushSchema } from "./ipc.js";
 
-export const zRemoteClientSurfaceSchema = z.enum([
-  "desktop-full",
-  "mobile-companion"
-]);
-
-export const zWorkbenchConnectionStateSchema = z.enum([
+export const zHostRelayConnectionStateSchema = z.enum([
   "idle",
-  "bootstrapping",
-  "pairing",
-  "authenticating",
   "connecting",
-  "hydrating",
-  "live",
+  "connected",
   "reconnecting",
   "degraded",
   "unauthorized",
@@ -41,97 +32,54 @@ export const zWorkbenchHostDescriptorSchema = z.object({
 });
 
 export const zWorkbenchHostCapabilitiesSchema = z.object({
-  clientSurfaces: z.array(zRemoteClientSurfaceSchema).default(["desktop-full"]),
   engineIds: z.array(z.string().min(1)).default([]),
   supportsPairing: z.boolean().default(true),
   supportsResume: z.boolean().default(true),
   supportsResourceGateway: z.boolean().default(false)
 });
 
-export const zWorkbenchConnectionSnapshotSchema = z.object({
-  state: zWorkbenchConnectionStateSchema,
+export const zHostRelayConnectionSnapshotSchema = z.object({
+  state: zHostRelayConnectionStateSchema,
   relayId: z.string().min(1).optional(),
   hostId: z.string().min(1).optional(),
   routeId: z.string().min(1).optional(),
-  authenticated: z.boolean().default(false),
-  authorizedClientId: z.string().min(1).optional(),
-  lastCursor: z.string().min(1).optional(),
-  resumeToken: z.string().min(1).optional(),
   reconnectAfterMs: z.number().int().nonnegative().optional(),
   stale: z.boolean().default(false),
   reason: z.string().min(1).optional(),
   updatedAt: z.string().min(1)
 });
 
-export const zWorkbenchBootstrapSchema = z.object({
+export const zMobileRemoteBootstrapSchema = z.object({
   serverInstanceId: z.string().min(1),
   relay: zWorkbenchRelayDescriptorSchema,
   host: zWorkbenchHostDescriptorSchema,
   capabilities: zWorkbenchHostCapabilitiesSchema,
-  connection: zWorkbenchConnectionSnapshotSchema,
-  clientSurface: zRemoteClientSurfaceSchema,
-  supportedClientSurfaces: z.array(zRemoteClientSurfaceSchema).default([
-    "desktop-full"
-  ]),
-  authenticated: z.boolean().default(false),
+  connection: zHostRelayConnectionSnapshotSchema,
   version: z.object({
-    protocolVersion: z.literal("2026-04-remote-v1"),
+    protocolVersion: z.literal("2026-09-mobile-v1"),
     appVersion: z.string().min(1)
   })
 });
 
-export const zWorkbenchPairingCodeSchema = z.object({
+export const zMobilePairingCodeSchema = z.object({
   pairingId: z.string().min(1),
   code: z.string().min(1),
   hostId: z.string().min(1),
-  clientSurface: zRemoteClientSurfaceSchema,
   createdAt: z.string().min(1),
   expiresAt: z.string().min(1),
   consumedAt: z.string().min(1).optional(),
   revokedAt: z.string().min(1).optional()
 });
 
-export const zWorkbenchSessionTokenPayloadSchema = z.object({
+export const zMobileSessionTokenSchema = z.object({
   sessionToken: z.string().min(1),
   resumeToken: z.string().min(1),
-  resourceToken: z.string().min(1),
   clientId: z.string().min(1),
   hostId: z.string().min(1),
   pairingId: z.string().min(1),
-  clientSurface: zRemoteClientSurfaceSchema,
   issuedAt: z.string().min(1),
   expiresAt: z.string().min(1),
   revokedAt: z.string().min(1).optional()
-});
-
-export const zWorkbenchResourceRefSchema = z.object({
-  resourceId: z.string().min(1),
-  hostId: z.string().min(1),
-  workspaceId: z.string().min(1).optional(),
-  sessionId: z.string().min(1).optional(),
-  kind: z.enum(["image", "text", "log", "rollout", "file", "diff"]),
-  displayName: z.string().min(1),
-  mimeType: z.string().min(1).optional(),
-  byteLength: z.number().int().nonnegative().optional(),
-  previewable: z.boolean().default(true),
-  downloadable: z.boolean().default(true)
-});
-
-export const zWorkbenchResourceAccessSchema = z.object({
-  resource: zWorkbenchResourceRefSchema,
-  token: z.string().min(1),
-  downloadUrl: z.string().url().optional(),
-  expiresAt: z.string().min(1)
-});
-
-export const zWorkbenchUploadReceiptSchema = z.object({
-  receiptId: z.string().min(1),
-  hostId: z.string().min(1),
-  fileName: z.string().min(1),
-  mimeType: z.string().min(1).optional(),
-  byteLength: z.number().int().nonnegative(),
-  createdAt: z.string().min(1),
-  expiresAt: z.string().min(1)
 });
 
 const zStringRecordSchema = z.record(z.string(), z.string());
@@ -163,7 +111,7 @@ export const zRelayHostBridgeMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("rpc.request"),
     requestId: z.string().min(1),
-    rpc: zWorkbenchRpcRequestSchema,
+    rpc: z.unknown(),
     headers: zStringRecordSchema.optional()
   }),
   z.object({
@@ -200,9 +148,8 @@ export const zRelayHostBridgeMessageSchema = z.discriminatedUnion("type", [
   })
 ]);
 
-export type RemoteClientSurface = z.infer<typeof zRemoteClientSurfaceSchema>;
-export type WorkbenchConnectionState = z.infer<
-  typeof zWorkbenchConnectionStateSchema
+export type HostRelayConnectionState = z.infer<
+  typeof zHostRelayConnectionStateSchema
 >;
 export type WorkbenchRelayDescriptor = z.infer<
   typeof zWorkbenchRelayDescriptorSchema
@@ -213,53 +160,44 @@ export type WorkbenchHostDescriptor = z.infer<
 export type WorkbenchHostCapabilities = z.infer<
   typeof zWorkbenchHostCapabilitiesSchema
 >;
-export type WorkbenchConnectionSnapshot = z.infer<
-  typeof zWorkbenchConnectionSnapshotSchema
+export type HostRelayConnectionSnapshot = z.infer<
+  typeof zHostRelayConnectionSnapshotSchema
 >;
-export type WorkbenchBootstrap = z.infer<typeof zWorkbenchBootstrapSchema>;
-export type WorkbenchPairingCode = z.infer<typeof zWorkbenchPairingCodeSchema>;
-export type WorkbenchSessionTokenPayload = z.infer<
-  typeof zWorkbenchSessionTokenPayloadSchema
->;
-export type WorkbenchResourceRef = z.infer<typeof zWorkbenchResourceRefSchema>;
-export type WorkbenchResourceAccess = z.infer<
-  typeof zWorkbenchResourceAccessSchema
->;
-export type WorkbenchUploadReceipt = z.infer<
-  typeof zWorkbenchUploadReceiptSchema
->;
+export type MobileRemoteBootstrap = z.infer<typeof zMobileRemoteBootstrapSchema>;
+export type MobilePairingCode = z.infer<typeof zMobilePairingCodeSchema>;
+export type MobileSessionToken = z.infer<typeof zMobileSessionTokenSchema>;
 export type RelayHostBridgeMessage = z.infer<
   typeof zRelayHostBridgeMessageSchema
 >;
 
-export const parseWorkbenchBootstrap = (value: unknown): WorkbenchBootstrap =>
-  zWorkbenchBootstrapSchema.parse(value);
+export const parseMobileRemoteBootstrap = (value: unknown): MobileRemoteBootstrap =>
+  zMobileRemoteBootstrapSchema.parse(value);
 
-export const parseWorkbenchConnectionSnapshot = (
+export const parseHostRelayConnectionSnapshot = (
   value: unknown
-): WorkbenchConnectionSnapshot =>
-  zWorkbenchConnectionSnapshotSchema.parse(value);
+): HostRelayConnectionSnapshot =>
+  zHostRelayConnectionSnapshotSchema.parse(value);
 
-export const parseWorkbenchPairingCode = (
+export const parseMobilePairingCode = (
   value: unknown
-): WorkbenchPairingCode => zWorkbenchPairingCodeSchema.parse(value);
+): MobilePairingCode => zMobilePairingCodeSchema.parse(value);
 
-export const parseWorkbenchSessionTokenPayload = (
+export const parseMobileSessionToken = (
   value: unknown
-): WorkbenchSessionTokenPayload =>
-  zWorkbenchSessionTokenPayloadSchema.parse(value);
+): MobileSessionToken =>
+  zMobileSessionTokenSchema.parse(value);
 
-export const safeParseWorkbenchBootstrap = (value: unknown) =>
-  zWorkbenchBootstrapSchema.safeParse(value);
+export const safeParseMobileRemoteBootstrap = (value: unknown) =>
+  zMobileRemoteBootstrapSchema.safeParse(value);
 
-export const safeParseWorkbenchConnectionSnapshot = (value: unknown) =>
-  zWorkbenchConnectionSnapshotSchema.safeParse(value);
+export const safeParseHostRelayConnectionSnapshot = (value: unknown) =>
+  zHostRelayConnectionSnapshotSchema.safeParse(value);
 
-export const safeParseWorkbenchPairingCode = (value: unknown) =>
-  zWorkbenchPairingCodeSchema.safeParse(value);
+export const safeParseMobilePairingCode = (value: unknown) =>
+  zMobilePairingCodeSchema.safeParse(value);
 
-export const safeParseWorkbenchSessionTokenPayload = (value: unknown) =>
-  zWorkbenchSessionTokenPayloadSchema.safeParse(value);
+export const safeParseMobileSessionToken = (value: unknown) =>
+  zMobileSessionTokenSchema.safeParse(value);
 
 export const parseRelayHostBridgeMessage = (value: unknown): RelayHostBridgeMessage =>
   zRelayHostBridgeMessageSchema.parse(value);

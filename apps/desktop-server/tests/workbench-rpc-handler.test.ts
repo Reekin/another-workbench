@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createRemoteRpcHandler } from "../src/remote-protocol.js";
+import { createWorkbenchRpcHandler } from "../src/workbench-rpc-handler.js";
 import { WorkbenchRuntimeService } from "../src/runtime-service.js";
 
 const createService = () =>
@@ -33,10 +33,10 @@ const createService = () =>
     ]
   });
 
-describe("createRemoteRpcHandler", () => {
+describe("createWorkbenchRpcHandler", () => {
   it("rejects legacy and empty session repair requests before dispatch", async () => {
     const repairSessionBrowser = vi.fn();
-    const handler = createRemoteRpcHandler({
+    const handler = createWorkbenchRpcHandler({
       listWorkspaces: vi.fn(),
       repairSessionBrowser
     } as never);
@@ -84,7 +84,7 @@ describe("createRemoteRpcHandler", () => {
         workspaces: []
       })
     };
-    const handler = createRemoteRpcHandler(shellService as never, {
+    const handler = createWorkbenchRpcHandler(shellService as never, {
       createSubscriptionId: () => "subscription-1"
     });
 
@@ -159,7 +159,7 @@ describe("createRemoteRpcHandler", () => {
 
   it("replays event envelopes through the shared replay response shape", async () => {
     const service = createService();
-    const handler = createRemoteRpcHandler(service, {
+    const handler = createWorkbenchRpcHandler(service, {
       createSubscriptionId: () => "subscription-1"
     });
 
@@ -207,7 +207,7 @@ describe("createRemoteRpcHandler", () => {
 
   it("returns an explicit replay gap when the requested cursor is unavailable", async () => {
     const service = createService();
-    const handler = createRemoteRpcHandler(service);
+    const handler = createWorkbenchRpcHandler(service);
 
     await handler.handleRequest({
       id: "req-create",
@@ -247,7 +247,7 @@ describe("createRemoteRpcHandler", () => {
 
   it("returns a typed domain snapshot with the latest cursor", async () => {
     const service = createService();
-    const handler = createRemoteRpcHandler(service);
+    const handler = createWorkbenchRpcHandler(service);
 
     await handler.handleRequest({
       id: "req-create",
@@ -290,7 +290,7 @@ describe("createRemoteRpcHandler", () => {
 
   it("returns shared error envelopes for invalid engine operations", async () => {
     const service = createService();
-    const handler = createRemoteRpcHandler(service);
+    const handler = createWorkbenchRpcHandler(service);
 
     const response = await handler.handleRequest({
       id: "req-select",
@@ -305,7 +305,7 @@ describe("createRemoteRpcHandler", () => {
       method: "engine.select",
       ok: false,
       error: {
-        code: "REMOTE_REQUEST_FAILED"
+        code: "WORKBENCH_REQUEST_FAILED"
       }
     });
   });
@@ -317,7 +317,7 @@ describe("createRemoteRpcHandler", () => {
       entryId: "error-1",
       logPath: "I:\\logs\\errors-2026-04-26.jsonl"
     });
-    const handler = createRemoteRpcHandler(
+    const handler = createWorkbenchRpcHandler(
       {
         executeCommand: runtimeService.executeCommand.bind(runtimeService),
         replay: runtimeService.replay.bind(runtimeService),
@@ -425,7 +425,7 @@ describe("createRemoteRpcHandler", () => {
       executeCommand: vi.fn(),
       replay: vi.fn().mockReturnValue([])
     };
-    const handler = createRemoteRpcHandler(shellService as never);
+    const handler = createWorkbenchRpcHandler(shellService as never);
 
     const getResponse = await handler.handleRequest({
       id: "req-settings-get",
@@ -503,7 +503,7 @@ describe("createRemoteRpcHandler", () => {
         ]
       })
     };
-    const handler = createRemoteRpcHandler(shellService as never);
+    const handler = createWorkbenchRpcHandler(shellService as never);
 
     await expect(
       handler.handleRequest({
@@ -566,7 +566,7 @@ describe("createRemoteRpcHandler", () => {
       executeCommand: vi.fn(),
       replay: vi.fn().mockReturnValue([])
     };
-    const handler = createRemoteRpcHandler(shellService as never);
+    const handler = createWorkbenchRpcHandler(shellService as never);
 
     await expect(
       handler.handleRequest({
@@ -652,7 +652,7 @@ describe("createRemoteRpcHandler", () => {
         }
       ])
     };
-    const handler = createRemoteRpcHandler(shellService as never);
+    const handler = createWorkbenchRpcHandler(shellService as never);
 
     await expect(
       handler.handleRequest({
@@ -704,9 +704,9 @@ describe("createRemoteRpcHandler", () => {
     });
   });
 
-  it("returns websocket endpoint metadata for remote event subscribe and unsubscribe", async () => {
+  it("returns event subscription endpoint metadata", async () => {
     const service = createService();
-    const handler = createRemoteRpcHandler(service, {
+    const handler = createWorkbenchRpcHandler(service, {
       createSubscriptionId: () => "subscription-1"
     });
 
@@ -899,7 +899,7 @@ describe("createRemoteRpcHandler", () => {
       })
     } as unknown as WorkbenchRuntimeService;
 
-    const handler = createRemoteRpcHandler(shellService);
+    const handler = createWorkbenchRpcHandler(shellService);
 
     const listTreeResponse = await handler.handleRequest({
       id: "req-tree",
@@ -1162,7 +1162,7 @@ describe("createRemoteRpcHandler", () => {
         }
       })
     };
-    const handler = createRemoteRpcHandler(shellService as never);
+    const handler = createWorkbenchRpcHandler(shellService as never);
 
     const actionResponse = await handler.handleRequest({
       id: "req-file-action",
@@ -1276,7 +1276,7 @@ describe("createRemoteRpcHandler", () => {
       executeCommand: vi.fn(),
       replay: vi.fn().mockReturnValue([])
     };
-    const handler = createRemoteRpcHandler(shellService as never);
+    const handler = createWorkbenchRpcHandler(shellService as never);
 
     const hookResponse = await handler.handleRequest({
       id: "req-codex-hook-activity",
@@ -1363,7 +1363,7 @@ describe("createRemoteRpcHandler", () => {
   });
 
   it("returns a typed unavailable error for file actions when shell services are absent", async () => {
-    const handler = createRemoteRpcHandler(createService());
+    const handler = createWorkbenchRpcHandler(createService());
 
     const actionResponse = await handler.handleRequest({
       id: "req-file-action",
@@ -1385,7 +1385,7 @@ describe("createRemoteRpcHandler", () => {
   });
 
   it("returns typed unavailable errors for Codex turn-change RPCs when shell services are absent", async () => {
-    const handler = createRemoteRpcHandler(createService());
+    const handler = createWorkbenchRpcHandler(createService());
 
     const getResponse = await handler.handleRequest({
       id: "req-codex-turn-changes",

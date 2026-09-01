@@ -1,48 +1,41 @@
 import { describe, expect, it, vi } from "vitest";
 import { HostRelayClient } from "../src/host-relay-client.js";
-import { RemoteAuthSessionService } from "../src/remote-auth-session-service.js";
-import { RemoteBootstrapService } from "../src/remote-bootstrap-service.js";
-import { RemoteConnectionService } from "../src/remote-connection-service.js";
-import { RemotePairingService } from "../src/remote-pairing-service.js";
+import { HostRelayConnectionService } from "../src/host-relay-connection-service.js";
+import { MobileAuthSessionService } from "../src/mobile-auth-session-service.js";
+import { MobilePairingService } from "../src/mobile-pairing-service.js";
+import { MobileRemoteBootstrapService } from "../src/mobile-remote-bootstrap-service.js";
 
 const now = (() => {
   let tick = 0;
   return () => `2026-04-21T00:00:${String(++tick).padStart(2, "0")}Z`;
 })();
 
-describe("remote control services", () => {
+describe("mobile remote control services", () => {
   it("issues and consumes pairing codes with expiration semantics", () => {
-    const service = new RemotePairingService({
+    const service = new MobilePairingService({
       hostId: "host-1",
       now,
       createPairingId: () => "pair-1",
       createCode: () => "ABC123"
     });
 
-    const issued = service.issue("desktop-full");
+    const issued = service.issue();
     expect(issued.hostId).toBe("host-1");
-    expect(issued.clientSurface).toBe("desktop-full");
 
-    const consumed = service.consumeByCode({
-      code: "ABC123",
-      clientSurface: "desktop-full"
-    });
+    const consumed = service.consumeByCode("ABC123");
     expect(consumed?.pairingId).toBe("pair-1");
-    expect(service.consumeByCode({
-      code: "ABC123",
-      clientSurface: "desktop-full"
-    })).toBeUndefined();
+    expect(service.consumeByCode("ABC123")).toBeUndefined();
   });
 
   it("issues, validates and revokes session token bundles", () => {
-    const pairingService = new RemotePairingService({
+    const pairingService = new MobilePairingService({
       hostId: "host-1",
       now,
       createPairingId: () => "pair-2",
       createCode: () => "XYZ999"
     });
-    const pairing = pairingService.issue("mobile-companion");
-    const auth = new RemoteAuthSessionService({
+    const pairing = pairingService.issue();
+    const auth = new MobileAuthSessionService({
       hostId: "host-1",
       now,
       createToken: (() => {
@@ -56,33 +49,29 @@ describe("remote control services", () => {
     expect(auth.validateSessionToken(session.sessionToken)?.clientId).toBe(
       "client-1"
     );
-    expect(
-      auth.validateResumeToken(session.resumeToken, "mobile-companion")
-        ?.sessionToken
-    ).toBe(session.sessionToken);
-    expect(
-      auth.validateResourceToken(session.resourceToken, "desktop-full")
-    ).toBeUndefined();
+    expect(auth.validateResumeToken(session.resumeToken)?.sessionToken).toBe(
+      session.sessionToken
+    );
 
     auth.revokeSession(session.sessionToken);
     expect(auth.validateSessionToken(session.sessionToken)).toBeUndefined();
+    expect(() =>
+      new MobileAuthSessionService({ hostId: "host-2" }).issueFromPairing(pairing)
+    ).toThrowError(/different host/i);
   });
 
-  it("builds remote bootstrap snapshots from shell and connection state", () => {
-    const connection = new RemoteConnectionService({
+  it("builds mobile bootstrap snapshots from shell and host relay state", () => {
+    const connection = new HostRelayConnectionService({
       hostId: "host-1",
       relayId: "relay-1",
       now
     });
     connection.update({
-      state: "live",
-      routeId: "route-1",
-      authenticated: true,
-      authorizedClientId: "client-1",
-      resumeToken: "resume-1"
+      state: "connected",
+      routeId: "route-1"
     });
 
-    const bootstrap = new RemoteBootstrapService({
+    const bootstrap = new MobileRemoteBootstrapService({
       shellService: {
         listEngines: () => [
           {
@@ -113,24 +102,20 @@ describe("remote control services", () => {
         platform: "win32"
       },
       now
-    }).buildBootstrap("desktop-full", true);
+    }).buildBootstrap();
 
-    expect(bootstrap.clientSurface).toBe("desktop-full");
-    expect(bootstrap.connection.state).toBe("live");
+    expect(bootstrap.connection.state).toBe("connected");
     expect(bootstrap.capabilities).toEqual({
-      clientSurfaces: ["desktop-full", "mobile-companion"],
       engineIds: ["codex", "pi-acp"],
       supportsPairing: true,
       supportsResume: true,
       supportsResourceGateway: false
     });
-    expect("features" in bootstrap.capabilities).toBe(false);
-    expect("supportsDiagnostics" in bootstrap.capabilities).toBe(false);
-    expect("supportsReviewContext" in bootstrap.capabilities).toBe(false);
+    expect(bootstrap.version.protocolVersion).toBe("2026-09-mobile-v1");
   });
 
   it("registers host metadata through relay and updates connection state", async () => {
-    const connection = new RemoteConnectionService({
+    const connection = new HostRelayConnectionService({
       hostId: "host-1",
       relayId: "relay-1",
       now
@@ -158,6 +143,7 @@ describe("remote control services", () => {
         online: true,
         lastSeenAt: now()
       }),
+      authToken: "host-auth-token",
       fetchImpl
     });
 
@@ -168,5 +154,13 @@ describe("remote control services", () => {
       state: "connecting",
       routeId: "route-9"
     });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      new URL("https://relay.example.com/api/hosts/register"),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          authorization: "Bearer host-auth-token"
+        })
+      })
+    );
   });
 });

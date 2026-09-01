@@ -59,22 +59,11 @@ export type RelayClientBootstrap = {
   hosts: RelayHostSummary[];
 };
 
-export type RelayRpcRequest =
-  | {
-      id?: string;
-      method: "relay.ping";
-      params?: Record<string, unknown>;
-    }
-  | {
-      id?: string;
-      method: "relay.forward";
-      params: {
-        hostId: string;
-        procedure: string;
-        payload?: unknown;
-        clientId?: string;
-      };
-    };
+export type RelayRpcRequest = {
+  id?: string;
+  method: "relay.ping";
+  params?: Record<string, unknown>;
+};
 
 export type RelayRpcSuccessResponse = {
   id?: string;

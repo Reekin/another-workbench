@@ -515,7 +515,17 @@ const installExternalNavigationHandlers = (window: BrowserWindow): void => {
 const resolveRendererTarget = (): { type: "url" | "file"; value: string } => {
   const devServerUrl = process.env.AWB_VITE_DEV_SERVER_URL?.trim();
   if (devServerUrl) {
-    return { type: "url", value: devServerUrl };
+    if (process.env.NODE_ENV !== "development") {
+      throw new Error("AWB_VITE_DEV_SERVER_URL is only allowed in development.");
+    }
+    const url = new URL(devServerUrl);
+    if (
+      url.protocol !== "http:"
+      || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
+    ) {
+      throw new Error("AWB_VITE_DEV_SERVER_URL must use a loopback HTTP origin.");
+    }
+    return { type: "url", value: url.toString() };
   }
 
   return { type: "file", value: bundledRendererIndexPath };

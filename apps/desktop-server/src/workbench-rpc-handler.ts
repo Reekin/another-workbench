@@ -15,7 +15,7 @@ import { SessionBrowserCursorStaleError } from "./session-browser-read-model.js"
 type Clock = () => string;
 type IdFactory = () => string;
 
-export type RemoteProtocolOptions = {
+export type WorkbenchRpcHandlerOptions = {
   now?: Clock;
   createSubscriptionId?: IdFactory;
 };
@@ -42,9 +42,9 @@ const toErrorResponse = (
     }
   });
 
-export const createRemoteRpcHandler = (
+export const createWorkbenchRpcHandler = (
   service: WorkbenchRuntimeService | WorkbenchShellService,
-  options: RemoteProtocolOptions = {}
+  options: WorkbenchRpcHandlerOptions = {}
 ) => {
   const now = options.now ?? (() => new Date().toISOString());
   const createSubscriptionId =
@@ -717,8 +717,8 @@ export const createRemoteRpcHandler = (
         }
         return toErrorResponse(
           request,
-          "REMOTE_REQUEST_FAILED",
-          error instanceof Error ? error.message : "Unknown remote request error",
+          "WORKBENCH_REQUEST_FAILED",
+          error instanceof Error ? error.message : "Unknown workbench request error",
           {
             failedAt: now()
           }

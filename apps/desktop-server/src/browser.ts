@@ -3,4 +3,4 @@ export {
   createDemoWorkbenchShellService
 } from "./demo-service.js";
 export { createLocalDesktopPreloadApi } from "./local-preload.js";
-export { createRemoteRpcHandler } from "./remote-protocol.js";
+export { createWorkbenchRpcHandler } from "./workbench-rpc-handler.js";

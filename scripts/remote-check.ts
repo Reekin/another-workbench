@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import {
-  parseWorkbenchBootstrap,
-  parseWorkbenchConnectionSnapshot,
-  parseWorkbenchSessionTokenPayload
+  parseHostRelayConnectionSnapshot,
+  parseMobileRemoteBootstrap,
+  parseMobileSessionToken
 } from "../packages/shared/src/remote-control.js";
-import { RemoteAuthSessionService } from "../apps/desktop-server/src/remote-auth-session-service.js";
-import { RemoteBootstrapService } from "../apps/desktop-server/src/remote-bootstrap-service.js";
-import { RemoteConnectionService } from "../apps/desktop-server/src/remote-connection-service.js";
-import { RemotePairingService } from "../apps/desktop-server/src/remote-pairing-service.js";
+import { HostRelayConnectionService } from "../apps/desktop-server/src/host-relay-connection-service.js";
+import { MobileAuthSessionService } from "../apps/desktop-server/src/mobile-auth-session-service.js";
+import { MobilePairingService } from "../apps/desktop-server/src/mobile-pairing-service.js";
+import { MobileRemoteBootstrapService } from "../apps/desktop-server/src/mobile-remote-bootstrap-service.js";
 
 const stableNow = (() => {
   let tick = 0;
@@ -25,18 +25,18 @@ const shellService = {
 } as const;
 
 const run = async (): Promise<void> => {
-  const connection = new RemoteConnectionService({
+  const connection = new HostRelayConnectionService({
     hostId: "check-host",
     relayId: "check-relay",
     now: stableNow
   });
-  const pairing = new RemotePairingService({
+  const pairing = new MobilePairingService({
     hostId: "check-host",
     now: stableNow,
     createPairingId: () => "pair-check",
     createCode: () => "PAIR42"
   });
-  const auth = new RemoteAuthSessionService({
+  const auth = new MobileAuthSessionService({
     hostId: "check-host",
     now: stableNow,
     createToken: (() => {
@@ -45,7 +45,7 @@ const run = async (): Promise<void> => {
     })(),
     createClientId: () => "client-check"
   });
-  const bootstrap = new RemoteBootstrapService({
+  const bootstrap = new MobileRemoteBootstrapService({
     shellService: shellService as never,
     connectionService: connection,
     relay: {
@@ -63,31 +63,23 @@ const run = async (): Promise<void> => {
     now: stableNow
   });
 
-  const issuedPairing = pairing.issue("desktop-full");
-  const consumedPairing = pairing.consumeByCode({
-    code: issuedPairing.code,
-    clientSurface: "desktop-full"
-  });
+  const issuedPairing = pairing.issue();
+  const consumedPairing = pairing.consumeByCode(issuedPairing.code);
   if (!consumedPairing) {
     throw new Error("Pairing consume failed.");
   }
 
   const session = auth.issueFromPairing(consumedPairing);
   connection.update({
-    state: "live",
-    authenticated: true,
-    authorizedClientId: session.clientId,
-    resumeToken: session.resumeToken,
+    state: "connected",
     routeId: "route-check"
   });
 
-  const parsedBootstrap = parseWorkbenchBootstrap(
-    bootstrap.buildBootstrap("desktop-full", true)
-  );
-  const parsedConnection = parseWorkbenchConnectionSnapshot(
+  const parsedBootstrap = parseMobileRemoteBootstrap(bootstrap.buildBootstrap());
+  const parsedConnection = parseHostRelayConnectionSnapshot(
     connection.getSnapshot()
   );
-  const parsedSession = parseWorkbenchSessionTokenPayload(session);
+  const parsedSession = parseMobileSessionToken(session);
 
   console.log(
     JSON.stringify(
@@ -96,13 +88,11 @@ const run = async (): Promise<void> => {
         bootstrap: {
           hostId: parsedBootstrap.host.hostId,
           relayId: parsedBootstrap.relay.relayId,
-          clientSurface: parsedBootstrap.clientSurface,
           engineIds: parsedBootstrap.capabilities.engineIds
         },
         connection: {
           state: parsedConnection.state,
-          routeId: parsedConnection.routeId,
-          authenticated: parsedConnection.authenticated
+          routeId: parsedConnection.routeId
         },
         session: {
           clientId: parsedSession.clientId,

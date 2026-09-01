@@ -1,9 +1,9 @@
 import { createConnection, type AddressInfo } from "node:net";
 import { HostRelayClient } from "../apps/desktop-server/src/host-relay-client.js";
-import { RemoteAuthSessionService } from "../apps/desktop-server/src/remote-auth-session-service.js";
-import { RemoteBootstrapService } from "../apps/desktop-server/src/remote-bootstrap-service.js";
-import { RemoteConnectionService } from "../apps/desktop-server/src/remote-connection-service.js";
-import { RemotePairingService } from "../apps/desktop-server/src/remote-pairing-service.js";
+import { HostRelayConnectionService } from "../apps/desktop-server/src/host-relay-connection-service.js";
+import { MobileAuthSessionService } from "../apps/desktop-server/src/mobile-auth-session-service.js";
+import { MobilePairingService } from "../apps/desktop-server/src/mobile-pairing-service.js";
+import { MobileRemoteBootstrapService } from "../apps/desktop-server/src/mobile-remote-bootstrap-service.js";
 import { WorkbenchRemoteServer } from "../apps/desktop-server/src/remote-server.js";
 import { WorkbenchRuntimeService } from "../apps/desktop-server/src/runtime-service.js";
 import { WorkbenchShellService } from "../apps/desktop-server/src/workbench-shell-service.js";
@@ -31,9 +31,9 @@ const createRuntimeService = () =>
       let index = 0;
       return () => `event-${++index}`;
     })(),
-    agents: [
+    engines: [
       {
-        agentId: "codex",
+        engineId: "codex",
         displayName: "Codex",
         capabilities: ["chat"]
       }
@@ -112,7 +112,7 @@ const openEventSocket = async (input: {
       host: "127.0.0.1",
       port: input.port
     });
-    let buffer = Buffer.alloc(0);
+    let buffer: Buffer = Buffer.alloc(0);
     let upgraded = false;
     const frames: unknown[] = [];
     let timeoutId: NodeJS.Timeout | undefined;
@@ -195,19 +195,21 @@ const waitWithCeiling = async (
 };
 
 const run = async (): Promise<void> => {
+  const hostAuthToken = "relay-smoke-host-auth";
+  const hostId = "relay-smoke-host";
   const runtime = createRuntimeService();
   const shell = createShellService(runtime);
-  const connection = new RemoteConnectionService({
-    hostId: "relay-smoke-host",
+  const connection = new HostRelayConnectionService({
+    hostId,
     relayId: "relay-smoke"
   });
-  const pairing = new RemotePairingService({
-    hostId: "relay-smoke-host",
+  const pairing = new MobilePairingService({
+    hostId,
     createPairingId: () => "relay-pair-1",
     createCode: () => "RSMOKE1"
   });
-  const authSessions = new RemoteAuthSessionService({
-    hostId: "relay-smoke-host",
+  const authSessions = new MobileAuthSessionService({
+    hostId,
     createToken: (() => {
       let index = 0;
       return () => `relay-smoke-token-${++index}`;
@@ -219,7 +221,7 @@ const run = async (): Promise<void> => {
     service: shell,
     host: "127.0.0.1",
     port: 0,
-    bootstrapService: new RemoteBootstrapService({
+    bootstrapService: new MobileRemoteBootstrapService({
       shellService: shell,
       connectionService: connection,
       relay: {
@@ -240,6 +242,9 @@ const run = async (): Promise<void> => {
   });
 
   const relay = new RelayServer({
+    hostTokens: {
+      [hostId]: hostAuthToken
+    },
     host: "127.0.0.1",
     port: 0,
     registry: new RelayHostRegistry()
@@ -272,6 +277,7 @@ const run = async (): Promise<void> => {
         wsBaseUrl: relayWsBaseUrl
       },
       connectionService: connection,
+      authToken: hostAuthToken,
       getHostDescriptor,
       localHttpBaseUrl: `http://127.0.0.1:${hostAddress.port}`,
       localEventsUrl: `ws://127.0.0.1:${hostAddress.port}/events`
@@ -280,22 +286,10 @@ const run = async (): Promise<void> => {
     const tunnel = await connectedHostClient.connect();
 
     const bootstrap = await fetch(
-      `${relayBaseUrl}/bootstrap?hostId=relay-smoke-host&clientSurface=desktop-full`
+      `${relayBaseUrl}/bootstrap?hostId=relay-smoke-host`
     ).then((response) => response.json());
 
-    const pairingCodePayload = await fetch(
-      `${relayBaseUrl}/pairing/code?hostId=relay-smoke-host`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json"
-        },
-        body: JSON.stringify({
-          clientSurface: "desktop-full"
-        })
-      }
-    ).then((response) => response.json()) as { pairing: { code: string } };
-
+    const issuedPairing = pairing.issue();
     const exchangePayload = await fetch(
       `${relayBaseUrl}/pairing/exchange?hostId=relay-smoke-host`,
       {
@@ -304,8 +298,7 @@ const run = async (): Promise<void> => {
           "content-type": "application/json"
         },
         body: JSON.stringify({
-          code: pairingCodePayload.pairing.code,
-          clientSurface: "desktop-full"
+          code: issuedPairing.code
         })
       }
     ).then((response) => response.json()) as {
@@ -401,7 +394,7 @@ const run = async (): Promise<void> => {
             hostId: bootstrap.host.hostId,
             relayId: bootstrap.relay.relayId
           },
-          pairingCode: pairingCodePayload.pairing.code,
+          pairingCode: issuedPairing.code,
           createSession,
           subscribe,
           pushes: pushes.map((push) => ({

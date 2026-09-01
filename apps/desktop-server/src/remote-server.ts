@@ -9,15 +9,13 @@ import { URL } from "node:url";
 import type { Socket } from "node:net";
 import {
   eventTypes,
-  type RemoteClientSurface,
   type WorkbenchEventSubscriptionFilter,
   type EventType
 } from "@another-workbench/shared";
-import { getRemoteAuthErrorBody, type RemoteAuthConfig, isRemoteRequestAuthorized } from "./remote-auth.js";
-import type { RemoteAuthSessionService } from "./remote-auth-session-service.js";
-import type { RemoteBootstrapService } from "./remote-bootstrap-service.js";
-import type { RemotePairingService } from "./remote-pairing-service.js";
-import { createRemoteRpcHandler } from "./remote-protocol.js";
+import type { MobileAuthSessionService } from "./mobile-auth-session-service.js";
+import type { MobileRemoteBootstrapService } from "./mobile-remote-bootstrap-service.js";
+import type { MobilePairingService } from "./mobile-pairing-service.js";
+import { createMobileRemoteRpcHandler } from "./mobile-remote-rpc.js";
 import type { WorkbenchShellService } from "./workbench-shell-service.js";
 
 type IdFactory = () => string;
@@ -29,13 +27,19 @@ export type WorkbenchRemoteServerOptions = {
   rpcPath?: string;
   wsPath?: string;
   createSubscriptionId?: IdFactory;
-  auth?: RemoteAuthConfig;
-  bootstrapService?: RemoteBootstrapService;
-  pairingService?: RemotePairingService;
-  authSessions?: RemoteAuthSessionService;
+  bootstrapService?: MobileRemoteBootstrapService;
+  pairingService?: MobilePairingService;
+  authSessions?: MobileAuthSessionService;
 };
 
 const websocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const unauthorizedBody = {
+  ok: false,
+  error: {
+    code: "REMOTE_UNAUTHORIZED",
+    message: "Missing or invalid mobile session token"
+  }
+} as const;
 
 const readBody = async (request: IncomingMessage): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -103,9 +107,6 @@ const stripBearerPrefix = (value: string | undefined): string | undefined => {
   return value.startsWith("Bearer ") ? value.slice("Bearer ".length) : value;
 };
 
-const parseClientSurface = (value: string | null | undefined): RemoteClientSurface =>
-  value === "mobile-companion" ? "mobile-companion" : "desktop-full";
-
 const parseEventFilter = (url: URL): WorkbenchEventSubscriptionFilter => {
   const eventTypesParam = url.searchParams.get("eventTypes");
   return {
@@ -122,16 +123,15 @@ const parseEventFilter = (url: URL): WorkbenchEventSubscriptionFilter => {
 
 export class WorkbenchRemoteServer {
   private readonly service: WorkbenchShellService;
-  private readonly rpcHandler: ReturnType<typeof createRemoteRpcHandler>;
+  private readonly rpcHandler: ReturnType<typeof createMobileRemoteRpcHandler>;
   private readonly host: string;
   private readonly port: number;
   private readonly rpcPath: string;
   private readonly wsPath: string;
   private readonly createSubscriptionId: IdFactory;
-  private readonly auth: RemoteAuthConfig | undefined;
-  private readonly bootstrapService: RemoteBootstrapService | undefined;
-  private readonly pairingService: RemotePairingService | undefined;
-  private readonly authSessions: RemoteAuthSessionService | undefined;
+  private readonly bootstrapService: MobileRemoteBootstrapService | undefined;
+  private readonly pairingService: MobilePairingService | undefined;
+  private readonly authSessions: MobileAuthSessionService | undefined;
   private readonly server: HttpServer;
   private readonly sockets = new Set<Socket>();
 
@@ -146,11 +146,10 @@ export class WorkbenchRemoteServer {
       (() => `remote-sub-${Date.now().toString(36)}-${Math.random()
         .toString(36)
         .slice(2, 10)}`);
-    this.auth = options.auth;
     this.bootstrapService = options.bootstrapService;
     this.pairingService = options.pairingService;
     this.authSessions = options.authSessions;
-    this.rpcHandler = createRemoteRpcHandler(this.service, {
+    this.rpcHandler = createMobileRemoteRpcHandler(this.service, {
       createSubscriptionId: this.createSubscriptionId
     });
     this.server = createServer((request, response) => {
@@ -240,49 +239,7 @@ export class WorkbenchRemoteServer {
         return;
       }
 
-      const surface = parseClientSurface(url.searchParams.get("clientSurface"));
-      const session = this.resolveAuthorizedSession(request);
-      sendJson(
-        response,
-        200,
-        this.bootstrapService.buildBootstrap(surface, Boolean(session))
-      );
-      return;
-    }
-
-    if (request.method === "POST" && url.pathname === "/pairing/code") {
-      if (!this.pairingService) {
-        sendJson(response, 404, {
-          ok: false,
-          error: {
-            code: "REMOTE_PAIRING_UNAVAILABLE",
-            message: "Remote pairing service is unavailable."
-          }
-        });
-        return;
-      }
-
-      try {
-        const body = (await readJsonBody(request)) as {
-          clientSurface?: RemoteClientSurface;
-        };
-        const pairing = this.pairingService.issue(
-          body.clientSurface ?? "desktop-full"
-        );
-        sendJson(response, 200, {
-          ok: true,
-          pairing
-        });
-      } catch (error) {
-        sendJson(response, 400, {
-          ok: false,
-          error: {
-            code: "REMOTE_BAD_REQUEST",
-            message:
-              error instanceof Error ? error.message : "Invalid pairing request"
-          }
-        });
-      }
+      sendJson(response, 200, this.bootstrapService.buildBootstrap());
       return;
     }
 
@@ -301,13 +258,9 @@ export class WorkbenchRemoteServer {
       try {
         const body = (await readJsonBody(request)) as {
           code?: string;
-          clientSurface?: RemoteClientSurface;
         };
         const pairing = body.code
-          ? this.pairingService.consumeByCode({
-              code: body.code,
-              clientSurface: body.clientSurface ?? "desktop-full"
-            })
+          ? this.pairingService.consumeByCode(body.code)
           : undefined;
         if (!pairing) {
           sendJson(response, 401, {
@@ -346,6 +299,10 @@ export class WorkbenchRemoteServer {
             message: "Remote auth session service is unavailable."
           }
         });
+        return;
+      }
+      if (!this.isRequestAuthorized(request)) {
+        sendJson(response, 401, unauthorizedBody);
         return;
       }
 
@@ -391,7 +348,7 @@ export class WorkbenchRemoteServer {
 
     if (request.method === "POST" && url.pathname === this.rpcPath) {
       if (!this.isRequestAuthorized(request)) {
-        sendJson(response, 401, getRemoteAuthErrorBody());
+        sendJson(response, 401, unauthorizedBody);
         return;
       }
 
@@ -522,9 +479,6 @@ export class WorkbenchRemoteServer {
   }
 
   private isRequestAuthorized(request: IncomingMessage): boolean {
-    if (isRemoteRequestAuthorized(request, this.auth)) {
-      return true;
-    }
     return Boolean(this.resolveAuthorizedSession(request));
   }
 }

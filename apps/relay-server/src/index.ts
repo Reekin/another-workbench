@@ -35,8 +35,31 @@ const resolvePort = (): number => {
 const resolveHost = (): string =>
   readArg("--host") ?? process.env.RELAY_SERVER_HOST ?? "127.0.0.1";
 
+const resolveRegisteredHostId = (): string => {
+  const hostId = readArg("--host-id") ?? process.env.RELAY_HOST_ID ?? "";
+  if (!hostId.trim()) {
+    throw new Error("Relay host id is required via --host-id or RELAY_HOST_ID.");
+  }
+  return hostId.trim();
+};
+
+const resolveHostAuthToken = (): string => {
+  const token =
+    readArg("--host-auth-token") ?? process.env.RELAY_HOST_AUTH_TOKEN ?? "";
+  if (!token.trim()) {
+    throw new Error(
+      "Relay host auth token is required via --host-auth-token or RELAY_HOST_AUTH_TOKEN."
+    );
+  }
+  return token.trim();
+};
+
 const startFromCli = async (): Promise<void> => {
+  const registeredHostId = resolveRegisteredHostId();
   const server = new RelayServer({
+    hostTokens: {
+      [registeredHostId]: resolveHostAuthToken()
+    },
     host: resolveHost(),
     port: resolvePort()
   });

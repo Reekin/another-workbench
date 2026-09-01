@@ -1,5 +1,5 @@
 import { HostRelayClient } from "../apps/desktop-server/src/host-relay-client.js";
-import { RemoteConnectionService } from "../apps/desktop-server/src/remote-connection-service.js";
+import { HostRelayConnectionService } from "../apps/desktop-server/src/host-relay-connection-service.js";
 import { RelayServer } from "../apps/relay-server/src/server.js";
 
 const now = (() => {
@@ -8,7 +8,12 @@ const now = (() => {
 })();
 
 const run = async (): Promise<void> => {
+  const hostAuthToken = "host-register-smoke-auth";
+  const hostId = "host-smoke-register";
   const relay = new RelayServer({
+    hostTokens: {
+      [hostId]: hostAuthToken
+    },
     host: "127.0.0.1",
     port: 0,
     now
@@ -17,8 +22,8 @@ const run = async (): Promise<void> => {
   try {
     const listening = await relay.listen();
     const relayBaseUrl = `http://${listening.host}:${listening.port}`;
-    const connection = new RemoteConnectionService({
-      hostId: "host-smoke-register",
+    const connection = new HostRelayConnectionService({
+      hostId,
       relayId: "relay-smoke",
       now
     });
@@ -30,8 +35,9 @@ const run = async (): Promise<void> => {
         wsBaseUrl: relayBaseUrl.replace("http://", "ws://")
       },
       connectionService: connection,
+      authToken: hostAuthToken,
       getHostDescriptor: () => ({
-        hostId: "host-smoke-register",
+        hostId,
         label: "Host Smoke Register",
         deviceName: "smoke-box",
         platform: process.platform,

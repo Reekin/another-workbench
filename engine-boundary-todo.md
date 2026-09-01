@@ -70,7 +70,7 @@ scope:
 - `apps/desktop-server/src/codex-app-server-runtime-port.ts`
 - `apps/desktop-server/src/session-discovery.ts`
 - `apps/desktop-server/src/workbench-shell-service.ts`
-- `apps/desktop-server/src/remote-protocol.ts`
+- `apps/desktop-server/src/workbench-rpc-handler.ts`
 - `apps/desktop-server/src/engine-control/*`
 - new `apps/desktop-server/src/engine-extensions/codex/*`
 
@@ -102,7 +102,7 @@ verify:
 
 - `pnpm --filter @another-workbench/desktop-server test -- codex-app-server-runtime-port`
 - `pnpm --filter @another-workbench/desktop-server test -- session-discovery`
-- `pnpm --filter @another-workbench/desktop-server test -- remote-protocol`
+- `pnpm --filter @another-workbench/desktop-server test -- workbench-rpc-handler`
 
 ### task_03_host_file_actions_vs_engine_extensions
 
@@ -152,7 +152,7 @@ scope:
 - `apps/desktop/src/ui/chat-shell/transcript-view-model.ts`
 - `apps/desktop/src/ui/chat-shell/MessageMarkdownView.tsx`
 - new `apps/desktop/src/features/engine-extensions/codex/*`
-- `apps/desktop-server/src/remote-bootstrap-service.ts`
+- `apps/desktop-server/src/mobile-remote-bootstrap-service.ts`
 - `packages/shared/src/remote-control.ts`
 
 work:
@@ -160,16 +160,16 @@ work:
 - transcript 主路径只保留通用消息/工具/审批/终端渲染
 - 新建 turn extension slot，并把 Codex changed files strip 挂到 Codex extension renderer
 - `MessageMarkdownView` 不承载本地文件动作
-- remote bootstrap 不再维护平行 `features[]` 真相，改为 host info + engine surface / engine list 同源表达
+- mobile bootstrap 不再维护平行 `features[]` 真相，改为 host info + engine surface / engine list 同源表达
 
 tdd:
 
 - 需要
-- 先补 transcript view-model、message markdown、remote bootstrap 的回归测试
+- 先补 transcript view-model、message markdown、mobile bootstrap 的回归测试
 
 test_design:
 
-- 单元测试：view-model、markdown 资源意图、remote bootstrap schema
+- 单元测试：view-model、markdown 资源意图、mobile bootstrap schema
 - 集成测试：Codex extension renderer 只在 Codex surface 可用时挂载
 - 用户视角验收：Codex session 能看到 changed files extension；非 Codex 或无 extension 时 transcript 保持干净
 
@@ -177,7 +177,7 @@ done_when:
 
 - generic transcript path 不再直接渲染 changed files strip
 - markdown 组件不包含宿主本地文件动作
-- remote bootstrap 不再硬编码 engine feature 名单
+- mobile bootstrap 不再硬编码 engine feature 名单
 
 verify:
 

@@ -3,7 +3,7 @@ import type {
   WorkbenchRpcRequest,
   WorkbenchRpcResponse
 } from "@another-workbench/shared";
-import { createRemoteRpcHandler } from "./remote-protocol.js";
+import { createWorkbenchRpcHandler } from "./workbench-rpc-handler.js";
 import type { WorkbenchRuntimeService } from "./runtime-service.js";
 import type { WorkbenchShellService } from "./workbench-shell-service.js";
 
@@ -24,7 +24,7 @@ export const createLocalDesktopPreloadApi = (
 ): WorkbenchClientApi => {
   const createSubscriptionId =
     options.createSubscriptionId ?? createOpaqueId;
-  const rpc = createRemoteRpcHandler(service, {
+  const rpc = createWorkbenchRpcHandler(service, {
     createSubscriptionId
   });
 

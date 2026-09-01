@@ -3,12 +3,12 @@ export const DESKTOP_SERVER_APP_NAME = "@another-workbench/desktop-server";
 export const desktopServerDependencies = ["@another-workbench/core", "@another-workbench/adapters", "@another-workbench/shared"];
 
 export * from "./runtime-service.js";
-export * from "./remote-auth.js";
-export * from "./remote-auth-session-service.js";
-export * from "./remote-bootstrap-service.js";
-export * from "./remote-connection-service.js";
-export * from "./remote-pairing-service.js";
-export * from "./remote-protocol.js";
+export * from "./mobile-auth-session-service.js";
+export * from "./mobile-remote-bootstrap-service.js";
+export * from "./host-relay-connection-service.js";
+export * from "./mobile-pairing-service.js";
+export * from "./mobile-remote-rpc.js";
+export * from "./workbench-rpc-handler.js";
 export * from "./remote-server.js";
 export * from "./host-relay-client.js";
 export * from "./demo-runtime-port.js";

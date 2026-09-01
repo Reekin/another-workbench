@@ -1,5 +1,5 @@
 import {
-  createRemoteRpcHandler,
+  createWorkbenchRpcHandler,
   type WorkbenchShellService
 } from "@another-workbench/desktop-server";
 import type {
@@ -76,7 +76,7 @@ export const createWorkbenchIpcRouter = (
 ): WorkbenchIpcRouter => {
   const createSubscriptionId =
     options.createSubscriptionId ?? createOpaqueSubscriptionId;
-  const rpc = createRemoteRpcHandler(options.service, {
+  const rpc = createWorkbenchRpcHandler(options.service, {
     createSubscriptionId
   });
   const pushBatchMaxSize = options.pushBatchMaxSize ?? defaultPushBatchMaxSize;

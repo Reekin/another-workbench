@@ -774,19 +774,19 @@ task_4_6: task_4_2 task_1_5
 
 ### 阶段目标
 
-一个 RPC 方法只定义一次；本地 IPC、remote relay、typed client 和 handler 使用同一 contract。
+一个 RPC 方法只定义一次；本地 IPC 使用完整 contract，mobile gateway 在服务端显式裁剪允许的子集。
 
 ### 用户可感知结果
 
-本地和 remote 行为不再因路由实现不同而漂移，协议错误能返回方法级校验信息。
+相同业务方法不再因路由实现不同而漂移；mobile gateway 对桌面专属方法返回正式拒绝语义。
 
 ### 通过标准
 
 - `packages/shared/src/ipc.ts` 不再是 1,800 行单文件矩阵。
-- `remote-protocol.ts` 不再有 50+ case switch。
+- `workbench-rpc-handler.ts` 不再有 50+ case switch。
 - generic client 自动取得 params/result 类型。
 - request params 和 result 都按 method schema 校验。
-- Electron local、remote relay 和 headless 调用均通过。
+- Electron local、mobile remote relay 和 headless 调用均通过。
 - 协议 envelope 带 `protocolVersion`。
 
 ### 目标 contract
@@ -863,9 +863,9 @@ type RpcResponseEnvelope =
 - subagent_context: inherit
 - tdd: required
 - 当前位置：
-  - `apps/desktop-server/src/remote-protocol.ts:44-837`
+  - `apps/desktop-server/src/workbench-rpc-handler.ts:44-837`
 - 做法：
-  - remote protocol 只负责 auth/session/subscription/envelope forwarding。
+  - mobile remote gateway 只负责 auth、授权、session、subscription 和 envelope forwarding。
   - 业务调用交给 rpc server。
 - 预期生产 LOC：**-500–650**。
 
@@ -1261,7 +1261,7 @@ task_7_5: task_7_3
 | `domain-projector.ts` | 984 | 850–1,000 | -134–+16 | 投影规则本身是真实复杂度，不强求缩短 |
 | renderer `reducer.ts + state.ts` | 2,217 | 550–800 | -1,417–1,667 | 复用 DomainReplica 后只留同步/UI 状态 |
 | `packages/shared/src/ipc.ts` 区域 | 1,797 | 650–850 | -947–1,147 | contract registry + 分域文件 |
-| `remote-protocol.ts` | 838 | 200–300 | -538–638 | 删除业务 switch |
+| `workbench-rpc-handler.ts` | 838 | 200–300 | -538–638 | 删除业务 switch |
 | `desktop-transport.ts` | 1,288 | 750–900 | -388–538 | 复用 contract-derived client |
 | `capability-registry.ts` | 666 | 200–300 | -366–466 | EnginePlugin 成为配置真相 |
 | `prod-service.ts` | 390 | 140–200 | -190–250 | 只做 composition |

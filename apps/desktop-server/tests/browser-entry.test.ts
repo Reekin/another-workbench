@@ -4,7 +4,8 @@ import * as browserEntry from "../src/browser.js";
 describe("desktop-server browser entry", () => {
   it("exposes browser-safe demo helpers without node-only remote server exports", () => {
     expect(typeof browserEntry.createLocalDesktopPreloadApi).toBe("function");
-    expect(typeof browserEntry.createRemoteRpcHandler).toBe("function");
+    expect(typeof browserEntry.createWorkbenchRpcHandler).toBe("function");
+    expect("createRemoteRpcHandler" in browserEntry).toBe(false);
     expect(typeof browserEntry.createDemoWorkbenchRuntimeService).toBe("function");
     expect(typeof browserEntry.createDemoWorkbenchShellService).toBe("function");
     expect("WorkbenchRemoteServer" in browserEntry).toBe(false);

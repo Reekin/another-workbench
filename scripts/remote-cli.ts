@@ -1,13 +1,11 @@
-type CommandName = "bootstrap" | "pair" | "session-list" | "session-repair";
+type CommandName = "bootstrap" | "pair" | "session-list";
 
 type ParsedArgs = {
   command: CommandName;
   baseUrl: string;
-  surface: "desktop-full" | "mobile-companion";
   code?: string;
   hostId?: string;
   sessionToken?: string;
-  workspaceIds: string[];
 };
 
 const parseArgs = (): ParsedArgs => {
@@ -17,9 +15,9 @@ const parseArgs = (): ParsedArgs => {
   }
   const [rawCommand, ...rest] = rawArgs;
   const command = (rawCommand ?? "bootstrap") as CommandName;
-  if (!["bootstrap", "pair", "session-list", "session-repair"].includes(command)) {
+  if (!["bootstrap", "pair", "session-list"].includes(command)) {
     throw new Error(
-      "Usage: pnpm remote:cli -- <bootstrap|pair|session-list|session-repair> [--base-url=http://127.0.0.1:4317] [--surface=desktop-full] [--host-id=host-1] [--code=PAIR99] [--session-token=...] [--workspace-ids=workspace-1,workspace-2]"
+      "Usage: pnpm remote:cli -- <bootstrap|pair|session-list> [--base-url=http://127.0.0.1:4317] [--host-id=host-1] [--code=PAIR99] [--session-token=...]"
     );
   }
 
@@ -38,17 +36,9 @@ const parseArgs = (): ParsedArgs => {
       args.get("base-url") ??
       process.env.AWB_REMOTE_BASE_URL ??
       "http://127.0.0.1:4317",
-    surface:
-      args.get("surface") === "mobile-companion"
-        ? "mobile-companion"
-        : "desktop-full",
     code: args.get("code"),
     hostId: args.get("host-id"),
-    sessionToken: args.get("session-token"),
-    workspaceIds: (args.get("workspace-ids") ?? "")
-      .split(",")
-      .map((workspaceId) => workspaceId.trim())
-      .filter(Boolean)
+    sessionToken: args.get("session-token")
   };
 };
 
@@ -89,37 +79,14 @@ const run = async (): Promise<void> => {
   switch (args.command) {
     case "bootstrap": {
       const payload = await requestJson(
-        withHostQuery(
-          new URL(`/bootstrap?clientSurface=${args.surface}`, baseUrl),
-          args.hostId
-        )
+        withHostQuery(new URL("/bootstrap", baseUrl), args.hostId)
       );
       console.log(JSON.stringify(payload, null, 2));
       return;
     }
     case "pair": {
-      const codePayload = args.code
-        ? { code: args.code, clientSurface: args.surface }
-        : await requestJson(withHostQuery(new URL("/pairing/code", baseUrl), args.hostId), {
-            method: "POST",
-            headers: {
-              "content-type": "application/json"
-            },
-            body: JSON.stringify({
-              clientSurface: args.surface
-            })
-          });
-
-      const code =
-        typeof codePayload === "object" &&
-        codePayload &&
-        "pairing" in codePayload &&
-        typeof (codePayload as { pairing?: { code?: unknown } }).pairing?.code ===
-          "string"
-          ? (codePayload as { pairing: { code: string } }).pairing.code
-          : args.code;
-      if (!code) {
-        throw new Error("Failed to resolve pairing code.");
+      if (!args.code) {
+        throw new Error("--code is required for pair");
       }
 
       const sessionPayload = await requestJson(
@@ -130,22 +97,12 @@ const run = async (): Promise<void> => {
             "content-type": "application/json"
           },
           body: JSON.stringify({
-            code,
-            clientSurface: args.surface
+            code: args.code
           })
         }
       );
 
-      console.log(
-        JSON.stringify(
-          {
-            pairing: codePayload,
-            session: sessionPayload
-          },
-          null,
-          2
-        )
-      );
+      console.log(JSON.stringify(sessionPayload, null, 2));
       return;
     }
     case "session-list": {
@@ -166,29 +123,6 @@ const run = async (): Promise<void> => {
       });
       console.log(JSON.stringify(payload, null, 2));
       return;
-    }
-    case "session-repair": {
-      if (!args.sessionToken) {
-        throw new Error("--session-token is required for session-repair");
-      }
-      if (args.workspaceIds.length === 0) {
-        throw new Error("--workspace-ids is required for session-repair");
-      }
-      const payload = await requestJson(new URL("/rpc", baseUrl), {
-        method: "POST",
-        headers: withHostHeaders({
-          authorization: `Bearer ${args.sessionToken}`,
-          "content-type": "application/json"
-        }, args.hostId),
-        body: JSON.stringify({
-          id: "cli-session-repair",
-          method: "sessionBrowser.repair",
-          params: {
-            workspaceIds: args.workspaceIds
-          }
-        })
-      });
-      console.log(JSON.stringify(payload, null, 2));
     }
   }
 };

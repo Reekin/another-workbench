@@ -1,9 +1,9 @@
 import { createConnection, type AddressInfo, type Socket } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { RemoteAuthSessionService } from "../src/remote-auth-session-service.js";
-import { RemoteBootstrapService } from "../src/remote-bootstrap-service.js";
-import { RemoteConnectionService } from "../src/remote-connection-service.js";
-import { RemotePairingService } from "../src/remote-pairing-service.js";
+import { HostRelayConnectionService } from "../src/host-relay-connection-service.js";
+import { MobileAuthSessionService } from "../src/mobile-auth-session-service.js";
+import { MobilePairingService } from "../src/mobile-pairing-service.js";
+import { MobileRemoteBootstrapService } from "../src/mobile-remote-bootstrap-service.js";
 import { WorkbenchRemoteServer } from "../src/remote-server.js";
 import { WorkbenchRuntimeService } from "../src/runtime-service.js";
 import { WorkbenchShellService } from "../src/workbench-shell-service.js";
@@ -38,6 +38,13 @@ const createService = () =>
       }
     ]
   });
+
+const createMobileSession = (hostId = "host-1") => {
+  const pairingService = new MobilePairingService({ hostId });
+  const authSessions = new MobileAuthSessionService({ hostId });
+  const session = authSessions.issueFromPairing(pairingService.issue());
+  return { authSessions, session };
+};
 
 const decodeTextFrames = (
   input: Buffer
@@ -177,13 +184,12 @@ describe("WorkbenchRemoteServer", () => {
 
   it("serves health and auth-protected rpc requests", async () => {
     const service = createService();
+    const { authSessions, session } = createMobileSession();
     const server = new WorkbenchRemoteServer({
       service,
       host: "127.0.0.1",
       port: 0,
-      auth: {
-        token: "secret-token"
-      }
+      authSessions
     });
     servers.push(server);
 
@@ -229,7 +235,7 @@ describe("WorkbenchRemoteServer", () => {
     const authorizedRpc = await fetch(`http://127.0.0.1:${address.port}/rpc`, {
       method: "POST",
       headers: {
-        authorization: "Bearer secret-token",
+        authorization: `Bearer ${session.sessionToken}`,
         "content-type": "application/json"
       },
       body: JSON.stringify({
@@ -259,8 +265,154 @@ describe("WorkbenchRemoteServer", () => {
     });
   });
 
+  it("fails closed when rpc has no configured auth or mobile session token", async () => {
+    const server = new WorkbenchRemoteServer({
+      service: createService(),
+      host: "127.0.0.1",
+      port: 0,
+      authSessions: new MobileAuthSessionService({
+        hostId: "host-1"
+      })
+    });
+    servers.push(server);
+    await server.listen();
+    const address = server.getHttpServer().address() as AddressInfo;
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/rpc`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        id: "req-session-list",
+        method: "session.list",
+        params: {}
+      })
+    });
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "REMOTE_UNAUTHORIZED"
+      }
+    });
+  });
+
+  it("allows mobile reads and commands while rejecting desktop-only operations", async () => {
+    const { authSessions, session } = createMobileSession();
+    const server = new WorkbenchRemoteServer({
+      service: createService(),
+      host: "127.0.0.1",
+      port: 0,
+      authSessions
+    });
+    servers.push(server);
+    await server.listen();
+    const address = server.getHttpServer().address() as AddressInfo;
+    const endpoint = `http://127.0.0.1:${address.port}/rpc`;
+    const postRpc = async (body: unknown) => {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${session.sessionToken}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(body)
+      });
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+
+    await expect(
+      postRpc({
+        id: "req-session-list",
+        method: "session.list",
+        params: {}
+      })
+    ).resolves.toMatchObject({
+      id: "req-session-list",
+      method: "session.list",
+      ok: true
+    });
+    await expect(
+      postRpc({
+        id: "req-create",
+        method: "runtime.command",
+        params: {
+          envelope: {
+            commandId: "cmd-create",
+            command: {
+              type: "createSession",
+              engineId: "codex"
+            }
+          }
+        }
+      })
+    ).resolves.toMatchObject({
+      id: "req-create",
+      method: "runtime.command",
+      ok: true,
+      result: {
+        accepted: true,
+        commandType: "createSession"
+      }
+    });
+
+    const deniedRequests = [
+      {
+        id: "req-settings-update",
+        method: "settings.update",
+        params: {
+          defaultNewSessionEngineId: "codex"
+        }
+      },
+      {
+        id: "req-pick-directory",
+        method: "workspace.pickDirectory",
+        params: {}
+      },
+      {
+        id: "req-file-action",
+        method: "file.runAction",
+        params: {
+          path: "I:\\repo\\README.md",
+          action: "open"
+        }
+      },
+      {
+        id: "req-undo",
+        method: "codex.turnChanges.undo",
+        params: {
+          sessionId: "session-1",
+          turnId: "turn-1"
+        }
+      },
+      {
+        id: "req-open-rollout",
+        method: "sessionBrowser.runAction",
+        params: {
+          sessionId: "session-1",
+          action: "open_rollout"
+        }
+      }
+    ];
+
+    for (const request of deniedRequests) {
+      await expect(postRpc(request)).resolves.toMatchObject({
+        id: request.id,
+        method: request.method,
+        ok: false,
+        error: {
+          code: "MOBILE_REMOTE_METHOD_NOT_ALLOWED"
+        }
+      });
+    }
+  });
+
   it("replays and streams workbench event pushes over websocket", async () => {
     const service = createService();
+    const { authSessions, session } = createMobileSession();
     await service.executeCommand({
       commandId: "cmd-create",
       command: {
@@ -274,9 +426,7 @@ describe("WorkbenchRemoteServer", () => {
       service,
       host: "127.0.0.1",
       port: 0,
-      auth: {
-        token: "secret-token"
-      }
+      authSessions
     });
     servers.push(server);
     await server.listen();
@@ -284,7 +434,9 @@ describe("WorkbenchRemoteServer", () => {
 
     const pushes = await openEventSocket({
       port: address.port,
-      path: "/events?token=secret-token&fromCursor=1&conversationId=conversation-1",
+      path: `/events?sessionToken=${encodeURIComponent(
+        session.sessionToken
+      )}&fromCursor=1&conversationId=conversation-1`,
       minFrames: 4,
       onUpgraded: async () => {
         await service.executeCommand({
@@ -314,7 +466,7 @@ describe("WorkbenchRemoteServer", () => {
     ]);
   });
 
-  it("serves bootstrap and pairing exchange endpoints when remote control services are configured", async () => {
+  it("serves mobile bootstrap and exchanges a locally issued pairing code", async () => {
     const service = createService();
     const shell = new WorkbenchShellService({
       runtimeService: service,
@@ -331,16 +483,16 @@ describe("WorkbenchRemoteServer", () => {
         ]
       } as never
     });
-    const connection = new RemoteConnectionService({
+    const connection = new HostRelayConnectionService({
       hostId: "host-1",
       relayId: "relay-1"
     });
-    const pairing = new RemotePairingService({
+    const pairing = new MobilePairingService({
       hostId: "host-1",
       createPairingId: () => "pair-1",
       createCode: () => "PAIR99"
     });
-    const authSessions = new RemoteAuthSessionService({
+    const authSessions = new MobileAuthSessionService({
       hostId: "host-1",
       createToken: (() => {
         let index = 0;
@@ -348,7 +500,7 @@ describe("WorkbenchRemoteServer", () => {
       })(),
       createClientId: () => "client-1"
     });
-    const bootstrap = new RemoteBootstrapService({
+    const bootstrap = new MobileRemoteBootstrapService({
       shellService: shell,
       connectionService: connection,
       relay: {
@@ -378,39 +530,33 @@ describe("WorkbenchRemoteServer", () => {
     const address = server.getHttpServer().address() as AddressInfo;
 
     const bootstrapResponse = await fetch(
-      `http://127.0.0.1:${address.port}/bootstrap?clientSurface=desktop-full`
+      `http://127.0.0.1:${address.port}/bootstrap`
     );
     expect(bootstrapResponse.status).toBe(200);
     await expect(bootstrapResponse.json()).resolves.toMatchObject({
       host: {
         hostId: "host-1"
       },
-      clientSurface: "desktop-full",
       version: {
-        protocolVersion: "2026-04-remote-v1"
+        protocolVersion: "2026-09-mobile-v1"
       }
     });
 
     const pairingResponse = await fetch(
       `http://127.0.0.1:${address.port}/pairing/code`,
       {
-        method: "POST",
-        headers: {
-          "content-type": "application/json"
-        },
-        body: JSON.stringify({
-          clientSurface: "desktop-full"
-        })
+        method: "POST"
       }
     );
-    expect(pairingResponse.status).toBe(200);
+    expect(pairingResponse.status).toBe(404);
     await expect(pairingResponse.json()).resolves.toMatchObject({
-      ok: true,
-      pairing: {
-        pairingId: "pair-1",
-        code: "PAIR99"
+      error: {
+        code: "REMOTE_NOT_FOUND"
       }
     });
+
+    const localPairing = pairing.issue();
+    expect(localPairing.code).toBe("PAIR99");
 
     const exchangeResponse = await fetch(
       `http://127.0.0.1:${address.port}/pairing/exchange`,
@@ -420,8 +566,7 @@ describe("WorkbenchRemoteServer", () => {
           "content-type": "application/json"
         },
         body: JSON.stringify({
-          code: "PAIR99",
-          clientSurface: "desktop-full"
+          code: localPairing.code
         })
       }
     );

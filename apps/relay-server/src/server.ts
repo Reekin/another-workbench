@@ -7,11 +7,8 @@ import {
 import type { Socket } from "node:net";
 import { URL } from "node:url";
 import {
-  parseWorkbenchRpcRequest,
   safeParseRelayHostBridgeMessage,
-  type RelayHostBridgeMessage,
-  type WorkbenchRpcRequest,
-  type WorkbenchRpcResponse
+  type RelayHostBridgeMessage
 } from "@another-workbench/shared";
 import {
   RELAY_PROTOCOL_VERSION,
@@ -36,6 +33,7 @@ type IdFactory = () => string;
 
 type RelayHostChannel = {
   buffer: Buffer;
+  expectedHostId: string;
   hostId?: string;
   routeId?: string;
   socket: Socket;
@@ -54,6 +52,7 @@ type RelayClientEventStream = {
 };
 
 export type RelayServerOptions = {
+  hostTokens: Readonly<Record<string, string>>;
   host?: string;
   port?: number;
   registry?: RelayHostRegistry;
@@ -81,6 +80,9 @@ const createOpaqueId = (prefix: string): string =>
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const stripBearerPrefix = (value: string | undefined): string | undefined =>
+  value?.startsWith("Bearer ") ? value.slice("Bearer ".length) : value;
 
 const sendJson = (
   response: ServerResponse,
@@ -286,13 +288,22 @@ export class RelayServer {
   private readonly createAnonymousClientId: IdFactory;
   private readonly createRelayRequestId: IdFactory;
   private readonly requestTimeoutMs: number;
+  private readonly hostTokens: ReadonlyMap<string, string>;
   private readonly server: HttpServer;
   private readonly sockets = new Set<Socket>();
   private readonly hostChannels = new Map<string, RelayHostChannel>();
   private readonly pendingRequests = new Map<string, PendingHostRequest>();
   private readonly clientEventStreams = new Map<string, RelayClientEventStream>();
 
-  public constructor(options: RelayServerOptions = {}) {
+  public constructor(options: RelayServerOptions) {
+    this.hostTokens = new Map(
+      Object.entries(options.hostTokens)
+        .map(([hostId, token]) => [hostId.trim(), token.trim()] as const)
+        .filter(([hostId, token]) => hostId.length > 0 && token.length > 0)
+    );
+    if (this.hostTokens.size === 0) {
+      throw new Error("At least one relay host credential is required.");
+    }
     this.host = options.host ?? "127.0.0.1";
     this.port = options.port ?? 4417;
     this.registry =
@@ -395,6 +406,14 @@ export class RelayServer {
 
       if (request.method === "POST" && url.pathname === "/api/hosts/register") {
         const input = parseHostRegistrationInput(await readJson(request));
+        if (!input.hostId) {
+          throw new RelayHttpError(
+            400,
+            "RELAY_HOST_ID_REQUIRED",
+            "hostId is required for host registration."
+          );
+        }
+        this.assertHostAuthorized(request, url, input.hostId);
         const host = await this.registry.registerHost(input);
         sendJson(response, 201, {
           ok: true,
@@ -446,25 +465,6 @@ export class RelayServer {
             [...url.searchParams.entries()].filter(([key]) => key !== "hostId")
           ),
           headers: sanitizeForwardHeaders(extractHeaders(request))
-        });
-        sendJson(response, proxied.statusCode, proxied.body);
-        return;
-      }
-
-      if (request.method === "POST" && url.pathname === "/pairing/code") {
-        const hostId = getTargetHostId(request, url, this.registry);
-        if (!hostId) {
-          throw new RelayHttpError(
-            400,
-            "RELAY_HOST_REQUIRED",
-            "hostId is required when multiple hosts are available."
-          );
-        }
-        const proxied = await this.forwardControlRequest(hostId, {
-          method: "POST",
-          path: "/pairing/code",
-          headers: sanitizeForwardHeaders(extractHeaders(request)),
-          body: await readJson(request)
         });
         sendJson(response, proxied.statusCode, proxied.body);
         return;
@@ -532,10 +532,9 @@ export class RelayServer {
             "hostId is required when multiple hosts are available."
           );
         }
-        const rpcRequest = parseWorkbenchRpcRequest(payload);
         const rpcResponse = await this.forwardRpcRequest(
           hostId,
-          rpcRequest,
+          payload,
           sanitizeForwardHeaders(extractHeaders(request))
         );
         sendJson(response, 200, rpcResponse);
@@ -597,6 +596,23 @@ export class RelayServer {
     socket: Socket,
     head: Buffer
   ): void {
+    const url = new URL(
+      request.url ?? "/",
+      `http://${request.headers.host ?? `${this.host}:${this.port}`}`
+    );
+    const expectedHostId = url.searchParams.get("hostId")?.trim();
+    if (!expectedHostId) {
+      socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    try {
+      this.assertHostAuthorized(request, url, expectedHostId);
+    } catch {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
     const websocketKey = normalizeHeaderValue(request.headers["sec-websocket-key"]);
     if (!websocketKey) {
       socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
@@ -617,6 +633,7 @@ export class RelayServer {
 
     const channel: RelayHostChannel = {
       buffer: head,
+      expectedHostId,
       socket
     };
     this.sockets.add(socket);
@@ -660,7 +677,9 @@ export class RelayServer {
         if (!parsed.success) {
           continue;
         }
-        void this.handleHostBridgeMessage(channel, parsed.data);
+        void this.handleHostBridgeMessage(channel, parsed.data).catch(() => {
+          socket.destroy();
+        });
       }
     };
 
@@ -758,6 +777,11 @@ export class RelayServer {
   ): Promise<void> {
     switch (message.type) {
       case "host.hello": {
+        if (message.host.hostId !== channel.expectedHostId) {
+          throw new Error(
+            `Host identity mismatch. expected=${channel.expectedHostId} actual=${message.host.hostId}`
+          );
+        }
         const existing = this.hostChannels.get(message.host.hostId);
         if (existing && existing !== channel) {
           existing.socket.destroy();
@@ -899,16 +923,34 @@ export class RelayServer {
 
   private async forwardRpcRequest(
     hostId: string,
-    rpc: WorkbenchRpcRequest,
+    rpc: unknown,
     headers: Record<string, string> | undefined
-  ): Promise<WorkbenchRpcResponse> {
+  ): Promise<unknown> {
     const response = await this.sendHostMessage(hostId, {
       type: "rpc.request",
       requestId: this.createRelayRequestId(),
       rpc,
       headers
     });
-    return response as WorkbenchRpcResponse;
+    return response;
+  }
+
+  private assertHostAuthorized(
+    request: IncomingMessage,
+    url: URL,
+    hostId: string
+  ): void {
+    const token =
+      stripBearerPrefix(normalizeHeaderValue(request.headers.authorization))
+      ?? url.searchParams.get("token")
+      ?? undefined;
+    if (token !== this.hostTokens.get(hostId)) {
+      throw new RelayHttpError(
+        401,
+        "RELAY_HOST_UNAUTHORIZED",
+        "Missing or invalid relay host token."
+      );
+    }
   }
 
   private async sendHostMessage(

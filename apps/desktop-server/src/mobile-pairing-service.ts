@@ -1,14 +1,14 @@
+import { randomUUID } from "node:crypto";
 import {
-  parseWorkbenchPairingCode,
-  type RemoteClientSurface,
-  type WorkbenchPairingCode
+  parseMobilePairingCode,
+  type MobilePairingCode
 } from "@another-workbench/shared";
 
 type Clock = () => string;
 type IdFactory = () => string;
 type CodeFactory = () => string;
 
-export type RemotePairingServiceOptions = {
+export type MobilePairingServiceOptions = {
   hostId: string;
   now?: Clock;
   pairingTtlMs?: number;
@@ -17,26 +17,26 @@ export type RemotePairingServiceOptions = {
 };
 
 const defaultCreateId = (): string =>
-  `pair-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  `pair-${randomUUID()}`;
 
 const defaultCreateCode = (): string =>
-  Math.random().toString(36).slice(2, 8).toUpperCase();
+  randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase();
 
 const toExpiresAt = (createdAt: string, ttlMs: number): string =>
   new Date(Date.parse(createdAt) + ttlMs).toISOString();
 
-const isExpired = (pairing: WorkbenchPairingCode, now: string): boolean =>
+const isExpired = (pairing: MobilePairingCode, now: string): boolean =>
   Date.parse(pairing.expiresAt) <= Date.parse(now);
 
-export class RemotePairingService {
+export class MobilePairingService {
   private readonly hostId: string;
   private readonly now: Clock;
   private readonly pairingTtlMs: number;
   private readonly createPairingId: IdFactory;
   private readonly createCode: CodeFactory;
-  private readonly pairings = new Map<string, WorkbenchPairingCode>();
+  private readonly pairings = new Map<string, MobilePairingCode>();
 
-  public constructor(options: RemotePairingServiceOptions) {
+  public constructor(options: MobilePairingServiceOptions) {
     this.hostId = options.hostId;
     this.now = options.now ?? (() => new Date().toISOString());
     this.pairingTtlMs = options.pairingTtlMs ?? 10 * 60 * 1000;
@@ -44,13 +44,12 @@ export class RemotePairingService {
     this.createCode = options.createCode ?? defaultCreateCode;
   }
 
-  public issue(clientSurface: RemoteClientSurface): WorkbenchPairingCode {
+  public issue(): MobilePairingCode {
     const createdAt = this.now();
-    const pairing = parseWorkbenchPairingCode({
+    const pairing = parseMobilePairingCode({
       pairingId: this.createPairingId(),
       code: this.createCode(),
       hostId: this.hostId,
-      clientSurface,
       createdAt,
       expiresAt: toExpiresAt(createdAt, this.pairingTtlMs)
     });
@@ -58,7 +57,7 @@ export class RemotePairingService {
     return pairing;
   }
 
-  public listActive(): WorkbenchPairingCode[] {
+  public listActive(): MobilePairingCode[] {
     const now = this.now();
     return Array.from(this.pairings.values()).filter(
       (pairing) =>
@@ -68,12 +67,12 @@ export class RemotePairingService {
     );
   }
 
-  public revoke(pairingId: string): WorkbenchPairingCode | undefined {
+  public revoke(pairingId: string): MobilePairingCode | undefined {
     const pairing = this.pairings.get(pairingId);
     if (!pairing) {
       return undefined;
     }
-    const updated = parseWorkbenchPairingCode({
+    const updated = parseMobilePairingCode({
       ...pairing,
       revokedAt: this.now()
     });
@@ -81,20 +80,16 @@ export class RemotePairingService {
     return updated;
   }
 
-  public consumeByCode(input: {
-    code: string;
-    clientSurface: RemoteClientSurface;
-  }): WorkbenchPairingCode | undefined {
+  public consumeByCode(code: string): MobilePairingCode | undefined {
     const now = this.now();
     for (const pairing of this.pairings.values()) {
       if (
-        pairing.code === input.code &&
-        pairing.clientSurface === input.clientSurface &&
+        pairing.code === code &&
         !pairing.revokedAt &&
         !pairing.consumedAt &&
         !isExpired(pairing, now)
       ) {
-        const consumed = parseWorkbenchPairingCode({
+        const consumed = parseMobilePairingCode({
           ...pairing,
           consumedAt: now
         });

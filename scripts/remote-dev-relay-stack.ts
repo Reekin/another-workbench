@@ -3,10 +3,10 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HostRelayClient } from "../apps/desktop-server/src/host-relay-client.js";
-import { RemoteAuthSessionService } from "../apps/desktop-server/src/remote-auth-session-service.js";
-import { RemoteBootstrapService } from "../apps/desktop-server/src/remote-bootstrap-service.js";
-import { RemoteConnectionService } from "../apps/desktop-server/src/remote-connection-service.js";
-import { RemotePairingService } from "../apps/desktop-server/src/remote-pairing-service.js";
+import { HostRelayConnectionService } from "../apps/desktop-server/src/host-relay-connection-service.js";
+import { MobileAuthSessionService } from "../apps/desktop-server/src/mobile-auth-session-service.js";
+import { MobilePairingService } from "../apps/desktop-server/src/mobile-pairing-service.js";
+import { MobileRemoteBootstrapService } from "../apps/desktop-server/src/mobile-remote-bootstrap-service.js";
 import { createWorkbenchRuntimeService } from "../apps/desktop-server/src/prod-service.js";
 import { WorkbenchRemoteServer } from "../apps/desktop-server/src/remote-server.js";
 import { RelayServer } from "../apps/relay-server/src/index.js";
@@ -20,20 +20,21 @@ const waitForSignal = async (): Promise<NodeJS.Signals> =>
 const run = async (): Promise<void> => {
   const hostId = "relay-dev-host";
   const relayId = "relay-dev";
+  const hostAuthToken = "relay-dev-host-auth";
   const persistenceBaseDir = mkdtempSync(join(tmpdir(), "awb-relay-dev-"));
   const shell = createWorkbenchRuntimeService({
     persistenceBaseDir
   });
-  const connection = new RemoteConnectionService({
+  const connection = new HostRelayConnectionService({
     hostId,
     relayId
   });
-  const pairing = new RemotePairingService({
+  const pairing = new MobilePairingService({
     hostId,
     createPairingId: () => "relay-dev-pair",
     createCode: () => "RDEV01"
   });
-  const authSessions = new RemoteAuthSessionService({
+  const authSessions = new MobileAuthSessionService({
     hostId,
     createToken: (() => {
       let index = 0;
@@ -45,7 +46,7 @@ const run = async (): Promise<void> => {
     service: shell,
     host: "127.0.0.1",
     port: 0,
-    bootstrapService: new RemoteBootstrapService({
+    bootstrapService: new MobileRemoteBootstrapService({
       shellService: shell,
       connectionService: connection,
       relay: {
@@ -65,6 +66,9 @@ const run = async (): Promise<void> => {
     authSessions
   });
   const relay = new RelayServer({
+    hostTokens: {
+      [hostId]: hostAuthToken
+    },
     host: "127.0.0.1",
     port: 0
   });
@@ -87,6 +91,7 @@ const run = async (): Promise<void> => {
         wsBaseUrl: relayWsBaseUrl
       },
       connectionService: connection,
+      authToken: hostAuthToken,
       getHostDescriptor: () => ({
         hostId,
         label: "Relay Dev Host",
@@ -102,14 +107,7 @@ const run = async (): Promise<void> => {
     });
 
     const tunnel = await hostClient.connect();
-    const issuedPairing = pairing.issue("desktop-full");
-    const session = authSessions.issueFromPairing(issuedPairing);
-
-    const remoteHeaders = JSON.stringify({
-      authorization: `Bearer ${session.sessionToken}`,
-      "x-workbench-host-id": hostId
-    });
-    const desktopUrl = `http://127.0.0.1:4173/?workbenchMode=remote&workbenchRemoteUrl=${encodeURIComponent(relayBaseUrl)}&workbenchRemoteHeaders=${encodeURIComponent(remoteHeaders)}`;
+    const issuedPairing = pairing.issue();
 
     console.log(
       JSON.stringify(
@@ -119,10 +117,7 @@ const run = async (): Promise<void> => {
           relayWsBaseUrl,
           hostId,
           tunnel,
-          sessionToken: session.sessionToken,
-          resumeToken: session.resumeToken,
-          pairingCode: issuedPairing.code,
-          desktopUrl
+          pairingCode: issuedPairing.code
         },
         null,
         2

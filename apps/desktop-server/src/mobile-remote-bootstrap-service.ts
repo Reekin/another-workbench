@@ -1,25 +1,19 @@
 import { hostname } from "node:os";
 import {
-  parseWorkbenchBootstrap,
-  type RemoteClientSurface,
-  type WorkbenchBootstrap,
+  parseMobileRemoteBootstrap,
+  type MobileRemoteBootstrap,
   type WorkbenchHostCapabilities,
   type WorkbenchHostDescriptor,
   type WorkbenchRelayDescriptor
 } from "@another-workbench/shared";
 import type { WorkbenchShellService } from "./workbench-shell-service.js";
-import type { RemoteConnectionService } from "./remote-connection-service.js";
+import type { HostRelayConnectionService } from "./host-relay-connection-service.js";
 
 type Clock = () => string;
 
-const SUPPORTED_CLIENT_SURFACES: RemoteClientSurface[] = [
-  "desktop-full",
-  "mobile-companion"
-];
-
-export type RemoteBootstrapServiceOptions = {
+export type MobileRemoteBootstrapServiceOptions = {
   shellService: WorkbenchShellService;
-  connectionService: RemoteConnectionService;
+  connectionService: HostRelayConnectionService;
   relay: WorkbenchRelayDescriptor;
   host: {
     hostId: string;
@@ -35,21 +29,20 @@ export type RemoteBootstrapServiceOptions = {
 const createCapabilities = (
   shellService: WorkbenchShellService
 ): WorkbenchHostCapabilities => ({
-  clientSurfaces: [...SUPPORTED_CLIENT_SURFACES],
   engineIds: shellService.listEngines().map((engine) => engine.engineId),
   supportsPairing: true,
   supportsResume: true,
   supportsResourceGateway: false
 });
 
-export class RemoteBootstrapService {
+export class MobileRemoteBootstrapService {
   private readonly shellService: WorkbenchShellService;
-  private readonly connectionService: RemoteConnectionService;
+  private readonly connectionService: HostRelayConnectionService;
   private readonly relay: WorkbenchRelayDescriptor;
   private readonly hostDescriptor: WorkbenchHostDescriptor;
   private readonly now: Clock;
 
-  public constructor(options: RemoteBootstrapServiceOptions) {
+  public constructor(options: MobileRemoteBootstrapServiceOptions) {
     this.shellService = options.shellService;
     this.connectionService = options.connectionService;
     this.relay = options.relay;
@@ -66,12 +59,9 @@ export class RemoteBootstrapService {
     };
   }
 
-  public buildBootstrap(
-    clientSurface: RemoteClientSurface,
-    authenticated = false
-  ): WorkbenchBootstrap {
+  public buildBootstrap(): MobileRemoteBootstrap {
     const capabilities = createCapabilities(this.shellService);
-    return parseWorkbenchBootstrap({
+    return parseMobileRemoteBootstrap({
       serverInstanceId: this.hostDescriptor.serverInstanceId,
       relay: this.relay,
       host: {
@@ -80,11 +70,8 @@ export class RemoteBootstrapService {
       },
       capabilities,
       connection: this.connectionService.getSnapshot(),
-      clientSurface,
-      supportedClientSurfaces: [...capabilities.clientSurfaces],
-      authenticated,
       version: {
-        protocolVersion: "2026-04-remote-v1",
+        protocolVersion: "2026-09-mobile-v1",
         appVersion: this.hostDescriptor.appVersion
       }
     });

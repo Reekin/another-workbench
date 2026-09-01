@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createRemoteRpcHandler } from "../src/remote-protocol.js";
+import { createWorkbenchRpcHandler } from "../src/workbench-rpc-handler.js";
 import { SessionBrowserCursorStaleError } from "../src/session-browser-read-model.js";
 import type { WorkbenchShellService } from "../src/workbench-shell-service.js";
 
@@ -28,10 +28,10 @@ const createShell = (overrides: Record<string, unknown> = {}): WorkbenchShellSer
   ...overrides
 } as unknown as WorkbenchShellService);
 
-describe("session browser remote protocol", () => {
+describe("session browser workbench RPC handler", () => {
   it("routes bounded roots, children, and selected path requests", async () => {
     const shell = createShell();
-    const handler = createRemoteRpcHandler(shell);
+    const handler = createWorkbenchRpcHandler(shell);
 
     const roots = await handler.handleRequest({
       id: "req-roots",
@@ -65,7 +65,7 @@ describe("session browser remote protocol", () => {
         throw new SessionBrowserCursorStaleError();
       })
     });
-    const response = await createRemoteRpcHandler(shell).handleRequest({
+    const response = await createWorkbenchRpcHandler(shell).handleRequest({
       id: "req-stale",
       method: "sessionBrowser.listRoots",
       params: {

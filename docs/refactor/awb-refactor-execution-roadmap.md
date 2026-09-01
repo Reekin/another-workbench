@@ -601,11 +601,11 @@ plugin contract suite、Codex/ACP smoke、GUI capability 展示与 unsupported �
 
 ## 阶段目标
 
-方法 schema 只定义一次，本地和 remote 使用同一 server dispatch。
+方法 schema 只定义一次，本地使用完整 dispatch，mobile gateway 显式暴露允许的子集。
 
 ## 用户可感知结果
 
-local/remote 的错误、校验和结果一致。
+相同业务方法的错误、校验和结果一致；桌面专属方法在 mobile gateway 被拒绝。
 
 ## 通过标准
 
@@ -678,9 +678,9 @@ contract parity tests、Electron IPC、remote relay 和 headless smoke。
   - desktop-server RPC tests
   - typecheck
 
-[ ] task_5_4: Remote protocol 迁移
+[ ] task_5_4: Mobile remote gateway 迁移
 - tag: prod
-- goal: remote 只负责 transport/session/subscription
+- goal: mobile remote 只负责 transport/auth/session/subscription 和方法授权
 - executor: subagent
 - subagent_context: inherit
 - subagent_context_reason: 需保持 remote auth、event push、error 行为
@@ -688,11 +688,11 @@ contract parity tests、Electron IPC、remote relay 和 headless smoke。
 - test_design:
   - unit: version mismatch、transport error、subscription
   - integration: relay server + host client full round trip
-  - user_acceptance: remote CLI list/open/send/replay
+  - user_acceptance: mobile CLI list/open/send/replay
 - done_when:
-  - remote-protocol 无业务 method switch
+  - workbench-rpc-handler 无业务 method switch
 - verify:
-  - remote-protocol/remote-server/relay tests
+  - workbench-rpc-handler/remote-server/relay tests
   - remote smoke scripts
 
 [ ] task_5_5: Desktop typed client 迁移

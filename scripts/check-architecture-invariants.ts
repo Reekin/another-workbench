@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -92,7 +92,7 @@ const assertCodexExtensionRpcAllowlist = (): void => {
   const inspectedFiles = [
     "packages/shared/src/ipc.ts",
     "apps/desktop/src/transport/desktop-transport.ts",
-    "apps/desktop-server/src/remote-protocol.ts"
+    "apps/desktop-server/src/workbench-rpc-handler.ts"
   ];
   const allowlist = new Set<string>(codexExtensionRpcMethods);
   for (const file of inspectedFiles) {
@@ -220,7 +220,7 @@ const assertInteractivePerformanceBoundaries = (): void => {
   const legacySessionRepairFiles = [
     "packages/shared/src/ipc.ts",
     "apps/desktop/src/transport/desktop-transport.ts",
-    "apps/desktop-server/src/remote-protocol.ts"
+    "apps/desktop-server/src/workbench-rpc-handler.ts"
   ].filter((file) => readRepoFile(file).includes("sessionBrowser.reconcile"));
   if (legacySessionRepairFiles.length > 0) {
     fail(
@@ -285,9 +285,59 @@ const assertInteractivePerformanceBoundaries = (): void => {
   }
 };
 
+const assertRemoteProductBoundaries = (): void => {
+  const forbiddenDesktopFiles = [
+    "apps/desktop/src/transport/remote-workbench-client.ts",
+    "apps/desktop/src/transport/workbench-client-bootstrap.ts"
+  ].filter((file) => existsSync(resolve(repoRoot, file)));
+  if (forbiddenDesktopFiles.length > 0) {
+    fail(
+      `Desktop must remain local-only; remove remote client files: ${forbiddenDesktopFiles.join(
+        ", "
+      )}.`
+    );
+  }
+
+  const desktopSource = listFiles("apps/desktop/src")
+    .filter((file) => /\.(?:ts|tsx|cts)$/u.test(file))
+    .map(readRepoFile)
+    .join("\n");
+  for (const forbidden of [
+    "VITE_WORKBENCH_REMOTE",
+    "workbenchRemoteBootstrap",
+    "createRemoteWorkbenchClientApi",
+    'workbenchMode=remote'
+  ]) {
+    if (desktopSource.includes(forbidden)) {
+      fail(`Desktop source must not contain remote client entrypoint ${forbidden}.`);
+    }
+  }
+
+  const remoteContract = readRepoFile("packages/shared/src/remote-control.ts");
+  for (const forbidden of ["desktop-full", "mobile-companion", "clientSurface"]) {
+    if (remoteContract.includes(forbidden)) {
+      fail(`Mobile remote contract must not contain legacy surface ${forbidden}.`);
+    }
+  }
+
+  const remoteServer = readRepoFile("apps/desktop-server/src/remote-server.ts");
+  if (remoteServer.includes('url.pathname === "/pairing/code"')) {
+    fail("Pairing codes must be issued locally, never through the remote server.");
+  }
+  if (!remoteServer.includes("createMobileRemoteRpcHandler")) {
+    fail("Remote server must dispatch through the mobile-only RPC gateway.");
+  }
+
+  const relayServer = readRepoFile("apps/relay-server/src/server.ts");
+  if (relayServer.includes('url.pathname === "/pairing/code"')) {
+    fail("Relay must not expose remote pairing-code issuance.");
+  }
+};
+
 assertRpcRegistryMatchesSchemas();
 assertSessionBrowserSchemaIsTyped();
 assertCodexExtensionRpcAllowlist();
+assertRemoteProductBoundaries();
 assertProviderIdentityBoundaries();
 assertRuntimeEventSwitchCoverage();
 assertReplayGapContract();

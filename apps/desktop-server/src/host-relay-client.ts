@@ -1,11 +1,12 @@
 import {
   parseWorkbenchRpcResponse,
   safeParseRelayHostBridgeMessage,
+  safeParseWorkbenchRpcRequest,
   type RelayHostBridgeMessage,
   type WorkbenchHostDescriptor,
   type WorkbenchRelayDescriptor
 } from "@another-workbench/shared";
-import type { RemoteConnectionService } from "./remote-connection-service.js";
+import type { HostRelayConnectionService } from "./host-relay-connection-service.js";
 
 type FetchLike = typeof fetch;
 type IdFactory = () => string;
@@ -38,10 +39,10 @@ export type HostRelayClientWebSocketConstructor = new (
 
 export type HostRelayClientOptions = {
   relay: WorkbenchRelayDescriptor;
-  connectionService: RemoteConnectionService;
+  connectionService: HostRelayConnectionService;
   getHostDescriptor: () => WorkbenchHostDescriptor;
+  authToken: string;
   fetchImpl?: FetchLike;
-  authToken?: string;
   localHttpBaseUrl?: string;
   localEventsUrl?: string;
   websocketProtocols?: string | string[];
@@ -169,10 +170,10 @@ const buildLocalEventsUrl = (
 
 export class HostRelayClient {
   private readonly relay: WorkbenchRelayDescriptor;
-  private readonly connectionService: RemoteConnectionService;
+  private readonly connectionService: HostRelayConnectionService;
   private readonly getHostDescriptor: () => WorkbenchHostDescriptor;
   private readonly fetchImpl: FetchLike;
-  private readonly authToken: string | undefined;
+  private readonly authToken: string;
   private readonly localHttpBaseUrl: string;
   private readonly localEventsUrl: string;
   private readonly websocketProtocols: string | string[] | undefined;
@@ -189,7 +190,10 @@ export class HostRelayClient {
     this.connectionService = options.connectionService;
     this.getHostDescriptor = options.getHostDescriptor;
     this.fetchImpl = options.fetchImpl ?? fetch;
-    this.authToken = options.authToken;
+    this.authToken = options.authToken.trim();
+    if (!this.authToken) {
+      throw new Error("Host relay auth token is required.");
+    }
     this.localHttpBaseUrl = normalizeBaseUrl(
       options.localHttpBaseUrl ?? "http://127.0.0.1:4317"
     );
@@ -222,9 +226,7 @@ export class HostRelayClient {
       {
         method: "POST",
         headers: {
-          ...(this.authToken
-            ? { authorization: `Bearer ${this.authToken}` }
-            : {}),
+          authorization: `Bearer ${this.authToken}`,
           "content-type": "application/json"
         },
         body: JSON.stringify({
@@ -269,9 +271,7 @@ export class HostRelayClient {
     const host = this.getHostDescriptor();
     const relayUrl = new URL("/relay/host", normalizeBaseUrl(this.relay.wsBaseUrl));
     relayUrl.searchParams.set("hostId", host.hostId);
-    if (this.authToken) {
-      relayUrl.searchParams.set("token", this.authToken);
-    }
+    relayUrl.searchParams.set("token", this.authToken);
 
     this.connectionService.update({
       state: "connecting",
@@ -361,7 +361,7 @@ export class HostRelayClient {
             if (parsed.data.type === "host.ready") {
               this.routeId = parsed.data.routeId;
               this.connectionService.update({
-                state: "live",
+                state: "connected",
                 routeId: parsed.data.routeId,
                 stale: false
               });
@@ -493,19 +493,30 @@ export class HostRelayClient {
         response: payload
       });
     } catch (error) {
+      const request = safeParseWorkbenchRpcRequest(message.rpc);
       this.sendMessage({
         type: "rpc.response",
         requestId: message.requestId,
-        response: parseWorkbenchRpcResponse({
-          id: message.rpc.id,
-          method: message.rpc.method,
-          ok: false,
-          error: {
-            code: "HOST_RELAY_FORWARD_FAILED",
-            message:
-              error instanceof Error ? error.message : "RPC relay forward failed."
-          }
-        })
+        response: request.success
+          ? parseWorkbenchRpcResponse({
+              id: request.data.id,
+              method: request.data.method,
+              ok: false,
+              error: {
+                code: "HOST_RELAY_FORWARD_FAILED",
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "RPC relay forward failed."
+              }
+            })
+          : {
+              ok: false,
+              error: {
+                code: "HOST_RELAY_FORWARD_FAILED",
+                message: "Relay forwarded an invalid RPC request."
+              }
+            }
       });
     }
   }

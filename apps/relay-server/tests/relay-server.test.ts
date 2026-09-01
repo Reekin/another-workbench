@@ -1,10 +1,10 @@
 import { createConnection, type AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { HostRelayClient } from "../../desktop-server/src/host-relay-client.js";
-import { RemoteAuthSessionService } from "../../desktop-server/src/remote-auth-session-service.js";
-import { RemoteBootstrapService } from "../../desktop-server/src/remote-bootstrap-service.js";
-import { RemoteConnectionService } from "../../desktop-server/src/remote-connection-service.js";
-import { RemotePairingService } from "../../desktop-server/src/remote-pairing-service.js";
+import { HostRelayConnectionService } from "../../desktop-server/src/host-relay-connection-service.js";
+import { MobileAuthSessionService } from "../../desktop-server/src/mobile-auth-session-service.js";
+import { MobilePairingService } from "../../desktop-server/src/mobile-pairing-service.js";
+import { MobileRemoteBootstrapService } from "../../desktop-server/src/mobile-remote-bootstrap-service.js";
 import { WorkbenchRemoteServer } from "../../desktop-server/src/remote-server.js";
 import { WorkbenchRuntimeService } from "../../desktop-server/src/runtime-service.js";
 import { WorkbenchShellService } from "../../desktop-server/src/workbench-shell-service.js";
@@ -13,6 +13,7 @@ import { RelayHostRegistry, RelayServer } from "../src/index.js";
 const relays: RelayServer[] = [];
 const hosts: WorkbenchRemoteServer[] = [];
 const hostClients: HostRelayClient[] = [];
+const hostAuthToken = "relay-host-auth-token";
 
 const createClock = () => {
   let tick = 0;
@@ -192,7 +193,12 @@ const openEventSocket = async (input: {
     socket.on("error", fail);
   });
 
-const startRelayServer = async (): Promise<{
+const startRelayServer = async (
+  hostTokens: Readonly<Record<string, string>> = {
+    "host-relay-1": hostAuthToken,
+    "host-invalid-token": hostAuthToken
+  }
+): Promise<{
   server: RelayServer;
   baseUrl: string;
 }> => {
@@ -209,6 +215,7 @@ const startRelayServer = async (): Promise<{
     })()
   });
   const server = new RelayServer({
+    hostTokens,
     host: "127.0.0.1",
     port: 0,
     registry,
@@ -274,19 +281,141 @@ describe("RelayServer", () => {
     });
   });
 
+  it("rejects host registration with an invalid host auth token", async () => {
+    const connection = new HostRelayConnectionService({
+      hostId: "host-invalid-token",
+      relayId: "relay-1"
+    });
+    const { baseUrl } = await startRelayServer();
+    const client = new HostRelayClient({
+      relay: {
+        relayId: "relay-1",
+        label: "Relay",
+        httpBaseUrl: baseUrl,
+        wsBaseUrl: baseUrl.replace("http://", "ws://")
+      },
+      connectionService: connection,
+      getHostDescriptor: () => ({
+        hostId: "host-invalid-token",
+        label: "Invalid Token Host",
+        deviceName: "invalid-token-box",
+        platform: process.platform,
+        appVersion: "0.1.0",
+        serverInstanceId: "srv-invalid-token",
+        online: true,
+        lastSeenAt: "2026-09-01T09:00:00.000Z"
+      }),
+      authToken: "wrong-host-auth-token"
+    });
+
+    await expect(client.register()).rejects.toThrow(
+      "Relay register failed with status 401."
+    );
+    expect(connection.getSnapshot()).toMatchObject({
+      state: "degraded",
+      reason: "relay-register-401",
+      stale: true
+    });
+  });
+
+  it("binds host credentials and websocket identity to the configured host id", async () => {
+    const { baseUrl } = await startRelayServer({
+      "host-relay-1": hostAuthToken
+    });
+    const unknownHostClient = new HostRelayClient({
+      relay: {
+        relayId: "relay-1",
+        label: "Relay",
+        httpBaseUrl: baseUrl,
+        wsBaseUrl: baseUrl.replace("http://", "ws://")
+      },
+      connectionService: new HostRelayConnectionService({
+        hostId: "host-other",
+        relayId: "relay-1"
+      }),
+      getHostDescriptor: () => ({
+        hostId: "host-other",
+        label: "Other Host",
+        deviceName: "other-box",
+        platform: process.platform,
+        appVersion: "0.1.0",
+        serverInstanceId: "srv-other",
+        online: true,
+        lastSeenAt: "2026-09-01T09:00:00.000Z"
+      }),
+      authToken: hostAuthToken
+    });
+    await expect(unknownHostClient.register()).rejects.toThrow(
+      "Relay register failed with status 401."
+    );
+
+    const socket = new WebSocket(
+      `${baseUrl.replace("http://", "ws://")}/relay/host?hostId=host-relay-1&token=${hostAuthToken}`
+    );
+    await new Promise<void>((resolve, reject) => {
+      const timeoutId = setTimeout(
+        () => reject(new Error("Timed out waiting for host websocket open.")),
+        2_000
+      );
+      socket.addEventListener("open", () => {
+        clearTimeout(timeoutId);
+        resolve();
+      });
+      socket.addEventListener("error", () => {
+        clearTimeout(timeoutId);
+        reject(new Error("Host websocket failed to open."));
+      });
+    });
+    const closed = new Promise<void>((resolve, reject) => {
+      const timeoutId = setTimeout(
+        () => reject(new Error("Timed out waiting for identity mismatch close.")),
+        2_000
+      );
+      socket.addEventListener("close", () => {
+        clearTimeout(timeoutId);
+        resolve();
+      });
+    });
+    socket.send(JSON.stringify({
+      type: "host.hello",
+      host: {
+        hostId: "host-other",
+        label: "Other Host",
+        deviceName: "other-box",
+        platform: process.platform,
+        appVersion: "0.1.0",
+        serverInstanceId: "srv-other",
+        online: true,
+        lastSeenAt: "2026-09-01T09:00:00.000Z"
+      }
+    }));
+    await closed;
+
+    const hostsResponse = await fetch(`${baseUrl}/api/hosts`);
+    const hostsPayload = await hostsResponse.json() as {
+      hosts: Array<{ hostId: string; status: string }>;
+    };
+    expect(hostsPayload.hosts).not.toContainEqual(
+      expect.objectContaining({
+        hostId: "host-other",
+        status: "connected"
+      })
+    );
+  });
+
   it("bridges bootstrap, pairing, rpc, and events through a connected host tunnel", async () => {
     const runtime = createRuntimeService();
     const shell = createShellService(runtime);
-    const connection = new RemoteConnectionService({
+    const connection = new HostRelayConnectionService({
       hostId: "host-relay-1",
       relayId: "relay-1"
     });
-    const pairing = new RemotePairingService({
+    const pairing = new MobilePairingService({
       hostId: "host-relay-1",
       createPairingId: () => "pair-relay-1",
       createCode: () => "PAIRR1"
     });
-    const authSessions = new RemoteAuthSessionService({
+    const authSessions = new MobileAuthSessionService({
       hostId: "host-relay-1",
       createToken: (() => {
         let index = 0;
@@ -299,7 +428,7 @@ describe("RelayServer", () => {
       service: shell,
       host: "127.0.0.1",
       port: 0,
-      bootstrapService: new RemoteBootstrapService({
+      bootstrapService: new MobileRemoteBootstrapService({
         shellService: shell,
         connectionService: connection,
         relay: {
@@ -331,6 +460,7 @@ describe("RelayServer", () => {
         wsBaseUrl: relayBaseUrl.replace("http://", "ws://")
       },
       connectionService: connection,
+      authToken: hostAuthToken,
       getHostDescriptor: () => ({
         hostId: "host-relay-1",
         label: "Relay Host",
@@ -351,7 +481,7 @@ describe("RelayServer", () => {
     });
 
     const bootstrapResponse = await fetch(
-      `${relayBaseUrl}/bootstrap?hostId=host-relay-1&clientSurface=desktop-full`
+      `${relayBaseUrl}/bootstrap?hostId=host-relay-1`
     );
     expect(bootstrapResponse.status).toBe(200);
     const bootstrapPayload = (await bootstrapResponse.json()) as {
@@ -362,8 +492,10 @@ describe("RelayServer", () => {
       relay: {
         relayId: string;
       };
-      clientSurface: string;
       capabilities: Record<string, unknown>;
+      version: {
+        protocolVersion: string;
+      };
     };
     expect(bootstrapPayload).toMatchObject({
       host: {
@@ -373,36 +505,17 @@ describe("RelayServer", () => {
       relay: {
         relayId: "relay-1"
       },
-      clientSurface: "desktop-full"
+      version: {
+        protocolVersion: "2026-09-mobile-v1"
+      }
     });
     expect(bootstrapPayload.capabilities).toMatchObject({
-      clientSurfaces: ["desktop-full", "mobile-companion"],
       supportsPairing: true,
       supportsResume: true,
       supportsResourceGateway: false
     });
-    expect(bootstrapPayload.capabilities).not.toHaveProperty("features");
-    expect(bootstrapPayload.capabilities).not.toHaveProperty(
-      "supportsDiagnostics"
-    );
-    expect(bootstrapPayload.capabilities).not.toHaveProperty(
-      "supportsReviewContext"
-    );
-
-    const pairingCodeResponse = await fetch(`${relayBaseUrl}/pairing/code?hostId=host-relay-1`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({
-        clientSurface: "desktop-full"
-      })
-    });
-    expect(pairingCodeResponse.status).toBe(200);
-    const pairingCodePayload = (await pairingCodeResponse.json()) as {
-      pairing: { code: string };
-    };
-    expect(pairingCodePayload.pairing.code).toBe("PAIRR1");
+    const localPairing = pairing.issue();
+    expect(localPairing.code).toBe("PAIRR1");
 
     const exchangeResponse = await fetch(
       `${relayBaseUrl}/pairing/exchange?hostId=host-relay-1`,
@@ -412,8 +525,7 @@ describe("RelayServer", () => {
           "content-type": "application/json"
         },
         body: JSON.stringify({
-          code: pairingCodePayload.pairing.code,
-          clientSurface: "desktop-full"
+          code: localPairing.code
         })
       }
     );

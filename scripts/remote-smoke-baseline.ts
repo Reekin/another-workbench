@@ -1,9 +1,9 @@
 import { createConnection, type Socket } from "node:net";
 import { WorkbenchShellService } from "../apps/desktop-server/src/workbench-shell-service.js";
-import { RemoteAuthSessionService } from "../apps/desktop-server/src/remote-auth-session-service.js";
-import { RemoteBootstrapService } from "../apps/desktop-server/src/remote-bootstrap-service.js";
-import { RemoteConnectionService } from "../apps/desktop-server/src/remote-connection-service.js";
-import { RemotePairingService } from "../apps/desktop-server/src/remote-pairing-service.js";
+import { HostRelayConnectionService } from "../apps/desktop-server/src/host-relay-connection-service.js";
+import { MobileAuthSessionService } from "../apps/desktop-server/src/mobile-auth-session-service.js";
+import { MobilePairingService } from "../apps/desktop-server/src/mobile-pairing-service.js";
+import { MobileRemoteBootstrapService } from "../apps/desktop-server/src/mobile-remote-bootstrap-service.js";
 import { WorkbenchRemoteServer } from "../apps/desktop-server/src/remote-server.js";
 import { WorkbenchRuntimeService } from "../apps/desktop-server/src/runtime-service.js";
 
@@ -73,9 +73,9 @@ const createService = () =>
       let index = 0;
       return () => `event-${++index}`;
     })(),
-    agents: [
+    engines: [
       {
-        agentId: "codex",
+        engineId: "codex",
         displayName: "Codex",
         capabilities: ["chat"]
       }
@@ -92,7 +92,7 @@ const openEventSocket = async (input: {
       host: "127.0.0.1",
       port: input.port
     });
-    let buffer = Buffer.alloc(0);
+    let buffer: Buffer = Buffer.alloc(0);
     let upgraded = false;
     const frames: unknown[] = [];
     let timeoutId: NodeJS.Timeout | undefined;
@@ -180,16 +180,16 @@ const run = async (): Promise<void> => {
       ]
     } as never
   });
-  const connection = new RemoteConnectionService({
+  const connection = new HostRelayConnectionService({
     hostId: "smoke-host",
     relayId: "smoke-relay"
   });
-  const pairing = new RemotePairingService({
+  const pairing = new MobilePairingService({
     hostId: "smoke-host",
     createPairingId: () => "pair-smoke",
     createCode: () => "SMOKE1"
   });
-  const authSessions = new RemoteAuthSessionService({
+  const authSessions = new MobileAuthSessionService({
     hostId: "smoke-host",
     createToken: (() => {
       let index = 0;
@@ -197,7 +197,7 @@ const run = async (): Promise<void> => {
     })(),
     createClientId: () => "client-smoke"
   });
-  const bootstrap = new RemoteBootstrapService({
+  const bootstrap = new MobileRemoteBootstrapService({
     shellService: shell,
     connectionService: connection,
     relay: {
@@ -236,22 +236,10 @@ const run = async (): Promise<void> => {
     }
 
     const initialBootstrap = await fetch(
-      `http://127.0.0.1:${port}/bootstrap?clientSurface=desktop-full`
+      `http://127.0.0.1:${port}/bootstrap`
     ).then((response) => response.json());
 
-    const pairingResponse = await fetch(
-      `http://127.0.0.1:${port}/pairing/code`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json"
-        },
-        body: JSON.stringify({
-          clientSurface: "desktop-full"
-        })
-      }
-    ).then((response) => response.json());
-
+    const issuedPairing = pairing.issue();
     const exchangeResponse = await fetch(
       `http://127.0.0.1:${port}/pairing/exchange`,
       {
@@ -260,8 +248,7 @@ const run = async (): Promise<void> => {
           "content-type": "application/json"
         },
         body: JSON.stringify({
-          code: pairingResponse.pairing.code,
-          clientSurface: "desktop-full"
+          code: issuedPairing.code
         })
       }
     ).then((response) => response.json());

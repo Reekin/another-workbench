@@ -35,6 +35,9 @@ importers:
       '@another-workbench/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      d3-hierarchy:
+        specifier: ^3.1.2
+        version: 3.1.2
       mermaid:
         specifier: ^11.14.0
         version: 11.14.0
@@ -57,6 +60,9 @@ importers:
         specifier: ^5.3.0
         version: 5.3.0
     devDependencies:
+      '@types/d3-hierarchy':
+        specifier: ^3.1.7
+        version: 3.1.7
       '@types/react':
         specifier: ^19.1.8
         version: 19.2.14

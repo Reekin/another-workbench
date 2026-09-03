@@ -86,6 +86,8 @@ const renderController = (
   >;
   sessionWindows: () => Record<string, SessionWindowRpc | undefined>;
   viewportDisplayedSessionIdRef: { current: string | undefined };
+  setBrowserSelectedSessionId: ReturnType<typeof vi.fn>;
+  setOpeningSessionId: ReturnType<typeof vi.fn>;
 } => {
   const store = createRendererStore();
   if (cachedSessionId) {
@@ -109,6 +111,8 @@ const renderController = (
   });
   const activate = vi.fn(async (sessionId: string) => ({ sessionId }));
   const refreshSessionBrowser = vi.fn(async () => {});
+  const setBrowserSelectedSessionId = vi.fn();
+  const setOpeningSessionId = vi.fn();
   let sessionWindows: Record<string, SessionWindowRpc | undefined> =
     cachedSessionId
       ? {
@@ -150,8 +154,8 @@ const renderController = (
         typeof updater === "function" ? updater(sessionWindows) : updater;
     }) as SessionOpenControllerInput["setSessionWindows"],
     setLoadingOlderSessionId: vi.fn(),
-    setBrowserSelectedSessionId: vi.fn(),
-    setOpeningSessionId: vi.fn(),
+    setBrowserSelectedSessionId,
+    setOpeningSessionId,
     displayedSessionId,
     viewport,
     isOpeningSelectedSession: false,
@@ -176,7 +180,9 @@ const renderController = (
     refreshSessionBrowser,
     openRequests,
     sessionWindows: () => sessionWindows,
-    viewportDisplayedSessionIdRef
+    viewportDisplayedSessionIdRef,
+    setBrowserSelectedSessionId,
+    setOpeningSessionId
   };
 };
 
@@ -297,6 +303,27 @@ describe("useSessionOpenController background refresh", () => {
     await backgroundRefresh;
 
     expect(sessionWindows()["session-a"]?.cursor).toBe("cursor-a-manual");
+  });
+
+  it("rolls the optimistic selection back when opening the target fails", async () => {
+    const {
+      controller,
+      openRequests,
+      setBrowserSelectedSessionId,
+      setOpeningSessionId
+    } = renderController("session-a");
+
+    const opening = controller.onOpenSession("session-b");
+
+    expect(setBrowserSelectedSessionId).toHaveBeenCalledWith("session-b");
+    expect(setOpeningSessionId).toHaveBeenCalledWith("session-b");
+
+    await flushMicrotasks();
+    openRequests.get("session-b")?.[0]?.reject(new Error("provider unavailable"));
+    await opening;
+
+    expect(setBrowserSelectedSessionId).toHaveBeenLastCalledWith("session-a");
+    expect(setOpeningSessionId).toHaveBeenLastCalledWith(undefined);
   });
 });
 

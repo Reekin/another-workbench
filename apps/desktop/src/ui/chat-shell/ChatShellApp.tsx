@@ -59,6 +59,7 @@ import {
 import {
   findActiveSessionNode,
   findSessionNode,
+  projectSessionBrowserPresentation,
   type AttentionSessionViewNode,
   type SessionBrowserViewNode,
   type WorkspaceBrowserViewNode
@@ -1454,6 +1455,9 @@ export const ChatShellApp = ({
     displayedConversationId
   );
   const highlightedSessionId = displayedSessionId;
+  const visibleAttentionSessions = attentionSessions.filter((session) =>
+    projectSessionBrowserPresentation(session, highlightedSessionId).showInAttention
+  );
   const isOpeningSelectedSession =
     Boolean(openingSessionId) && openingSessionId === displayedSessionId;
   const browsedSessionId =
@@ -1984,17 +1988,17 @@ export const ChatShellApp = ({
     session: SessionBrowserViewNode,
     depth = 0
   ): ReactElement => {
-    const statusDot = resolveStatusDotLabel(session.statusDot);
+    const presentation = projectSessionBrowserPresentation(
+      session,
+      highlightedSessionId
+    );
+    const statusDot = resolveStatusDotLabel(presentation.statusDot);
     const activityAt = session.activityAt ?? session.lastCompletedTurnAt;
     const activityAge = formatRelativeCompletedTurnAge(activityAt);
     return (
       <li key={session.sessionId} className="awb-tree__item">
         <div
-          className={`awb-tree__session ${
-            session.isActive || session.sessionId === highlightedSessionId
-              ? "is-active"
-              : ""
-          }`}
+          className={`awb-tree__session ${presentation.isSelected ? "is-active" : ""}`}
           style={{ "--awb-tree-depth": `${depth}` } as CSSProperties}
           onClick={() => void onOpenSession(session.sessionId)}
           onContextMenu={(event) => void onOpenSessionMenu(event, session.sessionId)}
@@ -2069,15 +2073,17 @@ export const ChatShellApp = ({
   const renderAttentionSession = (
     session: AttentionSessionViewNode
   ): ReactElement => {
-    const statusDot = resolveStatusDotLabel(session.statusDot);
+    const presentation = projectSessionBrowserPresentation(
+      session,
+      highlightedSessionId
+    );
+    const statusDot = resolveStatusDotLabel(presentation.statusDot);
     const activityAge = formatRelativeCompletedTurnAge(session.activityAt);
     return (
       <li key={session.sessionId} className="awb-tree__item">
         <div
           className={`awb-tree__session awb-attention__session ${
-            session.isActive || session.sessionId === highlightedSessionId
-              ? "is-active"
-              : ""
+            presentation.isSelected ? "is-active" : ""
           }`}
           onClick={() => void onOpenSession(session.sessionId)}
           onContextMenu={(event) => void onOpenSessionMenu(event, session.sessionId)}
@@ -2156,11 +2162,11 @@ export const ChatShellApp = ({
           <section className="awb-attention">
             <div className="awb-attention__header">
               <h2>Attention</h2>
-              <span>{attentionSessions.length}</span>
+              <span>{visibleAttentionSessions.length}</span>
             </div>
-            {attentionSessions.length > 0 ? (
+            {visibleAttentionSessions.length > 0 ? (
               <ul className="awb-tree__branch awb-attention__list">
-                {attentionSessions.map(renderAttentionSession)}
+                {visibleAttentionSessions.map(renderAttentionSession)}
               </ul>
             ) : (
               <p className="awb-attention__empty">Pinned and active sessions appear here.</p>

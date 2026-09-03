@@ -44,6 +44,28 @@ export type AttentionSessionViewNode = {
   activityAt?: string;
 };
 
+export const projectSessionBrowserPresentation = (
+  session: Pick<SessionBrowserItemRpc, "sessionId" | "statusDot"> & {
+    isPinned?: boolean;
+  },
+  selectedSessionId?: string
+) => {
+  const isSelected = session.sessionId === selectedSessionId;
+  const statusDot =
+    isSelected && session.statusDot === "unread_completed"
+      ? "none"
+      : session.statusDot;
+
+  return {
+    isSelected,
+    statusDot,
+    showInAttention:
+      Boolean(session.isPinned) ||
+      statusDot === "running" ||
+      statusDot === "unread_completed"
+  };
+};
+
 const attentionPriority = (
   session: Pick<AttentionSessionViewNode, "statusDot" | "isPinned">
 ): number =>

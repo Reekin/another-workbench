@@ -10,6 +10,7 @@ import {
   collectAttentionSessions,
   mergeSessionPath,
   mergeWorkspaceBrowserState,
+  projectSessionBrowserPresentation,
   resetRootPagination,
   setRootLoading,
   setSessionChildrenLoading,
@@ -44,6 +45,50 @@ const attentionSession = (
 });
 
 describe("workspace browser tree", () => {
+  it("projects one selected session and treats its completed result as read", () => {
+    expect(
+      projectSessionBrowserPresentation(
+        { sessionId: "session-old", statusDot: "none" },
+        "session-new"
+      )
+    ).toMatchObject({
+      isSelected: false
+    });
+    expect(
+      projectSessionBrowserPresentation(
+        { sessionId: "session-new", statusDot: "unread_completed" },
+        "session-new"
+      )
+    ).toEqual({
+      isSelected: true,
+      statusDot: "none",
+      showInAttention: false
+    });
+  });
+
+  it("keeps running and pinned attention visible for the selected session", () => {
+    expect(
+      projectSessionBrowserPresentation(
+        { sessionId: "session-running", statusDot: "running" },
+        "session-running"
+      ).showInAttention
+    ).toBe(true);
+    expect(
+      projectSessionBrowserPresentation(
+        {
+          sessionId: "session-pinned",
+          statusDot: "unread_completed",
+          isPinned: true
+        },
+        "session-pinned"
+      )
+    ).toEqual({
+      isSelected: true,
+      statusDot: "none",
+      showInAttention: true
+    });
+  });
+
   it("collects running, unread, and pinned sessions into a global attention order", () => {
     const workspaces: WorkspaceBrowserNodeRpc[] = [
       {

@@ -425,6 +425,7 @@ export const createDemoWorkbenchShellService = (
     },
     listWorkspaces: async () => ({
       workspaces: [demoWorkspace],
+      expandedWorkspaceIds: [...expandedWorkspaceIds],
       lastActiveWorkspaceId,
       lastActiveSessionId
     }),

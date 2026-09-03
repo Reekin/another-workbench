@@ -363,6 +363,14 @@ export const useSessionOpenController = (input: {
       }
       const manualOpenToken = beginManualSessionOpen();
       const requestId = ++openSessionRequestIdRef.current;
+      const previousSessionId = input.viewport.displayedSessionIdRef.current;
+      const rollbackSelection = (): void => {
+        input.setBrowserSelectedSessionId(previousSessionId);
+        input.setOpeningSessionId(undefined);
+      };
+      input.onResetSessionSwitchState();
+      input.setBrowserSelectedSessionId(sessionId);
+      input.setOpeningSessionId(sessionId);
       try {
         const isSessionVisible = Boolean(
           findSessionNode(input.workspaceTree, sessionId)
@@ -370,13 +378,9 @@ export const useSessionOpenController = (input: {
         if (!isSessionVisible && input.ensureSessionVisible) {
           await input.ensureSessionVisible(sessionId);
         }
-        const previousSessionId = input.viewport.displayedSessionIdRef.current;
         if (previousSessionId && previousSessionId !== sessionId) {
           await releaseSessionCache(previousSessionId);
         }
-        input.onResetSessionSwitchState();
-        input.setBrowserSelectedSessionId(sessionId);
-        input.setOpeningSessionId(sessionId);
         const cachedWindow = input.sessionWindows[sessionId];
         const domain = input.store.getDomainReadModel();
         const canActivateCachedWindow = canActivateCachedSessionWindow({
@@ -387,25 +391,12 @@ export const useSessionOpenController = (input: {
           input.viewport.scrollToBottom(sessionId, {
             allowPendingForInactive: true
           });
-          try {
-            await input.transport.sessionBrowser.activate(sessionId);
-            if (openSessionRequestIdRef.current !== requestId) {
-              return;
-            }
-            input.setOpeningSessionId(undefined);
-            input.onStatusNotice(undefined);
-          } catch (error) {
-            if (openSessionRequestIdRef.current !== requestId) {
-              return;
-            }
-            input.setOpeningSessionId(undefined);
-            input.onStatusNotice({
-              message: `Open session failed: ${(error as Error).message}`,
-              persistent: true,
-              source: "session-browser",
-              ...statusNoticeErrorDetails(error)
-            });
+          await input.transport.sessionBrowser.activate(sessionId);
+          if (openSessionRequestIdRef.current !== requestId) {
+            return;
           }
+          input.setOpeningSessionId(undefined);
+          input.onStatusNotice(undefined);
           return;
         }
         input.onStatusNotice({
@@ -413,25 +404,23 @@ export const useSessionOpenController = (input: {
           persistent: true,
           source: "session-browser"
         });
-        try {
-          await hydrateOpenedSession(sessionId, requestId);
-          if (openSessionRequestIdRef.current !== requestId) {
-            return;
-          }
-          input.setOpeningSessionId(undefined);
-          input.onStatusNotice(undefined);
-        } catch (error) {
-          if (openSessionRequestIdRef.current !== requestId) {
-            return;
-          }
-          input.setOpeningSessionId(undefined);
-          input.onStatusNotice({
-            message: `Open session failed: ${(error as Error).message}`,
-            persistent: true,
-            source: "session-browser",
-            ...statusNoticeErrorDetails(error)
-          });
+        await hydrateOpenedSession(sessionId, requestId);
+        if (openSessionRequestIdRef.current !== requestId) {
+          return;
         }
+        input.setOpeningSessionId(undefined);
+        input.onStatusNotice(undefined);
+      } catch (error) {
+        if (openSessionRequestIdRef.current !== requestId) {
+          return;
+        }
+        rollbackSelection();
+        input.onStatusNotice({
+          message: `Open session failed: ${(error as Error).message}`,
+          persistent: true,
+          source: "session-browser",
+          ...statusNoticeErrorDetails(error)
+        });
       } finally {
         finishManualSessionOpen(manualOpenToken);
       }

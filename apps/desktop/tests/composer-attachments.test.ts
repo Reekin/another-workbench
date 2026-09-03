@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createComposerAttachment,
   createComposerAttachments,
+  extractPastedMessageImages,
   formatComposerAttachmentSize,
   mergeComposerAttachments,
   releaseComposerAttachments,
@@ -121,6 +122,22 @@ describe("composer attachment helpers", () => {
     ]);
     expect(attachments.every((attachment) => attachment.isImage)).toBe(true);
     expect(attachments.every((attachment) => attachment.previewUrl)).toBe(true);
+  });
+
+  it("extracts copied message images from base64 markdown", async () => {
+    const extracted = extractPastedMessageImages(
+      "Inspect these.\n\n![clipboard.png](data:image/png;base64,AQID)\n" +
+        "![image](data:image/jpeg;base64,/9j/)"
+    );
+
+    expect(extracted?.text).toBe("Inspect these.");
+    expect(extracted?.files.map((file) => [file.name, file.type])).toEqual([
+      ["clipboard.png", "image/png"],
+      ["pasted-image.jpg", "image/jpeg"]
+    ]);
+    expect(
+      Array.from(new Uint8Array(await extracted!.files[0]!.arrayBuffer()))
+    ).toEqual([1, 2, 3]);
   });
 
   it("replaces merged attachments by dedupe key", () => {

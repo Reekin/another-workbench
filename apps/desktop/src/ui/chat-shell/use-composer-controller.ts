@@ -25,6 +25,7 @@ import { readSessionExecutionProfile } from "@another-workbench/shared";
 import type { DesktopTransport } from "../../transport/desktop-transport.js";
 import {
   createComposerAttachments,
+  extractPastedMessageImages,
   mergeComposerAttachments,
   releaseComposerAttachments,
   writeComposerAttachmentDraft,
@@ -875,13 +876,12 @@ export const useComposerController = (
     return removed;
   };
 
-  const setTextareaCursorToEnd = (value: string): void => {
+  const setTextareaCursor = (position: number): void => {
     queueMicrotask(() => {
       const element = composerTextareaRef.current;
       if (!element) {
         return;
       }
-      const position = value.length;
       element.focus();
       element.setSelectionRange(position, position);
       setCursorPosition(position);
@@ -1151,7 +1151,7 @@ export const useComposerController = (
   ): void => {
     const nextDraft = `${draft.slice(0, start)}${value}${draft.slice(end)}`;
     onDraftChange(nextDraft, start + value.length);
-    setTextareaCursorToEnd(nextDraft);
+    setTextareaCursor(nextDraft.length);
   };
 
   const onSuggestionSelect = async (
@@ -1287,11 +1287,23 @@ export const useComposerController = (
   const onComposerPaste = (
     event: ReactClipboardEvent<HTMLTextAreaElement>
   ): void => {
-    const files = collectPastedImageFiles(event.clipboardData);
+    const extracted = extractPastedMessageImages(
+      event.clipboardData.getData("text/plain")
+    );
+    const files =
+      extracted?.files ?? collectPastedImageFiles(event.clipboardData);
     if (files.length === 0) {
       return;
     }
-    if (!hasStringTransfer(event.clipboardData)) {
+    if (extracted) {
+      event.preventDefault();
+      const start = event.currentTarget.selectionStart ?? draft.length;
+      const end = event.currentTarget.selectionEnd ?? start;
+      const nextDraft = `${draft.slice(0, start)}${extracted.text}${draft.slice(end)}`;
+      const nextCursor = start + extracted.text.length;
+      onDraftChange(nextDraft, nextCursor);
+      setTextareaCursor(nextCursor);
+    } else if (!hasStringTransfer(event.clipboardData)) {
       event.preventDefault();
     }
     void appendComposerAttachments(files, "paste").catch((error) => {
@@ -1397,7 +1409,7 @@ export const useComposerController = (
     if (item.execution) {
       setExecution(item.execution);
     }
-    setTextareaCursorToEnd(item.text);
+    setTextareaCursor(item.text.length);
   };
 
   const onDeleteQueuedMessage = (messageId: string): void => {

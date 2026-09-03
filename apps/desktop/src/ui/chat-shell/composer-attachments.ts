@@ -38,6 +38,8 @@ export type CreateComposerAttachmentOptions = {
 
 const fallbackMimeType = "application/octet-stream";
 const imageMimeTypePattern = /^image\//iu;
+const pastedDataImagePattern =
+  /!\[([^\]\r\n]*)\]\(data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)\)/giu;
 
 const createAttachmentId = (): string =>
   `attachment-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -109,6 +111,37 @@ const normalizeFile = (
     type: file.type,
     lastModified: Date.now()
   });
+};
+
+export const extractPastedMessageImages = (
+  text: string
+): { files: File[]; text: string } | undefined => {
+  const files: File[] = [];
+  const remainingText = text.replace(
+    pastedDataImagePattern,
+    (_match, alt: string, mimeType: string, payload: string) => {
+      try {
+        const binary = atob(payload);
+        const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+        const buffer = new ArrayBuffer(bytes.byteLength);
+        new Uint8Array(buffer).set(bytes);
+        const name = /\.[a-z0-9]{1,8}$/iu.test(alt.trim())
+          ? alt.trim()
+          : buildFallbackName(mimeType, "paste");
+        files.push(new File([buffer], name, { type: mimeType }));
+        return "";
+      } catch {
+        return _match;
+      }
+    }
+  );
+  if (files.length === 0) {
+    return undefined;
+  }
+  return {
+    files,
+    text: remainingText.replace(/\n{3,}/gu, "\n\n").trim()
+  };
 };
 
 const resolveNativeFilePath = (file: File): string | undefined => {

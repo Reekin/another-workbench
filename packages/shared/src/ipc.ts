@@ -19,6 +19,7 @@ import {
 } from "./engine-control.js";
 import { eventTypes, zEventEnvelopeSchema } from "./events.js";
 import {
+  zExecutionPreferencesByEngineIdSchema,
   zSessionExecutionProfileInputSchema,
   zSessionExecutionProfileSchema
 } from "./session-profile.js";
@@ -101,12 +102,7 @@ const zWorkbenchSettingsSchema = z.object({
   customModelReasoningOptionIdsByEngineId: z
     .record(z.string(), z.record(z.string(), z.array(z.string().min(1))))
     .default({}),
-  serviceTierPreferencesByEngineId: z
-    .record(z.string(), z.record(z.string(), z.string().min(1).nullable()))
-    .default({}),
-  lastExecutionByEngineId: z
-    .record(z.string(), zSessionExecutionProfileInputSchema)
-    .default({})
+  executionPreferencesByEngineId: zExecutionPreferencesByEngineIdSchema
 });
 
 const zComposerSlashSuggestionRpcSchema = z.object({
@@ -615,12 +611,8 @@ const zSettingsUpdateRequestSchema = z.object({
     customModelReasoningOptionIdsByEngineId: z
       .record(z.string(), z.record(z.string(), z.array(z.string().min(1))))
       .optional(),
-    serviceTierPreferencesByEngineId: z
-      .record(z.string(), z.record(z.string(), z.string().min(1).nullable()))
-      .optional(),
-    lastExecutionByEngineId: z
-      .record(z.string(), zSessionExecutionProfileInputSchema)
-      .optional()
+    executionPreferencesByEngineId:
+      zExecutionPreferencesByEngineIdSchema.optional()
   })
 });
 

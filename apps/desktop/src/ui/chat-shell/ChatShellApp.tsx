@@ -23,6 +23,10 @@ import type {
   Turn,
   SessionWindowRpc
 } from "@another-workbench/shared";
+import {
+  resolveEngineExecutionPreference,
+  writeEngineExecutionPreference
+} from "@another-workbench/shared";
 import "xterm/css/xterm.css";
 import type { RendererStore } from "../../store/store.js";
 import type {
@@ -149,8 +153,8 @@ type WorkspaceMenuState = {
 
 const emptyTurns: Turn[] = [];
 const emptyParticipants: AgentParticipant[] = [];
-const resolveLastExecutionPreference = (
-  profile: WorkbenchSettingsRpc["lastExecutionByEngineId"][string] | undefined
+const toComposerExecution = (
+  profile: ReturnType<typeof resolveEngineExecutionPreference>
 ): ComposerExecutionSelection | undefined =>
   profile?.modelId
     ? {
@@ -948,9 +952,14 @@ const SettingsLauncher = ({
     setIsSaving(true);
     try {
       const result = await transport.settings.update({
-        ...draftSettings,
         defaultNewSessionEngineId:
-          draftSettings.defaultNewSessionEngineId || undefined
+          draftSettings.defaultNewSessionEngineId || undefined,
+        engineProgramPathsByEngineId:
+          draftSettings.engineProgramPathsByEngineId,
+        allowedModelIdsByEngineId:
+          draftSettings.allowedModelIdsByEngineId,
+        customModelReasoningOptionIdsByEngineId:
+          draftSettings.customModelReasoningOptionIdsByEngineId
       });
       onSettingsSaved(result);
       close();
@@ -1270,17 +1279,13 @@ export const ChatShellApp = ({
   >({});
   const [customModelReasoningOptionIdsByEngineId, setCustomModelReasoningOptionIdsByEngineId] =
     useState<Record<string, Record<string, string[]>>>({});
-  const [serviceTierPreferencesByEngineId, setServiceTierPreferencesByEngineId] =
-    useState<WorkbenchSettingsRpc["serviceTierPreferencesByEngineId"]>({});
-  const serviceTierPreferencesByEngineIdRef =
-    useRef<WorkbenchSettingsRpc["serviceTierPreferencesByEngineId"]>({});
-  const [lastExecutionByEngineId, setLastExecutionByEngineId] = useState<
-    WorkbenchSettingsRpc["lastExecutionByEngineId"]
+  const [executionPreferencesByEngineId, setExecutionPreferencesByEngineId] = useState<
+    WorkbenchSettingsRpc["executionPreferencesByEngineId"]
   >({});
-  const lastExecutionByEngineIdRef = useRef<
-    WorkbenchSettingsRpc["lastExecutionByEngineId"]
+  const executionPreferencesByEngineIdRef = useRef<
+    WorkbenchSettingsRpc["executionPreferencesByEngineId"]
   >({});
-  const settingsSaveChainRef = useRef<Promise<void>>(Promise.resolve());
+  const executionPreferenceWriteRef = useRef<Promise<void>>(Promise.resolve());
   const [statusNotice, setStatusNoticeState] = useState<ComposerStatusNotice | undefined>();
   const [sessionWindows, setSessionWindows] = useState<
     Record<string, SessionWindowCoverage | undefined>
@@ -1344,58 +1349,36 @@ export const ChatShellApp = ({
   );
 
   const onExecutionPreferenceChange = useCallback(
-    (
-      engineId: string,
-      execution: ComposerExecutionSelection,
-      options?: { serviceTierChanged?: boolean }
-    ): void => {
-      const nextExecutions = {
-        ...lastExecutionByEngineIdRef.current,
-        [engineId]: { ...execution }
-      };
-      let nextServiceTierPreferences =
-        serviceTierPreferencesByEngineIdRef.current;
-      if (
-        options?.serviceTierChanged &&
-        execution.modelId &&
-        execution.serviceTierId !== undefined
-      ) {
-        nextServiceTierPreferences = {
-          ...nextServiceTierPreferences,
-          [engineId]: {
-            ...(nextServiceTierPreferences[engineId] ?? {}),
-            [execution.modelId]: execution.serviceTierId
-          }
-        };
-      }
-      lastExecutionByEngineIdRef.current = nextExecutions;
-      serviceTierPreferencesByEngineIdRef.current =
-        nextServiceTierPreferences;
-      setLastExecutionByEngineId(nextExecutions);
-      setServiceTierPreferencesByEngineId(nextServiceTierPreferences);
+    (engineId: string, execution: ComposerExecutionSelection): void => {
+      const nextPreferences = writeEngineExecutionPreference(
+        executionPreferencesByEngineIdRef.current,
+        engineId,
+        execution
+      );
+      executionPreferencesByEngineIdRef.current = nextPreferences;
+      setExecutionPreferencesByEngineId(nextPreferences);
       if (!transport) {
         return;
       }
-      settingsSaveChainRef.current = settingsSaveChainRef.current
-        .then(async () => {
-          await transport.settings.update({
-            lastExecutionByEngineId: nextExecutions,
-            serviceTierPreferencesByEngineId: nextServiceTierPreferences
-          });
+      const pending = transport.settings
+        .update({
+          executionPreferencesByEngineId: nextPreferences
         })
-        .catch((error) => {
+        .then(() => undefined);
+      executionPreferenceWriteRef.current = pending;
+      void pending.catch((error) => {
           setStatusNotice({
-            message: `Model preference save failed: ${(error as Error).message}`,
+            message: `Execution preference save failed: ${(error as Error).message}`,
             source: "settings",
             ...statusNoticeErrorDetails(error)
           });
-        });
+      });
     },
     [setStatusNotice, transport]
   );
 
   const flushExecutionPreferenceWrites = useCallback(async (): Promise<void> => {
-    await settingsSaveChainRef.current;
+    await executionPreferenceWriteRef.current;
   }, []);
 
   const {
@@ -1792,14 +1775,9 @@ export const ChatShellApp = ({
         setCustomModelReasoningOptionIdsByEngineId(
           settings.customModelReasoningOptionIdsByEngineId ?? {}
         );
-        const serviceTierPreferences =
-          settings.serviceTierPreferencesByEngineId ?? {};
-        serviceTierPreferencesByEngineIdRef.current =
-          serviceTierPreferences;
-        setServiceTierPreferencesByEngineId(serviceTierPreferences);
-        const lastExecution = settings.lastExecutionByEngineId ?? {};
-        lastExecutionByEngineIdRef.current = lastExecution;
-        setLastExecutionByEngineId(lastExecution);
+        const executionPreferences = settings.executionPreferencesByEngineId ?? {};
+        executionPreferencesByEngineIdRef.current = executionPreferences;
+        setExecutionPreferencesByEngineId(executionPreferences);
         setSettingsHydrated(true);
       })
       .catch((error) => {
@@ -2331,8 +2309,7 @@ export const ChatShellApp = ({
                 ...engineProgramSettings,
                 allowedModelIdsByEngineId,
                 customModelReasoningOptionIdsByEngineId,
-                serviceTierPreferencesByEngineId,
-                lastExecutionByEngineId
+                executionPreferencesByEngineId
               }}
               onSettingsSaved={(nextSettings) => {
                 setSelectedEngineId(nextSettings.defaultNewSessionEngineId ?? "");
@@ -2346,14 +2323,6 @@ export const ChatShellApp = ({
                 setCustomModelReasoningOptionIdsByEngineId(
                   nextSettings.customModelReasoningOptionIdsByEngineId
                 );
-                serviceTierPreferencesByEngineIdRef.current =
-                  nextSettings.serviceTierPreferencesByEngineId;
-                setServiceTierPreferencesByEngineId(
-                  nextSettings.serviceTierPreferencesByEngineId
-                );
-                lastExecutionByEngineIdRef.current =
-                  nextSettings.lastExecutionByEngineId;
-                setLastExecutionByEngineId(nextSettings.lastExecutionByEngineId);
               }}
               onStatusNotice={setStatusNotice}
             />
@@ -2397,16 +2366,20 @@ export const ChatShellApp = ({
             threadGoal={activeThreadGoal}
             displayedSessionId={displayedSessionId}
             selectedEngineId={composerEngineId}
-            engineSurface={engineSurfacesById[composerEngineId]}
+            engineSurface={
+              settingsHydrated ? engineSurfacesById[composerEngineId] : undefined
+            }
             allowedModelIds={allowedModelIdsByEngineId[composerEngineId]}
             customModelReasoningOptionIds={
               customModelReasoningOptionIdsByEngineId[composerEngineId]
             }
-            serviceTierPreferences={
-              serviceTierPreferencesByEngineId[composerEngineId]
+            modelExecutionPreferences={
+              executionPreferencesByEngineId[composerEngineId]?.modelPreferences
             }
-            lastExecution={resolveLastExecutionPreference(
-              lastExecutionByEngineId[composerEngineId]
+            lastExecution={toComposerExecution(
+              resolveEngineExecutionPreference(
+                executionPreferencesByEngineId[composerEngineId]
+              )
             )}
             activeWorkspaceId={activeWorkspace?.workspaceId}
             activeWorkspaceRootPath={activeWorkspace?.rootPath}

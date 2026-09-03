@@ -130,7 +130,7 @@ describe("composer execution configuration", () => {
     });
   });
 
-  it("keeps an existing session profile ahead of the engine's last execution", () => {
+  it("keeps the session model while applying its saved parameters", () => {
     expect(
       resolveComposerExecutionSelection({
         models: [...catalog.models],
@@ -141,30 +141,42 @@ describe("composer execution configuration", () => {
         },
         lastExecution: {
           modelId: "gpt-5.4-mini"
+        },
+        modelExecutionPreferences: {
+          "gpt-5.5-codex": {
+            reasoningOptionId: null,
+            serviceTierId: null
+          }
         }
       })
     ).toEqual({
       modelId: "gpt-5.5-codex",
-      reasoningOptionId: "xhigh",
+      reasoningOptionId: undefined,
       serviceTierId: null
     });
   });
 
-  it("keeps the current unsent selection ahead of persisted and engine defaults", () => {
+  it("keeps the current model while applying its latest saved parameters", () => {
     expect(
       resolveComposerExecutionSelection({
         models: [...catalog.models],
-        current: { modelId: "gpt-5.4-mini" },
+        currentModelId: "gpt-5.5-codex",
         persistedProfile: {
           engineId: "codex",
-          modelId: "gpt-5.5-codex",
-          reasoningOptionId: "xhigh"
+          modelId: "gpt-5.4-mini"
         },
-        lastExecution: { modelId: "gpt-5.5-codex" }
+        lastExecution: { modelId: "gpt-5.4-mini" },
+        modelExecutionPreferences: {
+          "gpt-5.5-codex": {
+            reasoningOptionId: null,
+            serviceTierId: null
+          }
+        }
       })
     ).toEqual({
-      modelId: "gpt-5.4-mini",
-      reasoningOptionId: undefined
+      modelId: "gpt-5.5-codex",
+      reasoningOptionId: undefined,
+      serviceTierId: null
     });
   });
 
@@ -172,9 +184,11 @@ describe("composer execution configuration", () => {
     expect(
       resolveComposerExecutionSelection({
         models: [...catalog.models],
-        current: {
-          modelId: "gpt-5.5-codex",
-          reasoningOptionId: "extra"
+        currentModelId: "gpt-5.5-codex",
+        modelExecutionPreferences: {
+          "gpt-5.5-codex": {
+            reasoningOptionId: "extra"
+          }
         }
       })
     ).toEqual({
@@ -188,9 +202,11 @@ describe("composer execution configuration", () => {
     expect(
       resolveComposerExecutionSelection({
         models: [...catalog.models],
-        current: {
-          modelId: "gpt-5.5-codex",
-          serviceTierId: "unsupported-tier"
+        currentModelId: "gpt-5.5-codex",
+        modelExecutionPreferences: {
+          "gpt-5.5-codex": {
+            serviceTierId: "unsupported-tier"
+          }
         }
       })
     ).toEqual({

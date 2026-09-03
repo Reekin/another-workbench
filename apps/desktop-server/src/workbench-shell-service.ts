@@ -23,6 +23,7 @@ import type {
   SkillDescriptorRpc,
   WorkbenchSettingsRpc,
 } from "@another-workbench/shared";
+import { resolveEngineExecutionPreference } from "@another-workbench/shared";
 import type { RuntimeEventFilter, RuntimeEventReplayInput } from "@another-workbench/core";
 import {
   type BackgroundRunSnapshot,
@@ -549,18 +550,11 @@ export class WorkbenchShellService {
       cwd: workspace.absolutePath
     };
     const registryState = registry.getState();
-    const lastExecution = registryState.lastExecutionByEngineId[input.engineId];
-    const modelServiceTierPreferences =
-      registryState.serviceTierPreferencesByEngineId[input.engineId] ?? {};
-    const inheritedProfile =
-      lastExecution?.modelId &&
-      Object.hasOwn(modelServiceTierPreferences, lastExecution.modelId)
-        ? {
-            ...lastExecution,
-            serviceTierId: modelServiceTierPreferences[lastExecution.modelId]
-          }
-        : lastExecution;
-    const sessionProfile = input.sessionProfile ?? inheritedProfile;
+    const sessionProfile =
+      input.sessionProfile ??
+      resolveEngineExecutionPreference(
+        registryState.executionPreferencesByEngineId[input.engineId]
+      );
     const session = await this.runtimeService.createSession({
       type: "createSession",
       engineId: input.engineId,

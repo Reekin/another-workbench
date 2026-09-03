@@ -408,8 +408,13 @@ describe("createWorkbenchRpcHandler", () => {
         customModelReasoningOptionIdsByEngineId: {
           codex: { "custom-model": ["low", "high"] }
         },
-        lastExecutionByEngineId: {
-          codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "high" }
+        executionPreferencesByEngineId: {
+          codex: {
+            selectedModelId: "gpt-5.5-codex",
+            modelPreferences: {
+              "gpt-5.5-codex": { reasoningOptionId: "high" }
+            }
+          }
         }
       }),
       updateSettings: vi.fn().mockResolvedValue({
@@ -418,8 +423,13 @@ describe("createWorkbenchRpcHandler", () => {
         customModelReasoningOptionIdsByEngineId: {
           codex: { "custom-model": ["extra"] }
         },
-        lastExecutionByEngineId: {
-          codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "xhigh" }
+        executionPreferencesByEngineId: {
+          codex: {
+            selectedModelId: "gpt-5.5-codex",
+            modelPreferences: {
+              "gpt-5.5-codex": { reasoningOptionId: "xhigh" }
+            }
+          }
         }
       }),
       executeCommand: vi.fn(),
@@ -440,9 +450,6 @@ describe("createWorkbenchRpcHandler", () => {
         allowedModelIdsByEngineId: { codex: [] },
         customModelReasoningOptionIdsByEngineId: {
           codex: { "custom-model": ["extra"] }
-        },
-        lastExecutionByEngineId: {
-          codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "xhigh" }
         }
       }
     });
@@ -457,8 +464,13 @@ describe("createWorkbenchRpcHandler", () => {
         customModelReasoningOptionIdsByEngineId: {
           codex: { "custom-model": ["low", "high"] }
         },
-        lastExecutionByEngineId: {
-          codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "high" }
+        executionPreferencesByEngineId: {
+          codex: {
+            selectedModelId: "gpt-5.5-codex",
+            modelPreferences: {
+              "gpt-5.5-codex": { reasoningOptionId: "high" }
+            }
+          }
         }
       }
     });
@@ -472,8 +484,13 @@ describe("createWorkbenchRpcHandler", () => {
         customModelReasoningOptionIdsByEngineId: {
           codex: { "custom-model": ["extra"] }
         },
-        lastExecutionByEngineId: {
-          codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "xhigh" }
+        executionPreferencesByEngineId: {
+          codex: {
+            selectedModelId: "gpt-5.5-codex",
+            modelPreferences: {
+              "gpt-5.5-codex": { reasoningOptionId: "xhigh" }
+            }
+          }
         }
       }
     });
@@ -482,9 +499,6 @@ describe("createWorkbenchRpcHandler", () => {
       allowedModelIdsByEngineId: { codex: [] },
       customModelReasoningOptionIdsByEngineId: {
         codex: { "custom-model": ["extra"] }
-      },
-      lastExecutionByEngineId: {
-        codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "xhigh" }
       }
     });
   });

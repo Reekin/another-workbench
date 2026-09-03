@@ -40,6 +40,7 @@ import { resolveSlashSuggestionItems } from "./composer/composer-suggestions.js"
 import type {
   ComposerSkillReference,
   ComposerExecutionSelection,
+  ComposerModelExecutionPreferences,
   ComposerIntent,
   ComposerSuggestionItem,
   ComposerSuggestionQuery,
@@ -270,28 +271,14 @@ const resolveComposerServiceTierId = (
 
 export const resolveComposerExecutionSelection = (input: {
   models: EngineModelRpc[];
-  current?: ComposerExecutionSelection;
+  currentModelId?: string;
   persistedProfile?: SessionExecutionProfile;
   lastExecution?: ComposerExecutionSelection;
+  modelExecutionPreferences?: ComposerModelExecutionPreferences;
 }): ComposerExecutionSelection | undefined => {
-  const currentModel = input.current
-    ? input.models.find((model) => model.modelId === input.current?.modelId)
+  const currentModel = input.currentModelId
+    ? input.models.find((model) => model.modelId === input.currentModelId)
     : undefined;
-  if (currentModel && input.current) {
-    const serviceTierId = resolveComposerServiceTierId(
-      currentModel,
-      input.current.serviceTierId
-    );
-    return {
-      modelId: currentModel.modelId,
-      reasoningOptionId: currentModel.reasoningOptions.some(
-        (option) => option.optionId === input.current?.reasoningOptionId
-      )
-        ? input.current.reasoningOptionId
-        : undefined,
-      ...(serviceTierId !== undefined ? { serviceTierId } : {})
-    };
-  }
   const persistedModel = input.persistedProfile?.modelId
     ? input.models.find(
         (model) => model.modelId === input.persistedProfile?.modelId
@@ -301,6 +288,7 @@ export const resolveComposerExecutionSelection = (input: {
     ? input.models.find((model) => model.modelId === input.lastExecution?.modelId)
     : undefined;
   const defaultModel =
+    currentModel ??
     persistedModel ??
     lastModel ??
     input.models.find((model) => model.isDefault) ??
@@ -308,16 +296,21 @@ export const resolveComposerExecutionSelection = (input: {
   if (!defaultModel) {
     return undefined;
   }
-  const preferredReasoningOptionId = persistedModel
-    ? input.persistedProfile?.reasoningOptionId
-    : lastModel
-      ? input.lastExecution?.reasoningOptionId
-      : undefined;
-  const preferredServiceTierId = persistedModel
-    ? input.persistedProfile?.serviceTierId
-    : lastModel
-      ? input.lastExecution?.serviceTierId
-      : undefined;
+  const modelPreference =
+    input.modelExecutionPreferences?.[defaultModel.modelId];
+  const fallbackProfile = currentModel
+    ? undefined
+    : persistedModel
+      ? input.persistedProfile
+      : input.lastExecution;
+  const preferredReasoningOptionId =
+    modelPreference && Object.hasOwn(modelPreference, "reasoningOptionId")
+      ? modelPreference.reasoningOptionId ?? undefined
+      : fallbackProfile?.reasoningOptionId;
+  const preferredServiceTierId =
+    modelPreference && Object.hasOwn(modelPreference, "serviceTierId")
+      ? modelPreference.serviceTierId
+      : fallbackProfile?.serviceTierId;
   const serviceTierId = resolveComposerServiceTierId(
     defaultModel,
     preferredServiceTierId
@@ -359,7 +352,7 @@ type UseComposerControllerInput = {
   engineSurface?: EngineSurfaceRpc;
   allowedModelIds?: string[];
   customModelReasoningOptionIds?: Record<string, string[]>;
-  serviceTierPreferences?: Record<string, string | null>;
+  modelExecutionPreferences?: ComposerModelExecutionPreferences;
   lastExecution?: ComposerExecutionSelection;
   activeWorkspaceId?: string;
   activeWorkspaceRootPath?: string;
@@ -375,8 +368,7 @@ type UseComposerControllerInput = {
   onRequestTranscriptBottom?: (sessionId: string) => void;
   onExecutionPreferenceChange?: (
     engineId: string,
-    execution: ComposerExecutionSelection,
-    options?: { serviceTierChanged?: boolean }
+    execution: ComposerExecutionSelection
   ) => void;
 };
 
@@ -429,12 +421,10 @@ export const useComposerController = (
   const [queueBySessionId, setQueueBySessionId] = useState<
     Record<string, QueuedComposerMessage[]>
   >({});
-  const [executionBySessionId, setExecutionBySessionId] = useState<
-    Record<string, ComposerExecutionSelection | undefined>
+  const [modelIdBySessionId, setModelIdBySessionId] = useState<
+    Record<string, string | undefined>
   >({});
-  const [detachedExecution, setDetachedExecution] = useState<
-    ComposerExecutionSelection | undefined
-  >();
+  const [detachedModelId, setDetachedModelId] = useState<string>();
   const [modelCatalog, setModelCatalog] = useState<EngineModelCatalogRpc>();
   const [isExecutionLoading, setIsExecutionLoading] = useState(false);
   const [isDispatching, setIsDispatching] = useState(false);
@@ -486,9 +476,9 @@ export const useComposerController = (
   const queue = input.activeSessionId
     ? (queueBySessionId[input.activeSessionId] ?? [])
     : [];
-  const explicitExecution = input.activeSessionId
-    ? executionBySessionId[input.activeSessionId]
-    : detachedExecution;
+  const currentModelId = input.activeSessionId
+    ? modelIdBySessionId[input.activeSessionId]
+    : detachedModelId;
   const supportsTurnConfiguration = Boolean(
     input.engineSurface?.sharedCapabilities.includes("turnConfiguration")
   );
@@ -511,11 +501,18 @@ export const useComposerController = (
     () =>
       resolveComposerExecutionSelection({
         models,
-        current: explicitExecution,
+        currentModelId,
         persistedProfile: readSessionExecutionProfile(input.activeSession?.metadata),
-        lastExecution: input.lastExecution
+        lastExecution: input.lastExecution,
+        modelExecutionPreferences: input.modelExecutionPreferences
       }),
-    [explicitExecution, input.activeSession?.metadata, input.lastExecution, models]
+    [
+      currentModelId,
+      input.activeSession?.metadata,
+      input.lastExecution,
+      input.modelExecutionPreferences,
+      models
+    ]
   );
   const selectedModel = models.find((model) => model.modelId === execution?.modelId);
   const reasoningOptions = selectedModel?.reasoningOptions ?? [];
@@ -1482,42 +1479,32 @@ export const useComposerController = (
     queue
   ]);
 
-  function setExecution(
-    nextExecution: ComposerExecutionSelection,
-    options?: { serviceTierChanged?: boolean }
-  ): void {
+  function setExecution(nextExecution: ComposerExecutionSelection): void {
     if (input.selectedEngineId) {
-      input.onExecutionPreferenceChange?.(
-        input.selectedEngineId,
-        nextExecution,
-        options
-      );
+      input.onExecutionPreferenceChange?.(input.selectedEngineId, nextExecution);
     }
     if (input.activeSessionId) {
-      setExecutionBySessionId((current) => ({
+      setModelIdBySessionId((current) => ({
         ...current,
-        [input.activeSessionId!]: nextExecution
+        [input.activeSessionId!]: nextExecution.modelId
       }));
       return;
     }
-    setDetachedExecution(nextExecution);
+    setDetachedModelId(nextExecution.modelId);
   }
 
   const onModelChange = (modelId: string): void => {
     if (!supportsTurnConfiguration || intent === "steer") {
       return;
     }
-    const model = models.find((candidate) => candidate.modelId === modelId);
-    const serviceTierId = model
-      ? resolveComposerServiceTierId(
-          model,
-          input.serviceTierPreferences?.[modelId]
-        )
-      : undefined;
-    setExecution({
-      modelId,
-      ...(serviceTierId !== undefined ? { serviceTierId } : {})
+    const nextExecution = resolveComposerExecutionSelection({
+      models,
+      lastExecution: { modelId },
+      modelExecutionPreferences: input.modelExecutionPreferences
     });
+    if (nextExecution) {
+      setExecution(nextExecution);
+    }
   };
 
   const onReasoningOptionChange = (reasoningOptionId: string): void => {
@@ -1539,8 +1526,6 @@ export const useComposerController = (
       modelId: execution.modelId,
       reasoningOptionId: execution.reasoningOptionId,
       serviceTierId: serviceTierId || null
-    }, {
-      serviceTierChanged: true
     });
   };
 

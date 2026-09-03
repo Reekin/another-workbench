@@ -4,14 +4,16 @@ import { z } from "zod";
 import {
   arePathsEquivalent,
   toDisplayPath,
-  zSessionExecutionProfileInputSchema
+  writeEngineExecutionPreference,
+  zExecutionPreferencesByEngineIdSchema,
+  zSessionExecutionProfileInputSchema,
+  type ExecutionPreferencesByEngineId
 } from "@another-workbench/shared";
 import {
   cloneAllowedModelIdsByEngineId,
   cloneCustomModelReasoningOptionIdsByEngineId,
-  cloneLastExecutionByEngineId,
-  cloneModelSettings,
-  cloneServiceTierPreferencesByEngineId
+  cloneExecutionPreferencesByEngineId,
+  cloneModelSettings
 } from "./model-settings.js";
 import {
   loadJsonFile,
@@ -41,14 +43,18 @@ const workspaceRegistryDocumentSchema = z.object({
   customModelReasoningOptionIdsByEngineId: z
     .record(z.string(), z.record(z.string(), z.array(z.string().min(1))))
     .default({}),
+  executionPreferencesByEngineId: zExecutionPreferencesByEngineIdSchema,
+  lastActiveWorkspaceId: z.string().min(1).optional(),
+  lastActiveSessionId: z.string().min(1).optional()
+});
+
+const legacyExecutionSettingsSchema = z.object({
   serviceTierPreferencesByEngineId: z
     .record(z.string(), z.record(z.string(), z.string().min(1).nullable()))
     .default({}),
   lastExecutionByEngineId: z
     .record(z.string(), zSessionExecutionProfileInputSchema)
-    .default({}),
-  lastActiveWorkspaceId: z.string().min(1).optional(),
-  lastActiveSessionId: z.string().min(1).optional()
+    .default({})
 });
 
 export type WorkspaceRecord = z.infer<typeof workspaceRecordSchema>;
@@ -58,13 +64,11 @@ export type WorkspaceRegistryDocument = z.infer<
 
 type Clock = () => string;
 type IdFactory = () => string;
-type SaveDocument = (filePath: string, value: unknown) => Promise<void>;
 
 export type WorkspaceRegistryServiceOptions = {
   baseDir?: string;
   now?: Clock;
   createWorkspaceId?: IdFactory;
-  saveDocument?: SaveDocument;
 };
 
 export type WorkspaceRegistrationInput = {
@@ -80,27 +84,63 @@ const defaultBaseDir = (): string => join(homedir(), ".another-workbench");
 
 const dedupeIds = (items: readonly string[]): string[] => [...new Set(items)];
 
-const migrateServiceTierPreferences = (
-  document: WorkspaceRegistryDocument
-): WorkspaceRegistryDocument => {
-  const serviceTierPreferencesByEngineId =
-    cloneServiceTierPreferencesByEngineId(
-      document.serviceTierPreferencesByEngineId
+const migrateWorkspaceRegistry = (
+  document: Record<string, unknown>
+): Record<string, unknown> => {
+  const legacy = legacyExecutionSettingsSchema.parse(document);
+  let executionPreferencesByEngineId: ExecutionPreferencesByEngineId =
+    Object.fromEntries(
+      Object.entries(legacy.serviceTierPreferencesByEngineId).map(
+        ([engineId, tiers]) => [
+          engineId,
+          {
+            modelPreferences: Object.fromEntries(
+              Object.entries(tiers).map(([modelId, serviceTierId]) => [
+                modelId,
+                { serviceTierId }
+              ])
+            )
+          }
+        ]
+      )
     );
   for (const [engineId, execution] of Object.entries(
-    document.lastExecutionByEngineId
+    legacy.lastExecutionByEngineId
   )) {
-    if (!execution.modelId || execution.serviceTierId === undefined) {
+    if (!execution.modelId) {
+      if (execution.modeId) {
+        executionPreferencesByEngineId[engineId] = {
+          ...executionPreferencesByEngineId[engineId],
+          modeId: execution.modeId,
+          modelPreferences:
+            executionPreferencesByEngineId[engineId]?.modelPreferences ?? {}
+        };
+      }
       continue;
     }
-    serviceTierPreferencesByEngineId[engineId] = {
-      ...(serviceTierPreferencesByEngineId[engineId] ?? {}),
-      [execution.modelId]: execution.serviceTierId
-    };
+    const legacyModelPreference =
+      executionPreferencesByEngineId[engineId]?.modelPreferences[
+        execution.modelId
+      ];
+    executionPreferencesByEngineId = writeEngineExecutionPreference(
+      executionPreferencesByEngineId,
+      engineId,
+      {
+        modeId: execution.modeId,
+        modelId: execution.modelId,
+        reasoningOptionId: execution.reasoningOptionId,
+        serviceTierId: Object.hasOwn(
+          legacyModelPreference ?? {},
+          "serviceTierId"
+        )
+          ? legacyModelPreference?.serviceTierId
+          : execution.serviceTierId
+      }
+    );
   }
   return {
     ...document,
-    serviceTierPreferencesByEngineId
+    executionPreferencesByEngineId
   };
 };
 
@@ -108,7 +148,6 @@ export class WorkspaceRegistryService {
   private readonly filePath: string;
   private readonly now: Clock;
   private readonly createWorkspaceId: IdFactory;
-  private readonly saveDocument: SaveDocument;
   private document: WorkspaceRegistryDocument = {
     version: 1,
     workspaces: [],
@@ -118,12 +157,10 @@ export class WorkspaceRegistryService {
     engineProgramPathsByEngineId: {},
     allowedModelIdsByEngineId: {},
     customModelReasoningOptionIdsByEngineId: {},
-    serviceTierPreferencesByEngineId: {},
-    lastExecutionByEngineId: {}
+    executionPreferencesByEngineId: {}
   };
   private loadPromise: Promise<void> | undefined;
-  private persistPromise: Promise<void> | undefined;
-  private persistRequested = false;
+  private persistPromise = Promise.resolve();
   private revision = 0;
   private sessionBrowserRevision = 0;
 
@@ -132,7 +169,6 @@ export class WorkspaceRegistryService {
     this.filePath = join(baseDir, "workspace-registry.json");
     this.now = options.now ?? (() => new Date().toISOString());
     this.createWorkspaceId = options.createWorkspaceId ?? createOpaqueWorkspaceId;
-    this.saveDocument = options.saveDocument ?? saveJsonFile;
   }
 
   public async ready(): Promise<void> {
@@ -333,8 +369,7 @@ export class WorkspaceRegistryService {
       string,
       Record<string, string[]>
     >;
-    serviceTierPreferencesByEngineId?: WorkspaceRegistryDocument["serviceTierPreferencesByEngineId"];
-    lastExecutionByEngineId?: WorkspaceRegistryDocument["lastExecutionByEngineId"];
+    executionPreferencesByEngineId?: WorkspaceRegistryDocument["executionPreferencesByEngineId"];
   }): Promise<void> {
     await this.ready();
     this.document = {
@@ -366,19 +401,12 @@ export class WorkspaceRegistryService {
               )
           }
         : {}),
-      ...(Object.hasOwn(input, "serviceTierPreferencesByEngineId")
+      ...(Object.hasOwn(input, "executionPreferencesByEngineId")
         ? {
-            serviceTierPreferencesByEngineId:
-              cloneServiceTierPreferencesByEngineId(
-                input.serviceTierPreferencesByEngineId ?? {}
+            executionPreferencesByEngineId:
+              cloneExecutionPreferencesByEngineId(
+                input.executionPreferencesByEngineId ?? {}
               )
-          }
-        : {}),
-      ...(Object.hasOwn(input, "lastExecutionByEngineId")
-        ? {
-            lastExecutionByEngineId: cloneLastExecutionByEngineId(
-              input.lastExecutionByEngineId ?? {}
-            )
           }
         : {})
     };
@@ -395,17 +423,12 @@ export class WorkspaceRegistryService {
       engineProgramPathsByEngineId: {},
       allowedModelIdsByEngineId: {},
       customModelReasoningOptionIdsByEngineId: {},
-      serviceTierPreferencesByEngineId: {},
-      lastExecutionByEngineId: {}
+      executionPreferencesByEngineId: {}
     });
     const hadLegacySessionViewState =
       typeof loaded.value === "object" &&
       loaded.value !== null &&
       "sessionViewStateBySessionId" in loaded.value;
-    const needsServiceTierPreferenceMigration =
-      typeof loaded.value === "object" &&
-      loaded.value !== null &&
-      !Object.hasOwn(loaded.value, "serviceTierPreferencesByEngineId");
     const migratedValue =
       typeof loaded.value === "object" &&
       loaded.value !== null &&
@@ -418,38 +441,41 @@ export class WorkspaceRegistryService {
             }).defaultNewSessionAgentId
           }
         : loaded.value;
-    const parsed = workspaceRegistryDocumentSchema.safeParse(migratedValue);
+    const needsExecutionPreferenceMigration =
+      typeof migratedValue === "object" &&
+      migratedValue !== null &&
+      !Object.hasOwn(migratedValue, "executionPreferencesByEngineId");
+    let currentValue = migratedValue;
+    if (needsExecutionPreferenceMigration) {
+      try {
+        currentValue = migrateWorkspaceRegistry(
+          migratedValue as Record<string, unknown>
+        );
+      } catch (error) {
+        throw new PersistentStoreCorruptionError(this.filePath, error);
+      }
+    }
+    const parsed = workspaceRegistryDocumentSchema.safeParse(currentValue);
     if (!parsed.success) {
       throw new PersistentStoreCorruptionError(this.filePath, parsed.error);
     }
-    this.document = needsServiceTierPreferenceMigration
-      ? migrateServiceTierPreferences(parsed.data)
-      : parsed.data;
+    this.document = parsed.data;
     this.revision += 1;
     this.sessionBrowserRevision += 1;
-    if (hadLegacySessionViewState || needsServiceTierPreferenceMigration) {
+    if (hadLegacySessionViewState || needsExecutionPreferenceMigration) {
       await this.persist();
     }
   }
 
   private async persist(): Promise<void> {
     this.revision += 1;
-    this.persistRequested = true;
-    if (!this.persistPromise) {
-      this.persistPromise = this.flushPersistRequests().finally(() => {
-        this.persistPromise = undefined;
-      });
-    }
-    await this.persistPromise;
-  }
-
-  private async flushPersistRequests(): Promise<void> {
-    while (this.persistRequested) {
-      this.persistRequested = false;
-      await this.saveDocument(
+    const pending = this.persistPromise.then(() =>
+      saveJsonFile(
         this.filePath,
         workspaceRegistryDocumentSchema.parse(this.document)
-      );
-    }
+      )
+    );
+    this.persistPromise = pending.catch(() => undefined);
+    await pending;
   }
 }

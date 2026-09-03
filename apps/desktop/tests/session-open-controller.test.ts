@@ -74,12 +74,10 @@ const flushMicrotasks = async (): Promise<void> => {
 
 const renderController = (
   displayedSessionId: string,
-  cachedSessionId?: string,
-  beforeCreateSession?: () => Promise<void>
+  cachedSessionId?: string
 ): {
   controller: SessionOpenController;
   open: ReturnType<typeof vi.fn>;
-  create: ReturnType<typeof vi.fn>;
   activate: ReturnType<typeof vi.fn>;
   refreshSessionBrowser: ReturnType<typeof vi.fn>;
   openRequests: Map<
@@ -112,10 +110,6 @@ const renderController = (
     openRequests.set(sessionId, requests);
     return request.promise;
   });
-  const create = vi.fn(async () => ({
-    sessionId: "session-created",
-    conversationId: "conversation-created"
-  }));
   const activate = vi.fn(async (sessionId: string) => ({ sessionId }));
   const refreshSessionBrowser = vi.fn(async () => {});
   const setBrowserSelectedSessionId = vi.fn();
@@ -151,7 +145,7 @@ const renderController = (
       sessionBrowser: {
         open,
         activate,
-        create,
+        create: vi.fn(),
         loadOlder: vi.fn()
       }
     } as unknown as SessionOpenControllerInput["transport"],
@@ -168,7 +162,6 @@ const renderController = (
     viewport,
     isOpeningSelectedSession: false,
     onResetSessionSwitchState: vi.fn(),
-    beforeCreateSession,
     onSessionRead,
     onStatusNotice: vi.fn() as SessionOpenControllerInput["onStatusNotice"],
     refreshSessionBrowser
@@ -186,7 +179,6 @@ const renderController = (
   return {
     controller,
     open,
-    create,
     activate,
     refreshSessionBrowser,
     openRequests,
@@ -246,31 +238,6 @@ describe("useSessionOpenController background refresh", () => {
     expect(activate).toHaveBeenCalledWith("session-b");
     expect(refreshSessionBrowser).not.toHaveBeenCalled();
     expect(onSessionRead).toHaveBeenCalledWith("session-b");
-  });
-
-  it("flushes pending preferences before creating a session", async () => {
-    const flush = deferred<void>();
-    const { controller, create, openRequests } = renderController(
-      "session-a",
-      undefined,
-      () => flush.promise
-    );
-
-    const creating = controller.onCreateSession("workspace-1", "codex");
-    expect(create).not.toHaveBeenCalled();
-
-    flush.resolve();
-    for (let index = 0; index < 5 && !openRequests.has("session-created"); index += 1) {
-      await flushMicrotasks();
-    }
-    expect(create).toHaveBeenCalledWith({
-      workspaceId: "workspace-1",
-      engineId: "codex"
-    });
-    openRequests.get("session-created")?.[0]?.resolve({
-      page: sessionWindowFor("session-created")
-    });
-    await creating;
   });
 
   it("does not let an in-flight background refresh cancel or apply over a manual switch", async () => {

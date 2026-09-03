@@ -2,6 +2,7 @@ import type {
   ApprovalRequest,
   ChatInteractionCapabilitiesRpc,
   EngineModelRpc,
+  ExecutionPreferencesByEngineId,
   SkillDescriptorRpc,
 } from "@another-workbench/shared";
 import type {
@@ -16,6 +17,9 @@ export type ComposerExecutionSelection = {
   reasoningOptionId?: string;
   serviceTierId?: string | null;
 };
+
+export type ComposerModelExecutionPreferences =
+  ExecutionPreferencesByEngineId[string]["modelPreferences"];
 
 export type ComposerSkillReference = {
   id: string;

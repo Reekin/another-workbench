@@ -14,7 +14,10 @@ import type { ApprovalResponseInput } from "../ApprovalFlowView.js";
 import type { InteractionResponseInput } from "../InteractionFlowView.js";
 import { useComposerController } from "../use-composer-controller.js";
 import { ComposerPanel } from "./ComposerPanel.js";
-import type { ComposerExecutionSelection } from "./composer-types.js";
+import type {
+  ComposerExecutionSelection,
+  ComposerModelExecutionPreferences
+} from "./composer-types.js";
 
 export type ComposerContainerProps = {
   transport?: DesktopTransport;
@@ -26,7 +29,7 @@ export type ComposerContainerProps = {
   engineSurface?: EngineSurfaceRpc;
   allowedModelIds?: string[];
   customModelReasoningOptionIds?: Record<string, string[]>;
-  serviceTierPreferences?: Record<string, string | null>;
+  modelExecutionPreferences?: ComposerModelExecutionPreferences;
   lastExecution?: ComposerExecutionSelection;
   activeWorkspaceId?: string;
   activeWorkspaceRootPath?: string;
@@ -44,8 +47,7 @@ export type ComposerContainerProps = {
   onRequestTranscriptBottom?: (sessionId: string) => void;
   onExecutionPreferenceChange?: (
     engineId: string,
-    execution: ComposerExecutionSelection,
-    options?: { serviceTierChanged?: boolean }
+    execution: ComposerExecutionSelection
   ) => void;
   onRespondApproval?: (input: ApprovalResponseInput) => Promise<void>;
   onRespondInteraction?: (input: InteractionResponseInput) => Promise<void>;
@@ -61,7 +63,7 @@ export const ComposerContainer = ({
   engineSurface,
   allowedModelIds,
   customModelReasoningOptionIds,
-  serviceTierPreferences,
+  modelExecutionPreferences,
   lastExecution,
   activeWorkspaceId,
   activeWorkspaceRootPath,
@@ -91,7 +93,7 @@ export const ComposerContainer = ({
     engineSurface,
     allowedModelIds,
     customModelReasoningOptionIds,
-    serviceTierPreferences,
+    modelExecutionPreferences,
     lastExecution,
     activeWorkspaceId,
     activeWorkspaceRootPath,

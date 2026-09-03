@@ -179,8 +179,7 @@ export const createDemoWorkbenchShellService = (
     engineProgramResolutionsByEngineId: {},
     allowedModelIdsByEngineId: {},
     customModelReasoningOptionIdsByEngineId: {},
-    serviceTierPreferencesByEngineId: {},
-    lastExecutionByEngineId: {}
+    executionPreferencesByEngineId: {}
   };
   let lastActiveWorkspaceId: string | undefined = demoWorkspace.workspaceId;
   let lastActiveSessionId: string | undefined;

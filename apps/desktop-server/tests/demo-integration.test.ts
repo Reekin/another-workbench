@@ -11,21 +11,33 @@ const flushMicrotasks = async (): Promise<void> => {
 };
 
 describe("demo runtime fixture", () => {
-  it("partially updates and clones last execution settings", async () => {
+  it("partially updates and clones execution preferences", async () => {
     const service = createDemoWorkbenchShellService();
-    const input = {
-      codex: { modelId: "gpt-5.5", reasoningOptionId: "high" }
-    };
-
-    await service.updateSettings({ lastExecutionByEngineId: input });
-    input.codex.modelId = "mutated-after-write";
+    await service.updateSettings({
+      executionPreferencesByEngineId: {
+        codex: {
+          selectedModelId: "gpt-5.5",
+          modelPreferences: {
+            "gpt-5.5": {
+              reasoningOptionId: "high"
+            }
+          }
+        }
+      }
+    });
     const firstRead = await service.getSettings();
-    firstRead.lastExecutionByEngineId.codex.modelId = "mutated-after-read";
+    firstRead.executionPreferencesByEngineId.codex.selectedModelId =
+      "mutated-after-read";
 
     await expect(service.getSettings()).resolves.toMatchObject({
       defaultNewSessionEngineId: "acp",
-      lastExecutionByEngineId: {
-        codex: { modelId: "gpt-5.5", reasoningOptionId: "high" }
+      executionPreferencesByEngineId: {
+        codex: {
+          selectedModelId: "gpt-5.5",
+          modelPreferences: {
+            "gpt-5.5": { reasoningOptionId: "high" }
+          }
+        }
       }
     });
   });

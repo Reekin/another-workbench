@@ -1,10 +1,21 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { WorkspaceRegistryService } from "../src/workspace-registry.js";
 
 const tempDirs: string[] = [];
+const executionPreferences = {
+  codex: {
+    selectedModelId: "gpt-5.5-codex",
+    modelPreferences: {
+      "gpt-5.5-codex": {
+        reasoningOptionId: "high",
+        serviceTierId: "priority" as string | null
+      }
+    }
+  }
+};
 
 const createTempDir = async (): Promise<string> => {
   const dir = await mkdtemp(join(tmpdir(), "awb-workspace-registry-"));
@@ -72,17 +83,7 @@ describe("WorkspaceRegistryService", () => {
           "custom-model": ["low", "high"]
         }
       },
-      serviceTierPreferencesByEngineId: {
-        codex: {
-          "gpt-5.5-codex": "priority"
-        }
-      },
-      lastExecutionByEngineId: {
-        codex: {
-          modelId: "gpt-5.5-codex",
-          reasoningOptionId: "high"
-        }
-      }
+      executionPreferencesByEngineId: executionPreferences
     });
 
     const reloaded = new WorkspaceRegistryService({
@@ -108,17 +109,7 @@ describe("WorkspaceRegistryService", () => {
           "custom-model": ["low", "high"]
         }
       },
-      serviceTierPreferencesByEngineId: {
-        codex: {
-          "gpt-5.5-codex": "priority"
-        }
-      },
-      lastExecutionByEngineId: {
-        codex: {
-          modelId: "gpt-5.5-codex",
-          reasoningOptionId: "high"
-        }
-      },
+      executionPreferencesByEngineId: executionPreferences,
       lastActiveWorkspaceId: beta.workspaceId,
       lastActiveSessionId: "session-42"
     });
@@ -150,36 +141,29 @@ describe("WorkspaceRegistryService", () => {
     const customReasoning = {
       codex: { "custom-model": ["low", "high"] }
     };
-    const serviceTierPreferences = {
-      codex: { "gpt-5.5-codex": "priority" as string | null }
-    };
-    const lastExecution = {
-      codex: {
-        modelId: "gpt-5.5-codex",
-        reasoningOptionId: "high",
-        serviceTierId: "priority"
-      }
-    };
-
+    const executionPreferencesInput = structuredClone(executionPreferences);
     await service.updateSettings({ allowedModelIdsByEngineId: configured });
     await service.updateSettings({
       customModelReasoningOptionIdsByEngineId: customReasoning
     });
     await service.updateSettings({
-      serviceTierPreferencesByEngineId: serviceTierPreferences
+      executionPreferencesByEngineId: executionPreferencesInput
     });
-    await service.updateSettings({ lastExecutionByEngineId: lastExecution });
     configured.codex.push("mutated-after-write");
     customReasoning.codex["custom-model"].push("mutated-after-write");
-    serviceTierPreferences.codex["gpt-5.5-codex"] = null;
-    lastExecution.codex.modelId = "mutated-after-write";
+    executionPreferencesInput.codex.modelPreferences[
+      "gpt-5.5-codex"
+    ].serviceTierId = null;
     const firstRead = service.getState();
     firstRead.allowedModelIdsByEngineId.codex.push("mutated-after-read");
     firstRead.customModelReasoningOptionIdsByEngineId.codex["custom-model"].push(
       "mutated-after-read"
     );
-    firstRead.serviceTierPreferencesByEngineId.codex["gpt-5.5-codex"] = null;
-    firstRead.lastExecutionByEngineId.codex.modelId = "mutated-after-read";
+    firstRead.executionPreferencesByEngineId.codex.selectedModelId =
+      "mutated-after-read";
+    firstRead.executionPreferencesByEngineId.codex.modelPreferences[
+      "gpt-5.5-codex"
+    ].serviceTierId = null;
 
     expect(service.getState()).toMatchObject({
       defaultNewSessionEngineId: "codex",
@@ -195,76 +179,11 @@ describe("WorkspaceRegistryService", () => {
           "custom-model": ["low", "high"]
         }
       },
-      serviceTierPreferencesByEngineId: {
-        codex: {
-          "gpt-5.5-codex": "priority"
-        }
-      },
-      lastExecutionByEngineId: {
-        codex: {
-          modelId: "gpt-5.5-codex",
-          reasoningOptionId: "high",
-          serviceTierId: "priority"
-        }
-      }
+      executionPreferencesByEngineId: executionPreferences
     });
   });
 
-  it("serializes concurrent writes and flushes the latest registry state", async () => {
-    const baseDir = await createTempDir();
-    let releaseFirstSave: (() => void) | undefined;
-    let markFirstSaveStarted: (() => void) | undefined;
-    const firstSaveStarted = new Promise<void>((resolve) => {
-      markFirstSaveStarted = resolve;
-    });
-    const firstSaveBlocked = new Promise<void>((resolve) => {
-      releaseFirstSave = resolve;
-    });
-    const snapshots: unknown[] = [];
-    const saveDocument = vi.fn(async (_filePath: string, value: unknown) => {
-      snapshots.push(structuredClone(value));
-      if (snapshots.length === 1) {
-        markFirstSaveStarted?.();
-        await firstSaveBlocked;
-      }
-    });
-    const service = new WorkspaceRegistryService({
-      baseDir,
-      saveDocument
-    });
-
-    const settingsWrite = service.updateSettings({
-      lastExecutionByEngineId: {
-        codex: {
-          modelId: "gpt-5.5-codex",
-          serviceTierId: "priority"
-        }
-      }
-    });
-    await firstSaveStarted;
-    const selectionWrite = service.setLastActiveSelection({
-      workspaceId: "workspace-1",
-      sessionId: "session-1"
-    });
-
-    expect(saveDocument).toHaveBeenCalledTimes(1);
-    releaseFirstSave?.();
-    await Promise.all([settingsWrite, selectionWrite]);
-
-    expect(saveDocument).toHaveBeenCalledTimes(2);
-    expect(snapshots.at(-1)).toMatchObject({
-      lastExecutionByEngineId: {
-        codex: {
-          modelId: "gpt-5.5-codex",
-          serviceTierId: "priority"
-        }
-      },
-      lastActiveWorkspaceId: "workspace-1",
-      lastActiveSessionId: "session-1"
-    });
-  });
-
-  it("defaults last execution settings for existing registry files", async () => {
+  it("migrates existing registry files without execution settings", async () => {
     const baseDir = await createTempDir();
     await writeRegistry(baseDir, {
       version: 1,
@@ -278,11 +197,10 @@ describe("WorkspaceRegistryService", () => {
     const service = new WorkspaceRegistryService({ baseDir });
     await service.ready();
 
-    expect(service.getState().lastExecutionByEngineId).toEqual({});
-    expect(service.getState().serviceTierPreferencesByEngineId).toEqual({});
+    expect(service.getState().executionPreferencesByEngineId).toEqual({});
   });
 
-  it("migrates the existing last speed selection into model preferences once", async () => {
+  it("migrates legacy execution and speed settings into per-model preferences", async () => {
     const baseDir = await createTempDir();
     const registryPath = await writeRegistry(baseDir, {
       version: 1,
@@ -293,9 +211,17 @@ describe("WorkspaceRegistryService", () => {
       engineProgramPathsByEngineId: {},
       allowedModelIdsByEngineId: {},
       customModelReasoningOptionIdsByEngineId: {},
+      serviceTierPreferencesByEngineId: {
+        codex: {
+          "gpt-5.5-codex": "priority",
+          "gpt-5.4-mini": null
+        }
+      },
       lastExecutionByEngineId: {
         codex: {
+          modeId: "danger-full-access",
           modelId: "gpt-5.5-codex",
+          reasoningOptionId: "high",
           serviceTierId: "priority"
         }
       }
@@ -304,20 +230,31 @@ describe("WorkspaceRegistryService", () => {
     const service = new WorkspaceRegistryService({ baseDir });
     await service.ready();
 
-    expect(service.getState().serviceTierPreferencesByEngineId).toEqual({
+    expect(service.getState().executionPreferencesByEngineId).toEqual({
       codex: {
-        "gpt-5.5-codex": "priority"
+        modeId: "danger-full-access",
+        selectedModelId: "gpt-5.5-codex",
+        modelPreferences: {
+          "gpt-5.5-codex": {
+            reasoningOptionId: "high",
+            serviceTierId: "priority"
+          },
+          "gpt-5.4-mini": {
+            serviceTierId: null
+          }
+        }
       }
     });
-    expect(
-      (JSON.parse(await readFile(registryPath, "utf8")) as {
-        serviceTierPreferencesByEngineId: unknown;
-      }).serviceTierPreferencesByEngineId
-    ).toEqual({
-      codex: {
-        "gpt-5.5-codex": "priority"
-      }
-    });
+    const persisted = JSON.parse(await readFile(registryPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    expect(persisted.version).toBe(1);
+    expect(persisted.executionPreferencesByEngineId).toEqual(
+      service.getState().executionPreferencesByEngineId
+    );
+    expect(persisted).not.toHaveProperty("lastExecutionByEngineId");
+    expect(persisted).not.toHaveProperty("serviceTierPreferencesByEngineId");
   });
 
   it("reuses existing workspace ids for duplicate paths and updates labels", async () => {

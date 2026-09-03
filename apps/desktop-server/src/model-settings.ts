@@ -4,8 +4,7 @@ type ModelSettings = Pick<
   WorkbenchSettingsRpc,
   | "allowedModelIdsByEngineId"
   | "customModelReasoningOptionIdsByEngineId"
-  | "serviceTierPreferencesByEngineId"
-  | "lastExecutionByEngineId"
+  | "executionPreferencesByEngineId"
 >;
 
 const cloneRecord = <Value>(
@@ -28,15 +27,15 @@ export const cloneCustomModelReasoningOptionIdsByEngineId = (
     cloneRecord(modelOptions, (optionIds) => [...optionIds])
   );
 
-export const cloneServiceTierPreferencesByEngineId = (
-  value: ModelSettings["serviceTierPreferencesByEngineId"]
-): ModelSettings["serviceTierPreferencesByEngineId"] =>
-  cloneRecord(value, (modelPreferences) => ({ ...modelPreferences }));
-
-export const cloneLastExecutionByEngineId = (
-  value: ModelSettings["lastExecutionByEngineId"]
-): ModelSettings["lastExecutionByEngineId"] =>
-  cloneRecord(value, (profile) => ({ ...profile }));
+export const cloneExecutionPreferencesByEngineId = (
+  value: ModelSettings["executionPreferencesByEngineId"]
+): ModelSettings["executionPreferencesByEngineId"] =>
+  cloneRecord(value, (engine) => ({
+    ...engine,
+    modelPreferences: cloneRecord(engine.modelPreferences, (preference) => ({
+      ...preference
+    }))
+  }));
 
 export const cloneModelSettings = (settings: ModelSettings): ModelSettings => ({
   allowedModelIdsByEngineId: cloneAllowedModelIdsByEngineId(
@@ -46,11 +45,7 @@ export const cloneModelSettings = (settings: ModelSettings): ModelSettings => ({
     cloneCustomModelReasoningOptionIdsByEngineId(
       settings.customModelReasoningOptionIdsByEngineId
     ),
-  serviceTierPreferencesByEngineId:
-    cloneServiceTierPreferencesByEngineId(
-      settings.serviceTierPreferencesByEngineId ?? {}
-    ),
-  lastExecutionByEngineId: cloneLastExecutionByEngineId(
-    settings.lastExecutionByEngineId
+  executionPreferencesByEngineId: cloneExecutionPreferencesByEngineId(
+    settings.executionPreferencesByEngineId
   )
 });

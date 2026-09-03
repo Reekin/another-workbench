@@ -625,8 +625,13 @@ describe("Desktop transport facade", () => {
         customModelReasoningOptionIdsByEngineId: {
           codex: { "custom-model": ["low", "high"] }
         },
-        lastExecutionByEngineId: {
-          codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "xhigh" }
+        executionPreferencesByEngineId: {
+          codex: {
+            selectedModelId: "gpt-5.5-codex",
+            modelPreferences: {
+              "gpt-5.5-codex": { reasoningOptionId: "xhigh" }
+            }
+          }
         }
       })
     ).resolves.toEqual({
@@ -637,8 +642,13 @@ describe("Desktop transport facade", () => {
       customModelReasoningOptionIdsByEngineId: {
         codex: { "custom-model": ["low", "high"] }
       },
-      lastExecutionByEngineId: {
-        codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "xhigh" }
+      executionPreferencesByEngineId: {
+        codex: {
+          selectedModelId: "gpt-5.5-codex",
+          modelPreferences: {
+            "gpt-5.5-codex": { reasoningOptionId: "xhigh" }
+          }
+        }
       }
     });
 
@@ -649,8 +659,13 @@ describe("Desktop transport facade", () => {
     if (updateRequest.method !== "settings.update") {
       throw new Error("Expected settings.update request.");
     }
-    expect(updateRequest.params.lastExecutionByEngineId).toEqual({
-      codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "xhigh" }
+    expect(updateRequest.params.executionPreferencesByEngineId).toEqual({
+      codex: {
+        selectedModelId: "gpt-5.5-codex",
+        modelPreferences: {
+          "gpt-5.5-codex": { reasoningOptionId: "xhigh" }
+        }
+      }
     });
   });
 
@@ -1329,7 +1344,10 @@ describe("Desktop transport facade", () => {
 
     const sendRequest = preload.request.mock.calls[0][0] as WorkbenchRpcRequest;
     const steerRequest = preload.request.mock.calls[1][0] as WorkbenchRpcRequest;
-    if (sendRequest.method !== "runtime.command" || steerRequest.method !== "runtime.command") {
+    if (
+      sendRequest.method !== "runtime.command" ||
+      steerRequest.method !== "runtime.command"
+    ) {
       throw new Error("Expected runtime.command requests.");
     }
     expect(sendRequest.params.envelope.command).toMatchObject({

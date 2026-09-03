@@ -1403,6 +1403,7 @@ export const ChatShellApp = ({
     attentionSessions,
     refreshSessionBrowser,
     ensureSessionVisible,
+    markSessionRead,
     onAddWorkspace,
     onToggleWorkspace,
     onToggleSessionTree,
@@ -1566,6 +1567,7 @@ export const ChatShellApp = ({
     viewport,
     onResetSessionSwitchState: resetSessionSwitchState,
     beforeCreateSession: flushExecutionPreferenceWrites,
+    onSessionRead: markSessionRead,
     onStatusNotice: setStatusNotice,
     refreshSessionBrowser,
     ensureSessionVisible

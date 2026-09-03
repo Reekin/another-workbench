@@ -90,6 +90,7 @@ const renderController = (
   viewportDisplayedSessionIdRef: { current: string | undefined };
   setBrowserSelectedSessionId: ReturnType<typeof vi.fn>;
   setOpeningSessionId: ReturnType<typeof vi.fn>;
+  onSessionRead: ReturnType<typeof vi.fn>;
 } => {
   const store = createRendererStore();
   if (cachedSessionId) {
@@ -119,6 +120,7 @@ const renderController = (
   const refreshSessionBrowser = vi.fn(async () => {});
   const setBrowserSelectedSessionId = vi.fn();
   const setOpeningSessionId = vi.fn();
+  const onSessionRead = vi.fn();
   let sessionWindows: Record<string, SessionWindowRpc | undefined> =
     cachedSessionId
       ? {
@@ -167,6 +169,7 @@ const renderController = (
     isOpeningSelectedSession: false,
     onResetSessionSwitchState: vi.fn(),
     beforeCreateSession,
+    onSessionRead,
     onStatusNotice: vi.fn() as SessionOpenControllerInput["onStatusNotice"],
     refreshSessionBrowser
   };
@@ -190,7 +193,8 @@ const renderController = (
     sessionWindows: () => sessionWindows,
     viewportDisplayedSessionIdRef,
     setBrowserSelectedSessionId,
-    setOpeningSessionId
+    setOpeningSessionId,
+    onSessionRead
   };
 };
 
@@ -201,7 +205,8 @@ describe("useSessionOpenController background refresh", () => {
       open,
       openRequests,
       sessionWindows,
-      refreshSessionBrowser
+      refreshSessionBrowser,
+      onSessionRead
     } = renderController("session-a");
 
     const manualOpen = controller.onOpenSession("session-b");
@@ -223,6 +228,7 @@ describe("useSessionOpenController background refresh", () => {
     expect(sessionWindows()["session-b"]?.cursor).toBe("cursor-b");
     expect(sessionWindows()["session-a"]).toBeUndefined();
     expect(refreshSessionBrowser).not.toHaveBeenCalled();
+    expect(onSessionRead).toHaveBeenCalledWith("session-b");
   });
 
   it("opens a cached session without refreshing or resetting the browser page", async () => {
@@ -230,7 +236,8 @@ describe("useSessionOpenController background refresh", () => {
       controller,
       open,
       activate,
-      refreshSessionBrowser
+      refreshSessionBrowser,
+      onSessionRead
     } = renderController("session-a", "session-b");
 
     await controller.onOpenSession("session-b");
@@ -238,6 +245,7 @@ describe("useSessionOpenController background refresh", () => {
     expect(open).not.toHaveBeenCalled();
     expect(activate).toHaveBeenCalledWith("session-b");
     expect(refreshSessionBrowser).not.toHaveBeenCalled();
+    expect(onSessionRead).toHaveBeenCalledWith("session-b");
   });
 
   it("flushes pending preferences before creating a session", async () => {
@@ -343,7 +351,8 @@ describe("useSessionOpenController background refresh", () => {
       controller,
       openRequests,
       setBrowserSelectedSessionId,
-      setOpeningSessionId
+      setOpeningSessionId,
+      onSessionRead
     } = renderController("session-a");
 
     const opening = controller.onOpenSession("session-b");
@@ -357,6 +366,7 @@ describe("useSessionOpenController background refresh", () => {
 
     expect(setBrowserSelectedSessionId).toHaveBeenLastCalledWith("session-a");
     expect(setOpeningSessionId).toHaveBeenLastCalledWith(undefined);
+    expect(onSessionRead).not.toHaveBeenCalled();
   });
 });
 

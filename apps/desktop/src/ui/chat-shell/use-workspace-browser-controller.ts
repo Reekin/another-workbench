@@ -286,6 +286,7 @@ export type WorkspaceBrowserController = {
   attentionSessions: AttentionSessionViewNode[];
   refreshSessionBrowser: (input?: SessionBrowserRefreshInput) => Promise<void>;
   ensureSessionVisible: (sessionId: string) => Promise<string | undefined>;
+  markSessionRead: (sessionId: string) => void;
   onAddWorkspace: () => Promise<void>;
   onToggleWorkspace: (workspaceId: string) => Promise<void>;
   onToggleSessionTree: (sessionId: string, workspaceId?: string) => Promise<void>;
@@ -705,6 +706,22 @@ export const useWorkspaceBrowserController = (input: {
     attentionSessions,
     refreshSessionBrowser,
     ensureSessionVisible,
+    markSessionRead: (sessionId: string) => {
+      setWorkspaceTree((workspaces) =>
+        workspaces.map((workspace) =>
+          updateSessionNode(workspace, sessionId, (session) =>
+            session.statusDot === "unread_completed"
+              ? { ...session, statusDot: "none" }
+              : session
+          )
+        )
+      );
+      setAttentionSessions((sessions) => sessions.flatMap((session) =>
+        session.sessionId !== sessionId || session.statusDot !== "unread_completed"
+          ? [session]
+          : session.isPinned ? [{ ...session, statusDot: "none" }] : []
+      ));
+    },
     onAddWorkspace: async () => {
       if (!input.transport) {
         return;

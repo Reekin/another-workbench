@@ -70,6 +70,7 @@ export const useSessionOpenController = (input: {
   viewport: TranscriptViewportController;
   onResetSessionSwitchState: () => void;
   beforeCreateSession?: () => Promise<void>;
+  onSessionRead?: (sessionId: string) => void;
   onStatusNotice: StatusNoticeSetter;
   refreshSessionBrowser: (input?: SessionBrowserRefreshInput) => Promise<void>;
   ensureSessionVisible?: (sessionId: string) => Promise<string | undefined>;
@@ -397,6 +398,7 @@ export const useSessionOpenController = (input: {
           if (openSessionRequestIdRef.current !== requestId) {
             return;
           }
+          input.onSessionRead?.(sessionId);
           input.setOpeningSessionId(undefined);
           input.onStatusNotice(undefined);
           return;
@@ -410,6 +412,7 @@ export const useSessionOpenController = (input: {
         if (openSessionRequestIdRef.current !== requestId) {
           return;
         }
+        input.onSessionRead?.(sessionId);
         input.setOpeningSessionId(undefined);
         input.onStatusNotice(undefined);
       } catch (error) {

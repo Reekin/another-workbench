@@ -359,6 +359,7 @@ type UseComposerControllerInput = {
   engineSurface?: EngineSurfaceRpc;
   allowedModelIds?: string[];
   customModelReasoningOptionIds?: Record<string, string[]>;
+  serviceTierPreferences?: Record<string, string | null>;
   lastExecution?: ComposerExecutionSelection;
   activeWorkspaceId?: string;
   activeWorkspaceRootPath?: string;
@@ -374,7 +375,8 @@ type UseComposerControllerInput = {
   onRequestTranscriptBottom?: (sessionId: string) => void;
   onExecutionPreferenceChange?: (
     engineId: string,
-    execution: ComposerExecutionSelection
+    execution: ComposerExecutionSelection,
+    options?: { serviceTierChanged?: boolean }
   ) => void;
 };
 
@@ -1480,9 +1482,16 @@ export const useComposerController = (
     queue
   ]);
 
-  function setExecution(nextExecution: ComposerExecutionSelection): void {
+  function setExecution(
+    nextExecution: ComposerExecutionSelection,
+    options?: { serviceTierChanged?: boolean }
+  ): void {
     if (input.selectedEngineId) {
-      input.onExecutionPreferenceChange?.(input.selectedEngineId, nextExecution);
+      input.onExecutionPreferenceChange?.(
+        input.selectedEngineId,
+        nextExecution,
+        options
+      );
     }
     if (input.activeSessionId) {
       setExecutionBySessionId((current) => ({
@@ -1498,7 +1507,17 @@ export const useComposerController = (
     if (!supportsTurnConfiguration || intent === "steer") {
       return;
     }
-    setExecution({ modelId });
+    const model = models.find((candidate) => candidate.modelId === modelId);
+    const serviceTierId = model
+      ? resolveComposerServiceTierId(
+          model,
+          input.serviceTierPreferences?.[modelId]
+        )
+      : undefined;
+    setExecution({
+      modelId,
+      ...(serviceTierId !== undefined ? { serviceTierId } : {})
+    });
   };
 
   const onReasoningOptionChange = (reasoningOptionId: string): void => {
@@ -1520,6 +1539,8 @@ export const useComposerController = (
       modelId: execution.modelId,
       reasoningOptionId: execution.reasoningOptionId,
       serviceTierId: serviceTierId || null
+    }, {
+      serviceTierChanged: true
     });
   };
 

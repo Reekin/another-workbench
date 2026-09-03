@@ -230,6 +230,7 @@ export type DesktopTransport = {
       defaultNewSessionEngineId?: string;
       allowedModelIdsByEngineId?: Record<string, string[]>;
       customModelReasoningOptionIdsByEngineId?: Record<string, Record<string, string[]>>;
+      serviceTierPreferencesByEngineId?: Record<string, Record<string, string | null>>;
       lastExecutionByEngineId?: Record<string, SessionExecutionProfileInput>;
       engineProgramPathsByEngineId?: Record<string, string>;
     }) => Promise<WorkbenchSettingsRpc>;
@@ -668,6 +669,7 @@ export const createDesktopTransport = (
     engineProgramPathsByEngineId?: Record<string, string>;
     allowedModelIdsByEngineId?: Record<string, string[]>;
     customModelReasoningOptionIdsByEngineId?: Record<string, Record<string, string[]>>;
+    serviceTierPreferencesByEngineId?: Record<string, Record<string, string | null>>;
     lastExecutionByEngineId?: Record<string, SessionExecutionProfileInput>;
   }): Promise<WorkbenchSettingsRpc> => {
     return rpc.request("settings.update", input);

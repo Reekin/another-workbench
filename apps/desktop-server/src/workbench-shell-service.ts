@@ -548,8 +548,19 @@ export class WorkbenchShellService {
       ...(input.metadata ?? {}),
       cwd: workspace.absolutePath
     };
-    const sessionProfile =
-      input.sessionProfile ?? registry.getState().lastExecutionByEngineId[input.engineId];
+    const registryState = registry.getState();
+    const lastExecution = registryState.lastExecutionByEngineId[input.engineId];
+    const modelServiceTierPreferences =
+      registryState.serviceTierPreferencesByEngineId[input.engineId] ?? {};
+    const inheritedProfile =
+      lastExecution?.modelId &&
+      Object.hasOwn(modelServiceTierPreferences, lastExecution.modelId)
+        ? {
+            ...lastExecution,
+            serviceTierId: modelServiceTierPreferences[lastExecution.modelId]
+          }
+        : lastExecution;
+    const sessionProfile = input.sessionProfile ?? inheritedProfile;
     const session = await this.runtimeService.createSession({
       type: "createSession",
       engineId: input.engineId,

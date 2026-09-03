@@ -70,11 +70,23 @@ const buildWorkspaceRegistry = (
   absolutePath = "I:/repo",
   lastExecutionByEngineId: Record<
     string,
-    { modeId?: string; modelId?: string; reasoningOptionId?: string }
+    {
+      modeId?: string;
+      modelId?: string;
+      reasoningOptionId?: string;
+      serviceTierId?: string | null;
+    }
+  > = {},
+  serviceTierPreferencesByEngineId: Record<
+    string,
+    Record<string, string | null>
   > = {}
 ) => ({
   ready: vi.fn().mockResolvedValue(undefined),
-  getState: vi.fn().mockReturnValue({ lastExecutionByEngineId }),
+  getState: vi.fn().mockReturnValue({
+    lastExecutionByEngineId,
+    serviceTierPreferencesByEngineId
+  }),
   getWorkspace: vi.fn().mockReturnValue({
     workspaceId: "workspace-1",
     absolutePath,
@@ -186,6 +198,7 @@ describe("WorkbenchShellService", () => {
       customModelReasoningOptionIdsByEngineId: {
         codex: { "custom-model": ["low", "high"] }
       },
+      serviceTierPreferencesByEngineId: {},
       lastExecutionByEngineId: {
         codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "high" }
       }
@@ -216,6 +229,7 @@ describe("WorkbenchShellService", () => {
       customModelReasoningOptionIdsByEngineId: {
         codex: { "custom-model": ["low", "high"] }
       },
+      serviceTierPreferencesByEngineId: {},
       lastExecutionByEngineId: {
         codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "high" }
       }
@@ -227,6 +241,7 @@ describe("WorkbenchShellService", () => {
       customModelReasoningOptionIdsByEngineId: {
         codex: { "custom-model": ["low", "high"] }
       },
+      serviceTierPreferencesByEngineId: {},
       lastExecutionByEngineId: {
         codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "high" }
       }
@@ -246,6 +261,7 @@ describe("WorkbenchShellService", () => {
       customModelReasoningOptionIdsByEngineId: {
         codex: { "custom-model": ["low", "high"] }
       },
+      serviceTierPreferencesByEngineId: {},
       lastExecutionByEngineId: {
         codex: { modelId: "gpt-5.5-codex", reasoningOptionId: "high" }
       }
@@ -1490,7 +1506,7 @@ describe("WorkbenchShellService", () => {
     expect(markSessionRead).toHaveBeenCalledWith("session-created");
   });
 
-  it("inherits the last execution profile for the selected engine only", async () => {
+  it("inherits the selected engine profile with its explicit model speed", async () => {
     const createSession = vi.fn().mockResolvedValue({
       sessionId: "session-created",
       conversationId: "conversation-created"
@@ -1499,16 +1515,25 @@ describe("WorkbenchShellService", () => {
       runtimeService: {
         createSession,
         getWorkspaceRegistry: () =>
-          buildWorkspaceRegistry("I:/repo", {
-            codex: {
-              modelId: "gpt-5.5-codex",
-              reasoningOptionId: "high"
+          buildWorkspaceRegistry(
+            "I:/repo",
+            {
+              codex: {
+                modelId: "gpt-5.5-codex",
+                reasoningOptionId: "high",
+                serviceTierId: null
+              },
+              acp: {
+                modelId: "claude-sonnet",
+                reasoningOptionId: "extra"
+              }
             },
-            acp: {
-              modelId: "claude-sonnet",
-              reasoningOptionId: "extra"
+            {
+              codex: {
+                "gpt-5.5-codex": "priority"
+              }
             }
-          })
+          )
       } as never,
       sessionCatalog: {
         markSessionRead: vi.fn().mockResolvedValue(undefined)
@@ -1527,7 +1552,8 @@ describe("WorkbenchShellService", () => {
         engineId: "codex",
         sessionProfile: {
           modelId: "gpt-5.5-codex",
-          reasoningOptionId: "high"
+          reasoningOptionId: "high",
+          serviceTierId: "priority"
         }
       })
     );

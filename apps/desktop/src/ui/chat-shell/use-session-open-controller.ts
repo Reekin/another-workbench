@@ -69,6 +69,7 @@ export const useSessionOpenController = (input: {
   isOpeningSelectedSession: boolean;
   viewport: TranscriptViewportController;
   onResetSessionSwitchState: () => void;
+  beforeCreateSession?: () => Promise<void>;
   onStatusNotice: StatusNoticeSetter;
   refreshSessionBrowser: (input?: SessionBrowserRefreshInput) => Promise<void>;
   ensureSessionVisible?: (sessionId: string) => Promise<string | undefined>;
@@ -315,6 +316,7 @@ export const useSessionOpenController = (input: {
       });
       let requestId: number | undefined;
       try {
+        await input.beforeCreateSession?.();
         const previousSessionId = input.viewport.displayedSessionIdRef.current;
         if (previousSessionId) {
           await releaseSessionCache(previousSessionId);

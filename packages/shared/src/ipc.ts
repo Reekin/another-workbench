@@ -101,6 +101,9 @@ const zWorkbenchSettingsSchema = z.object({
   customModelReasoningOptionIdsByEngineId: z
     .record(z.string(), z.record(z.string(), z.array(z.string().min(1))))
     .default({}),
+  serviceTierPreferencesByEngineId: z
+    .record(z.string(), z.record(z.string(), z.string().min(1).nullable()))
+    .default({}),
   lastExecutionByEngineId: z
     .record(z.string(), zSessionExecutionProfileInputSchema)
     .default({})
@@ -611,6 +614,9 @@ const zSettingsUpdateRequestSchema = z.object({
       .optional(),
     customModelReasoningOptionIdsByEngineId: z
       .record(z.string(), z.record(z.string(), z.array(z.string().min(1))))
+      .optional(),
+    serviceTierPreferencesByEngineId: z
+      .record(z.string(), z.record(z.string(), z.string().min(1).nullable()))
       .optional(),
     lastExecutionByEngineId: z
       .record(z.string(), zSessionExecutionProfileInputSchema)

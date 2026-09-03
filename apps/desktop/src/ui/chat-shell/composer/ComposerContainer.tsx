@@ -26,6 +26,7 @@ export type ComposerContainerProps = {
   engineSurface?: EngineSurfaceRpc;
   allowedModelIds?: string[];
   customModelReasoningOptionIds?: Record<string, string[]>;
+  serviceTierPreferences?: Record<string, string | null>;
   lastExecution?: ComposerExecutionSelection;
   activeWorkspaceId?: string;
   activeWorkspaceRootPath?: string;
@@ -43,7 +44,8 @@ export type ComposerContainerProps = {
   onRequestTranscriptBottom?: (sessionId: string) => void;
   onExecutionPreferenceChange?: (
     engineId: string,
-    execution: ComposerExecutionSelection
+    execution: ComposerExecutionSelection,
+    options?: { serviceTierChanged?: boolean }
   ) => void;
   onRespondApproval?: (input: ApprovalResponseInput) => Promise<void>;
   onRespondInteraction?: (input: InteractionResponseInput) => Promise<void>;
@@ -59,6 +61,7 @@ export const ComposerContainer = ({
   engineSurface,
   allowedModelIds,
   customModelReasoningOptionIds,
+  serviceTierPreferences,
   lastExecution,
   activeWorkspaceId,
   activeWorkspaceRootPath,
@@ -88,6 +91,7 @@ export const ComposerContainer = ({
     engineSurface,
     allowedModelIds,
     customModelReasoningOptionIds,
+    serviceTierPreferences,
     lastExecution,
     activeWorkspaceId,
     activeWorkspaceRootPath,

@@ -10,7 +10,8 @@ import {
   cloneAllowedModelIdsByEngineId,
   cloneCustomModelReasoningOptionIdsByEngineId,
   cloneLastExecutionByEngineId,
-  cloneModelSettings
+  cloneModelSettings,
+  cloneServiceTierPreferencesByEngineId
 } from "./model-settings.js";
 import {
   loadJsonFile,
@@ -40,6 +41,9 @@ const workspaceRegistryDocumentSchema = z.object({
   customModelReasoningOptionIdsByEngineId: z
     .record(z.string(), z.record(z.string(), z.array(z.string().min(1))))
     .default({}),
+  serviceTierPreferencesByEngineId: z
+    .record(z.string(), z.record(z.string(), z.string().min(1).nullable()))
+    .default({}),
   lastExecutionByEngineId: z
     .record(z.string(), zSessionExecutionProfileInputSchema)
     .default({}),
@@ -54,11 +58,13 @@ export type WorkspaceRegistryDocument = z.infer<
 
 type Clock = () => string;
 type IdFactory = () => string;
+type SaveDocument = (filePath: string, value: unknown) => Promise<void>;
 
 export type WorkspaceRegistryServiceOptions = {
   baseDir?: string;
   now?: Clock;
   createWorkspaceId?: IdFactory;
+  saveDocument?: SaveDocument;
 };
 
 export type WorkspaceRegistrationInput = {
@@ -74,10 +80,35 @@ const defaultBaseDir = (): string => join(homedir(), ".another-workbench");
 
 const dedupeIds = (items: readonly string[]): string[] => [...new Set(items)];
 
+const migrateServiceTierPreferences = (
+  document: WorkspaceRegistryDocument
+): WorkspaceRegistryDocument => {
+  const serviceTierPreferencesByEngineId =
+    cloneServiceTierPreferencesByEngineId(
+      document.serviceTierPreferencesByEngineId
+    );
+  for (const [engineId, execution] of Object.entries(
+    document.lastExecutionByEngineId
+  )) {
+    if (!execution.modelId || execution.serviceTierId === undefined) {
+      continue;
+    }
+    serviceTierPreferencesByEngineId[engineId] = {
+      ...(serviceTierPreferencesByEngineId[engineId] ?? {}),
+      [execution.modelId]: execution.serviceTierId
+    };
+  }
+  return {
+    ...document,
+    serviceTierPreferencesByEngineId
+  };
+};
+
 export class WorkspaceRegistryService {
   private readonly filePath: string;
   private readonly now: Clock;
   private readonly createWorkspaceId: IdFactory;
+  private readonly saveDocument: SaveDocument;
   private document: WorkspaceRegistryDocument = {
     version: 1,
     workspaces: [],
@@ -87,9 +118,12 @@ export class WorkspaceRegistryService {
     engineProgramPathsByEngineId: {},
     allowedModelIdsByEngineId: {},
     customModelReasoningOptionIdsByEngineId: {},
+    serviceTierPreferencesByEngineId: {},
     lastExecutionByEngineId: {}
   };
   private loadPromise: Promise<void> | undefined;
+  private persistPromise: Promise<void> | undefined;
+  private persistRequested = false;
   private revision = 0;
   private sessionBrowserRevision = 0;
 
@@ -98,6 +132,7 @@ export class WorkspaceRegistryService {
     this.filePath = join(baseDir, "workspace-registry.json");
     this.now = options.now ?? (() => new Date().toISOString());
     this.createWorkspaceId = options.createWorkspaceId ?? createOpaqueWorkspaceId;
+    this.saveDocument = options.saveDocument ?? saveJsonFile;
   }
 
   public async ready(): Promise<void> {
@@ -298,6 +333,7 @@ export class WorkspaceRegistryService {
       string,
       Record<string, string[]>
     >;
+    serviceTierPreferencesByEngineId?: WorkspaceRegistryDocument["serviceTierPreferencesByEngineId"];
     lastExecutionByEngineId?: WorkspaceRegistryDocument["lastExecutionByEngineId"];
   }): Promise<void> {
     await this.ready();
@@ -330,6 +366,14 @@ export class WorkspaceRegistryService {
               )
           }
         : {}),
+      ...(Object.hasOwn(input, "serviceTierPreferencesByEngineId")
+        ? {
+            serviceTierPreferencesByEngineId:
+              cloneServiceTierPreferencesByEngineId(
+                input.serviceTierPreferencesByEngineId ?? {}
+              )
+          }
+        : {}),
       ...(Object.hasOwn(input, "lastExecutionByEngineId")
         ? {
             lastExecutionByEngineId: cloneLastExecutionByEngineId(
@@ -351,12 +395,17 @@ export class WorkspaceRegistryService {
       engineProgramPathsByEngineId: {},
       allowedModelIdsByEngineId: {},
       customModelReasoningOptionIdsByEngineId: {},
+      serviceTierPreferencesByEngineId: {},
       lastExecutionByEngineId: {}
     });
     const hadLegacySessionViewState =
       typeof loaded.value === "object" &&
       loaded.value !== null &&
       "sessionViewStateBySessionId" in loaded.value;
+    const needsServiceTierPreferenceMigration =
+      typeof loaded.value === "object" &&
+      loaded.value !== null &&
+      !Object.hasOwn(loaded.value, "serviceTierPreferencesByEngineId");
     const migratedValue =
       typeof loaded.value === "object" &&
       loaded.value !== null &&
@@ -373,16 +422,34 @@ export class WorkspaceRegistryService {
     if (!parsed.success) {
       throw new PersistentStoreCorruptionError(this.filePath, parsed.error);
     }
-    this.document = parsed.data;
+    this.document = needsServiceTierPreferenceMigration
+      ? migrateServiceTierPreferences(parsed.data)
+      : parsed.data;
     this.revision += 1;
     this.sessionBrowserRevision += 1;
-    if (hadLegacySessionViewState) {
+    if (hadLegacySessionViewState || needsServiceTierPreferenceMigration) {
       await this.persist();
     }
   }
 
   private async persist(): Promise<void> {
     this.revision += 1;
-    await saveJsonFile(this.filePath, this.document);
+    this.persistRequested = true;
+    if (!this.persistPromise) {
+      this.persistPromise = this.flushPersistRequests().finally(() => {
+        this.persistPromise = undefined;
+      });
+    }
+    await this.persistPromise;
+  }
+
+  private async flushPersistRequests(): Promise<void> {
+    while (this.persistRequested) {
+      this.persistRequested = false;
+      await this.saveDocument(
+        this.filePath,
+        workspaceRegistryDocumentSchema.parse(this.document)
+      );
+    }
   }
 }

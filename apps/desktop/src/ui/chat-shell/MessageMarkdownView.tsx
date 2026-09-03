@@ -3,6 +3,7 @@ import {
   useDeferredValue,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactElement
 } from "react";
@@ -11,6 +12,7 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import type { MessageBlock } from "@another-workbench/shared";
 import { buildLocalImagePreviewSrc } from "./local-image-preview.js";
+import { writeClipboardText } from "./clipboard.js";
 
 export type MessageMarkdownViewProps = {
   block: MessageBlock;
@@ -102,6 +104,7 @@ type UserMessageParts = {
   attachmentMarkdown?: string;
 };
 
+const copyFeedbackDurationMs = 2_000;
 const codeCommentLinePattern = /^::code-comment\{(?<attributes>.*)\}$/;
 const directiveAttributeKeys = new Set<keyof CodeCommentDirective>([
   "title",
@@ -543,6 +546,8 @@ export const MessageMarkdownView = memo(({
   copyBlocks,
   onPreviewImage
 }: MessageMarkdownViewProps): ReactElement => {
+  const [isCopied, setIsCopied] = useState(false);
+  const copyResetTimerRef = useRef<number | undefined>(undefined);
   const sourceText = block.text ?? "";
   const copyText = copyBlocks
     ?.flatMap((candidate) =>
@@ -570,6 +575,25 @@ export const MessageMarkdownView = memo(({
         ? "is-user"
         : "is-system";
   const mermaidClass = hasMermaidSegment ? " awb-message--contains-mermaid" : "";
+  const showCopiedFeedback = (): void => {
+    if (copyResetTimerRef.current !== undefined) {
+      window.clearTimeout(copyResetTimerRef.current);
+    }
+    setIsCopied(true);
+    copyResetTimerRef.current = window.setTimeout(() => {
+      copyResetTimerRef.current = undefined;
+      setIsCopied(false);
+    }, copyFeedbackDurationMs);
+  };
+
+  useEffect(
+    () => () => {
+      if (copyResetTimerRef.current !== undefined) {
+        window.clearTimeout(copyResetTimerRef.current);
+      }
+    },
+    []
+  );
 
   return (
     <article
@@ -669,17 +693,29 @@ export const MessageMarkdownView = memo(({
         {copyText ? (
           <button
             type="button"
-            className="awb-message__copy"
-            aria-label="Copy message"
-            title="Copy"
+            className={`awb-message__copy${isCopied ? " is-copied" : ""}`}
+            aria-label={isCopied ? "Message copied" : "Copy message"}
+            title={isCopied ? "Copied" : "Copy"}
             onClick={() => {
-              void navigator.clipboard.writeText(copyText);
+              void writeClipboardText(copyText)
+                .then(showCopiedFeedback)
+                .catch((error) => {
+                  if (!window.workbenchDesktop) {
+                    console.error("Message clipboard write failed.", error);
+                  }
+                });
             }}
           >
-            <svg aria-hidden="true" focusable="false" viewBox="0 0 20 20">
-              <rect x="8" y="8" width="9" height="9" rx="1.75" />
-              <path d="M12 8V5.75A1.75 1.75 0 0 0 10.25 4h-4.5A1.75 1.75 0 0 0 4 5.75v4.5A1.75 1.75 0 0 0 5.75 12H8" />
-            </svg>
+            {isCopied ? (
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 20 20">
+                <path d="m4 10 4 4 8-8" />
+              </svg>
+            ) : (
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 20 20">
+                <rect x="8" y="8" width="9" height="9" rx="1.75" />
+                <path d="M12 8V5.75A1.75 1.75 0 0 0 10.25 4h-4.5A1.75 1.75 0 0 0 4 5.75v4.5A1.75 1.75 0 0 0 5.75 12H8" />
+              </svg>
+            )}
           </button>
         ) : null}
       </div>

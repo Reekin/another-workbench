@@ -36,6 +36,7 @@ import {
   type ElectronDiagnosticsLogger,
   type RendererHealthSnapshot
 } from "./electron-diagnostics.js";
+import { writeVerifiedClipboardText } from "./clipboard-writer.js";
 import {
   createAgentCompletionNotifier,
   findMainSessionInPath
@@ -728,7 +729,7 @@ const boot = async (): Promise<void> => {
       if (typeof text !== "string") {
         throw new TypeError("Clipboard text must be a string.");
       }
-      clipboard.writeText(text);
+      writeVerifiedClipboardText(clipboard, diagnostics, text);
     }
   );
 

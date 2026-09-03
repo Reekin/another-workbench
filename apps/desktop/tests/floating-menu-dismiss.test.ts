@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   formatSessionCopyStatusNotice,
-  shouldDismissFloatingMenuForContextMenu,
-  writeSessionActionClipboardText
+  shouldDismissFloatingMenuForContextMenu
 } from "../src/ui/chat-shell/use-session-actions-controller.js";
+import { writeClipboardText } from "../src/ui/chat-shell/clipboard.js";
 
 class FakeElement {
   public constructor(private readonly isInsideMenu: boolean) {}
@@ -64,7 +64,7 @@ describe("floating context menu dismissal", () => {
       }
     });
 
-    await writeSessionActionClipboardText("thread-1");
+    await writeClipboardText("thread-1");
 
     expect(desktop).toHaveBeenCalledWith("thread-1");
     expect(browser).not.toHaveBeenCalled();
@@ -79,7 +79,7 @@ describe("floating context menu dismissal", () => {
       }
     });
 
-    await writeSessionActionClipboardText("thread-1");
+    await writeClipboardText("thread-1");
 
     expect(browser).toHaveBeenCalledWith("thread-1");
   });

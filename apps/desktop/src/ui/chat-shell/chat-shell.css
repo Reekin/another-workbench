@@ -955,6 +955,10 @@ button:disabled {
   color: var(--awb-ink-strong);
 }
 
+.awb-message__copy.is-copied {
+  color: var(--awb-success);
+}
+
 .awb-message__copy svg {
   width: 14px;
   height: 14px;

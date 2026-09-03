@@ -5,6 +5,7 @@ import {
   statusNoticeErrorDetails,
   type ComposerStatusNotice
 } from "./composer-status.js";
+import { writeClipboardText } from "./clipboard.js";
 import {
   findSessionNode,
   type WorkspaceBrowserViewNode
@@ -40,21 +41,6 @@ export const formatSessionCopyStatusNotice = (
   action === "copy_awb_session_id"
     ? `Copied AWB session id ${copiedText}`
     : `Copied session id ${copiedText}`;
-
-export const writeSessionActionClipboardText = async (
-  text: string
-): Promise<void> => {
-  const desktopWriter = window.workbenchDesktop?.writeClipboardText;
-  if (desktopWriter) {
-    await desktopWriter(text);
-    return;
-  }
-
-  if (!navigator.clipboard) {
-    throw new Error("Clipboard API is unavailable.");
-  }
-  await navigator.clipboard.writeText(text);
-};
 
 export const useSessionActionsController = (input: {
   transport?: DesktopTransport;
@@ -129,7 +115,7 @@ export const useSessionActionsController = (input: {
           result.action === "copy_session_id" ||
           result.action === "copy_awb_session_id"
         ) {
-          await writeSessionActionClipboardText(result.copiedText);
+          await writeClipboardText(result.copiedText);
           input.onStatusNotice({
             message: formatSessionCopyStatusNotice(result.action, result.copiedText),
             source: "session-action"

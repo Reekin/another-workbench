@@ -379,6 +379,26 @@ export const zEventEnvelopeSchema = z.object({
 export type RuntimeEvent = z.infer<typeof zEventSchema>;
 export type EventEnvelope = z.infer<typeof zEventEnvelopeSchema>;
 
+export const invalidatesSessionBrowser = (event: RuntimeEvent): boolean => {
+  switch (event.type) {
+    case "conversation.updated":
+      return event.workspaceId !== undefined;
+    case "session.created":
+    case "session.updated":
+    case "session.archived":
+    case "session.disposed":
+    case "turn.started":
+    case "turn.completed":
+    case "approval.requested":
+    case "interaction.requested":
+      return true;
+    case "runtime.error":
+      return !event.recoverable && Boolean(event.sessionId);
+    default:
+      return false;
+  }
+};
+
 export const parseRuntimeEvent = (value: unknown): RuntimeEvent =>
   zEventSchema.parse(value);
 

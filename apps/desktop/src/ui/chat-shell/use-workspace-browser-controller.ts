@@ -74,6 +74,56 @@ export const runAddWorkspaceFlow = async (input: {
 const rootPageSize = 10;
 const childPageSize = 20;
 
+export const loadRootPageWithRecovery = async (input: {
+  coordinator: SessionBrowserQueryCoordinator;
+  workspaceId: string;
+  targetPageIndex: number;
+  cursorHistory: Array<string | undefined>;
+}) => {
+  const load = (cursor?: string) =>
+    input.coordinator.load({
+      kind: "roots",
+      workspaceId: input.workspaceId,
+      cursor,
+      limit: rootPageSize
+    });
+  const initial = await load(input.cursorHistory[input.targetPageIndex]);
+  if (initial.status !== "committed") {
+    return undefined;
+  }
+  if (!initial.recoveredRootPage) {
+    return {
+      page: initial.page,
+      pageIndex: input.targetPageIndex,
+      cursorHistory: input.cursorHistory
+    };
+  }
+
+  let page = initial.recoveredRootPage;
+  let pageIndex = 0;
+  let cursorHistory: Array<string | undefined> = [undefined];
+  while (pageIndex < input.targetPageIndex && page.hasMore && page.nextCursor) {
+    cursorHistory[pageIndex + 1] = page.nextCursor;
+    const next = await load(page.nextCursor);
+    if (next.status !== "committed") {
+      return undefined;
+    }
+    if (next.recoveredRootPage) {
+      page = next.recoveredRootPage;
+      pageIndex = 0;
+      cursorHistory = [undefined];
+      continue;
+    }
+    page = next.page;
+    pageIndex += 1;
+  }
+  return {
+    page,
+    pageIndex,
+    cursorHistory
+  };
+};
+
 export const runSessionExpansionEffects = async (input: {
   persistExpansion: () => Promise<unknown>;
   loadChildren?: () => Promise<void>;
@@ -234,10 +284,7 @@ export const projectSessionBrowserLoading = (
 export type WorkspaceBrowserController = {
   workspaceTree: WorkspaceBrowserViewNode[];
   attentionSessions: AttentionSessionViewNode[];
-  refreshSessionBrowser: (input?: {
-    mode?: "all" | "visible" | "workspace";
-    workspaceId?: string;
-  }) => Promise<void>;
+  refreshSessionBrowser: (input?: SessionBrowserRefreshInput) => Promise<void>;
   ensureSessionVisible: (sessionId: string) => Promise<string | undefined>;
   onAddWorkspace: () => Promise<void>;
   onToggleWorkspace: (workspaceId: string) => Promise<void>;
@@ -245,6 +292,12 @@ export type WorkspaceBrowserController = {
   onLoadMoreSessionChildren: (sessionId: string, workspaceId: string) => Promise<void>;
   onPreviousWorkspacePage: (workspaceId: string) => Promise<void>;
   onNextWorkspacePage: (workspaceId: string) => Promise<void>;
+};
+
+export type SessionBrowserRefreshInput = {
+  mode?: "all" | "visible" | "workspace";
+  workspaceId?: string;
+  intent?: "live" | "mutation";
 };
 
 export const useWorkspaceBrowserController = (input: {
@@ -309,7 +362,8 @@ export const useWorkspaceBrowserController = (input: {
   const loadRootPage = async (
     workspaceId: string,
     pageIndex?: number,
-    cursorHistoryOverride?: Array<string | undefined>
+    cursorHistoryOverride?: Array<string | undefined>,
+    options: { showLoading?: boolean } = {}
   ): Promise<void> => {
     const coordinator = coordinatorRef.current;
     const workspace = workspaceTreeRef.current.find(
@@ -325,22 +379,25 @@ export const useWorkspaceBrowserController = (input: {
         ? workspace.rootCursorHistory
         : [undefined]);
     const scope = { kind: "roots" as const, workspaceId };
-    const resultPromise = coordinator.load({
-      ...scope,
-      cursor: cursorHistory[targetPageIndex],
-      limit: rootPageSize
+    const resultPromise = loadRootPageWithRecovery({
+      coordinator,
+      workspaceId,
+      targetPageIndex,
+      cursorHistory
     });
-    projectCollectionLoading(coordinator, scope);
+    const showLoading = options.showLoading ?? true;
+    if (showLoading) {
+      projectCollectionLoading(coordinator, scope);
+    }
     try {
       const result = await resultPromise;
       if (
-        result.status !== "committed" ||
+        !result ||
         !mountedRef.current ||
         coordinatorRef.current !== coordinator
       ) {
         return;
       }
-      const recovered = Boolean(result.recoveredRootPage);
       let committed = false;
       let committedSessions: SessionBrowserViewNode[] = [];
       updateWorkspace(workspaceId, (current) => {
@@ -351,8 +408,8 @@ export const useWorkspaceBrowserController = (input: {
         const next = applyRootPage(
           current,
           result.page,
-          recovered ? 0 : targetPageIndex,
-          recovered ? [undefined] : cursorHistory
+          result.pageIndex,
+          result.cursorHistory
         );
         committedSessions = next.sessions;
         return next;
@@ -380,7 +437,7 @@ export const useWorkspaceBrowserController = (input: {
         }
       }
     } finally {
-      if (mountedRef.current) {
+      if (showLoading && mountedRef.current) {
         projectCollectionLoading(coordinator, scope);
       }
     }
@@ -401,10 +458,9 @@ export const useWorkspaceBrowserController = (input: {
     return path.workspaceId;
   };
 
-  const refreshSessionBrowser = async (refreshInput?: {
-    mode?: "all" | "visible" | "workspace";
-    workspaceId?: string;
-  }): Promise<void> => {
+  const refreshSessionBrowser = async (
+    refreshInput?: SessionBrowserRefreshInput
+  ): Promise<void> => {
     if (!input.transport || !coordinatorRef.current) {
       workspaceListGenerationRef.current += 1;
       workspaceTreeRef.current = [];
@@ -431,6 +487,16 @@ export const useWorkspaceBrowserController = (input: {
       lastActiveWorkspaceId: workspaceState.lastActiveWorkspaceId,
       workspaces: current
     });
+    const intent = refreshInput?.intent ?? "mutation";
+    const refreshableWorkspaceIds =
+      intent === "live"
+        ? targetWorkspaceIds.filter(
+            (workspaceId) =>
+              !workspaceTreeRef.current.find(
+                (workspace) => workspace.workspaceId === workspaceId
+              )?.isLoadingRoots
+          )
+        : targetWorkspaceIds;
     const expandedCollectionsByWorkspace = new Map(
       current.map((workspace) => [
         workspace.workspaceId,
@@ -438,25 +504,20 @@ export const useWorkspaceBrowserController = (input: {
       ])
     );
 
-    if (mode === "all" || mode === "visible") {
-      for (const workspace of current) {
-        clearCollectionLoading(
-          coordinatorRef.current.invalidateWorkspace(workspace.workspaceId)
-        );
-      }
-      setWorkspaceTree((workspaces) =>
-        workspaces.map(resetRootPagination)
-      );
-    } else if (targetWorkspaceIds[0]) {
+    for (const workspaceId of refreshableWorkspaceIds) {
       clearCollectionLoading(
-        coordinatorRef.current.invalidateWorkspace(targetWorkspaceIds[0])
+        coordinatorRef.current.invalidateWorkspace(workspaceId)
       );
-      updateWorkspace(targetWorkspaceIds[0], resetRootPagination);
+      if (intent === "mutation") {
+        updateWorkspace(workspaceId, resetRootPagination);
+      }
     }
 
     await Promise.all(
-      targetWorkspaceIds.map(async (workspaceId) => {
-        await loadRootPage(workspaceId);
+      refreshableWorkspaceIds.map(async (workspaceId) => {
+        await loadRootPage(workspaceId, undefined, undefined, {
+          showLoading: intent !== "live"
+        });
         await Promise.all(
           (expandedCollectionsByWorkspace.get(workspaceId) ?? []).map((sessionId) =>
             loadChildren(workspaceId, sessionId, false)
@@ -622,7 +683,7 @@ export const useWorkspaceBrowserController = (input: {
     if (!input.transport) {
       return;
     }
-    void refreshSessionBrowser({ mode: "visible" }).catch((error) => {
+    void refreshSessionBrowser({ mode: "visible", intent: "live" }).catch((error) => {
       input.onStatusNotice({
         message: `Session browser failed: ${(error as Error).message}`,
         persistent: true,

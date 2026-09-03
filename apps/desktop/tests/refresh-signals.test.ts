@@ -125,7 +125,7 @@ describe("renderer refresh signals", () => {
     });
   });
 
-  it("increments only the views invalidated by session and graph events", () => {
+  it("keeps chat-tree-only graph updates out of the session browser", () => {
     const signals = advance([
       {
         type: "session.created",
@@ -159,10 +159,28 @@ describe("renderer refresh signals", () => {
     ]);
 
     expect(signals).toEqual({
-      sessionBrowser: 3,
+      sessionBrowser: 2,
       chatTree: 2,
       engineExtensions: 0
     });
+  });
+
+  it("refreshes workspace metadata only when the event identifies a workspace", () => {
+    const signals = advance([
+      {
+        type: "conversation.updated",
+        conversationId: "conversation-1",
+        participantIds: []
+      },
+      {
+        type: "conversation.updated",
+        conversationId: "conversation-1",
+        workspaceId: "workspace-1",
+        participantIds: []
+      }
+    ]);
+
+    expect(signals.sessionBrowser).toBe(1);
   });
 
   it("refreshes engine extension slots when extension data changes", () => {

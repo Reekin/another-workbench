@@ -9,6 +9,7 @@ import {
   findSessionNode,
   type WorkspaceBrowserViewNode
 } from "./workspace-browser-tree.js";
+import type { SessionBrowserRefreshInput } from "./use-workspace-browser-controller.js";
 
 export type SessionMenuState = {
   sessionId: string;
@@ -58,10 +59,7 @@ export const writeSessionActionClipboardText = async (
 export const useSessionActionsController = (input: {
   transport?: DesktopTransport;
   workspaceTree: WorkspaceBrowserViewNode[];
-  refreshSessionBrowser: (input?: {
-    mode?: "all" | "visible" | "workspace";
-    workspaceId?: string;
-  }) => Promise<void>;
+  refreshSessionBrowser: (input?: SessionBrowserRefreshInput) => Promise<void>;
   onOpenSession?: (sessionId: string) => Promise<void>;
   onResumeSession?: (
     sessionId: string,

@@ -1,4 +1,7 @@
-import type { RuntimeEvent } from "@another-workbench/shared";
+import {
+  invalidatesSessionBrowser,
+  type RuntimeEvent
+} from "@another-workbench/shared";
 
 export type RendererRefreshSignals = {
   sessionBrowser: number;
@@ -13,26 +16,6 @@ export const createInitialRendererRefreshSignals = (): RendererRefreshSignals =>
 });
 
 const increment = (value: number): number => value + 1;
-
-const invalidatesSessionBrowser = (event: RuntimeEvent): boolean => {
-  switch (event.type) {
-    case "conversation.updated":
-    case "conversationGraph.updated":
-    case "session.created":
-    case "session.updated":
-    case "session.archived":
-    case "session.disposed":
-    case "turn.started":
-    case "turn.completed":
-    case "approval.requested":
-    case "interaction.requested":
-      return true;
-    case "runtime.error":
-      return !event.recoverable && Boolean(event.sessionId);
-    default:
-      return false;
-  }
-};
 
 const invalidatesChatTree = (event: RuntimeEvent): boolean => {
   switch (event.type) {

@@ -6,6 +6,7 @@ import type {
 import type { SessionBrowserViewNode } from "../src/ui/chat-shell/workspace-browser-tree.js";
 import {
   collectExpandedLoadedSessionIds,
+  loadRootPageWithRecovery,
   loadWorkspaceCatalogs,
   loadPersistedExpandedChildren,
   projectSessionBrowserLoading,
@@ -63,6 +64,51 @@ describe("workspace browser controller operations", () => {
     );
     releaseWorkspaceA();
     await startup;
+  });
+
+  it("replays a stale cursor through to the page the user requested", async () => {
+    const firstPage = {
+      workspaceId: "workspace-1",
+      revision: "revision-2",
+      items: [],
+      nextCursor: "fresh-page-2",
+      hasMore: true,
+      totalCount: 24
+    } satisfies SessionBrowserPageRpc;
+    const secondPage = {
+      ...firstPage,
+      items: [{
+        sessionId: "root-11",
+        engineId: "codex",
+        title: "Root 11",
+        statusDot: "none",
+        isActive: false,
+        childCount: 0
+      }],
+      nextCursor: "fresh-page-3"
+    } satisfies SessionBrowserPageRpc;
+    const coordinator = new SessionBrowserQueryCoordinator({
+      listRoots: vi
+        .fn()
+        .mockRejectedValueOnce({ code: "CURSOR_STALE" })
+        .mockResolvedValueOnce(firstPage)
+        .mockResolvedValueOnce(secondPage),
+      listChildren: vi.fn(),
+      getPath: vi.fn()
+    });
+
+    await expect(
+      loadRootPageWithRecovery({
+        coordinator,
+        workspaceId: "workspace-1",
+        targetPageIndex: 1,
+        cursorHistory: [undefined, "stale-page-2"]
+      })
+    ).resolves.toEqual({
+      page: secondPage,
+      pageIndex: 1,
+      cursorHistory: [undefined, "fresh-page-2"]
+    });
   });
 
   it("does not load a catalog when startup has no target workspace", async () => {

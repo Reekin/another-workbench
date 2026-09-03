@@ -2226,9 +2226,12 @@ export const ChatShellApp = ({
                   </header>
                   {workspace.isExpanded && (
                     <>
-                      <ul className="awb-tree__branch awb-tree__branch--workspace">
+                      <ul
+                        className="awb-tree__branch awb-tree__branch--workspace"
+                        aria-busy={workspace.isLoadingRoots}
+                      >
                         {workspace.sessions.map((session) => renderSessionNode(session))}
-                        {workspace.isLoadingRoots ? (
+                        {workspace.isLoadingRoots && workspace.sessions.length === 0 ? (
                           <li className="awb-list__empty">Loading…</li>
                         ) : null}
                       </ul>

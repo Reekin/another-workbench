@@ -16,6 +16,7 @@ import {
   findSessionNode,
   type WorkspaceBrowserViewNode
 } from "./workspace-browser-tree.js";
+import type { SessionBrowserRefreshInput } from "./use-workspace-browser-controller.js";
 
 type StatusNoticeSetter = Dispatch<
   SetStateAction<ComposerStatusNotice | undefined>
@@ -69,10 +70,7 @@ export const useSessionOpenController = (input: {
   viewport: TranscriptViewportController;
   onResetSessionSwitchState: () => void;
   onStatusNotice: StatusNoticeSetter;
-  refreshSessionBrowser: (input?: {
-    mode?: "all" | "visible" | "workspace";
-    workspaceId?: string;
-  }) => Promise<void>;
+  refreshSessionBrowser: (input?: SessionBrowserRefreshInput) => Promise<void>;
   ensureSessionVisible?: (sessionId: string) => Promise<string | undefined>;
   onReleasedSession?: (sessionId: string | undefined) => void;
 }): {

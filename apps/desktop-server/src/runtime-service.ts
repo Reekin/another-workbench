@@ -9,7 +9,10 @@ import type {
   ProviderSessionHandle,
   SessionRelationType
 } from "@another-workbench/shared";
-import type { SessionExecutionProfileInput } from "@another-workbench/shared";
+import {
+  invalidatesSessionBrowser,
+  type SessionExecutionProfileInput
+} from "@another-workbench/shared";
 import type {
   SessionIndexStore,
   SessionRelationIndex
@@ -33,48 +36,6 @@ import type { WorkspaceRegistryService } from "./workspace-registry.js";
 
 type Clock = () => string;
 type IdFactory = () => string;
-
-const isSessionBrowserRelevantEvent = (
-  event: EventEnvelope["event"]
-): boolean => {
-  switch (event.type) {
-    case "conversation.updated":
-      return event.workspaceId !== undefined;
-    case "session.created":
-    case "session.updated":
-    case "session.archived":
-    case "session.disposed":
-    case "turn.started":
-    case "turn.completed":
-    case "approval.requested":
-    case "interaction.requested":
-      return true;
-    case "runtime.error":
-      return !event.recoverable && Boolean(event.sessionId);
-    case "session.context.updated":
-    case "message.started":
-    case "message.delta":
-    case "message.completed":
-    case "tool.started":
-    case "tool.delta":
-    case "tool.completed":
-    case "terminal.started":
-    case "terminal.output":
-    case "terminal.completed":
-    case "approval.resolved":
-    case "interaction.resolved":
-    case "thread.goal.updated":
-    case "thread.goal.cleared":
-    case "engineExtension.updated":
-    case "conversationGraph.updated":
-    case "participant.updated":
-      return false;
-    default: {
-      const exhaustiveEvent: never = event;
-      return exhaustiveEvent;
-    }
-  }
-};
 
 export type {
   EngineSelectionInput,
@@ -336,7 +297,7 @@ export class WorkbenchRuntimeService {
   }
 
   private advanceSessionBrowserRevision(event: EventEnvelope["event"]): void {
-    if (isSessionBrowserRelevantEvent(event)) {
+    if (invalidatesSessionBrowser(event)) {
       this.sessionBrowserRevision += 1;
     }
   }
